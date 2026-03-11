@@ -1,0 +1,999 @@
+<!DOCTYPE html>
+<!-- DOC: client\public\public_casadepiedra.html | Proposito: Vista publica del cotizador Casa de Piedra. | Ver docs/10-funcionamiento-general-del-codigo.txt -->
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Catálogo Exclusivo - Casa de Piedra</title>
+    
+    <script src="assets/libs/js/tailwindcss.js"></script>
+    <script src="assets/libs/js/env.js"></script> 
+    <script src="assets/libs/js/supabase.js"></script>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
+
+    <link href="assets/libs/css/all.min.css" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&family=Playfair+Display:wght@400;500;600;700;900&display=swap" rel="stylesheet">
+
+    <script>
+        tailwind.config = { theme: { extend: { colors: { brand: { gold: '#deac07', dark: '#121212', gray: '#1f1f1f' } }, fontFamily: { serif: ['"Playfair Display"', 'serif'], sans: ['"Montserrat"', 'sans-serif'] }, boxShadow: { 'luxury': '0 10px 40px -10px rgba(0,0,0,0.1)', 'luxury-hover': '0 20px 40px -10px rgba(222,172,7,0.15)', 'upward': '0 -10px 20px -5px rgba(0,0,0,0.05)', } } } }
+    </script>
+    <style>
+        body.modal-open { overflow: hidden; }
+        .custom-scroll::-webkit-scrollbar { width: 6px; height: 6px;} .custom-scroll::-webkit-scrollbar-track { background: rgba(0,0,0,0.02); border-radius: 8px; } .custom-scroll::-webkit-scrollbar-thumb { background: rgba(222,172,7,0.4); border-radius: 8px; } .custom-scroll::-webkit-scrollbar-thumb:hover { background: rgba(222,172,7,0.8); }
+        .cal-day { transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
+        .cal-day:hover:not(.cal-disabled):not(.cal-occupied) { border-color: #deac07; background-color: #fdfaf0; z-index: 10; transform: scale(1.05); box-shadow: 0 4px 12px rgba(0,0,0,0.05); border-radius: 0.5rem; }
+        .cal-selected { background-color: #deac07 !important; color: #121212 !important; border-color: #deac07 !important; border-radius: 0.5rem; transform: scale(1.05); z-index: 20; box-shadow: 0 4px 15px rgba(222,172,7,0.4); }
+        .cal-selected .day-price { color: #121212 !important; font-weight: 800; }
+        .cal-in-range { background-color: rgba(222, 172, 7, 0.1) !important; }
+        .cal-disabled { opacity: 0.3; pointer-events: none; background-color: #f9f9f9; }
+        .cal-occupied { background-color: #f3f4f6; pointer-events: none; position: relative; color: #9ca3af; }
+        .cal-occupied::after { content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(0,0,0,0.03) 10px, rgba(0,0,0,0.03) 20px); }
+        .shake-animation { animation: shake 0.4s cubic-bezier(.36,.07,.19,.97) both; }
+        @keyframes shake { 10%, 90% { transform: translate3d(-1px, 0, 0); } 20%, 80% { transform: translate3d(2px, 0, 0); } 30%, 50%, 70% { transform: translate3d(-4px, 0, 0); } 40%, 60% { transform: translate3d(4px, 0, 0); } }
+    </style>
+</head>
+<body class="bg-[#fcfcfc] text-gray-800 font-sans antialiased min-h-screen flex flex-col relative transition-colors duration-300">
+
+    <header class="bg-brand-dark shadow-xl border-b-[3px] border-brand-gold relative z-20">
+        <div class="max-w-7xl mx-auto px-4 py-6 flex flex-col items-center justify-center">
+            <img src="assets/img/logocp.png" alt="Casa de Piedra" class="h-16 md:h-20 object-contain drop-shadow-lg">
+            <p class="text-gray-400 mt-3 text-[10px] md:text-xs font-bold tracking-[0.25em] uppercase">Salones y Espacios Exclusivos</p>
+        </div>
+    </header>
+
+    <main class="flex-grow w-full relative z-10">
+        <div class="bg-white shadow-sm border-b border-gray-100 pb-6 pt-8 px-4 mb-10 sticky top-0 z-30">
+            <div class="max-w-4xl mx-auto flex flex-col gap-5">
+                <div class="relative w-full">
+                    <i class="fas fa-search absolute left-5 top-1/2 transform -translate-y-1/2 text-brand-gold text-lg"></i>
+                    <input type="text" id="search-input" placeholder="Buscar por salón o característica..." class="w-full pl-14 pr-6 py-4 border-2 border-gray-100 rounded-2xl text-base outline-none focus:border-brand-gold transition shadow-sm bg-[#fafafa] focus:bg-white font-medium" onkeyup="filtrarCatalogo()">
+                </div>
+                <div class="relative w-full overflow-hidden">
+                    <div class="absolute right-0 top-0 bottom-0 w-16 bg-gradient-to-l from-white to-transparent z-10 pointer-events-none"></div>
+                    <div class="w-full flex items-center gap-3 overflow-x-auto hide-scrollbar pb-2 pt-1 snap-x scroll-smooth" id="filter-tags"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="max-w-7xl mx-auto px-4">
+            <div id="ui-message" class="hidden mb-8 p-4 rounded-xl text-center font-medium shadow-sm transition-all duration-500"></div>
+            <div id="espacios-grid" class="grid grid-cols-1 md:grid-cols-2 gap-10 md:gap-14 max-w-5xl mx-auto pb-16"></div>
+        </div>
+    </main>
+
+    <footer class="bg-brand-dark text-white pt-16 pb-8 border-t-[5px] border-brand-gold relative z-10 mt-auto">
+        <div class="max-w-7xl mx-auto px-4 grid grid-cols-1 md:grid-cols-3 gap-12 mb-12 text-center md:text-left">
+            <div>
+                <img src="assets/img/logocp.png" alt="Casa de Piedra" class="h-14 object-contain mb-6 mx-auto md:mx-0 opacity-90">
+                <p class="text-sm text-gray-400 leading-relaxed font-light">El escenario perfecto para tus momentos más memorables.</p>
+            </div>
+        </div>
+        <div class="border-t border-gray-800 pt-8 text-center"><p class="text-[10px] text-gray-500 tracking-[0.2em] uppercase font-light">&copy; 2026 Casa de Piedra.</p></div>
+    </footer>
+
+    <div id="modal-backdrop" class="fixed inset-0 bg-brand-dark/95 backdrop-blur-md z-[100] flex items-center justify-center opacity-0 pointer-events-none transition-opacity duration-500 p-0 md:p-6">
+        
+        <div id="step-1-info" class="bg-white shadow-2xl w-full max-w-6xl md:rounded-3xl transform scale-95 translate-y-4 transition-all duration-500 h-full md:max-h-[92vh] flex flex-col overflow-hidden md:border-t-[5px] border-brand-gold relative">
+            <button onclick="cerrarModal()" class="absolute top-4 right-4 md:top-6 md:right-6 z-40 bg-brand-dark/80 hover:bg-brand-gold text-white w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-all hover:rotate-90 text-xl"><i class="fas fa-times"></i></button>
+
+            <div class="flex flex-col md:flex-row flex-1 min-h-0 overflow-y-auto md:overflow-hidden relative">
+                <div class="w-full md:w-5/12 bg-gray-50 flex flex-col border-b md:border-b-0 md:border-r border-gray-200 shrink-0 md:overflow-y-auto custom-scroll">
+                    <div class="relative h-64 md:h-72 bg-gray-200 shrink-0">
+                        <img id="modal-img" src="" class="w-full h-full object-cover">
+                        <div class="absolute inset-0 bg-gradient-to-t from-brand-dark via-brand-dark/20 to-transparent"></div>
+                        <div class="absolute bottom-6 left-6 md:left-8 right-6">
+                            <p id="modal-type" class="text-brand-gold text-[10px] md:text-xs font-bold uppercase tracking-[0.3em] mb-2 drop-shadow"><i class="fas fa-gem mr-2"></i> Tipo</p>
+                            <h2 id="modal-title" class="text-3xl md:text-4xl font-serif text-white leading-tight drop-shadow-lg">Salón</h2>
+                        </div>
+                    </div>
+                    <div class="p-6 md:p-8">
+                        <div class="flex justify-between items-center mb-6 pb-6 border-b border-gray-200">
+                            <div><span class="block text-gray-400 text-[10px] uppercase tracking-[0.2em] font-bold mb-1">Aforo Máximo</span><span id="modal-cap-max" class="font-serif font-bold text-brand-dark text-2xl"></span></div>
+                        </div>
+                        <p id="modal-desc" class="text-gray-600 text-sm md:text-base leading-relaxed font-light text-justify"></p>
+                    </div>
+                </div>
+
+                <div class="w-full md:w-7/12 flex flex-col bg-white relative shrink-0 md:min-h-0">
+                    <div id="cal-loader" class="absolute inset-0 bg-white/95 backdrop-blur-sm z-30 flex flex-col items-center justify-center hidden"><i class="fas fa-circle-notch fa-spin text-5xl text-brand-gold mb-4"></i></div>
+
+                    <div class="flex-1 p-6 md:p-10 md:overflow-y-auto custom-scroll pb-56 md:pb-10">
+                        <h3 class="font-serif text-2xl md:text-3xl text-brand-dark mb-6"><i class="far fa-calendar-check text-brand-gold mr-3"></i> Configurar Evento</h3>
+                        
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                            <div>
+                                <label class="block text-[10px] md:text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">1. ¿Cuántos invitados esperas? *</label>
+                                <div class="relative group">
+                                    <i class="fas fa-users absolute left-5 top-1/2 transform -translate-y-1/2 text-brand-gold text-lg"></i>
+                                    <input type="number" id="input-people" placeholder="Requerido" class="w-full border-2 border-gray-100 rounded-2xl pl-14 pr-6 py-3.5 text-base md:text-sm font-medium outline-none focus:border-brand-gold transition shadow-sm bg-gray-50 focus:bg-white" oninput="validarPersonas()">
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] md:text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">2. Horario del Evento *</label>
+                                <select id="input-horario" class="w-full border-2 border-gray-100 rounded-2xl px-5 py-3.5 text-base md:text-sm font-medium outline-none focus:border-brand-gold transition shadow-sm bg-gray-50 focus:bg-white cursor-pointer" onchange="calcularTotalSeleccion()"></select>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8 pb-8 border-b border-gray-100">
+                            <div>
+                                <label class="flex items-center gap-2 text-[10px] md:text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 cursor-pointer">
+                                    <input type="checkbox" id="chk-premontaje" class="accent-brand-gold" onchange="togglePremontajePublic()">
+                                    ¿Necesitas días de premontaje?
+                                </label>
+                                <div id="premontaje-controls" class="hidden">
+                                    <div class="relative flex gap-2">
+                                        <div class="relative w-full">
+                                            <i class="fas fa-hammer absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
+                                            <input type="number" id="input-premontaje" value="0" min="0" class="w-full border-2 border-gray-100 rounded-xl pl-10 pr-2 py-3 text-base md:text-sm font-medium outline-none focus:border-brand-gold transition bg-gray-50 focus:bg-white" oninput="validarMontajeInput()">
+                                        </div>
+                                        <button id="btn-fechas-montaje" onclick="abrirModalMontaje()" class="hidden bg-brand-gold hover:bg-[#c99a05] text-brand-dark px-3 rounded-xl font-bold text-[10px] uppercase tracking-wider transition shadow-sm whitespace-nowrap"><i class="fa-solid fa-calendar-plus mr-1"></i> Fechas</button>
+                                    </div>
+                                    <p id="lbl-fechas-montaje" class="text-[9px] font-bold text-brand-gold mt-1 hidden"></p>
+                                </div>
+                            </div>
+                            <div>
+                                <label class="flex items-center gap-2 text-[10px] md:text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 cursor-pointer">
+                                    <input type="checkbox" id="chk-horas-extra" class="accent-brand-gold" onchange="toggleHorasExtraPublic()">
+                                    ¿Necesitas horas extra?
+                                </label>
+                                <div id="horas-extra-controls" class="hidden">
+                                    <div class="relative">
+                                        <i class="fas fa-clock absolute left-5 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
+                                        <input type="number" id="input-horas" value="0" min="0" class="w-full border-2 border-gray-100 rounded-xl pl-12 pr-4 py-3 text-base md:text-sm font-medium outline-none focus:border-brand-gold transition bg-gray-50 focus:bg-white" oninput="calcularTotalSeleccion()">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mb-8 pb-8 border-b border-gray-100">
+                            <label class="block text-[10px] md:text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">Servicios Adicionales (Opcional)</label>
+                            <div class="flex flex-col sm:flex-row gap-2 mb-3">
+                                <select id="public-concept-select" class="w-full border-2 border-gray-100 rounded-xl px-4 py-3 text-sm font-medium outline-none focus:border-brand-gold transition bg-gray-50 focus:bg-white cursor-pointer"><option value="">Selecciona un servicio...</option></select>
+                                <button onclick="window.addPublicConcept()" class="bg-brand-gold hover:bg-[#c99a05] text-brand-dark px-6 py-3 rounded-xl font-bold transition shadow-sm w-full sm:w-auto"><i class="fas fa-plus"></i></button>
+                            </div>
+                            <div id="public-concepts-summary" class="space-y-2 mt-4"></div>
+                        </div>
+
+                        <label class="block text-[10px] md:text-xs font-bold text-gray-500 uppercase tracking-widest mb-3">3. Selecciona la Fecha (Para un rango, haz clic en Inicio y luego en Fin) *</label>
+                        <div class="border-2 border-gray-100 rounded-2xl overflow-hidden shadow-sm">
+                            <div class="bg-gray-50 p-4 flex justify-between items-center border-b border-gray-100">
+                                <button onclick="cambiarMes(-1)" class="w-10 h-10 md:w-12 md:h-12 rounded-full hover:bg-white text-brand-dark flex items-center justify-center text-lg"><i class="fas fa-chevron-left"></i></button>
+                                <h4 id="cal-month-year" class="font-bold text-sm md:text-base uppercase tracking-[0.2em] text-brand-dark">Mes Año</h4>
+                                <button onclick="cambiarMes(1)" class="w-10 h-10 md:w-12 md:h-12 rounded-full hover:bg-white text-brand-dark flex items-center justify-center text-lg"><i class="fas fa-chevron-right"></i></button>
+                            </div>
+                            <div class="grid grid-cols-7 text-center border-b border-gray-100 bg-white">
+                                <div class="py-4 text-[9px] md:text-[10px] font-bold text-gray-400 uppercase tracking-widest">Dom</div><div class="py-4 text-[9px] md:text-[10px] font-bold text-gray-400 uppercase tracking-widest">Lun</div><div class="py-4 text-[9px] md:text-[10px] font-bold text-gray-400 uppercase tracking-widest">Mar</div><div class="py-4 text-[9px] md:text-[10px] font-bold text-gray-400 uppercase tracking-widest">Mié</div><div class="py-4 text-[9px] md:text-[10px] font-bold text-gray-400 uppercase tracking-widest">Jue</div><div class="py-4 text-[9px] md:text-[10px] font-bold text-gray-400 uppercase tracking-widest">Vie</div><div class="py-4 text-[9px] md:text-[10px] font-bold text-gray-400 uppercase tracking-widest">Sáb</div>
+                            </div>
+                            <div id="cal-grid" class="grid grid-cols-7 bg-white"></div>
+                        </div>
+                        <div id="modal-status-msg" class="text-xs font-bold text-center mt-3 hidden px-4 py-3 rounded-xl"></div>
+                    </div>
+
+                    <div class="absolute md:sticky bottom-0 left-0 right-0 w-full bg-white border-t border-gray-200 p-5 md:p-8 shadow-[0_-10px_20px_-5px_rgba(0,0,0,0.05)] z-20 flex flex-col sm:flex-row justify-between items-center gap-4">
+                        <div class="text-center sm:text-left w-full sm:w-auto">
+                            <span class="block text-[10px] text-gray-400 uppercase tracking-[0.2em] font-bold mb-1">Inversión Estimada Base</span>
+                            <span id="txt-precio-calculado" class="text-3xl md:text-4xl font-serif font-black text-brand-dark leading-none">$0.00</span>
+                        </div>
+                        <button id="btn-check" class="w-full sm:w-auto bg-gray-200 text-gray-400 px-6 md:px-10 py-4 md:py-5 rounded-2xl text-sm font-bold tracking-[0.2em] uppercase cursor-not-allowed transition-all" disabled>Selecciona Fecha</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="step-2-contact" class="hidden bg-white shadow-2xl w-full max-w-3xl md:rounded-3xl transform transition-all duration-500 h-full md:h-auto md:max-h-[92vh] flex flex-col overflow-hidden md:border-t-[5px] border-brand-gold relative">
+            <button onclick="volverPaso1()" class="absolute top-4 left-4 md:top-6 md:left-6 z-40 text-gray-500 hover:text-brand-dark w-12 h-12 rounded-full flex items-center justify-center transition-colors text-2xl bg-gray-100 hover:bg-gray-200"><i class="fas fa-arrow-left"></i></button>
+            <button onclick="cerrarModal()" class="absolute top-4 right-4 md:top-6 md:right-6 z-40 bg-gray-100 hover:bg-gray-200 text-gray-600 w-12 h-12 rounded-full flex items-center justify-center transition-colors text-xl"><i class="fas fa-times"></i></button>
+
+            <div class="flex-1 overflow-y-auto custom-scroll p-6 md:p-12 pt-20 md:pt-12 pb-48 md:pb-12 relative" id="contact-form-container">
+                <div class="text-center mb-10">
+                    <div class="w-20 h-20 bg-[#fdfaf0] text-brand-gold rounded-full flex items-center justify-center mx-auto mb-6 text-4xl shadow-sm border border-[#f5ebc6]"><i class="fas fa-check"></i></div>
+                    <h2 class="text-3xl md:text-4xl font-serif text-brand-dark mb-3">Resumen y Datos</h2>
+                    <p class="text-gray-500 text-sm md:text-base font-medium tracking-wide">Revisa tu selección y completa tus datos de contacto.</p>
+                </div>
+                
+                <div class="bg-brand-dark text-white rounded-2xl p-6 md:p-8 mb-10 shadow-luxury">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div><p class="text-[9px] text-brand-gold uppercase tracking-[0.2em] font-bold mb-1">Fecha Evento</p><p id="resumen-fechas" class="text-sm font-serif font-medium mb-3"></p></div>
+                        <div><p class="text-[9px] text-brand-gold uppercase tracking-[0.2em] font-bold mb-1">Aforo & Horario</p><p id="resumen-personas" class="text-sm font-serif font-medium mb-3"></p></div>
+                        <div><p class="text-[9px] text-brand-gold uppercase tracking-[0.2em] font-bold mb-1">Días Montaje</p><p id="resumen-dias" class="text-sm font-serif font-medium mb-1"></p></div>
+                        <div><p class="text-[9px] text-brand-gold uppercase tracking-[0.2em] font-bold mb-1">Horas Extras</p><p id="resumen-horas" class="text-sm font-serif font-medium mb-1"></p></div>
+                    </div>
+                </div>
+
+                <div class="space-y-8">
+                    <div><label class="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-3">Nombre Completo o Empresa *</label><input type="text" id="cli-name" class="w-full border-b-2 border-gray-200 py-3 text-base md:text-sm font-medium text-brand-dark outline-none focus:border-brand-gold transition bg-transparent placeholder-gray-300"></div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        <div><label class="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-3">Teléfono a 10 dígitos *</label><input type="tel" id="cli-phone" class="w-full border-b-2 border-gray-200 py-3 text-base md:text-sm font-medium text-brand-dark outline-none focus:border-brand-gold transition bg-transparent placeholder-gray-300"></div>
+                        <div><label class="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-3">Correo Electrónico *</label><input type="email" id="cli-email" class="w-full border-b-2 border-gray-200 py-3 text-base md:text-sm font-medium text-brand-dark outline-none focus:border-brand-gold transition bg-transparent placeholder-gray-300"></div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="absolute md:sticky bottom-0 left-0 right-0 w-full bg-white border-t border-gray-100 p-5 md:p-8 shadow-[0_-10px_20px_-5px_rgba(0,0,0,0.05)] z-30" id="btn-container-submit">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <button id="btn-add-space" class="w-full bg-white border-2 border-brand-gold text-brand-dark py-4 rounded-2xl font-bold uppercase tracking-[0.15em] text-xs transition-all duration-300 active:scale-[0.98]">Agregar Espacio</button>
+                    <button id="btn-submit-quote" class="w-full bg-brand-gold hover:bg-[#c99a05] text-brand-dark py-4 rounded-2xl font-bold uppercase tracking-[0.15em] text-xs transition-all duration-300 active:scale-[0.98] shadow-luxury hover:shadow-luxury-hover">Generar Cotización y Enviar Solicitud</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="montaje-modal" class="fixed inset-0 bg-brand-dark/90 z-[150] hidden flex items-center justify-center p-4 backdrop-blur-sm transition-all duration-300">
+        <div class="bg-white w-full max-w-sm rounded-3xl shadow-2xl p-6 md:p-8 animate-enter">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="font-serif text-xl text-brand-dark">Días de Montaje</h3>
+                <button onclick="document.getElementById('montaje-modal').classList.add('hidden')" class="text-gray-400 hover:text-brand-gold transition"><i class="fas fa-times text-xl"></i></button>
+            </div>
+            <p class="text-xs font-medium text-gray-500 mb-4">Selecciona un rango continuo con <span class="font-black text-brand-gold text-sm" id="montaje-limit-num">0</span> día(s) para tu montaje.</p>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                <div>
+                    <label class="block text-[10px] font-bold uppercase tracking-[0.2em] text-gray-400 mb-1">Inicio</label>
+                    <input type="date" id="montaje-range-start" class="w-full border-2 border-gray-100 rounded-xl px-4 py-3 text-sm outline-none focus:border-brand-gold transition font-medium text-gray-700">
+                </div>
+                <div>
+                    <label class="block text-[10px] font-bold uppercase tracking-[0.2em] text-gray-400 mb-1">Fin</label>
+                    <input type="date" id="montaje-range-end" class="w-full border-2 border-gray-100 rounded-xl px-4 py-3 text-sm outline-none focus:border-brand-gold transition font-medium text-gray-700">
+                </div>
+            </div>
+            <button onclick="previewMontajeRange()" class="w-full bg-brand-dark hover:bg-black text-brand-gold py-2 rounded-xl font-bold transition shadow-sm mb-4"><i class="fas fa-eye mr-2"></i>Previsualizar Rango</button>
+            <ul id="montaje-dates-list" class="space-y-2 mb-6 max-h-40 overflow-y-auto custom-scroll pr-2"></ul>
+            <button onclick="confirmMontajeDates()" class="w-full bg-brand-dark hover:bg-black text-brand-gold py-4 rounded-xl font-bold text-xs uppercase tracking-widest transition-all shadow-luxury hover:shadow-luxury-hover">Confirmar Selección</button>
+        </div>
+    </div>
+
+    <div id="horas-extra-warning-modal" class="fixed inset-0 bg-brand-dark/80 z-[155] hidden flex items-center justify-center p-4">
+        <div class="bg-white w-full max-w-md rounded-2xl shadow-2xl p-6 border-t-4 border-brand-gold">
+            <h4 class="font-serif text-xl text-brand-dark mb-2"><i class="fa-solid fa-clock mr-2 text-brand-gold"></i>Aviso de Horas Extra</h4>
+            <p class="text-sm text-gray-600 mb-4">Las horas extra empiezan a contar a partir del horario de finalización que seleccionaste para tu evento.</p>
+            <div class="text-right">
+                <button onclick="cerrarAvisoHorasExtra()" class="bg-brand-dark text-brand-gold px-4 py-2 rounded-lg text-xs font-bold uppercase">Entendido</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const SUPABASE_URL = window.ENV ? window.ENV.SUPABASE_URL : '';
+        const SUPABASE_ANON_KEY = window.ENV ? window.ENV.SUPABASE_ANON_KEY : '';
+        const ESQUEMA_DB = (window.ENV && window.ENV.SCHEMA_CASA_PIEDRA) ? window.ENV.SCHEMA_CASA_PIEDRA : 'finanzas_casadepiedra';
+
+        const clienteSupabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { db: { schema: ESQUEMA_DB } });
+        function repararImagen(url) { if(!url) return 'assets/img/placeholder_cp.png'; if(url.includes('127.0.0.1:55551')) return url.replace('http://127.0.0.1:55551', SUPABASE_URL); return url; }
+
+        const grid = document.getElementById('espacios-grid');
+        let espaciosGlobal = []; let catalogConceptsPublic = []; let espacioActual = null; let capacidadMaximaActual = 0; let tarifasActuales = [];
+        let calCurrentDate = new Date(); let selStart = null; let selEnd = null; let totalCalculado = 0; let fechasOcupadasArray = []; let filtroActivo = 'all';
+        let selectedPublicConcepts = [];
+        let finalMontajeDates = []; let tempMontajeDates = [];
+        let publicQuoteSpaces = [];
+        let premontajePercentPublic = 25;
+        let horaExtraCfgPublic = { mode: 'percent', value: 100 };
+        let avisoHorasMostrado = false;
+
+        function parseTags(raw) { if(!raw) return []; if(Array.isArray(raw)) return raw; if(typeof raw === 'string') { try { let parsed = JSON.parse(raw); return Array.isArray(parsed) ? parsed : [raw]; } catch(e) { return raw.split(',').map(s=>s.trim()).filter(Boolean); } } return []; }
+        function procesarTarifasJSONB(jsonRaw) { let tarifas = []; try { if (typeof jsonRaw === 'string') tarifas = JSON.parse(jsonRaw); else if (Array.isArray(jsonRaw)) tarifas = jsonRaw; else if (typeof jsonRaw === 'object' && jsonRaw !== null) tarifas = [jsonRaw]; } catch (e) {} return tarifas; }
+
+        async function cargarEspacios() {
+            try {
+                const [espData, concData] = await Promise.all([ clienteSupabase.from('espacios').select('*').order('nombre', { ascending: true }), clienteSupabase.from('conceptos_catalogo').select('*').eq('activo', true) ]);
+                espaciosGlobal = espData.data || []; catalogConceptsPublic = concData.data || [];
+                generarFiltrosEtiquetas(); renderizarEspacios(espaciosGlobal); renderizarConceptosPublicos();
+            } catch (err) { console.error(err); }
+        }
+
+        async function cargarConfigPublica() {
+            premontajePercentPublic = 25;
+            horaExtraCfgPublic = { mode: 'percent', value: 100 };
+            try {
+                const { data, error } = await clienteSupabase
+                    .from('configuracion')
+                    .select('clave,valor_json,valor_num')
+                    .in('clave', ['premontaje_pct', 'hora_extra_cfg']);
+                if (error) throw error;
+                (Array.isArray(data) ? data : []).forEach(row => {
+                    const key = String(row?.clave || '').toLowerCase();
+                    if (key === 'premontaje_pct') {
+                        const raw = row?.valor_num ?? row?.valor_json?.value ?? row?.valor_json?.percent;
+                        const pct = parseFloat(raw);
+                        if (Number.isFinite(pct) && pct >= 0) premontajePercentPublic = pct;
+                        return;
+                    }
+                    if (key === 'hora_extra_cfg') {
+                        const modeRaw = String(row?.valor_json?.mode || '').toLowerCase();
+                        const mode = (modeRaw === 'fixed' || modeRaw === 'percent') ? modeRaw : 'percent';
+                        const rawVal = row?.valor_num ?? row?.valor_json?.value ?? 100;
+                        const val = parseFloat(rawVal);
+                        horaExtraCfgPublic = { mode, value: Number.isFinite(val) && val >= 0 ? val : 100 };
+                    }
+                });
+            } catch (e) {
+                premontajePercentPublic = 25;
+                horaExtraCfgPublic = { mode: 'percent', value: 100 };
+            }
+        }
+
+        function obtenerPrecioHoraExtraPublic(space) {
+            let b2b = {};
+            try { b2b = typeof space?.config_b2b === 'string' ? JSON.parse(space.config_b2b) : (space?.config_b2b || {}); } catch(e){}
+            const base = parseFloat(b2b?.precio_hora_extra || 0) || 0;
+            const mode = String(horaExtraCfgPublic?.mode || '').toLowerCase();
+            const val = parseFloat(horaExtraCfgPublic?.value);
+            const safeVal = Number.isFinite(val) && val >= 0 ? val : 100;
+            return mode === 'fixed' ? safeVal : (base * (safeVal / 100));
+        }
+
+        function renderizarConceptosPublicos() { const sel = document.getElementById('public-concept-select'); sel.innerHTML = '<option value="">Selecciona un servicio...</option>'; catalogConceptsPublic.forEach(c => { sel.innerHTML += `<option value="${c.id}">${c.nombre} (+$${parseFloat(c.precio_sugerido).toLocaleString()})</option>`; }); }
+        window.addPublicConcept = function() { const sel = document.getElementById('public-concept-select'); const id = sel.value; if(!id) return; const concept = catalogConceptsPublic.find(c => c.id == id); selectedPublicConcepts.push({ id: concept.id, description: concept.nombre, amount: concept.precio_sugerido, value: concept.precio_sugerido, unit: 'fixed', type: 'aumento' }); sel.value = ''; updatePublicConceptsSummary(); calcularTotalSeleccion(); }
+        window.removePublicConcept = function(index) { selectedPublicConcepts.splice(index, 1); updatePublicConceptsSummary(); calcularTotalSeleccion(); }
+        function updatePublicConceptsSummary() { const container = document.getElementById('public-concepts-summary'); container.innerHTML = ''; if(selectedPublicConcepts.length === 0) return; selectedPublicConcepts.forEach((c, idx) => { container.innerHTML += `<div class="flex justify-between items-center bg-gray-50 border border-gray-100 p-3 rounded-xl animate-enter mb-2"><span class="text-xs font-bold text-gray-700"><i class="fas fa-check text-brand-gold mr-2"></i>${c.description}</span><div class="flex items-center gap-4"><span class="text-xs font-black text-brand-dark">+$${parseFloat(c.amount).toLocaleString()}</span><button onclick="removePublicConcept(${idx})" class="text-gray-300 hover:text-red-500 transition"><i class="fas fa-times"></i></button></div></div>`; }); }
+        
+        function generarFiltrosEtiquetas() { let tagsSet = new Set(); espaciosGlobal.forEach(e => { let tags = parseTags(e.etiquetas); tags.forEach(t => tagsSet.add(t.toUpperCase().trim())); }); const container = document.getElementById('filter-tags'); let html = `<button onclick="setFilter('all')" class="filter-btn active snap-start shrink-0 px-6 py-3 rounded-full text-xs font-bold uppercase tracking-widest transition-all duration-300 bg-brand-gold text-brand-dark shadow-md border-2 border-brand-gold">Todos</button>`; tagsSet.forEach(tag => { html += `<button onclick="setFilter('${tag}')" class="filter-btn snap-start shrink-0 px-6 py-3 rounded-full text-xs font-bold uppercase tracking-widest transition-all duration-300 bg-white border-2 border-gray-200 text-gray-500 hover:border-brand-gold hover:text-brand-dark shadow-sm hover:shadow">${tag}</button>`; }); container.innerHTML = html; }
+        function setFilter(tag) { filtroActivo = tag; document.querySelectorAll('.filter-btn').forEach(btn => { if(btn.innerText.trim() === tag || (tag === 'all' && btn.innerText.trim() === 'TODOS')) { btn.className = "filter-btn active snap-start shrink-0 px-6 py-3 rounded-full text-xs font-bold uppercase tracking-widest transition-all duration-300 bg-brand-gold text-brand-dark shadow-md border-2 border-brand-gold"; } else { btn.className = "filter-btn snap-start shrink-0 px-6 py-3 rounded-full text-xs font-bold uppercase tracking-widest transition-all duration-300 bg-white border-2 border-gray-200 text-gray-500 hover:border-brand-gold hover:text-brand-dark shadow-sm hover:shadow"; } }); filtrarCatalogo(); }
+        function filtrarCatalogo() { const term = document.getElementById('search-input').value.toLowerCase(); const msgEl = document.getElementById('ui-message'); let filtrados = espaciosGlobal.filter(e => { const txtMatch = e.nombre.toLowerCase().includes(term) || (e.descripcion || '').toLowerCase().includes(term) || (e.clave || '').toLowerCase().includes(term); let tagMatch = true; if(filtroActivo !== 'all') { const eTags = parseTags(e.etiquetas).map(t => t.toUpperCase().trim()); tagMatch = eTags.includes(filtroActivo.toUpperCase()); } return txtMatch && tagMatch; }); if(filtrados.length === 0) { msgEl.innerHTML = `<i class="fas fa-search text-4xl mb-3 text-gray-300"></i><br>No se encontraron salones.`; msgEl.className = "mb-8 p-10 rounded-3xl text-center font-bold text-sm bg-white text-gray-400 border-2 border-dashed border-gray-200 block"; } else { msgEl.classList.add('hidden'); } renderizarEspacios(filtrados); }
+
+        function renderizarEspacios(listaRenderer) {
+            grid.innerHTML = listaRenderer.map(espacio => {
+                const eTags = parseTags(espacio.etiquetas); let tagsHtml = ''; if(eTags.length > 0) { tagsHtml = `<div class="flex gap-2 mb-4 flex-wrap">` + eTags.slice(0,3).map(t => `<span class="bg-yellow-50 text-brand-dark border border-yellow-100 px-3 py-1 rounded-full text-[9px] font-bold uppercase tracking-widest">${t}</span>`).join('') + `</div>`; }
+                const tarifas = procesarTarifasJSONB(espacio.precios_por_dia); let capMax = 0; tarifas.forEach(t => { if(t.max && t.max < 999999 && t.max > capMax) capMax = parseInt(t.max); }); const imagenFinal = repararImagen(espacio.imagen_url);
+                return `<div class="bg-white rounded-3xl border border-gray-100 shadow-luxury overflow-hidden hover:shadow-luxury-hover transition-all duration-500 flex flex-col cursor-pointer group hover:-translate-y-2" onclick="abrirModal('${espacio.id}')"><div class="relative h-72 bg-gray-200 overflow-hidden"><img src="${imagenFinal}" class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"><div class="absolute inset-0 bg-gradient-to-t from-brand-dark/95 via-brand-dark/20 to-transparent opacity-90 group-hover:opacity-100 transition-opacity duration-500"></div><div class="absolute bottom-8 left-8 right-8"><p class="text-[10px] font-bold text-brand-gold uppercase tracking-[0.3em] mb-2 drop-shadow-md"><i class="fas fa-gem mr-1"></i> ${espacio.tipo || 'Salón'}</p><h3 class="text-3xl font-serif text-white drop-shadow-lg leading-tight">${espacio.nombre}</h3></div></div><div class="p-8 flex-grow flex flex-col bg-white relative"><div class="absolute -top-6 right-8 w-12 h-12 bg-brand-gold text-brand-dark rounded-full flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform duration-300 text-lg"><i class="fas fa-arrow-right"></i></div>${tagsHtml}<div class="flex justify-between items-center mb-6 pb-6 border-b border-gray-100"><div class="flex items-center text-gray-500 text-xs tracking-[0.1em] uppercase font-bold"><i class="fas fa-users text-brand-gold mr-3 text-lg"></i> ${capMax > 0 ? `${capMax} px` : 'Aforo Flexible'}</div></div><div class="mt-auto flex items-end justify-between"><div><span class="block text-[10px] text-gray-400 uppercase tracking-[0.2em] font-bold mb-1">Disponibilidad</span><span class="text-lg font-serif font-black text-brand-dark">Sujeta a agenda</span></div></div></div></div>`;
+            }).join('');
+        }
+
+        async function descargarFechasBloqueadas(id) {
+            fechasOcupadasArray = []; const loader = document.getElementById('cal-loader'); loader.classList.remove('hidden');
+            try {
+                let rows = [];
+                const q = await clienteSupabase
+                    .from('cotizaciones')
+                    .select('espacio_id,fecha_inicio,fecha_fin,conceptos_adicionales,espacios_detalle')
+                    .in('status', ['aprobada', 'finalizada']);
+                if (q.error) {
+                    const fb = await clienteSupabase
+                        .from('cotizaciones')
+                        .select('espacio_id,fecha_inicio,fecha_fin,conceptos_adicionales')
+                        .in('status', ['aprobada', 'finalizada']);
+                    if (fb.error) throw fb.error;
+                    rows = fb.data || [];
+                } else {
+                    rows = q.data || [];
+                }
+
+                const addDate = (dateStr) => {
+                    if (/^\d{4}-\d{2}-\d{2}$/.test(String(dateStr || ''))) fechasOcupadasArray.push(dateStr);
+                };
+                const addRange = (startStr, endStr) => {
+                    let dCurr = new Date((startStr || '') + 'T00:00:00');
+                    let dEnd = new Date((endStr || startStr || '') + 'T00:00:00');
+                    if (isNaN(dCurr.getTime()) || isNaN(dEnd.getTime())) return;
+                    while (dCurr <= dEnd) { addDate(formateaFechaString(dCurr)); dCurr.setDate(dCurr.getDate() + 1); }
+                };
+                const safeArray = (v) => {
+                    if (!v) return [];
+                    if (Array.isArray(v)) return v;
+                    if (typeof v === 'string') { try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch (e) { return []; } }
+                    return [];
+                };
+                const safeObj = (v) => {
+                    if (!v) return {};
+                    if (typeof v === 'object') return v;
+                    if (typeof v === 'string') { try { const p = JSON.parse(v); return p && typeof p === 'object' ? p : {}; } catch (e) { return {}; } }
+                    return {};
+                };
+                const addMontajeFromConcepts = (conceptos, defaultSpaceId) => {
+                    safeArray(conceptos).forEach(c => {
+                        if (String(c?.type || '').toLowerCase() !== 'b2b_montaje') return;
+                        const meta = safeObj(c.meta);
+                        const sid = meta.space_id || defaultSpaceId;
+                        if (String(sid) !== String(id)) return;
+                        safeArray(meta.dates).forEach(addDate);
+                    });
+                };
+
+                rows.forEach(cot => {
+                    let matchedByDetail = false;
+                    const details = safeArray(cot.espacios_detalle);
+                    if (details.length) {
+                        details.forEach(item => {
+                            const sid = item.espacio_id || item.space_id;
+                            if (String(sid) !== String(id)) return;
+                            matchedByDetail = true;
+                            addRange(item.fecha_inicio, item.fecha_fin);
+                            safeArray(item.premontaje_fechas).forEach(addDate);
+                            addMontajeFromConcepts(item.conceptos_adicionales, sid);
+                        });
+                    }
+                    if (!matchedByDetail && String(cot.espacio_id) === String(id)) {
+                        addRange(cot.fecha_inicio, cot.fecha_fin);
+                        addMontajeFromConcepts(cot.conceptos_adicionales, cot.espacio_id);
+                    }
+                });
+            } catch (e) { console.error("Error BD", e); } finally { loader.classList.add('hidden'); }
+        }
+
+        function obtenerPrecioParaDia(fechaObj, personas) {
+            if(!tarifasActuales || tarifasActuales.length === 0) return 0; let rule = tarifasActuales.find(t => personas >= (t.min || 0) && personas <= (t.max || 999999)); if (!rule) rule = tarifasActuales[tarifasActuales.length - 1]; if (!rule || !rule.precios) return 0; const keys = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado']; return parseFloat(rule.precios[keys[fechaObj.getDay()]]) || 0;
+        }
+
+        function calcularCostoPremontajeSeleccion(personas) {
+            if (!Array.isArray(finalMontajeDates) || finalMontajeDates.length === 0) return { total: 0, detalle: [] };
+            let total = 0;
+            const detalle = [];
+            finalMontajeDates.forEach(ds => {
+                const d = new Date(ds + 'T00:00:00');
+                const base = obtenerPrecioParaDia(d, personas);
+                const amount = base * (premontajePercentPublic / 100);
+                total += amount;
+                detalle.push({ date: ds, base_day: base, porcentaje: premontajePercentPublic, amount });
+            });
+            return { total, detalle };
+        }
+
+        function cambiarMes(offset) { calCurrentDate.setMonth(calCurrentDate.getMonth() + offset); renderizarCalendario(); }
+        function formateaFechaString(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+
+        function esDiaBloqueado(dateObj, personas) {
+            const str = formateaFechaString(dateObj); if (fechasOcupadasArray.includes(str)) return true; let blockedByAdmin = []; try { blockedByAdmin = typeof espacioActual.dias_bloqueados === 'string' ? JSON.parse(espacioActual.dias_bloqueados) : (espacioActual.dias_bloqueados || []); } catch(e){} const keys = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado']; if (blockedByAdmin.includes(keys[dateObj.getDay()])) return true; if (personas > 0) { const precioDia = obtenerPrecioParaDia(dateObj, personas); if (precioDia === 0) return true; } return false;
+        }
+
+        function togglePremontajePublic() {
+            const checked = document.getElementById('chk-premontaje').checked;
+            document.getElementById('premontaje-controls').classList.toggle('hidden', !checked);
+            if (!checked) {
+                document.getElementById('input-premontaje').value = '0';
+                finalMontajeDates = [];
+                actualizarLabelMontaje();
+            }
+            validarMontajeInput();
+        }
+
+        function toggleHorasExtraPublic() {
+            const checked = document.getElementById('chk-horas-extra').checked;
+            document.getElementById('horas-extra-controls').classList.toggle('hidden', !checked);
+            if (!checked) document.getElementById('input-horas').value = '0';
+            if (checked && !avisoHorasMostrado) {
+                avisoHorasMostrado = true;
+                document.getElementById('horas-extra-warning-modal').classList.remove('hidden');
+            }
+            calcularTotalSeleccion();
+            actualizarBotonCheck();
+        }
+
+        function cerrarAvisoHorasExtra() {
+            document.getElementById('horas-extra-warning-modal').classList.add('hidden');
+        }
+
+        // LÓGICA DE DÍAS DE MONTAJE B2C
+        function validarMontajeInput() {
+            const chk = document.getElementById('chk-premontaje');
+            const val = chk && chk.checked ? (parseInt(document.getElementById('input-premontaje').value) || 0) : 0;
+            if (!chk || !chk.checked) document.getElementById('input-premontaje').value = '0';
+            const btn = document.getElementById('btn-fechas-montaje');
+            if (val > 0) btn.classList.remove('hidden'); else btn.classList.add('hidden');
+            if (finalMontajeDates.length > val) finalMontajeDates = finalMontajeDates.slice(0, val);
+            actualizarLabelMontaje();
+            calcularTotalSeleccion();
+            actualizarBotonCheck();
+        }
+
+        function actualizarLabelMontaje() {
+            const lbl = document.getElementById('lbl-fechas-montaje');
+            if (finalMontajeDates.length > 0) {
+                lbl.innerText = "Fechas: " + finalMontajeDates.map(d => d.split('-').reverse().join('/')).join(', ');
+                lbl.classList.remove('hidden');
+            } else {
+                lbl.classList.add('hidden');
+            }
+        }
+
+        function abrirModalMontaje() {
+            const diasM = parseInt(document.getElementById('input-premontaje').value) || 0;
+            if (diasM <= 0) return alert("Ingresa cantidad de días de montaje primero.");
+            if (!selStart) return alert("Primero selecciona la fecha principal de tu evento en el calendario de abajo.");
+            
+            document.getElementById('montaje-limit-num').innerText = diasM;
+            tempMontajeDates = [...finalMontajeDates].slice(0, diasM);
+            
+            const startEl = document.getElementById('montaje-range-start');
+            const endEl = document.getElementById('montaje-range-end');
+            const minD = new Date(selStart); minD.setDate(minD.getDate() - 4);
+            const maxD = new Date(selStart); maxD.setDate(maxD.getDate() - 1);
+            
+            const minDate = formateaFechaString(minD);
+            const maxDate = formateaFechaString(maxD);
+            startEl.min = minDate; startEl.max = maxDate;
+            endEl.min = minDate; endEl.max = maxDate;
+            startEl.value = tempMontajeDates[0] || '';
+            endEl.value = tempMontajeDates.length ? tempMontajeDates[tempMontajeDates.length - 1] : '';
+            
+            renderListaMontaje();
+            document.getElementById('montaje-modal').classList.remove('hidden');
+        }
+
+        function previewMontajeRange() {
+            const startEl = document.getElementById('montaje-range-start');
+            const endEl = document.getElementById('montaje-range-end');
+            const startVal = startEl.value;
+            const endVal = endEl.value;
+            if(!startVal || !endVal) return alert("Selecciona inicio y fin.");
+            if(endVal < startVal) return alert("La fecha fin no puede ser menor al inicio.");
+            const limit = parseInt(document.getElementById('input-premontaje').value) || 0;
+            tempMontajeDates = [];
+            let d = new Date(startVal + 'T00:00:00');
+            const e = new Date(endVal + 'T00:00:00');
+            while(!isNaN(d.getTime()) && !isNaN(e.getTime()) && d <= e){
+                tempMontajeDates.push(formateaFechaString(d));
+                d.setDate(d.getDate() + 1);
+            }
+            if (tempMontajeDates.length !== limit) return alert(`El rango debe contener exactamente ${limit} día(s).`);
+            renderListaMontaje();
+        }
+
+        function renderListaMontaje() {
+            const list = document.getElementById('montaje-dates-list');
+            list.innerHTML = '';
+            tempMontajeDates.forEach((d, i) => {
+                list.innerHTML += `<li class="flex justify-between items-center bg-gray-50 p-3 rounded-xl border border-gray-100"><span class="text-xs font-bold text-gray-700">${d.split('-').reverse().join('/')}</span><span class="text-[10px] font-bold text-gray-400">#${i+1}</span></li>`;
+            });
+        }
+
+        function confirmMontajeDates() {
+            if (!tempMontajeDates.length) previewMontajeRange();
+            const limit = parseInt(document.getElementById('input-premontaje').value) || 0;
+            if(tempMontajeDates.length !== limit) return alert(`Debes seleccionar exactamente ${limit} fecha(s) para tu montaje.`);
+            const personas = parseInt(document.getElementById('input-people').value) || 0;
+            const blocked = tempMontajeDates.find(ds => {
+                const dt = new Date(ds + 'T00:00:00');
+                return esDiaBloqueado(dt, personas);
+            });
+            if (blocked) return alert(`La fecha ${blocked.split('-').reverse().join('/')} está ocupada o inhabilitada.`);
+            finalMontajeDates = [...tempMontajeDates];
+            actualizarLabelMontaje();
+            document.getElementById('montaje-modal').classList.add('hidden');
+        }
+
+        // CIERRE DE MODALES PUBLICOS
+        const backdrop = document.getElementById('modal-backdrop'); const step1 = document.getElementById('step-1-info'); const step2 = document.getElementById('step-2-contact');
+        
+        function cerrarModal() { document.body.classList.remove('modal-open'); backdrop.classList.add('opacity-0', 'pointer-events-none'); step1.classList.add('scale-95', 'translate-y-4'); step2.classList.add('scale-95', 'translate-y-4'); }
+        function volverPaso1() { step2.classList.add('hidden'); step1.classList.remove('hidden'); }
+        
+        window.addEventListener('click', (e) => { 
+            if(e.target === backdrop) cerrarModal(); 
+            const mm = document.getElementById('montaje-modal');
+            if(e.target === mm) mm.classList.add('hidden');
+            const hm = document.getElementById('horas-extra-warning-modal');
+            if(e.target === hm) hm.classList.add('hidden');
+        });
+
+        // FUNCIONES DE CALENDARIO Y CÁLCULO
+        function validarPersonas() {
+            const personas = parseInt(document.getElementById('input-people').value) || 0; const msgBox = document.getElementById('modal-status-msg');
+            if(personas <= 0) { 
+                selStart = null; selEnd = null; totalCalculado = 0; document.getElementById('txt-precio-calculado').textContent = '$0.00'; 
+            } else if (capacidadMaximaActual > 0 && capacidadMaximaActual < 999999 && personas > capacidadMaximaActual) { 
+                selStart = null; selEnd = null; totalCalculado = 0; document.getElementById('txt-precio-calculado').textContent = '$0.00'; 
+                msgBox.innerHTML = `<i class="fas fa-exclamation-triangle mr-2"></i> El salón solo permite máximo ${capacidadMaximaActual} personas.`; 
+                msgBox.className = 'text-xs font-bold uppercase tracking-widest block px-4 py-3 mt-4 rounded-xl bg-red-50 text-red-600 border border-red-100'; msgBox.classList.remove('hidden'); 
+            } else { msgBox.classList.add('hidden'); }
+            renderizarCalendario(); calcularTotalSeleccion(); actualizarBotonCheck();
+        }
+
+        function clickDia(fechaStr) {
+            const personas = parseInt(document.getElementById('input-people').value) || 0; const inputEl = document.getElementById('input-people');
+            if (personas <= 0 || (capacidadMaximaActual > 0 && capacidadMaximaActual < 999999 && personas > capacidadMaximaActual)) { inputEl.classList.add('shake-animation', 'border-red-500'); setTimeout(() => inputEl.classList.remove('shake-animation', 'border-red-500'), 400); inputEl.focus(); return; }
+            
+            const parts = fechaStr.split('-'); const clickedDate = new Date(parts[0], parts[1]-1, parts[2], 0, 0, 0); 
+            
+            if (!selStart || (selStart && selEnd)) {
+                selStart = clickedDate; selEnd = null;
+            } else if (selStart && !selEnd) {
+                if (clickedDate.getTime() < selStart.getTime()) {
+                    selStart = clickedDate;
+                } else if (clickedDate.getTime() === selStart.getTime()) {
+                    selEnd = clickedDate; 
+                } else {
+                    let isValid = true; let d = new Date(selStart);
+                    while(d <= clickedDate) { if (esDiaBloqueado(d, personas)) { isValid = false; break; } d.setDate(d.getDate() + 1); }
+                    if (isValid) selEnd = clickedDate; else { selStart = clickedDate; selEnd = null; alert("Hay fechas no disponibles en tu selección."); }
+                }
+            }
+            renderizarCalendario(); calcularTotalSeleccion(); actualizarBotonCheck();
+        }
+
+        function renderizarCalendario() {
+            const container = document.getElementById('cal-grid'); const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]; const year = calCurrentDate.getFullYear(), month = calCurrentDate.getMonth(); document.getElementById('cal-month-year').textContent = `${monthNames[month]} ${year}`;
+            const firstDay = new Date(year, month, 1), lastDay = new Date(year, month + 1, 0); const startOffset = firstDay.getDay(); const today = new Date(); today.setHours(0,0,0,0); const personas = parseInt(document.getElementById('input-people').value) || 0;
+            let html = ''; for(let i=0; i<startOffset; i++) html += `<div class="p-2 border-b border-r border-gray-100 bg-gray-50/50"></div>`;
+            
+            for(let d=1; d<=lastDay.getDate(); d++) {
+                const cellDate = new Date(year, month, d, 0, 0, 0); const cellStr = formateaFechaString(cellDate); 
+                let isPast = cellDate < today; let isOccupied = !isPast && esDiaBloqueado(cellDate, personas); 
+                
+                let isSelected = false; let isInRange = false;
+                if(selStart && !selEnd && cellDate.getTime() === selStart.getTime()) isSelected = true;
+                if(selStart && selEnd) {
+                    if(cellDate.getTime() === selStart.getTime() || cellDate.getTime() === selEnd.getTime()) isSelected = true;
+                    if(cellDate > selStart && cellDate < selEnd) isInRange = true;
+                }
+
+                let classNames = "cal-day border-b border-r border-gray-100 p-2 h-16 md:h-20 flex flex-col justify-between cursor-pointer relative";
+                if(isPast) classNames += " cal-disabled"; 
+                else if (isOccupied) classNames += " cal-occupied";
+                else if (isSelected) classNames += " cal-selected shadow-md";
+                else if (isInRange) classNames += " cal-in-range";
+
+                const iconoBloqueado = isOccupied ? '<i class="fas fa-ban absolute inset-0 m-auto text-gray-300 text-2xl md:text-3xl opacity-40 flex items-center justify-center"></i>' : ''; 
+                
+                let priceHtml = '';
+                if(!isPast && !isOccupied && personas > 0) {
+                    let pDia = obtenerPrecioParaDia(cellDate, personas);
+                    if(pDia > 0) priceHtml = `<span class="text-[9px] md:text-[10px] font-bold mt-auto text-right ${isSelected ? 'text-brand-dark' : 'text-gray-400'}">$${pDia.toLocaleString()}</span>`;
+                }
+
+                html += `<div class="${classNames}" onclick="${(!isPast && !isOccupied) ? `clickDia('${cellStr}')` : ''}">
+                    <span class="text-sm font-bold ${isSelected ? 'text-brand-dark' : 'text-gray-800'} relative z-20">${d}</span>
+                    ${priceHtml} ${iconoBloqueado}
+                </div>`;
+            } 
+            container.innerHTML = html;
+        }
+
+        let costoBasePorDias = 0; 
+
+        function calcularTotalSeleccion() {
+            totalCalculado = 0; costoBasePorDias = 0; const personas = parseInt(document.getElementById('input-people').value) || 0;
+            if (personas > 0 && selStart && !(capacidadMaximaActual > 0 && capacidadMaximaActual < 999999 && personas > capacidadMaximaActual)) { 
+                
+                let currentDate = new Date(selStart);
+                let end = selEnd ? new Date(selEnd) : new Date(selStart);
+                while(currentDate <= end) {
+                    costoBasePorDias += obtenerPrecioParaDia(currentDate, personas);
+                    currentDate.setDate(currentDate.getDate() + 1);
+                }
+
+                let pHora = obtenerPrecioHoraExtraPublic(espacioActual);
+                let selHorario = document.getElementById('input-horario'); let costoHorario = parseFloat(selHorario.options[selHorario.selectedIndex]?.getAttribute('data-price')) || 0;
+                const premEnabled = document.getElementById('chk-premontaje')?.checked;
+                const horasEnabled = document.getElementById('chk-horas-extra')?.checked;
+                const costoPrem = premEnabled ? calcularCostoPremontajeSeleccion(personas) : { total: 0, detalle: [] };
+                let costoMontaje = costoPrem.total;
+                let costoHoras = horasEnabled ? ((parseInt(document.getElementById('input-horas').value) || 0) * pHora) : 0;
+                
+                let costoConceptosCheckbox = 0; selectedPublicConcepts.forEach(c => costoConceptosCheckbox += parseFloat(c.amount));
+                totalCalculado = costoBasePorDias + costoHorario + costoMontaje + costoHoras + costoConceptosCheckbox;
+            }
+            document.getElementById('txt-precio-calculado').textContent = totalCalculado > 0 ? `$${totalCalculado.toLocaleString()}` : '$0.00'; 
+        }
+
+        function actualizarBotonCheck() {
+            const btn = document.getElementById('btn-check'); const personas = parseInt(document.getElementById('input-people').value) || 0;
+            if (selStart && personas > 0 && totalCalculado > 0 && !(capacidadMaximaActual > 0 && capacidadMaximaActual < 999999 && personas > capacidadMaximaActual)) { 
+                btn.disabled = false; btn.className = 'w-full sm:w-auto bg-brand-dark hover:bg-black text-brand-gold px-8 md:px-12 py-5 rounded-2xl text-sm font-bold tracking-[0.2em] uppercase transition-all shadow-luxury hover:scale-105 hover:shadow-luxury-hover'; btn.innerHTML = 'Continuar <i class="fas fa-arrow-right ml-2"></i>'; 
+            } else { 
+                btn.disabled = true; btn.className = 'w-full sm:w-auto bg-gray-200 text-gray-400 px-8 md:px-12 py-5 rounded-2xl text-sm font-bold tracking-[0.2em] uppercase cursor-not-allowed transition-all shadow-sm'; btn.innerHTML = 'Selecciona Fecha'; 
+            }
+        }
+
+        function construirConfigEspacioActual() {
+            if (!espacioActual) throw new Error("No hay espacio seleccionado.");
+            const personas = parseInt(document.getElementById('input-people').value) || 0;
+            if (!selStart || personas <= 0) throw new Error("Completa fecha y cantidad de personas.");
+            if (capacidadMaximaActual > 0 && capacidadMaximaActual < 999999 && personas > capacidadMaximaActual) throw new Error(`El espacio solo permite ${capacidadMaximaActual} personas.`);
+
+            const start = formateaFechaString(selStart);
+            const end = formateaFechaString(selEnd || selStart);
+            const selHorario = document.getElementById('input-horario');
+            const selOpt = selHorario.options[selHorario.selectedIndex];
+            const horarioLabel = selOpt?.text || 'Sin horario';
+            const horarioAmount = parseFloat(selOpt?.getAttribute('data-price')) || 0;
+
+            const pHora = obtenerPrecioHoraExtraPublic(espacioActual);
+            const horas = document.getElementById('chk-horas-extra')?.checked ? (parseInt(document.getElementById('input-horas').value) || 0) : 0;
+
+            const premEnabled = document.getElementById('chk-premontaje')?.checked;
+            const diasM = premEnabled ? (parseInt(document.getElementById('input-premontaje').value) || 0) : 0;
+            if (diasM > 0 && finalMontajeDates.length !== diasM) throw new Error(`Debes seleccionar ${diasM} fecha(s) de premontaje.`);
+            const premInfo = diasM > 0 ? calcularCostoPremontajeSeleccion(personas) : { total: 0, detalle: [] };
+
+            let costoBase = 0;
+            let d = new Date((start || '') + 'T00:00:00');
+            const e = new Date((end || '') + 'T00:00:00');
+            while(!isNaN(d.getTime()) && !isNaN(e.getTime()) && d <= e){
+                costoBase += obtenerPrecioParaDia(d, personas);
+                d.setDate(d.getDate() + 1);
+            }
+
+            const conceptos = (selectedPublicConcepts || []).map(c => ({ ...c }));
+            const conceptosTotal = conceptos.reduce((acc, c) => acc + (parseFloat(c.amount || c.value || 0) || 0), 0);
+            const horasTotal = horas * pHora;
+            const totalEspacio = costoBase + horarioAmount + premInfo.total + horasTotal + conceptosTotal;
+
+            return {
+                space_id: espacioActual.id,
+                space_name: espacioActual.nombre,
+                space_key: espacioActual.clave,
+                start,
+                end,
+                guests: personas,
+                horario_label: horarioLabel,
+                horario_amount: horarioAmount,
+                prem_days: diasM,
+                prem_dates: [...finalMontajeDates],
+                prem_total: premInfo.total,
+                prem_detail: premInfo.detalle,
+                extra_hours: horas,
+                extra_hour_price: pHora,
+                extra_hours_total: horasTotal,
+                conceptos,
+                subtotal_space: totalEspacio
+            };
+        }
+
+        function guardarEspacioActualEnCarrito() {
+            const cfg = construirConfigEspacioActual();
+            const idx = publicQuoteSpaces.findIndex(x => String(x.space_id) === String(cfg.space_id));
+            if (idx >= 0) publicQuoteSpaces[idx] = cfg;
+            else publicQuoteSpaces.push(cfg);
+            return cfg;
+        }
+
+        function construirPayloadMultiEspacio(nombre, telefono, email) {
+            if (!publicQuoteSpaces.length) throw new Error("No hay espacios en la cotización.");
+            const spaces = [...publicQuoteSpaces];
+            const spacesByStart = spaces.slice().sort((a, b) => String(a.start).localeCompare(String(b.start)));
+            const spacesByEnd = spaces.slice().sort((a, b) => String(a.end).localeCompare(String(b.end)));
+            const first = spacesByStart[0];
+            const minStart = first.start;
+            const maxEnd = spacesByEnd[spacesByEnd.length - 1].end;
+            const total = spaces.reduce((acc, s) => acc + (parseFloat(s.subtotal_space || 0) || 0), 0);
+            const maxGuests = Math.max(...spaces.map(s => parseInt(s.guests, 10) || 0), 0);
+
+            const conceptosB2B = [];
+            const espaciosDetalle = spaces.map(sp => {
+                conceptosB2B.push({ description: `[${sp.space_name}] Horario: ${sp.horario_label}`, amount: sp.horario_amount, value: sp.horario_amount, unit: 'fixed', type: 'b2b_horario', meta: { space_id: sp.space_id } });
+                if (sp.prem_days > 0) {
+                    conceptosB2B.push({ description: `[${sp.space_name}] Premontaje (${sp.prem_days} días) - ${sp.prem_dates.map(d => d.split('-').reverse().join('/')).join(', ')}`, amount: sp.prem_total, value: sp.prem_total, unit: 'fixed', type: 'b2b_montaje', meta: { space_id: sp.space_id, dates: sp.prem_dates, days: sp.prem_days, percentage: premontajePercentPublic, per_day_base: sp.prem_detail } });
+                }
+                if (sp.extra_hours > 0) conceptosB2B.push({ description: `[${sp.space_name}] Horas Extras (${sp.extra_hours} hrs)`, amount: sp.extra_hours_total, value: sp.extra_hours_total, unit: 'fixed', type: 'b2b_horas', meta: { space_id: sp.space_id, hours: sp.extra_hours, unit_price: sp.extra_hour_price } });
+                (sp.conceptos || []).forEach(c => conceptosB2B.push({ ...c, description: `[${sp.space_name}] ${c.description || 'Concepto'}` }));
+                return { espacio_id: sp.space_id, espacio_nombre: sp.space_name, espacio_clave: sp.space_key, fecha_inicio: sp.start, fecha_fin: sp.end, personas: sp.guests, horario: { label: sp.horario_label, amount: sp.horario_amount }, premontaje_dias: sp.prem_days, premontaje_fechas: sp.prem_dates, premontaje_total: sp.prem_total, premontaje_detalle: sp.prem_detail, horas_extra: sp.extra_hours, horas_extra_unitario: sp.extra_hour_price, horas_extra_total: sp.extra_hours_total, subtotal_espacio: sp.subtotal_space };
+            });
+
+            const quoteName = `${nombre} - ${spaces.map(s => s.space_name).join(' + ')}`;
+            return {
+                cliente_id: null,
+                nombre_cotizacion: quoteName,
+                espacio_id: first.space_id,
+                espacio_nombre: spaces.length > 1 ? `${first.space_name} + ${spaces.length - 1} espacio(s)` : first.space_name,
+                espacio_clave: spaces.length > 1 ? 'MULTI' : first.space_key,
+                cliente_nombre: nombre,
+                cliente_rfc: '',
+                cliente_contacto: telefono,
+                cliente_email: email,
+                fecha_inicio: minStart,
+                fecha_fin: maxEnd,
+                precio_final: total,
+                desglose_precios: { subtotal_antes_impuestos: total, impuestos_detalle: [], tax_total: 0, espacios: espaciosDetalle },
+                conceptos_adicionales: conceptosB2B,
+                detalles_evento: { multi_espacio: spaces.length > 1, total_espacios: spaces.length, nombre_cotizacion: quoteName },
+                espacios_detalle: espaciosDetalle,
+                status: 'pendiente',
+                personas: maxGuests || 1
+            };
+        }
+
+        function getBase64ImageFromUrl(imageUrl) {
+            return new Promise((resolve, reject) => {
+                let img = new Image(); img.crossOrigin = "Anonymous";
+                img.onload = () => { let canvas = document.createElement("canvas"); canvas.width = img.width; canvas.height = img.height; let ctx = canvas.getContext("2d"); ctx.drawImage(img, 0, 0); resolve(canvas.toDataURL("image/png")); };
+                img.onerror = reject; img.src = imageUrl;
+            });
+        }
+
+        async function descargarPDFPublico(payload, folio) {
+            const { jsPDF } = window.jspdf; const doc = new jsPDF();
+            doc.setFillColor(18, 18, 18); doc.rect(0, 0, 210, 40, 'F');
+            
+            try {
+                const logoData = await getBase64ImageFromUrl('assets/img/logocp.png');
+                doc.addImage(logoData, 'PNG', 82.5, 12, 45, 16); 
+            } catch(e) {
+                doc.setTextColor(222, 172, 7); doc.setFontSize(22); doc.text("CASA DE PIEDRA", 105, 20, { align: "center" });
+            }
+
+            doc.setTextColor(50, 50, 50); doc.setFontSize(12);
+            doc.text(`Folio de Seguimiento: #${folio}`, 14, 50);
+            doc.text(`Cliente: ${payload.cliente_nombre}`, 14, 60);
+            doc.text(`Teléfono: ${payload.cliente_contacto}`, 14, 70); doc.text(`Email: ${payload.cliente_email}`, 105, 70);
+            doc.text(`Espacio: ${payload.espacio_nombre}`, 14, 80); doc.text(`Aforo Estimado: ${payload.personas} personas`, 105, 80);
+            doc.text(`Desde: ${payload.fecha_inicio}`, 14, 90); doc.text(`Hasta: ${payload.fecha_fin}`, 105, 90);
+            
+            let tableBody = [];
+            
+            let currentDate = new Date(payload.fecha_inicio + 'T00:00:00');
+            let endD = new Date(payload.fecha_fin + 'T00:00:00');
+            const names = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+            while(currentDate <= endD) {
+                let pDia = obtenerPrecioParaDia(currentDate, payload.personas);
+                tableBody.push([`Renta de Espacio - ${currentDate.toLocaleDateString('es-MX')} (${names[currentDate.getDay()]})`, `$${pDia.toLocaleString()}`]);
+                currentDate.setDate(currentDate.getDate() + 1);
+            }
+
+            payload.conceptos_adicionales.forEach(c => tableBody.push([c.description, `$${parseFloat(c.amount).toLocaleString()}`]));
+
+            doc.autoTable({ startY: 100, head: [['Concepto / Servicio', 'Monto Estimado']], body: tableBody, foot: [['Total Inversión Estimada Base', `$${payload.precio_final.toLocaleString()}`]], theme: 'grid', headStyles: { fillColor: [18, 18, 18], textColor: [222, 172, 7] }, footStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold' } });
+
+            let y = doc.lastAutoTable.finalY + 14;
+            doc.setFontSize(9); doc.setTextColor(80, 80, 80);
+            doc.text("Notas y condiciones clave:", 14, y); y += 5;
+            doc.text(`- Premontaje: ${premontajePercentPublic}% sobre el valor base del día seleccionado.`, 14, y); y += 5;
+            doc.text("- Vigencia de tarifa: 15 días desde la emisión (sujeto a disponibilidad).", 14, y); y += 5;
+            doc.text("- Cancelación del cliente: penalización del 100% del anticipo.", 14, y); y += 5;
+            doc.text("- Se requiere generador externo de energía para el evento.", 14, y); y += 5;
+            doc.text("- Proveedores y carpas sujetos a lineamientos de Casa de Piedra.", 14, y); y += 8;
+            doc.setTextColor(200, 0, 0);
+            doc.text("IMPORTANTE: Este documento es estimativo y NO confirma la reserva.", 105, y, { align: "center" }); y += 5;
+            doc.setTextColor(100, 100, 100);
+            doc.text("Un asesor validará disponibilidad final para emitir la cotización oficial.", 105, y, { align: "center" });
+
+            doc.save(`Cotizacion_CasaDePiedra_${payload.cliente_nombre.replace(/\s+/g, '_')}.pdf`);
+        }
+
+        async function abrirModal(id) {
+            espacioActual = espaciosGlobal.find(e => e.id == id); if (!espacioActual) return;
+            document.body.classList.add('modal-open'); tarifasActuales = procesarTarifasJSONB(espacioActual.precios_por_dia); tarifasActuales.sort((a, b) => (parseInt(a.min) || 0) - (parseInt(b.min) || 0));
+            let capMax = 0; tarifasActuales.forEach(t => { if(t.max && t.max < 999999 && t.max > capMax) capMax = parseInt(t.max); }); const existeInfinito = tarifasActuales.some(t => t.max >= 999999); capacidadMaximaActual = existeInfinito ? 999999 : capMax;
+            
+            let b2b = {}; try { b2b = typeof espacioActual.config_b2b === 'string' ? JSON.parse(espacioActual.config_b2b) : (espacioActual.config_b2b || {}); } catch(e){}
+            let h = b2b.horarios || []; if (!Array.isArray(h)) { const mapNames = { matutino: 'Matutino', vespertino: 'Vespertino', nocturno: 'Nocturno', todo_dia: 'Todo el día' }; h = Object.keys(h).map(k => ({ nombre: mapNames[k] || k, start: h[k].start, end: h[k].end, price: h[k].price })).filter(item => item.start && item.end); }
+            let selHorario = document.getElementById('input-horario'); selHorario.innerHTML = ''; if (h.length > 0) { h.forEach(item => { selHorario.innerHTML += `<option value="${item.nombre}" data-price="${item.price}">${item.nombre} (${item.start} a ${item.end})</option>`; }); } else { selHorario.innerHTML = '<option value="Sin horario" data-price="0">Sin horario configurado</option>'; }
+
+            document.getElementById('contact-form-container').innerHTML = `
+                <div class="text-center mb-10"><div class="w-20 h-20 bg-[#fdfaf0] text-brand-gold rounded-full flex items-center justify-center mx-auto mb-6 text-4xl shadow-sm border border-[#f5ebc6]"><i class="fas fa-check"></i></div><h2 class="text-3xl md:text-4xl font-serif text-brand-dark mb-3">Resumen y Datos</h2><p class="text-gray-500 text-sm md:text-base font-medium tracking-wide">Revisa tu selección y completa tus datos de contacto.</p></div>
+                <div class="bg-brand-dark text-white rounded-2xl p-6 md:p-8 mb-10 shadow-luxury"><div class="grid grid-cols-2 gap-4"><div><p class="text-[9px] text-brand-gold uppercase tracking-[0.2em] font-bold mb-1">Fecha Evento</p><p id="resumen-fechas" class="text-sm font-serif font-medium mb-3"></p></div><div><p class="text-[9px] text-brand-gold uppercase tracking-[0.2em] font-bold mb-1">Aforo & Horario</p><p id="resumen-personas" class="text-sm font-serif font-medium mb-3"></p></div><div><p class="text-[9px] text-brand-gold uppercase tracking-[0.2em] font-bold mb-1">Días Montaje</p><p id="resumen-dias" class="text-sm font-serif font-medium mb-1"></p></div><div><p class="text-[9px] text-brand-gold uppercase tracking-[0.2em] font-bold mb-1">Horas Extras</p><p id="resumen-horas" class="text-sm font-serif font-medium mb-1"></p></div></div></div>
+                <div class="space-y-8"><div><label class="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-3">Nombre Completo o Empresa *</label><input type="text" id="cli-name" class="w-full border-b-2 border-gray-200 py-3 text-base md:text-sm font-medium text-brand-dark outline-none focus:border-brand-gold transition bg-transparent placeholder-gray-300"></div><div class="grid grid-cols-1 md:grid-cols-2 gap-8"><div><label class="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-3">Teléfono a 10 dígitos *</label><input type="tel" id="cli-phone" class="w-full border-b-2 border-gray-200 py-3 text-base md:text-sm font-medium text-brand-dark outline-none focus:border-brand-gold transition bg-transparent placeholder-gray-300"></div><div><label class="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-3">Correo Electrónico *</label><input type="email" id="cli-email" class="w-full border-b-2 border-gray-200 py-3 text-base md:text-sm font-medium text-brand-dark outline-none focus:border-brand-gold transition bg-transparent placeholder-gray-300"></div></div></div>`;
+            document.getElementById('btn-container-submit').classList.remove('hidden');
+
+            selStart = null; selEnd = null; totalCalculado = 0; calCurrentDate = new Date(); selectedPublicConcepts = []; finalMontajeDates = []; tempMontajeDates = []; updatePublicConceptsSummary();
+            document.getElementById('input-people').value = ''; document.getElementById('input-premontaje').value = '0'; document.getElementById('input-horas').value = '0';
+            document.getElementById('lbl-fechas-montaje').classList.add('hidden'); document.getElementById('btn-fechas-montaje').classList.add('hidden');
+            document.getElementById('chk-premontaje').checked = false; document.getElementById('chk-horas-extra').checked = false;
+            document.getElementById('premontaje-controls').classList.add('hidden'); document.getElementById('horas-extra-controls').classList.add('hidden');
+            document.getElementById('horas-extra-warning-modal').classList.add('hidden');
+            avisoHorasMostrado = false;
+            document.getElementById('txt-precio-calculado').textContent = '$0.00'; document.getElementById('modal-status-msg').classList.add('hidden');
+            document.getElementById('modal-img').src = repararImagen(espacioActual.imagen_url); document.getElementById('modal-title').textContent = espacioActual.nombre; document.getElementById('modal-type').innerHTML = `<i class="fas fa-gem mr-2"></i> ${espacioActual.tipo || 'Salón'}`; document.getElementById('modal-cap-max').textContent = capMax > 0 ? `${capMax} px` : (existeInfinito ? 'Aforo Flexible' : '-- px'); document.getElementById('modal-desc').textContent = espacioActual.descripcion || 'Detalles no disponibles.';
+
+            const existing = publicQuoteSpaces.find(x => String(x.space_id) === String(espacioActual.id));
+            if (existing) {
+                document.getElementById('input-people').value = existing.guests || '';
+                const horarioSel = document.getElementById('input-horario');
+                const findOpt = Array.from(horarioSel.options).find(opt => (opt.text || '').trim() === (existing.horario_label || '').trim());
+                if (findOpt) horarioSel.value = findOpt.value;
+                selStart = existing.start ? new Date(existing.start + 'T00:00:00') : null;
+                selEnd = existing.end ? new Date(existing.end + 'T00:00:00') : null;
+                finalMontajeDates = [...(existing.prem_dates || [])];
+                selectedPublicConcepts = (existing.conceptos || []).map(c => ({ ...c }));
+                const hasPrem = (existing.prem_days || 0) > 0;
+                document.getElementById('chk-premontaje').checked = hasPrem;
+                document.getElementById('input-premontaje').value = existing.prem_days || 0;
+                document.getElementById('premontaje-controls').classList.toggle('hidden', !hasPrem);
+                document.getElementById('btn-fechas-montaje').classList.toggle('hidden', !hasPrem);
+                const hasHours = (existing.extra_hours || 0) > 0;
+                document.getElementById('chk-horas-extra').checked = hasHours;
+                document.getElementById('input-horas').value = existing.extra_hours || 0;
+                document.getElementById('horas-extra-controls').classList.toggle('hidden', !hasHours);
+                updatePublicConceptsSummary();
+                actualizarLabelMontaje();
+                calcularTotalSeleccion();
+            }
+            step1.classList.remove('hidden'); step2.classList.add('hidden'); backdrop.classList.remove('opacity-0', 'pointer-events-none'); setTimeout(() => step1.classList.remove('scale-95', 'translate-y-4'), 10);
+            actualizarBotonCheck(); await descargarFechasBloqueadas(id); renderizarCalendario();
+        }
+
+        document.getElementById('btn-check').addEventListener('click', async () => {
+            const personas = parseInt(document.getElementById('input-people').value) || 0; 
+            const diasM = document.getElementById('chk-premontaje')?.checked ? (parseInt(document.getElementById('input-premontaje').value) || 0) : 0;
+            if (diasM > 0 && finalMontajeDates.length !== diasM) return alert("Por favor, selecciona las fechas específicas para tu montaje dando clic en el botón 'Fechas'.");
+            
+            const btn = document.getElementById('btn-check'); btn.disabled = true; btn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
+            const fInicio = formateaFechaString(selStart); const fFin = formateaFechaString(selEnd || selStart);
+            try {
+                await descargarFechasBloqueadas(espacioActual.id);
+                const blocked = new Set(fechasOcupadasArray);
+                const eventoDates = [];
+                let d = new Date((fInicio || '') + 'T00:00:00');
+                let e = new Date((fFin || '') + 'T00:00:00');
+                while (!isNaN(d.getTime()) && !isNaN(e.getTime()) && d <= e) {
+                    eventoDates.push(formateaFechaString(d));
+                    d.setDate(d.getDate() + 1);
+                }
+                const conflictEvento = eventoDates.some(ds => blocked.has(ds));
+                const conflictPrem = finalMontajeDates.some(ds => blocked.has(ds));
+                if (conflictEvento || conflictPrem) {
+                    renderizarCalendario(); selStart = null; selEnd = null; calcularTotalSeleccion(); actualizarBotonCheck();
+                    alert("Parte de esta fecha (evento o premontaje) acaba de ser reservada por alguien más.");
+                    return;
+                }
+            } catch(e){}
+            
+            const selHorarioText = document.getElementById('input-horario').options[document.getElementById('input-horario').selectedIndex].text;
+            const horasExtras = document.getElementById('chk-horas-extra')?.checked ? (document.getElementById('input-horas').value || '0') : '0';
+
+            document.getElementById('resumen-fechas').textContent = selEnd ? `${selStart.toLocaleDateString()} a ${selEnd.toLocaleDateString()}` : selStart.toLocaleDateString(); 
+            document.getElementById('resumen-personas').textContent = `${personas} px. | ${selHorarioText}`; 
+            document.getElementById('resumen-dias').innerHTML = diasM > 0 ? `${diasM} día(s)<br><span class="text-[8px] text-brand-gold font-normal">${finalMontajeDates.map(d=>d.split('-').reverse().join('/')).join(', ')}</span>` : '0'; 
+            document.getElementById('resumen-horas').textContent = `${horasExtras} hr(s)`;
+            
+            step1.classList.add('hidden'); step2.classList.remove('hidden'); setTimeout(() => step2.classList.remove('scale-95', 'translate-y-4'), 10); actualizarBotonCheck();
+        });
+
+        document.addEventListener('click', async (e) => {
+            if(e.target && e.target.id === 'btn-add-space') {
+                try {
+                    const cfg = guardarEspacioActualEnCarrito();
+                    alert(`Espacio agregado: ${cfg.space_name}. Puedes seleccionar otro espacio.`);
+                    cerrarModal();
+                } catch (err) {
+                    alert(err.message || "No se pudo agregar el espacio.");
+                }
+                return;
+            }
+
+            if(e.target && e.target.id === 'btn-submit-quote') {
+                const nombre = document.getElementById('cli-name').value.trim();
+                const telefono = document.getElementById('cli-phone').value.trim();
+                const email = document.getElementById('cli-email').value.trim();
+                const btn = document.getElementById('btn-submit-quote');
+                if(!nombre || !telefono || !email) { alert("Por favor, completa todos tus datos de contacto."); return; }
+                btn.disabled = true; btn.innerHTML = '<i class="fas fa-circle-notch fa-spin mr-2"></i> Procesando...';
+                try {
+                    guardarEspacioActualEnCarrito();
+                    const payload = construirPayloadMultiEspacio(nombre, telefono, email);
+                    const { data, error } = await clienteSupabase.from('cotizaciones').insert(payload).select();
+                    if (error) throw error;
+
+                    const folioBD = data && data.length > 0 ? data[0].id.split('-')[0].toUpperCase() : Math.floor(Math.random() * 10000);
+                    descargarPDFPublico(payload, folioBD);
+                    publicQuoteSpaces = [];
+
+                    document.getElementById('btn-container-submit').classList.add('hidden');
+                    document.getElementById('contact-form-container').innerHTML = `
+                        <div class="p-4 md:p-8 text-center flex flex-col items-center justify-center animate-enter mt-10">
+                            <div class="w-20 h-20 bg-green-50 text-green-600 border-4 border-green-100 rounded-full flex items-center justify-center mx-auto mb-6 text-4xl shadow-md">
+                                <i class="fas fa-file-download"></i>
+                            </div>
+                            <h2 class="text-3xl font-serif text-brand-dark mb-4">¡Cotización Creada!</h2>
+                            <p class="text-gray-500 font-medium text-sm leading-relaxed mb-8">
+                                Se descargó un archivo PDF con la estimación de tu evento.<br>Verifica tu carpeta de descargas.
+                            </p>
+                            <div class="bg-red-50 border border-red-200 rounded-2xl p-6 max-w-lg mx-auto shadow-sm mb-8 text-left relative overflow-hidden">
+                                <div class="absolute top-0 left-0 w-1 h-full bg-red-500"></div>
+                                <p class="text-red-700 font-bold text-xs uppercase tracking-widest mb-3 flex items-center">
+                                    <i class="fas fa-exclamation-triangle mr-2 text-lg"></i> Aviso Importante
+                                </p>
+                                <p class="text-red-600 text-xs md:text-sm leading-relaxed text-justify">
+                                    El documento descargado es únicamente un estimado y <b>NO representa una reserva confirmada de la fecha ni del salón.</b><br><br>
+                                    Un asesor del staff se contactará personalmente contigo al teléfono <span class="font-bold underline">${telefono}</span> para validar la disponibilidad final de tu logística y continuar con el proceso formal.
+                                </p>
+                            </div>
+                            <button onclick="cerrarModal()" class="bg-brand-dark hover:bg-black text-brand-gold px-10 py-4 rounded-xl font-bold uppercase tracking-widest text-xs transition shadow-lg hover:-translate-y-1">Entendido, Salir</button>
+                        </div>`;
+                } catch (err) {
+                    if (String(err?.message || '').toLowerCase().includes('espacios_detalle')) alert("Falta aplicar la migración de base de datos para premontaje/multi-espacio.");
+                    else alert(err?.message || "Error al enviar la solicitud.");
+                    btn.disabled = false; btn.innerHTML = 'Generar Cotización y Enviar Solicitud';
+                }
+            }
+        });
+        document.addEventListener('DOMContentLoaded', async () => {
+            await cargarConfigPublica();
+            await cargarEspacios();
+        });
+    </script>
+</body>
+</html>
+

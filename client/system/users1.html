@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<!-- DOC: client\system\users1.html | Proposito: Vista de configuracion de usuarios/permisos del sistema. | Ver docs/10-funcionamiento-general-del-codigo.txt -->
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Configuración Finanzas - Admin</title>
+
+  <!-- Local assets -->
+  <script src="../../assets/libs/js/tailwindcss.js"></script>
+  <link rel="stylesheet" href="../../assets/libs/css/all.min.css">
+
+  <!-- Supabase + Hub config + Layout (fijo para que SI renderice layout) -->
+  <script src="../supabase.js"></script>
+  <script src="../js/hub-config.js"></script>
+  <script src="../js/layout.js"></script>
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: { red: '#D32F2F', dark: '#1a1a1a', gray: '#f3f4f6', light: '#ffffff' }
+          },
+          animation: { 'enter': 'enter 0.4s cubic-bezier(0.25, 0.8, 0.25, 1)' },
+          keyframes: {
+            enter: {
+              '0%': { opacity: '0', transform: 'translateY(15px) scale(0.98)' },
+              '100%': { opacity: '1', transform: 'translateY(0) scale(1)' }
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    body { font-family: 'Segoe UI', sans-serif; background-color: #f3f4f6; overflow-x: hidden; }
+    .hidden { display: none !important; }
+    .custom-scroll::-webkit-scrollbar { width: 6px; }
+    .custom-scroll::-webkit-scrollbar-track { background: transparent; }
+    .custom-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+
+    /* Dropdown Nav */
+    .dropdown-menu {
+      display: none; position: absolute; top: 100%; left: 0;
+      background: white; min-width: 220px;
+      box-shadow: 0 10px 30px -5px rgba(0,0,0,0.2);
+      border-radius: 0 0 16px 16px; overflow: hidden;
+      z-index: 50; padding: 8px 0; border: 1px solid #f3f4f6;
+    }
+    .nav-item:hover .dropdown-menu { display: block; animation: enter 0.2s ease-out; }
+    .dropdown-item {
+      display: block; padding: 12px 20px; font-size: 0.8rem;
+      font-weight: bold; color: #4b5563; transition: 0.2s;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .dropdown-item:hover { background-color: #fef2f2; color: #D32F2F; }
+
+    /* Card Hover Effect */
+    .hover-card { transition: all 0.3s ease; }
+    .hover-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1),
+                  0 10px 10px -5px rgba(0, 0, 0, 0.04);
+    }
+  </style>
+</head>
+
+<body class="bg-brand-gray text-gray-800 flex flex-col min-h-screen">
+
+  <div id="toast-container" class="fixed bottom-5 right-5 z-[70] flex flex-col gap-2"></div>
+
+  <nav class="bg-brand-red shadow-lg sticky top-16 z-40 flex-shrink-0 border-t border-red-800">
+    <div class="container mx-auto px-6 flex h-14 gap-6 items-center text-white">
+
+      <!-- Dropdown Secciones -->
+      <div class="nav-item relative h-full flex items-center cursor-pointer group">
+        <span class="text-xs font-bold uppercase tracking-wider flex items-center gap-2 transition">
+          <i class="fa-solid fa-coins"></i> Finanzas
+          <i class="fa-solid fa-chevron-down text-[10px] opacity-50"></i>
+        </span>
+        <div class="dropdown-menu">
+          <a id="menu-concepts" href="#" onclick="switchView('v_concepts'); return false;" class="dropdown-item">
+            <i class="fa-solid fa-tags text-gray-400"></i> Conceptos adicionales
+          </a>
+          <a id="menu-taxes" href="#" onclick="switchView('v_taxes'); return false;" class="dropdown-item">
+            <i class="fa-solid fa-percent text-gray-400"></i> Impuestos
+          </a>
+        </div>
+      </div>
+
+      <!-- Tabs Tenant -->
+      <div class="ml-auto flex items-center gap-2">
+        <div class="bg-white/15 rounded-full p-1 flex gap-1">
+          <button id="btn-tenant-pm"
+            class="px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider bg-white text-brand-red shadow-sm"
+            onclick="setTenant('pm')">
+            Plaza Mayor
+          </button>
+          <button id="btn-tenant-cp"
+            class="px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider text-white/90 hover:bg-white/20 transition rounded-full"
+            onclick="setTenant('cp')">
+            Casa de Piedra
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </nav>
+
+  <main class="flex-grow container mx-auto px-6 py-8 max-w-7xl animate-enter">
+
+    <div class="mb-6">
+      <div class="bg-white rounded-3xl border border-gray-100 shadow-sm p-5 flex items-center justify-between">
+        <div>
+          <div class="text-[10px] font-black uppercase tracking-wider text-gray-400">Configuración</div>
+          <div id="tenant-label" class="text-lg font-black text-gray-800">Plaza Mayor</div>
+          <div class="text-xs font-bold text-gray-500 mt-1">
+            Admin: gestiona <span class="text-gray-700">Conceptos adicionales</span> e <span class="text-gray-700">Impuestos</span> por tenant.
+          </div>
+        </div>
+        <button onclick="refreshCurrent()" class="w-10 h-10 rounded-2xl bg-gray-50 text-gray-400 hover:text-brand-red hover:bg-red-50 transition flex items-center justify-center">
+          <i class="fa-solid fa-rotate"></i>
+        </button>
+      </div>
+    </div>
+
+    <div id="cp-pricing-cfg" class="mb-6 hidden">
+      <div class="bg-white rounded-3xl border border-gray-100 shadow-sm p-5">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <div class="text-[10px] font-black uppercase tracking-wider text-gray-400">Casa de Piedra</div>
+            <div class="text-sm font-black text-gray-800">Precio de días de premontaje (%)</div>
+            <div class="text-xs text-gray-500 mt-1">Ejemplo: si escribes 25, se cobra 25% del precio base del día.</div>
+          </div>
+          <div class="flex items-center gap-2">
+            <input id="cfg-premontaje-pct" type="number" min="0" step="0.01"
+              class="w-28 p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-blue-600 text-sm font-bold text-right transition"
+              placeholder="25">
+            <button id="btn-save-premontaje" onclick="savePremontajePct()"
+              class="bg-blue-600 text-white py-3 px-4 rounded-xl font-bold text-xs uppercase hover:bg-blue-700 shadow-lg shadow-blue-200 transition transform active:scale-95">
+              Guardar
+            </button>
+          </div>
+        </div>
+        <div id="hint-premontaje-missing" class="hidden mt-3 text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-100 rounded-xl p-3">
+          No existe la tabla de configuración todavía. Aplica la migración SQL para persistir este valor.
+        </div>
+      </div>
+    </div>
+
+    <div id="cp-hora-extra-cfg" class="mb-6 hidden">
+      <div class="bg-white rounded-3xl border border-gray-100 shadow-sm p-5">
+        <div class="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <div class="text-[10px] font-black uppercase tracking-wider text-gray-400">Casa de Piedra</div>
+            <div class="text-sm font-black text-gray-800">Precio de horas extra</div>
+            <div class="text-xs text-gray-500 mt-1">
+              Define si se usa precio <span class="font-bold text-gray-700">fijo</span> o <span class="font-bold text-gray-700">porcentaje</span>
+              sobre el precio base de hora extra configurado en el espacio.
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="btn-save-hora-extra" onclick="saveHoraExtraCfg()"
+              class="bg-blue-600 text-white py-3 px-4 rounded-xl font-bold text-xs uppercase hover:bg-blue-700 shadow-lg shadow-blue-200 transition transform active:scale-95">
+              Guardar
+            </button>
+          </div>
+        </div>
+
+        <div class="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div>
+            <label class="block text-[10px] font-black uppercase tracking-wider text-gray-400 mb-1">Modo</label>
+            <select id="cfg-hora-extra-mode"
+              class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-blue-600 text-sm font-bold transition">
+              <option value="fixed">Precio fijo por hora</option>
+              <option value="percent">Porcentaje sobre precio base</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-[10px] font-black uppercase tracking-wider text-gray-400 mb-1">Valor</label>
+            <input id="cfg-hora-extra-value" type="number" min="0" step="0.01"
+              class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-blue-600 text-sm font-bold text-right transition"
+              placeholder="100">
+          </div>
+          <div class="flex items-end">
+            <label class="flex items-center gap-2 p-3 border border-gray-200 rounded-xl w-full bg-gray-50 cursor-pointer">
+              <input id="cfg-hora-extra-custom" type="checkbox" class="accent-blue-600 w-4 h-4" checked>
+              <span class="text-xs font-bold text-gray-700">Permitir personalizar en <span class="font-mono">order_detail</span></span>
+            </label>
+          </div>
+        </div>
+
+        <div id="hint-hora-extra-missing" class="hidden mt-3 text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-100 rounded-xl p-3">
+          No existe la tabla de configuración todavía. Aplica la migración SQL para persistir este valor.
+        </div>
+      </div>
+    </div>
+
+    <!-- ======================= CONCEPTOS ======================= -->
+    <div id="v_concepts" class="view hidden fade-in">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+        <div class="bg-white rounded-3xl shadow-sm border border-gray-100 p-6 h-fit sticky top-32">
+          <div class="flex items-center gap-3 mb-6">
+            <div class="w-10 h-10 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center text-lg">
+              <i class="fa-solid fa-plus"></i>
+            </div>
+            <h3 class="font-black text-gray-800 text-lg leading-tight">Nuevo Concepto</h3>
+          </div>
+
+          <input type="hidden" id="cpt-id">
+
+          <div class="space-y-4">
+            <div class="group">
+              <label class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-1.5 ml-1">Nombre</label>
+              <input id="cpt-name" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-blue-600 text-sm font-bold transition"
+                placeholder="Ej: Servicio de Limpieza">
+            </div>
+
+            <div class="group">
+              <label class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-1.5 ml-1">Precio Sugerido</label>
+              <div class="relative">
+                <span class="absolute left-3 top-3 text-gray-400 text-xs font-bold">$</span>
+                <input type="number" id="cpt-price"
+                  class="w-full pl-7 p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-blue-600 text-sm font-bold transition"
+                  placeholder="0.00">
+              </div>
+            </div>
+
+            <label class="flex items-center gap-3 p-3 border border-gray-100 rounded-xl cursor-pointer hover:bg-gray-50 transition">
+              <input type="checkbox" id="cpt-active" checked class="accent-blue-600 w-5 h-5 rounded">
+              <span class="text-xs font-bold text-gray-600">Activo en catálogo</span>
+            </label>
+
+            <div class="flex gap-2 pt-2">
+              <button onclick="resetCptForm()" id="btn-cpt-cancel"
+                class="hidden flex-1 border border-gray-200 text-gray-500 py-3 rounded-xl font-bold text-xs uppercase hover:bg-gray-50 transition">
+                Cancelar
+              </button>
+              <button onclick="saveConcept()" id="btn-cpt-save"
+                class="flex-1 bg-blue-600 text-white py-3 rounded-xl font-bold text-xs uppercase hover:bg-blue-700 shadow-lg shadow-blue-200 transition transform active:scale-95">
+                Guardar
+              </button>
+            </div>
+
+            <div id="admin-hint-concepts" class="hidden text-[11px] font-bold text-red-600 bg-red-50 border border-red-100 rounded-xl p-3">
+              Solo Admin puede guardar cambios.
+            </div>
+          </div>
+        </div>
+
+        <div class="md:col-span-2 bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+          <div class="p-6 bg-white border-b border-gray-50 flex justify-between items-center">
+            <h3 class="font-black text-gray-800 text-lg">Catálogo de Servicios</h3>
+            <button onclick="loadConcepts()"
+              class="w-8 h-8 rounded-full bg-gray-50 text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition flex items-center justify-center">
+              <i class="fa-solid fa-rotate"></i>
+            </button>
+          </div>
+
+          <ul id="concepts-list" class="divide-y divide-gray-50 text-sm max-h-[600px] overflow-y-auto custom-scroll p-2">
+            <li class="p-8 text-center text-gray-400 italic font-medium">Cargando...</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======================= IMPUESTOS ======================= -->
+    <div id="v_taxes" class="view hidden fade-in">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+        <div class="bg-white rounded-3xl shadow-sm border border-gray-100 p-6 h-fit sticky top-32">
+          <div class="flex items-center gap-3 mb-6">
+            <div class="w-10 h-10 bg-purple-50 text-purple-600 rounded-xl flex items-center justify-center text-lg">
+              <i class="fa-solid fa-percent"></i>
+            </div>
+            <h3 class="font-black text-gray-800 text-lg leading-tight">Nuevo Impuesto</h3>
+          </div>
+
+          <input type="hidden" id="tax-id">
+
+          <div class="space-y-4">
+            <div>
+              <label class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-1.5 ml-1">Nombre (Siglas)</label>
+              <input id="tax-name"
+                class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-purple-600 text-sm font-bold transition"
+                placeholder="Ej: IVA">
+            </div>
+
+            <div>
+              <label class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-1.5 ml-1">Porcentaje</label>
+              <input type="number" id="tax-pct"
+                class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-purple-600 text-sm font-bold transition"
+                placeholder="16">
+            </div>
+
+            <label class="flex items-center gap-3 p-3 border border-gray-100 rounded-xl cursor-pointer hover:bg-gray-50 transition">
+              <input type="checkbox" id="tax-active" checked class="accent-purple-600 w-5 h-5 rounded">
+              <span class="text-xs font-bold text-gray-600">Activo</span>
+            </label>
+
+            <div class="flex gap-2 pt-2">
+              <button onclick="resetTaxForm()" id="btn-tax-cancel"
+                class="hidden flex-1 border border-gray-200 text-gray-500 py-3 rounded-xl font-bold text-xs uppercase hover:bg-gray-50 transition">
+                Cancelar
+              </button>
+              <button onclick="saveTax()" id="btn-tax-save"
+                class="flex-1 bg-purple-600 text-white py-3 rounded-xl font-bold text-xs uppercase hover:bg-purple-700 shadow-lg shadow-purple-200 transition transform active:scale-95">
+                Guardar
+              </button>
+            </div>
+
+            <div id="admin-hint-taxes" class="hidden text-[11px] font-bold text-red-600 bg-red-50 border border-red-100 rounded-xl p-3">
+              Solo Admin puede guardar cambios.
+            </div>
+          </div>
+        </div>
+
+        <div class="md:col-span-2 bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+          <div class="p-6 bg-white border-b border-gray-50 flex justify-between items-center">
+            <h3 class="font-black text-gray-800 text-lg">Catálogo de Impuestos</h3>
+            <button onclick="loadTaxesConfig()"
+              class="w-8 h-8 rounded-full bg-gray-50 text-gray-400 hover:text-purple-600 hover:bg-purple-50 transition flex items-center justify-center">
+              <i class="fa-solid fa-rotate"></i>
+            </button>
+          </div>
+
+          <table class="w-full text-left text-sm">
+            <thead class="bg-gray-50 text-gray-400 uppercase text-[10px] font-black border-b border-gray-100">
+              <tr>
+                <th class="p-5 pl-8">Nombre</th>
+                <th class="p-5">Valor</th>
+                <th class="p-5 text-center">Estado</th>
+                <th class="p-5 text-center pr-8">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="taxes-table-body" class="divide-y divide-gray-50"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <script>
+    let pmSupabase = null;
+    let cpSupabase = null;
+    let activeSupabase = null;
+
+    let isAdminUser = false;
+    let currentView = 'v_concepts';
+    let currentTenant = 'pm'; // pm | cp
+
+    const PM_SCHEMA = (window.HUB_CONFIG && window.HUB_CONFIG.finanzasSchema) ? window.HUB_CONFIG.finanzasSchema : 'finanzas';
+    const CP_SCHEMA = 'finanzas_casadepiedra';
+
+    function _toast(msg, type){
+      if (window.showToast) return window.showToast(msg, type);
+      console[type === 'error' ? 'error' : 'log'](msg);
+      try { alert(msg); } catch(e) {}
+    }
+
+    function getDB(){
+      return activeSupabase || pmSupabase || window.finSupabase || window.supabaseClient;
+    }
+
+    function togglePremontajeHint(show) {
+      const el = document.getElementById('hint-premontaje-missing');
+      if (!el) return;
+      el.classList.toggle('hidden', !show);
+    }
+
+    function toggleHoraExtraHint(show) {
+      const el = document.getElementById('hint-hora-extra-missing');
+      if (!el) return;
+      el.classList.toggle('hidden', !show);
+    }
+
+    async function loadPremontajePct() {
+      const input = document.getElementById('cfg-premontaje-pct');
+      if (!input) return;
+      input.value = '25';
+      togglePremontajeHint(false);
+      try {
+        const db = getDB();
+        const { data, error } = await db
+          .from('configuracion')
+          .select('clave,valor_json,valor_num')
+          .eq('clave', 'premontaje_pct')
+          .maybeSingle();
+        if (error) throw error;
+        const raw = data?.valor_num ?? data?.valor_json?.value ?? data?.valor_json?.percent;
+        const val = Number(raw);
+        input.value = Number.isFinite(val) && val >= 0 ? String(val) : '25';
+      } catch (e) {
+        togglePremontajeHint(true);
+      }
+    }
+
+    async function loadHoraExtraCfg() {
+      const modeEl = document.getElementById('cfg-hora-extra-mode');
+      const valEl = document.getElementById('cfg-hora-extra-value');
+      const customEl = document.getElementById('cfg-hora-extra-custom');
+      if (!modeEl || !valEl || !customEl) return;
+      modeEl.value = 'percent';
+      valEl.value = '100';
+      customEl.checked = true;
+      toggleHoraExtraHint(false);
+      try {
+        const db = getDB();
+        const { data, error } = await db
+          .from('configuracion')
+          .select('clave,valor_json,valor_num')
+          .eq('clave', 'hora_extra_cfg')
+          .maybeSingle();
+        if (error) throw error;
+        const modeRaw = String(data?.valor_json?.mode || '').toLowerCase();
+        const mode = (modeRaw === 'fixed' || modeRaw === 'percent') ? modeRaw : 'percent';
+        const rawVal = data?.valor_num ?? data?.valor_json?.value ?? 100;
+        const parsedVal = Number(rawVal);
+        const allowCustom = data?.valor_json?.allow_custom !== false;
+        modeEl.value = mode;
+        valEl.value = Number.isFinite(parsedVal) && parsedVal >= 0 ? String(parsedVal) : '100';
+        customEl.checked = !!allowCustom;
+      } catch (e) {
+        toggleHoraExtraHint(true);
+      }
+    }
+
+    window.savePremontajePct = async () => {
+      if (!isAdminUser) return _toast("Acceso restringido: solo Administrador.", "error");
+      const input = document.getElementById('cfg-premontaje-pct');
+      const btn = document.getElementById('btn-save-premontaje');
+      const val = Number(input?.value);
+      if (!Number.isFinite(val) || val < 0) return _toast("Porcentaje inválido", "error");
+      if (btn) { btn.disabled = true; btn.innerText = "..."; }
+      try {
+        const db = getDB();
+        const payload = {
+          clave: 'premontaje_pct',
+          valor_num: val,
+          valor_json: { value: val, percent: val, updated_at: new Date().toISOString() }
+        };
+        const { error } = await db.from('configuracion').upsert(payload, { onConflict: 'clave' });
+        if (error) throw error;
+        togglePremontajeHint(false);
+        _toast("Porcentaje de premontaje guardado", "success");
+      } catch (e) {
+        togglePremontajeHint(true);
+        _toast("No se pudo guardar configuración: " + (e.message || e), "error");
+      } finally {
+        if (btn) { btn.disabled = false; btn.innerText = "Guardar"; }
+      }
+    };
+
+    window.saveHoraExtraCfg = async () => {
+      if (!isAdminUser) return _toast("Acceso restringido: solo Administrador.", "error");
+      const modeEl = document.getElementById('cfg-hora-extra-mode');
+      const valEl = document.getElementById('cfg-hora-extra-value');
+      const customEl = document.getElementById('cfg-hora-extra-custom');
+      const btn = document.getElementById('btn-save-hora-extra');
+      const modeRaw = String(modeEl?.value || 'percent').toLowerCase();
+      const mode = (modeRaw === 'fixed' || modeRaw === 'percent') ? modeRaw : 'percent';
+      const val = Number(valEl?.value);
+      if (!Number.isFinite(val) || val < 0) return _toast("Valor inválido para horas extra", "error");
+      if (btn) { btn.disabled = true; btn.innerText = "..."; }
+      try {
+        const db = getDB();
+        const payload = {
+          clave: 'hora_extra_cfg',
+          valor_num: val,
+          valor_json: {
+            mode,
+            value: val,
+            allow_custom: !!customEl?.checked,
+            updated_at: new Date().toISOString()
+          }
+        };
+        const { error } = await db.from('configuracion').upsert(payload, { onConflict: 'clave' });
+        if (error) throw error;
+        toggleHoraExtraHint(false);
+        _toast("Configuración de horas extra guardada", "success");
+      } catch (e) {
+        toggleHoraExtraHint(true);
+        _toast("No se pudo guardar configuración: " + (e.message || e), "error");
+      } finally {
+        if (btn) { btn.disabled = false; btn.innerText = "Guardar"; }
+      }
+    };
+
+    async function requireAdmin(){
+      const sb = window.supabaseClient || window.globalSupabase || window.finSupabase;
+      if (!sb) return false;
+
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) return false;
+
+      let role = localStorage.getItem('hub_user_cache_role');
+      if (role === 'admin') return true;
+
+      const { data, error } = await sb.from('profiles').select('role').eq('id', session.user.id).single();
+      if (!error && data?.role === 'admin') {
+        localStorage.setItem('hub_user_cache_role', 'admin');
+        return true;
+      }
+      return false;
+    }
+
+    function paintTenantUI(){
+      const pmBtn = document.getElementById('btn-tenant-pm');
+      const cpBtn = document.getElementById('btn-tenant-cp');
+      const label = document.getElementById('tenant-label');
+      const cpPrem = document.getElementById('cp-pricing-cfg');
+      const cpHora = document.getElementById('cp-hora-extra-cfg');
+      const menuTaxes = document.getElementById('menu-taxes');
+      const taxesView = document.getElementById('v_taxes');
+
+      if (currentTenant === 'pm') {
+        label.innerText = 'Plaza Mayor';
+        pmBtn.className = "px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider bg-white text-brand-red shadow-sm";
+        cpBtn.className = "px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider text-white/90 hover:bg-white/20 transition rounded-full";
+      } else {
+        label.innerText = 'Casa de Piedra';
+        cpBtn.className = "px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider bg-white text-brand-red shadow-sm";
+        pmBtn.className = "px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider text-white/90 hover:bg-white/20 transition rounded-full";
+      }
+
+      const isCP = currentTenant === 'cp';
+      if (cpPrem) cpPrem.classList.toggle('hidden', !isCP);
+      if (cpHora) cpHora.classList.toggle('hidden', !isCP);
+      if (menuTaxes) menuTaxes.classList.toggle('hidden', !isCP);
+      if (taxesView) taxesView.classList.toggle('hidden', !isCP && currentView === 'v_taxes');
+
+      // hints
+      document.getElementById('admin-hint-concepts').classList.toggle('hidden', isAdminUser);
+      document.getElementById('admin-hint-taxes').classList.toggle('hidden', isAdminUser);
+
+      // bloquear botones si no admin (doble seguridad UI)
+      document.getElementById('btn-cpt-save').disabled = !isAdminUser;
+      document.getElementById('btn-tax-save').disabled = !isAdminUser;
+      const btnPrem = document.getElementById('btn-save-premontaje');
+      if (btnPrem) btnPrem.disabled = !isAdminUser;
+      const btnHora = document.getElementById('btn-save-hora-extra');
+      if (btnHora) btnHora.disabled = !isAdminUser;
+    }
+
+    window.setTenant = async (t) => {
+      currentTenant = (t === 'cp') ? 'cp' : 'pm';
+      activeSupabase = (currentTenant === 'cp') ? cpSupabase : pmSupabase;
+      if (currentTenant === 'pm' && currentView === 'v_taxes') currentView = 'v_concepts';
+
+      resetCptForm();
+      resetTaxForm();
+      paintTenantUI();
+      await loadPremontajePct();
+      await loadHoraExtraCfg();
+      await switchView(currentView);
+    };
+
+    window.switchView = async (viewId) => {
+      if (currentTenant === 'pm' && viewId === 'v_taxes') viewId = 'v_concepts';
+      currentView = viewId;
+      document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
+      const target = document.getElementById(viewId);
+      if (target) target.classList.remove('hidden');
+
+      if(viewId === 'v_concepts') await loadConcepts();
+      if(viewId === 'v_taxes') await loadTaxesConfig();
+    };
+
+    window.refreshCurrent = async () => {
+      await loadPremontajePct();
+      await loadHoraExtraCfg();
+      await switchView(currentView);
+    };
+
+    async function loadConcepts() {
+      const list = document.getElementById('concepts-list');
+      list.innerHTML = '<li class="p-8 text-center text-gray-400 italic font-medium">Cargando catálogo...</li>';
+
+      const db = getDB();
+      const { data, error } = await db.from('conceptos_catalogo').select('*').order('nombre');
+
+      if(error) { console.error(error); _toast("Error cargando conceptos: " + error.message, "error"); return; }
+
+      list.innerHTML = '';
+      if(data && data.length > 0) {
+        data.forEach(c => {
+          const statusDot = c.activo
+            ? '<span class="w-2.5 h-2.5 rounded-full bg-green-500 shadow-sm block" title="Activo"></span>'
+            : '<span class="w-2.5 h-2.5 rounded-full bg-gray-300 block" title="Inactivo"></span>';
+
+          const priceNum = (c.precio_sugerido == null) ? 0 : Number(c.precio_sugerido);
+          const priceDisplay = priceNum > 0
+            ? `<span class="font-bold text-gray-800">$${priceNum.toLocaleString()}</span>`
+            : '<span class="text-gray-400 text-xs italic font-bold">Precio Variable</span>';
+
+          const actions = isAdminUser ? `
+            <div class="flex gap-2 opacity-0 group-hover:opacity-100 transition duration-200">
+              <button onclick='editConcept(${JSON.stringify(c)})'
+                class="bg-white border border-gray-200 text-blue-600 w-8 h-8 rounded-lg flex items-center justify-center hover:bg-blue-50 shadow-sm transition">
+                <i class="fa-solid fa-pen"></i>
+              </button>
+              <button onclick="deleteConcept(${c.id})"
+                class="bg-white border border-gray-200 text-red-500 w-8 h-8 rounded-lg flex items-center justify-center hover:bg-red-50 shadow-sm transition">
+                <i class="fa-solid fa-trash"></i>
+              </button>
+            </div>
+          ` : '';
+
+          list.innerHTML += `
+            <li class="p-4 flex justify-between items-center group hover:bg-gray-50 transition border-b border-gray-50 last:border-0 rounded-xl mx-2 my-1">
+              <div class="flex items-center gap-4">
+                ${statusDot}
+                <div>
+                  <p class="font-bold text-gray-700 text-sm">${c.nombre}</p>
+                  <p class="text-xs text-gray-500 font-mono mt-0.5">${priceDisplay}</p>
+                </div>
+              </div>
+              ${actions}
+            </li>
+          `;
+        });
+      } else {
+        list.innerHTML = '<li class="p-8 text-center text-gray-400 italic">No hay conceptos registrados.</li>';
+      }
+    }
+
+    window.editConcept = (c) => {
+      if (!isAdminUser) return;
+      document.getElementById('cpt-id').value = c.id;
+      document.getElementById('cpt-name').value = c.nombre;
+      document.getElementById('cpt-price').value = c.precio_sugerido ?? '';
+      document.getElementById('cpt-active').checked = !!c.activo;
+
+      document.getElementById('btn-cpt-cancel').classList.remove('hidden');
+      document.getElementById('cpt-name').focus();
+    };
+
+    window.resetCptForm = () => {
+      document.getElementById('cpt-id').value = '';
+      document.getElementById('cpt-name').value = '';
+      document.getElementById('cpt-price').value = '';
+      document.getElementById('cpt-active').checked = true;
+      document.getElementById('btn-cpt-cancel').classList.add('hidden');
+    };
+
+    window.saveConcept = async () => {
+      if (!isAdminUser) return _toast("Acceso restringido: solo Administrador.", "error");
+
+      const id = document.getElementById('cpt-id').value;
+      const name = document.getElementById('cpt-name').value.trim();
+      const price = document.getElementById('cpt-price').value;
+      const active = document.getElementById('cpt-active').checked;
+
+      if(!name) return _toast("El nombre es obligatorio", "error");
+
+      const payload = { nombre: name, precio_sugerido: parseFloat(price) || 0, activo: active };
+
+      const btn = document.getElementById('btn-cpt-save');
+      btn.disabled = true; btn.innerText = "...";
+
+      const db = getDB();
+      let error;
+      if(id) ({ error } = await db.from('conceptos_catalogo').update(payload).eq('id', id));
+      else   ({ error } = await db.from('conceptos_catalogo').insert(payload));
+
+      btn.disabled = false; btn.innerText = "Guardar";
+
+      if(error) _toast("Error: " + error.message, "error");
+      else {
+        _toast("Concepto guardado", "success");
+        resetCptForm();
+        loadConcepts();
+      }
+    };
+
+    window.deleteConcept = (id) => {
+      if (!isAdminUser) return _toast("Acceso restringido: solo Administrador.", "error");
+
+      openConfirm("¿Eliminar este concepto?", async () => {
+        const db = getDB();
+        const { error } = await db.from('conceptos_catalogo').delete().eq('id', id);
+        if(error) _toast("Error al eliminar: " + error.message, "error");
+        else { _toast("Eliminado", "success"); loadConcepts(); }
+      });
+    };
+
+    async function loadTaxesConfig() {
+      const tbody = document.getElementById('taxes-table-body');
+      tbody.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-gray-400 italic">Cargando...</td></tr>';
+
+      const db = getDB();
+      const { data, error } = await db.from('impuestos').select('*').order('id');
+
+      if(error) return _toast("Error cargando impuestos: " + error.message, "error");
+
+      tbody.innerHTML = '';
+      if(data && data.length > 0) {
+        data.forEach(t => {
+          const statusClass = t.activo ? 'bg-green-100 text-green-700 border-green-200' : 'bg-red-50 text-red-600 border-red-100';
+          const statusText = t.activo ? 'ACTIVO' : 'INACTIVO';
+          const actions = isAdminUser ? `
+            <button onclick='editTax(${JSON.stringify(t)})'
+              class="text-blue-500 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 p-2 rounded-lg transition shadow-sm">
+              <i class="fa-solid fa-pen"></i>
+            </button>
+          ` : '';
+
+          tbody.innerHTML += `
+            <tr class="hover:bg-gray-50 border-b border-gray-50 last:border-0 group transition">
+              <td class="p-5 font-bold text-gray-700 pl-8">${t.nombre}</td>
+              <td class="p-5 font-mono font-bold text-brand-dark">${t.porcentaje}%</td>
+              <td class="p-5 text-center">
+                <span class="${statusClass} px-3 py-1 rounded-full text-[10px] font-black border">${statusText}</span>
+              </td>
+              <td class="p-5 text-center pr-8">${actions}</td>
+            </tr>
+          `;
+        });
+      } else {
+        tbody.innerHTML = '<tr><td colspan="4" class="p-8 text-center text-gray-400 italic">No hay impuestos registrados.</td></tr>';
+      }
+    }
+
+    window.editTax = (t) => {
+      if (!isAdminUser) return;
+      document.getElementById('tax-id').value = t.id;
+      document.getElementById('tax-name').value = t.nombre;
+      document.getElementById('tax-pct').value = t.porcentaje;
+      document.getElementById('tax-active').checked = !!t.activo;
+      document.getElementById('btn-tax-cancel').classList.remove('hidden');
+    };
+
+    window.resetTaxForm = () => {
+      document.getElementById('tax-id').value = '';
+      document.getElementById('tax-name').value = '';
+      document.getElementById('tax-pct').value = '';
+      document.getElementById('tax-active').checked = true;
+      document.getElementById('btn-tax-cancel').classList.add('hidden');
+    };
+
+    window.saveTax = async () => {
+      if (!isAdminUser) return _toast("Acceso restringido: solo Administrador.", "error");
+
+      const id = document.getElementById('tax-id').value;
+      const name = document.getElementById('tax-name').value.trim();
+      const pct = document.getElementById('tax-pct').value;
+      const active = document.getElementById('tax-active').checked;
+
+      if(!name || pct === '') return _toast("Datos incompletos", "error");
+
+      const payload = { nombre: name, porcentaje: parseFloat(pct), activo: active };
+      const db = getDB();
+
+      let error;
+      if(id) ({ error } = await db.from('impuestos').update(payload).eq('id', id));
+      else   ({ error } = await db.from('impuestos').insert(payload));
+
+      if(error) _toast("Error: " + error.message, "error");
+      else {
+        _toast("Impuesto guardado", "success");
+        resetTaxForm();
+        loadTaxesConfig();
+      }
+    };
+
+    document.addEventListener('DOMContentLoaded', async () => {
+      // 1) Admin guard
+      isAdminUser = await requireAdmin();
+      if(!isAdminUser){
+        _toast("Acceso restringido: solo Administrador.", "error");
+        setTimeout(() => { window.location.href = "../index.html"; }, 700);
+        return;
+      }
+
+      // 2) Tenants (mismo JWT, diferente schema)
+      if (!window.globalSupabase) {
+        // layout.js debe crear window.globalSupabase; si no, fallback:
+        if (window.supabase && window.HUB_CONFIG) {
+          window.globalSupabase = window.supabase.createClient(window.HUB_CONFIG.supabaseUrl, window.HUB_CONFIG.supabaseAnonKey);
+        }
+      }
+
+      const root = window.globalSupabase || window.supabaseClient;
+      if (!root) {
+        _toast("No se pudo inicializar Supabase (globalSupabase). Revisa hub-config.js + layout.js.", "error");
+        return;
+      }
+
+      pmSupabase = root.schema(PM_SCHEMA);
+      cpSupabase = root.schema(CP_SCHEMA);
+
+      // default PM
+      activeSupabase = pmSupabase;
+      currentTenant = 'pm';
+      paintTenantUI();
+      await loadPremontajePct();
+      await loadHoraExtraCfg();
+
+      // default view
+      await switchView('v_concepts');
+    });
+  </script>
+
+</body>
+</html>
+

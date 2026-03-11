@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<!-- DOC: client\public\public_plazamayor.html | Proposito: Vista publica del cotizador Plaza Mayor. | Ver docs/10-funcionamiento-general-del-codigo.txt -->
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Espacios Comerciales - Plaza Mayor</title>
+    
+    <link rel="icon" type="image/png" href="assets/img/faviconpm.png">
+    
+    <script src="assets/libs/js/tailwindcss.js"></script>
+    <script src="assets/libs/js/env.js"></script>
+    <script src="assets/libs/js/supabase.js"></script>
+    <link href="assets/libs/css/all.min.css" rel="stylesheet">
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: { brand: { primary: '#cc0000', dark: '#1a1a1a', light: '#f5f5f5' } },
+                    fontFamily: { sans: ['"Montserrat"', 'sans-serif'] },
+                    boxShadow: {
+                        'corporate': '0 10px 40px -10px rgba(204,0,0,0.1)',
+                        'corporate-hover': '0 20px 40px -10px rgba(204,0,0,0.2)',
+                        'upward': '0 -10px 20px -5px rgba(0,0,0,0.03)',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body.modal-open { overflow: hidden; }
+        .custom-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scroll::-webkit-scrollbar-track { background: rgba(0,0,0,0.02); border-radius: 8px; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: rgba(204,0,0,0.3); border-radius: 8px; }
+        .custom-scroll::-webkit-scrollbar-thumb:hover { background: rgba(204,0,0,0.6); }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .cal-day { transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
+        .cal-day:hover:not(.cal-disabled):not(.cal-occupied) { border-color: #cc0000; background-color: #fff5f5; z-index: 10; transform: scale(1.05); box-shadow: 0 4px 12px rgba(204,0,0,0.1); border-radius: 0.5rem; }
+        .cal-selected { background-color: #cc0000 !important; color: #ffffff !important; border-color: #cc0000 !important; border-radius: 0.5rem; transform: scale(1.05); z-index: 10; box-shadow: 0 4px 15px rgba(204,0,0,0.3); }
+        .cal-in-range { background-color: rgba(204, 0, 0, 0.08) !important; }
+        .cal-disabled { opacity: 0.3; pointer-events: none; background-color: #fafafa; }
+        .cal-occupied { background-color: #f3f4f6; pointer-events: none; position: relative; color: #9ca3af; }
+        .cal-occupied::after { content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(0,0,0,0.03) 10px, rgba(0,0,0,0.03) 20px); }
+    </style>
+</head>
+<body class="bg-[#fafafa] text-gray-800 font-sans antialiased min-h-screen flex flex-col relative transition-colors duration-300">
+
+    <header class="bg-white shadow-sm border-b-[3px] border-brand-primary relative z-20">
+        <div class="max-w-7xl mx-auto px-4 py-6 flex flex-col items-center justify-center">
+            <img src="assets/img/logo_texto.png" alt="Plaza Mayor" class="h-10 md:h-14 object-contain mb-2">
+            <p class="text-gray-500 text-[10px] md:text-xs font-bold tracking-[0.25em] uppercase">Catálogo de Espacios Comerciales</p>
+        </div>
+    </header>
+
+    <main class="flex-grow w-full relative z-10">
+        <div class="bg-white shadow-sm border-b border-gray-100 pb-6 pt-8 px-4 mb-10 sticky top-0 z-30">
+            <div class="max-w-6xl mx-auto flex flex-col gap-5">
+                <div class="relative w-full">
+                    <i class="fas fa-search absolute left-5 top-1/2 transform -translate-y-1/2 text-gray-400 text-lg"></i>
+                    <input type="text" id="search-input" placeholder="Buscar por espacio, zona o palabra clave..." class="w-full pl-14 pr-6 py-4 border-2 border-gray-100 rounded-2xl text-base outline-none focus:border-brand-primary transition shadow-sm bg-[#fafafa] focus:bg-white font-medium" onkeyup="filtrarCatalogo()">
+                </div>
+                <div class="relative w-full overflow-hidden">
+                    <div class="absolute right-0 top-0 bottom-0 w-16 bg-gradient-to-l from-white to-transparent z-10 pointer-events-none"></div>
+                    <div class="w-full flex items-center gap-3 overflow-x-auto hide-scrollbar pb-2 pt-1 snap-x scroll-smooth" id="filter-tags"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="max-w-7xl mx-auto px-4">
+            <div id="ui-message" class="hidden mb-8 p-4 rounded-xl text-center font-medium shadow-sm transition-all duration-500"></div>
+            <div id="espacios-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8 md:gap-12 max-w-6xl mx-auto pb-16"></div>
+        </div>
+    </main>
+
+    <footer class="bg-brand-dark text-white pt-16 pb-8 border-t-[5px] border-brand-primary relative z-10 mt-auto">
+        <div class="max-w-7xl mx-auto px-4 grid grid-cols-1 md:grid-cols-3 gap-12 mb-12 text-center md:text-left">
+            <div>
+                <img src="assets/img/logo_texto.png" alt="Plaza Mayor" class="h-10 object-contain mb-6 mx-auto md:mx-0 filter brightness-0 invert opacity-90">
+                <p class="text-sm text-gray-400 leading-relaxed font-light">El centro comercial más importante del Bajío. Conecta tu marca con miles de visitantes diarios.</p>
+            </div>
+            <div class="flex flex-col items-center md:items-start">
+                <h4 class="font-bold text-white text-lg mb-6 tracking-wider uppercase">Contacto</h4>
+                <p class="text-sm text-gray-400 mb-4 hover:text-brand-primary transition cursor-pointer"><i class="fas fa-map-marker-alt w-5 text-brand-primary"></i> Blvd. Juan Alonso de Torres 2002, León, Gto.</p>
+                <a href="#" class="text-sm text-gray-400 mb-4 hover:text-brand-primary transition"><i class="fas fa-phone w-5 text-brand-primary"></i> +52 (477) 717 6010</a>
+                <a href="https://plazamayor.com.mx" target="_blank" class="text-sm text-gray-400 hover:text-brand-primary transition"><i class="fas fa-globe w-5 text-brand-primary"></i> plazamayor.com.mx</a>
+            </div>
+            <div class="flex flex-col items-center md:items-start">
+                <h4 class="font-bold text-white text-lg mb-6 tracking-wider uppercase">Síguenos</h4>
+                <div class="flex gap-4">
+                    <a href="https://www.facebook.com/PlazaMayorLeon" target="_blank" class="w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center hover:bg-brand-primary hover:text-white transition-all text-lg"><i class="fab fa-facebook-f"></i></a>
+                    <a href="https://www.instagram.com/plazamayorleon/" target="_blank" class="w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center hover:bg-brand-primary hover:text-white transition-all text-lg"><i class="fab fa-instagram"></i></a>
+                </div>
+            </div>
+        </div>
+        <div class="border-t border-gray-800 pt-8 text-center"><p class="text-[10px] text-gray-500 tracking-[0.2em] uppercase font-light">&copy; 2026 Plaza Mayor.</p></div>
+    </footer>
+
+    <div id="modal-backdrop" class="fixed inset-0 bg-brand-dark/95 backdrop-blur-md z-[100] flex items-center justify-center opacity-0 pointer-events-none transition-opacity duration-500 p-0 md:p-6">
+        
+        <div id="step-1-info" class="bg-white shadow-2xl w-full max-w-6xl md:rounded-3xl transform scale-95 translate-y-4 transition-all duration-500 h-full md:max-h-[92vh] flex flex-col overflow-hidden md:border-t-[5px] border-brand-primary relative">
+            <button onclick="cerrarModal()" class="absolute top-4 right-4 md:top-6 md:right-6 z-40 bg-brand-dark/80 hover:bg-brand-primary text-white w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-all hover:rotate-90 text-xl"><i class="fas fa-times"></i></button>
+
+            <div class="flex flex-col md:flex-row flex-1 min-h-0 overflow-y-auto md:overflow-hidden relative">
+                
+                <div class="w-full md:w-5/12 bg-gray-50 flex flex-col border-b md:border-b-0 md:border-r border-gray-200 shrink-0 md:overflow-y-auto custom-scroll">
+                    <div class="relative h-64 md:h-72 bg-gray-200 shrink-0">
+                        <img id="modal-img" src="" class="w-full h-full object-cover">
+                        <div class="absolute inset-0 bg-gradient-to-t from-brand-dark via-brand-dark/40 to-transparent"></div>
+                        <div class="absolute bottom-6 left-6 md:left-8 right-6">
+                            <p id="modal-type" class="text-white opacity-90 text-[10px] md:text-xs font-bold uppercase tracking-[0.3em] mb-2 drop-shadow"><i class="fas fa-tag mr-2"></i> Tipo</p>
+                            <h2 id="modal-title" class="text-3xl md:text-4xl font-bold text-white leading-tight drop-shadow-lg">Espacio</h2>
+                        </div>
+                    </div>
+                    <div class="p-6 md:p-8">
+                        <h4 class="text-xs font-bold text-brand-primary uppercase tracking-[0.2em] mb-3">Descripción del Espacio</h4>
+                        <p id="modal-desc" class="text-gray-600 text-sm md:text-base leading-relaxed font-medium text-justify"></p>
+                    </div>
+                </div>
+
+                <div class="w-full md:w-7/12 flex flex-col bg-white relative shrink-0 md:min-h-0">
+                    <div id="cal-loader" class="absolute inset-0 bg-white/95 backdrop-blur-sm z-30 flex flex-col items-center justify-center hidden"><i class="fas fa-circle-notch fa-spin text-5xl text-brand-primary mb-4"></i></div>
+
+                    <div class="flex-1 p-6 md:p-10 md:overflow-y-auto custom-scroll pb-48 md:pb-10">
+                        <h3 class="font-bold text-2xl md:text-3xl text-brand-dark mb-8"><i class="far fa-calendar-check text-brand-primary mr-3"></i> Cotizar Fechas</h3>
+                        <label class="block text-[10px] md:text-xs font-bold text-gray-500 uppercase tracking-widest mb-4">Selecciona los días</label>
+                        <div class="border-2 border-gray-100 rounded-2xl overflow-hidden shadow-sm">
+                            <div class="bg-gray-50 p-4 flex justify-between items-center border-b border-gray-100">
+                                <button onclick="cambiarMes(-1)" class="w-10 h-10 md:w-12 md:h-12 rounded-full hover:bg-white text-brand-dark flex items-center justify-center text-lg"><i class="fas fa-chevron-left"></i></button>
+                                <h4 id="cal-month-year" class="font-bold text-sm md:text-base uppercase tracking-[0.2em] text-brand-primary">Mes Año</h4>
+                                <button onclick="cambiarMes(1)" class="w-10 h-10 md:w-12 md:h-12 rounded-full hover:bg-white text-brand-dark flex items-center justify-center text-lg"><i class="fas fa-chevron-right"></i></button>
+                            </div>
+                            <div class="grid grid-cols-7 text-center border-b border-gray-100 bg-white">
+                                <div class="py-4 text-[9px] md:text-[10px] font-bold text-gray-400 uppercase tracking-widest">Dom</div><div class="py-4 text-[9px] md:text-[10px] font-bold text-gray-400 uppercase tracking-widest">Lun</div><div class="py-4 text-[9px] md:text-[10px] font-bold text-gray-400 uppercase tracking-widest">Mar</div><div class="py-4 text-[9px] md:text-[10px] font-bold text-gray-400 uppercase tracking-widest">Mié</div><div class="py-4 text-[9px] md:text-[10px] font-bold text-gray-400 uppercase tracking-widest">Jue</div><div class="py-4 text-[9px] md:text-[10px] font-bold text-gray-400 uppercase tracking-widest">Vie</div><div class="py-4 text-[9px] md:text-[10px] font-bold text-gray-400 uppercase tracking-widest">Sáb</div>
+                            </div>
+                            <div id="cal-grid" class="grid grid-cols-7 bg-white"></div>
+                        </div>
+                    </div>
+
+                    <div class="absolute md:sticky bottom-0 left-0 right-0 w-full bg-white border-t border-gray-200 p-5 md:p-8 shadow-[0_-10px_20px_-5px_rgba(0,0,0,0.05)] z-20 flex flex-col sm:flex-row justify-between items-center gap-4">
+                        <div class="text-center sm:text-left w-full sm:w-auto">
+                            <span class="block text-[10px] text-gray-400 uppercase tracking-[0.2em] font-bold mb-1">Inversión Base Total</span>
+                            <span id="txt-precio-calculado" class="text-3xl md:text-4xl font-bold text-brand-dark leading-none">$0.00</span>
+                            <span id="txt-precio-iva" class="block text-xs text-gray-500 font-medium mt-1.5">$0.00 con IVA</span>
+                        </div>
+                        <button id="btn-check" class="w-full sm:w-auto bg-gray-200 text-gray-400 px-6 md:px-10 py-4 md:py-5 rounded-2xl text-sm font-bold tracking-[0.2em] uppercase cursor-not-allowed transition-all" disabled>Selecciona Fecha</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="step-2-contact" class="hidden bg-white shadow-2xl w-full max-w-3xl md:rounded-3xl transform transition-all duration-500 h-full md:h-auto md:max-h-[92vh] flex flex-col overflow-hidden md:border-t-[5px] border-brand-primary relative">
+            <button onclick="volverPaso1()" class="absolute top-4 left-4 md:top-6 md:left-6 z-40 text-gray-500 hover:text-brand-dark w-12 h-12 rounded-full flex items-center justify-center transition-colors text-2xl bg-gray-100 hover:bg-gray-200"><i class="fas fa-arrow-left"></i></button>
+            <button onclick="cerrarModal()" class="absolute top-4 right-4 md:top-6 md:right-6 z-40 bg-gray-100 hover:bg-gray-200 text-gray-600 w-12 h-12 rounded-full flex items-center justify-center transition-colors text-xl"><i class="fas fa-times"></i></button>
+
+            <div class="flex-1 overflow-y-auto custom-scroll p-6 md:p-12 pt-20 md:pt-12 pb-48 md:pb-12 relative">
+                <div class="text-center mb-10">
+                    <div class="w-20 h-20 bg-[#fff5f5] text-brand-primary rounded-full flex items-center justify-center mx-auto mb-6 text-4xl shadow-sm border border-[#ffebeb]"><i class="fas fa-check"></i></div>
+                    <h2 class="text-3xl md:text-4xl font-bold text-brand-dark mb-3">Espacio Disponible</h2>
+                    <p class="text-gray-500 text-sm md:text-base font-medium tracking-wide">Completa tus datos para agendar tu campaña.</p>
+                </div>
+                
+                <div class="bg-gray-50 border border-gray-200 text-brand-dark rounded-2xl p-6 md:p-8 mb-10 flex flex-col md:flex-row justify-between items-start md:items-center shadow-sm">
+                    <div class="mb-5 md:mb-0">
+                        <p class="text-[10px] text-gray-500 uppercase tracking-[0.2em] font-bold mb-2">Resumen de Campaña</p>
+                        <p id="resumen-fechas" class="text-base md:text-lg font-bold mb-1"></p>
+                    </div>
+                    <div class="md:text-right border-t md:border-t-0 md:border-l border-gray-300 pt-5 md:pt-0 md:pl-8 w-full md:w-auto">
+                        <p class="text-[10px] text-gray-500 uppercase tracking-[0.2em] font-bold mb-2">Inversión Base Total</p>
+                        <p id="resumen-precio" class="text-2xl md:text-3xl font-black text-brand-dark leading-none"></p>
+                        <p id="resumen-precio-iva" class="text-sm text-gray-500 font-medium mt-1.5"></p>
+                        <span class="block text-[9px] text-brand-primary mt-1 opacity-90 italic">(Todos los precios incluyen IVA)</span>
+                    </div>
+                </div>
+
+                <div class="space-y-8">
+                    <div><label class="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-3">Nombre Completo o Empresa *</label><input type="text" id="cli-name" class="w-full border-b-2 border-gray-200 py-3 text-base md:text-sm font-bold text-brand-dark outline-none focus:border-brand-primary transition bg-transparent placeholder-gray-300"></div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        <div><label class="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-3">Teléfono a 10 dígitos *</label><input type="tel" id="cli-phone" class="w-full border-b-2 border-gray-200 py-3 text-base md:text-sm font-bold text-brand-dark outline-none focus:border-brand-primary transition bg-transparent placeholder-gray-300"></div>
+                        <div><label class="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-3">Correo Electrónico *</label><input type="email" id="cli-email" class="w-full border-b-2 border-gray-200 py-3 text-base md:text-sm font-bold text-brand-dark outline-none focus:border-brand-primary transition bg-transparent placeholder-gray-300"></div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="absolute md:sticky bottom-0 left-0 right-0 w-full bg-white border-t border-gray-100 p-5 md:p-8 shadow-[0_-10px_20px_-5px_rgba(0,0,0,0.05)] z-30">
+                <button id="btn-submit-quote" class="w-full bg-brand-primary hover:bg-red-700 text-white py-5 rounded-2xl font-bold uppercase tracking-[0.2em] text-sm transition-all duration-300 active:scale-[0.98] shadow-corporate">Enviar Solicitud</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function formatMoney(amount) { return '$' + amount.toLocaleString('es-MX', {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
+        const SUPABASE_URL = window.ENV ? window.ENV.SUPABASE_URL : ''; const SUPABASE_ANON_KEY = window.ENV ? window.ENV.SUPABASE_ANON_KEY : ''; const ESQUEMA_DB = (window.ENV && window.ENV.SCHEMA_PLAZA_MAYOR) ? window.ENV.SCHEMA_PLAZA_MAYOR : 'finanzas';
+        const clienteSupabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { db: { schema: ESQUEMA_DB } });
+
+        // TRADUCTOR DE IMÁGENES LOCALES A NUBE DE CLOUDFLARE
+        function repararImagen(url) {
+            if(!url) return 'assets/img/placeholder.png';
+            if(url.includes('127.0.0.1:55551')) return url.replace('http://127.0.0.1:55551', SUPABASE_URL);
+            return url;
+        }
+
+        const grid = document.getElementById('espacios-grid');
+        let espaciosGlobal = []; let espacioActual = null; let filtroActivo = 'all';
+        let calCurrentDate = new Date(); let selStart = null; let selEnd = null; let totalCalculado = 0; let totalConIva = 0; let fechasOcupadasArray = []; 
+
+        function parseTags(raw) { if(!raw) return []; if(Array.isArray(raw)) return raw; if(typeof raw === 'string') { try { let parsed = JSON.parse(raw); return Array.isArray(parsed) ? parsed : [raw]; } catch(e) { return raw.split(',').map(s=>s.trim()).filter(Boolean); } } return []; }
+
+        async function cargarEspacios() {
+            try {
+                const { data, error } = await clienteSupabase.from('espacios').select('id, clave, nombre, tipo, descripcion, precio_base, etiquetas, imagen_url').order('nombre', { ascending: true });
+                if (error) throw error;
+                espaciosGlobal = data || []; generarFiltrosEtiquetas(); renderizarEspacios(espaciosGlobal);
+            } catch (err) { console.error(err); }
+        }
+
+        function generarFiltrosEtiquetas() {
+            let tagsSet = new Set(); espaciosGlobal.forEach(e => { let tags = parseTags(e.etiquetas); tags.forEach(t => tagsSet.add(t.toUpperCase().trim())); });
+            const container = document.getElementById('filter-tags');
+            let html = `<button onclick="setFilter('all')" class="filter-btn active snap-start shrink-0 px-6 py-3 rounded-full text-xs font-bold uppercase tracking-widest transition-all duration-300 bg-brand-primary text-white shadow-md border-2 border-brand-primary">Todos</button>`;
+            tagsSet.forEach(tag => { html += `<button onclick="setFilter('${tag}')" class="filter-btn snap-start shrink-0 px-6 py-3 rounded-full text-xs font-bold uppercase tracking-widest transition-all duration-300 bg-white border-2 border-gray-200 text-gray-500 hover:border-brand-primary hover:text-brand-primary shadow-sm hover:shadow">${tag}</button>`; });
+            container.innerHTML = html;
+        }
+
+        function setFilter(tag) {
+            filtroActivo = tag;
+            document.querySelectorAll('.filter-btn').forEach(btn => { if(btn.innerText.trim() === tag || (tag === 'all' && btn.innerText.trim() === 'TODOS')) { btn.className = "filter-btn active snap-start shrink-0 px-6 py-3 rounded-full text-xs font-bold uppercase tracking-widest transition-all duration-300 bg-brand-primary text-white shadow-md border-2 border-brand-primary"; } else { btn.className = "filter-btn snap-start shrink-0 px-6 py-3 rounded-full text-xs font-bold uppercase tracking-widest transition-all duration-300 bg-white border-2 border-gray-200 text-gray-500 hover:border-brand-primary hover:text-brand-primary shadow-sm hover:shadow"; } });
+            filtrarCatalogo();
+        }
+
+        function filtrarCatalogo() {
+            const term = document.getElementById('search-input').value.toLowerCase(); const msgEl = document.getElementById('ui-message');
+            let filtrados = espaciosGlobal.filter(e => { const txtMatch = e.nombre.toLowerCase().includes(term) || (e.descripcion || '').toLowerCase().includes(term) || (e.clave || '').toLowerCase().includes(term); let tagMatch = true; if(filtroActivo !== 'all') { const eTags = parseTags(e.etiquetas).map(t => t.toUpperCase().trim()); tagMatch = eTags.includes(filtroActivo.toUpperCase()); } return txtMatch && tagMatch; });
+            if(filtrados.length === 0) { msgEl.innerHTML = `<i class="fas fa-search text-4xl mb-3 text-gray-300"></i><br>No se encontraron espacios.`; msgEl.className = "mb-8 p-10 rounded-3xl text-center font-bold text-sm bg-white text-gray-400 border-2 border-dashed border-gray-200 block"; } else { msgEl.classList.add('hidden'); }
+            renderizarEspacios(filtrados);
+        }
+
+        function renderizarEspacios(listaRenderer) {
+            grid.innerHTML = listaRenderer.map(espacio => {
+                const precio = parseFloat(espacio.precio_base) || 0; const precioIva = precio * 1.16; const eTags = parseTags(espacio.etiquetas); let tagsHtml = ''; if(eTags.length > 0) { tagsHtml = `<div class="flex gap-2 mb-4 flex-wrap">` + eTags.slice(0,3).map(t => `<span class="bg-red-50 text-brand-primary border border-red-100 px-3 py-1 rounded-full text-[9px] font-bold uppercase tracking-widest">${t}</span>`).join('') + `</div>`; }
+                
+                // USO DEL TRADUCTOR DE IMÁGENES
+                const imagenFinal = repararImagen(espacio.imagen_url);
+
+                return `
+                    <div class="bg-white rounded-3xl border border-gray-100 shadow-corporate overflow-hidden hover:shadow-corporate-hover transition-all duration-500 flex flex-col cursor-pointer group hover:-translate-y-2" onclick="abrirModal('${espacio.id}')">
+                        <div class="relative h-64 bg-gray-200 overflow-hidden"><img src="${imagenFinal}" class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"><div class="absolute inset-0 bg-gradient-to-t from-brand-dark/90 via-transparent to-transparent opacity-80 group-hover:opacity-100 transition-opacity duration-500"></div><div class="absolute bottom-6 left-6 right-6"><p class="text-[10px] font-bold text-white opacity-90 uppercase tracking-[0.3em] mb-2 drop-shadow-md"><i class="fas fa-tag mr-2"></i> ${espacio.tipo || 'Espacio'}</p><h3 class="text-2xl md:text-3xl font-bold text-white drop-shadow-lg leading-tight">${espacio.nombre}</h3></div></div>
+                        <div class="p-8 flex-grow flex flex-col bg-white relative"><div class="absolute -top-6 right-6 w-12 h-12 bg-brand-primary text-white rounded-full flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform duration-300 text-lg"><i class="fas fa-arrow-right"></i></div>${tagsHtml}<p class="text-sm text-gray-500 line-clamp-3 mb-6 h-12 font-medium">${espacio.descripcion || 'Sin descripción disponible.'}</p><div class="mt-auto flex items-end justify-between border-t border-gray-100 pt-6"><div><span class="block text-[10px] text-gray-400 uppercase tracking-[0.2em] font-bold mb-1">Inversión Base Total</span><span class="text-2xl font-black text-brand-dark">${precio > 0 ? formatMoney(precio) : 'A consultar'}</span>${precio > 0 ? `<span class="block text-[11px] text-gray-500 font-medium mt-1">${formatMoney(precioIva)} con IVA</span>` : ''}</div></div></div>
+                    </div>`;
+            }).join('');
+        }
+
+        async function descargarFechasBloqueadas(id) {
+            fechasOcupadasArray = []; const loader = document.getElementById('cal-loader'); loader.classList.remove('hidden');
+            try { const { data, error } = await clienteSupabase.from('cotizaciones').select('fecha_inicio, fecha_fin').eq('espacio_id', id).in('status', ['aprobada', 'finalizada']); if (error) throw error; data.forEach(cot => { let dCurr = new Date(cot.fecha_inicio + 'T00:00:00'); let dEnd = new Date(cot.fecha_fin + 'T00:00:00'); while (dCurr <= dEnd) { fechasOcupadasArray.push(formateaFechaString(dCurr)); dCurr.setDate(dCurr.getDate() + 1); } }); } catch (e) { console.error("Error BD", e); } finally { loader.classList.add('hidden'); }
+        }
+
+        function cambiarMes(offset) { calCurrentDate.setMonth(calCurrentDate.getMonth() + offset); renderizarCalendario(); }
+        function formateaFechaString(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+        function esDiaBloqueado(dateObj) { const str = formateaFechaString(dateObj); return fechasOcupadasArray.includes(str); }
+
+        function clickDia(fechaStr) {
+            const parts = fechaStr.split('-'); const clickedDate = new Date(parts[0], parts[1]-1, parts[2], 0, 0, 0);
+            if (selStart && !selEnd && clickedDate > selStart) { let hasOverlap = false; let curr = new Date(selStart); while (curr <= clickedDate) { if (esDiaBloqueado(curr)) { hasOverlap = true; break; } curr.setDate(curr.getDate() + 1); } if (hasOverlap) { selStart = clickedDate; selEnd = null; } else { selEnd = clickedDate; } } else { selStart = clickedDate; selEnd = null; }
+            renderizarCalendario(); actualizarBotonCheck();
+        }
+
+        function renderizarCalendario() {
+            const container = document.getElementById('cal-grid'); const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]; const year = calCurrentDate.getFullYear(), month = calCurrentDate.getMonth(); document.getElementById('cal-month-year').textContent = `${monthNames[month]} ${year}`;
+            const firstDay = new Date(year, month, 1), lastDay = new Date(year, month + 1, 0); const startOffset = firstDay.getDay(); const today = new Date(); today.setHours(0,0,0,0);
+            let html = ''; for(let i=0; i<startOffset; i++) html += `<div class="p-2 border-b border-r border-gray-100 bg-gray-50/50"></div>`;
+            for(let d=1; d<=lastDay.getDate(); d++) {
+                const cellDate = new Date(year, month, d, 0, 0, 0); const cellStr = formateaFechaString(cellDate); let isPast = cellDate < today; let isOccupied = !isPast && esDiaBloqueado(cellDate); let isSelectedStart = selStart && cellDate.getTime() === selStart.getTime(); let isSelectedEnd = selEnd && cellDate.getTime() === selEnd.getTime(); let isInRange = selStart && selEnd && cellDate > selStart && cellDate < selEnd;
+                let classNames = "cal-day border-b border-r border-gray-100 h-16 md:h-20 flex flex-col items-center justify-center cursor-pointer relative";
+                if(isPast) classNames += " cal-disabled"; else if (isOccupied) classNames += " cal-occupied";
+                if(!isOccupied && !isPast) { if(isSelectedStart || isSelectedEnd) classNames += " cal-selected shadow-md"; if(isInRange) classNames += " cal-in-range"; }
+                const iconoBloqueado = isOccupied ? '<i class="fas fa-ban absolute inset-0 m-auto text-gray-300 text-2xl md:text-3xl opacity-40 flex items-center justify-center"></i>' : '';
+                html += `<div class="${classNames}" onclick="${(!isPast && !isOccupied) ? `clickDia('${cellStr}')` : ''}"><span class="text-sm md:text-base font-bold ${isSelectedStart || isSelectedEnd ? 'text-white' : 'text-gray-700'} relative z-10">${d}</span>${iconoBloqueado}</div>`;
+            }
+            container.innerHTML = html;
+        }
+
+        function actualizarBotonCheck() {
+            const btn = document.getElementById('btn-check');
+            if (selStart) { btn.disabled = false; btn.className = 'w-full sm:w-auto bg-brand-primary hover:bg-red-700 text-white px-8 md:px-12 py-5 rounded-2xl text-sm font-bold tracking-[0.2em] uppercase transition-all shadow-corporate hover:scale-105 hover:shadow-corporate-hover'; btn.innerHTML = 'Continuar <i class="fas fa-arrow-right ml-2"></i>'; } else { btn.disabled = true; btn.className = 'w-full sm:w-auto bg-gray-200 text-gray-400 px-8 md:px-12 py-5 rounded-2xl text-sm font-bold tracking-[0.2em] uppercase cursor-not-allowed transition-all shadow-sm'; btn.innerHTML = 'Selecciona Fecha'; }
+        }
+
+        const backdrop = document.getElementById('modal-backdrop'); const step1 = document.getElementById('step-1-info'); const step2 = document.getElementById('step-2-contact');
+
+        async function abrirModal(id) {
+            espacioActual = espaciosGlobal.find(e => e.id == id); if (!espacioActual) return;
+            document.body.classList.add('modal-open'); totalCalculado = parseFloat(espacioActual.precio_base) || 0; totalConIva = totalCalculado * 1.16; selStart = null; selEnd = null; calCurrentDate = new Date();
+            document.getElementById('txt-precio-calculado').textContent = formatMoney(totalCalculado); document.getElementById('txt-precio-iva').textContent = `${formatMoney(totalConIva)} con IVA`; 
+            
+            // USO DEL TRADUCTOR DE IMÁGENES AL ABRIR MODAL
+            document.getElementById('modal-img').src = repararImagen(espacioActual.imagen_url); 
+            
+            document.getElementById('modal-title').textContent = espacioActual.nombre; document.getElementById('modal-type').innerHTML = `<i class="fas fa-tag mr-2"></i> ${espacioActual.tipo || 'Espacio'}`; document.getElementById('modal-desc').textContent = espacioActual.descripcion || 'Detalles no disponibles.';
+            step1.classList.remove('hidden'); step2.classList.add('hidden'); backdrop.classList.remove('opacity-0', 'pointer-events-none'); setTimeout(() => step1.classList.remove('scale-95', 'translate-y-4'), 10);
+            actualizarBotonCheck(); await descargarFechasBloqueadas(id); renderizarCalendario();
+        }
+
+        function cerrarModal() { document.body.classList.remove('modal-open'); backdrop.classList.add('opacity-0', 'pointer-events-none'); step1.classList.add('scale-95', 'translate-y-4'); step2.classList.add('scale-95', 'translate-y-4'); }
+        function volverPaso1() { step2.classList.add('hidden'); step1.classList.remove('hidden'); }
+        backdrop.addEventListener('click', (e) => { if(e.target === backdrop) cerrarModal(); });
+
+        document.getElementById('btn-check').addEventListener('click', async () => {
+            const btn = document.getElementById('btn-check'); btn.disabled = true; btn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
+            const fInicio = formateaFechaString(selStart); const fFin = selEnd ? formateaFechaString(selEnd) : fInicio;
+            try { const { data } = await clienteSupabase.from('cotizaciones').select('id').eq('espacio_id', espacioActual.id).in('status', ['aprobada', 'finalizada']).lte('fecha_inicio', fFin).gte('fecha_fin', fInicio); if (data.length > 0) { await descargarFechasBloqueadas(espacioActual.id); renderizarCalendario(); selStart = null; selEnd = null; actualizarBotonCheck(); alert("Esta fecha acaba de ser reservada por alguien más."); return; } } catch(e){} 
+            
+            document.getElementById('resumen-fechas').textContent = selEnd ? `Del ${selStart.toLocaleDateString()} al ${selEnd.toLocaleDateString()}` : `Día ${selStart.toLocaleDateString()}`;
+            document.getElementById('resumen-precio').textContent = formatMoney(totalCalculado);
+            document.getElementById('resumen-precio-iva').textContent = `${formatMoney(totalConIva)} con IVA`;
+            document.getElementById('cli-name').value = ''; document.getElementById('cli-phone').value = ''; document.getElementById('cli-email').value = '';
+            
+            step1.classList.add('hidden'); step2.classList.remove('hidden'); setTimeout(() => step2.classList.remove('scale-95', 'translate-y-4'), 10); actualizarBotonCheck();
+        });
+
+        document.getElementById('btn-submit-quote').addEventListener('click', async () => {
+            const nombre = document.getElementById('cli-name').value.trim(), telefono = document.getElementById('cli-phone').value.trim(), email = document.getElementById('cli-email').value.trim(); const btn = document.getElementById('btn-submit-quote');
+            if(!nombre || !telefono || !email) { alert("Por favor, completa todos tus datos de contacto."); return; }
+            btn.disabled = true; btn.innerHTML = '<i class="fas fa-circle-notch fa-spin mr-2"></i> Procesando...';
+            const payload = { espacio_id: espacioActual.id, espacio_nombre: espacioActual.nombre, espacio_clave: espacioActual.clave, cliente_nombre: nombre, cliente_rfc: '', cliente_contacto: telefono, cliente_email: email, fecha_inicio: formateaFechaString(selStart), fecha_fin: selEnd ? formateaFechaString(selEnd) : formateaFechaString(selStart), precio_final: totalConIva, desglose_precios: { subtotal_antes_impuestos: totalCalculado, impuestos_detalle: [], tax_total: (totalConIva - totalCalculado) }, conceptos_adicionales: [], status: 'pendiente' };
+            try { const { error } = await clienteSupabase.from('cotizaciones').insert(payload); if (error) throw error; document.getElementById('step-2-contact').innerHTML = `<div class="p-6 md:p-12 text-center h-full flex flex-col items-center justify-center min-h-[60vh] md:min-h-[50vh]"><div class="w-24 h-24 bg-[#fff5f5] text-brand-primary border-4 border-[#ffebeb] rounded-full flex items-center justify-center mx-auto mb-8 text-5xl shadow-lg"><i class="fas fa-check"></i></div><h2 class="text-3xl md:text-4xl font-bold text-brand-dark mb-4">¡Solicitud Exitosa!</h2><p class="text-gray-500 font-medium text-sm md:text-base leading-relaxed px-4">Tu solicitud de campaña por <strong class="text-brand-dark">${formatMoney(totalConIva)}</strong> ha sido registrada.<br>Nuestro equipo se comunicará contigo al ${telefono}.</p></div>`; setTimeout(() => cerrarModal(), 5000); } catch (err) { alert("Error al enviar la solicitud."); btn.disabled = false; btn.innerHTML = 'Enviar Solicitud'; }
+        });
+        document.addEventListener('DOMContentLoaded', cargarEspacios);
+    </script>
+</body>
+</html>

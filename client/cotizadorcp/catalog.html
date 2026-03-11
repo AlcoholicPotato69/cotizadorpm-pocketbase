@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<!-- DOC: client\cotizadorcp\catalog.html | Proposito: Vista de catalogo y administracion de espacios. | Ver docs/10-funcionamiento-general-del-codigo.txt -->
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Catálogo (Admin) - Casa de Piedra</title>
+    <script src="../../assets/libs/js/tailwindcss.js"></script>
+    <link rel="stylesheet" href="../../assets/libs/css/all.min.css">
+    <script src="../js/hub-config.js"></script>
+    <script src="../supabase.js"></script>
+    <script>
+        tailwind.config = { 
+            theme: { 
+                extend: { 
+                    colors: { brand: { red: '#deac07', dark: '#1a1a1a', gray: '#f3f4f6' } },
+                    animation: { 'enter': 'enter 0.4s cubic-bezier(0.25, 0.8, 0.25, 1)' },
+                    keyframes: { enter: { '0%': { opacity: '0', transform: 'translateY(10px)' }, '100%': { opacity: '1', transform: 'translateY(0)' } } }
+                } 
+            } 
+        }
+    </script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background-color: #f3f4f6; }
+        .hidden { display: none !important; }
+        .custom-scroll::-webkit-scrollbar { width: 6px; }
+        .custom-scroll::-webkit-scrollbar-track { background: #f1f1f1; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="bg-brand-gray text-gray-800 flex flex-col min-h-screen">
+    
+    <script>const TENANT_SCHEMA='finanzas_casadepiedra'; window.__CP_PAGE_MODE='catalog_admin';</script>
+    <script src="../js/layout.js"></script>
+
+    <nav class="bg-brand-red shadow-lg sticky top-16 z-30 border-t border-yellow-600 transition-all duration-300">
+        <div class="container mx-auto px-4 flex h-14 items-center text-white gap-2 overflow-x-auto no-scrollbar">
+            <a href="catalog.html" class="bg-white/20 shadow-inner px-4 py-1.5 rounded-full text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap"><i class="fa-solid fa-store"></i> Catálogo</a>
+            <a href="cotizacion.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 flex items-center gap-2 whitespace-nowrap transition"><i class="fa-solid fa-calculator"></i> Cotización</a>
+            <a href="orders.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 flex items-center gap-2 whitespace-nowrap transition"><i class="fa-solid fa-file-invoice-dollar"></i> Cotizaciones</a>
+            <a href="contracts.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 flex items-center gap-2 whitespace-nowrap transition"><i class="fa-solid fa-file-signature"></i> Contratos</a>
+            <a href="invoices.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 flex items-center gap-2 whitespace-nowrap transition"><i class="fa-solid fa-file-invoice"></i> Facturas</a>
+            <a href="agenda.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 flex items-center gap-2 whitespace-nowrap transition"><i class="fa-solid fa-calendar-days"></i> Agenda</a>
+            <a href="clientes.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 flex items-center gap-2 whitespace-nowrap transition"><i class="fa-solid fa-users"></i> Clientes</a>
+            <div class="flex-grow"></div>
+            <button onclick="window.openManagerModal()" id="btn-new-space" class="bg-white text-brand-red px-4 py-1.5 rounded-full text-xs font-black uppercase shadow hover:bg-gray-100 hidden transition mr-2 whitespace-nowrap"><i class="fa-solid fa-plus mr-1"></i> Nuevo</button>
+        </div>
+    </nav>
+    <main class="flex-grow container mx-auto px-4 md:px-6 py-6 md:py-8 max-w-7xl animate-enter">
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 mb-6 flex flex-col md:flex-row gap-4 justify-between items-stretch md:items-center">
+            <div class="relative w-full md:w-1/3"><i class="fa-solid fa-search absolute left-3 top-3 text-gray-400 text-xs"></i><input type="text" id="cat-search" onkeyup="window.filterCatalogLogic()" placeholder="Buscar espacio..." class="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-full text-sm outline-none focus:border-brand-red focus:ring-4 focus:ring-red-50 transition"></div>
+            <div class="flex flex-col sm:flex-row gap-3">
+                <select id="cat-filter-type" onchange="window.filterCatalogLogic()" class="bg-gray-50 border border-gray-200 text-gray-700 text-xs font-bold py-2.5 px-4 rounded-lg outline-none cursor-pointer focus:border-brand-red transition w-full sm:w-auto"><option value="all">Todos los Tipos</option><option value="local">Local</option><option value="isla">Isla</option><option value="evento">Evento</option><option value="publicidad">Publicidad</option><option value="espacio">Espacio</option></select>
+                <select id="cat-sort" onchange="window.filterCatalogLogic()" class="bg-gray-50 border border-gray-200 text-gray-700 text-xs font-bold py-2.5 px-4 rounded-lg outline-none cursor-pointer focus:border-brand-red transition w-full sm:w-auto"><option value="default">Orden: Defecto</option><option value="price_asc">Precio: Menor</option><option value="price_desc">Precio: Mayor</option></select>
+            </div>
+        </div>
+        <div id="spaces-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 pb-10"></div>
+    </main>
+
+    <div id="manager-modal" class="fixed inset-0 bg-black/80 z-50 hidden flex items-center justify-center p-4 backdrop-blur-sm animate-enter">
+        <div class="bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[95vh]">
+            <div class="bg-brand-dark p-4 flex justify-between items-center text-white shrink-0">
+                <h3 class="font-bold uppercase text-xs tracking-wider" id="mgr-title">Gestor</h3>
+                <button onclick="window.closeModal('manager-modal')" class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10 transition"><i class="fa-solid fa-times"></i></button>
+            </div>
+            <div class="p-6 space-y-4 overflow-y-auto custom-scroll flex-grow bg-gray-50/50">
+                <input type="hidden" id="mgr-id">
+                <div class="grid grid-cols-2 gap-4">
+                    <div><label class="text-[10px] font-bold uppercase text-gray-500">Clave</label><input id="mgr-key" class="w-full border border-gray-200 rounded-lg p-2.5 text-sm font-bold bg-white focus:border-brand-red outline-none"></div>
+                    <div><label class="text-[10px] font-bold uppercase text-gray-500">Tipo</label><select id="mgr-type" class="w-full border border-gray-200 rounded-lg p-2.5 text-sm bg-white focus:border-brand-red outline-none cursor-pointer"><option value="local">Local</option><option value="isla">Isla</option><option value="publicidad">Publicidad</option><option value="evento">Evento</option><option value="espacio">Espacio</option></select></div>
+                </div>
+                <div><label class="text-[10px] font-bold uppercase text-gray-500">Nombre</label><input id="mgr-name" class="w-full border border-gray-200 rounded-lg p-2.5 text-sm font-bold bg-white focus:border-brand-red outline-none"></div>
+                <div>
+                    <label class="text-[10px] font-bold uppercase text-brand-red">Etiquetas / Categorías (Separadas por coma)</label>
+                    <input id="mgr-tags" placeholder="Ej. Social, Empresarial, Premium" class="w-full border border-gray-200 rounded-lg p-2.5 text-sm bg-white focus:border-brand-red outline-none">
+                </div>
+                <div><label class="text-[10px] font-bold uppercase text-gray-500">Descripción</label><textarea id="mgr-desc" rows="3" class="w-full border border-gray-200 rounded-lg p-2.5 text-sm bg-white focus:border-brand-red outline-none resize-none"></textarea></div>
+                
+                <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+                    <div class="flex justify-between items-center mb-4">
+                        <p class="text-[10px] font-bold uppercase text-gray-500">Configuración de Precios Base (Personas y Día)</p>
+                        <button onclick="window.addRangeRow()" class="bg-yellow-50 hover:bg-yellow-100 text-brand-dark px-3 py-1 rounded text-[10px] font-bold uppercase transition border border-yellow-200"><i class="fa-solid fa-plus mr-1"></i> Agregar Regla</button>
+                    </div>
+                    <div id="mgr-ranges-container" class="space-y-4 mb-4"></div>
+                    
+                    <div class="bg-gray-50 p-3 rounded-lg border border-gray-200 mt-4">
+                        <p class="text-[10px] font-bold uppercase text-gray-500 mb-2">Días Inhabilitados / Bloqueados Fijos</p>
+                        <div class="grid grid-cols-4 sm:grid-cols-7 gap-2">
+                            <label class="flex items-center gap-1 text-[10px] font-bold text-gray-600 uppercase cursor-pointer"><input type="checkbox" value="lunes" class="day-block-check accent-brand-red"> Lun</label>
+                            <label class="flex items-center gap-1 text-[10px] font-bold text-gray-600 uppercase cursor-pointer"><input type="checkbox" value="martes" class="day-block-check accent-brand-red"> Mar</label>
+                            <label class="flex items-center gap-1 text-[10px] font-bold text-gray-600 uppercase cursor-pointer"><input type="checkbox" value="miercoles" class="day-block-check accent-brand-red"> Mié</label>
+                            <label class="flex items-center gap-1 text-[10px] font-bold text-gray-600 uppercase cursor-pointer"><input type="checkbox" value="jueves" class="day-block-check accent-brand-red"> Jue</label>
+                            <label class="flex items-center gap-1 text-[10px] font-bold text-gray-600 uppercase cursor-pointer"><input type="checkbox" value="viernes" class="day-block-check accent-brand-red"> Vie</label>
+                            <label class="flex items-center gap-1 text-[10px] font-bold text-gray-600 uppercase cursor-pointer"><input type="checkbox" value="sabado" class="day-block-check accent-brand-red"> Sáb</label>
+                            <label class="flex items-center gap-1 text-[10px] font-bold text-gray-600 uppercase cursor-pointer"><input type="checkbox" value="domingo" class="day-block-check accent-brand-red"> Dom</label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+                    <div class="flex justify-between items-center mb-3 border-b border-gray-100 pb-2">
+                        <p class="text-[10px] font-bold uppercase text-brand-red">Configuración de Horarios (Turnos)</p>
+                        <button onclick="window.addHorarioRow()" class="bg-yellow-50 hover:bg-yellow-100 text-brand-dark px-3 py-1 rounded text-[10px] font-bold uppercase transition border border-yellow-200"><i class="fa-solid fa-plus mr-1"></i> Agregar Turno</button>
+                    </div>
+                    <div id="mgr-horarios-container" class="flex flex-col gap-2 mb-4"></div>
+                    
+                    <div class="grid grid-cols-1 gap-4 pt-3 border-t border-gray-100">
+                        <div><label class="text-[10px] font-bold uppercase text-gray-500 block mb-1">Costo Hora Extra ($ por hr)</label><input type="number" id="cfg-precio-hora" value="0" class="w-full border rounded p-2 text-xs font-bold outline-none focus:border-brand-red"></div>
+                    </div>
+                </div>
+                
+                <div class="bg-white p-3 rounded-xl border border-gray-200 shadow-sm"><div class="flex justify-between items-center mb-2"><p class="text-[10px] font-bold uppercase text-gray-500">Impuestos Aplicables</p><i class="fa-solid fa-percent text-gray-400 text-xs"></i></div><div id="mgr-taxes-list" class="grid grid-cols-2 gap-2"></div></div>
+                <div class="bg-white p-3 rounded-xl border border-gray-200 shadow-sm"><p class="text-[10px] font-bold uppercase mb-2 text-gray-500">Ajuste Automático</p><div class="grid grid-cols-2 gap-3"><select id="mgr-adj-type" class="border border-gray-200 rounded-lg p-2 text-xs font-bold bg-gray-50 outline-none"><option value="ninguno">Ninguno</option><option value="aumento">Aumento (+)</option><option value="descuento">Descuento (-)</option></select><input type="number" id="mgr-adj-pct" placeholder="%" class="border border-gray-200 rounded-lg p-2 text-xs font-bold bg-gray-50 outline-none text-center"></div></div>
+                <div><label class="text-[10px] font-bold uppercase text-gray-500" id="mgr-lbl-img">Imagen</label><input type="file" id="mgr-file" accept="image/*" class="w-full text-xs mt-1 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-brand-red/10 file:text-brand-red hover:file:bg-brand-red/20" onchange="window.previewImage(this)"><div class="mt-2 h-32 bg-gray-100 rounded-xl flex items-center justify-center border border-gray-200 overflow-hidden relative"><img id="mgr-preview" class="w-full h-full object-cover hidden"><span class="text-gray-400 text-xs font-bold uppercase absolute pointer-events-none">Vista Previa</span></div></div>
+                <div class="bg-white p-3 rounded-xl border border-gray-200 flex items-center justify-between shadow-sm"><div><p class="text-[10px] font-bold uppercase text-gray-600">Visible en Catálogo</p></div><label class="relative inline-flex items-center cursor-pointer"><input type="checkbox" id="mgr-active" class="sr-only peer" checked><div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:bg-green-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full peer-checked:after:border-white"></div></label></div>
+            </div>
+            <div class="p-4 border-t border-gray-100 bg-white flex gap-3 shrink-0"><button onclick="window.askDeleteSpace()" id="btn-delete-mgr" class="hidden flex-1 bg-red-50 hover:bg-red-100 text-red-600 py-3 rounded-xl font-bold uppercase text-xs transition">Eliminar</button><button onclick="window.saveSpace()" id="btn-save-mgr" class="flex-[2] bg-brand-red hover:bg-red-700 text-white py-3 rounded-xl font-bold uppercase text-xs shadow-lg transition transform active:scale-95">Guardar</button></div>
+        </div>
+    </div>
+    
+    <div id="quote-modal" class="fixed inset-0 bg-black/80 z-[100] hidden flex items-center justify-center p-4 backdrop-blur-sm animate-enter">
+        <div class="bg-white w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden flex flex-col md:flex-row max-h-[90vh] md:h-auto">
+            <div class="w-full md:w-1/3 bg-gray-900 p-6 text-white flex flex-col justify-between shrink-0 relative overflow-hidden"><div class="absolute top-0 left-0 w-full h-1 bg-brand-red"></div><div class="relative z-10"><h3 id="q-name" class="font-black text-2xl md:text-3xl leading-tight mb-1">Nombre</h3><p id="q-key" class="text-xs font-mono text-gray-400 mb-4 bg-white/10 inline-block px-2 py-0.5 rounded">KEY</p><div class="aspect-video w-full rounded-xl overflow-hidden bg-gray-800 border border-white/10 mb-4"><img id="q-img" class="w-full h-full object-cover opacity-80"></div></div><div class="relative z-10 mt-4 md:mt-0"><p class="text-[10px] font-bold uppercase text-gray-400 tracking-wider">Precio Final Estimado</p><p id="q-price" class="text-3xl md:text-4xl font-black text-white tracking-tight">$0.00</p></div></div>
+            <div class="w-full md:w-2/3 p-6 md:p-8 overflow-y-auto custom-scroll bg-white">
+                <div class="flex justify-between items-center mb-6"><h3 class="font-bold uppercase text-sm text-gray-800 tracking-wide border-b-2 border-brand-red pb-1">Nueva Cotización</h3><button onclick="window.closeModal('quote-modal')" class="w-8 h-8 rounded-full bg-gray-50 hover:bg-red-50 text-gray-400 hover:text-red-500 transition flex items-center justify-center"><i class="fa-solid fa-times"></i></button></div>
+
+                <div class="mb-4 p-3 rounded-xl border border-gray-100 bg-gray-50">
+                    <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Nombre Cotización</label>
+                    <input id="q-quote-name" placeholder="Ej. BODA - Cliente - Espacio" class="w-full border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none focus:border-brand-red bg-white mb-3">
+
+                    <label class="block text-[10px] font-bold text-gray-400 uppercase mb-2">Espacios En Esta Cotización</label>
+                    <div class="flex gap-2 mb-2">
+                        <select id="q-space-add" class="w-full border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none focus:border-brand-red bg-white"></select>
+                        <button onclick="window.addSpaceToQuote()" class="bg-gray-900 text-white px-3 rounded-lg text-xs font-bold uppercase hover:bg-brand-red transition">Agregar</button>
+                    </div>
+                    <div id="q-spaces-tabs" class="flex flex-wrap gap-2"></div>
+                </div>
+                
+                <div class="grid grid-cols-2 gap-4 mb-4">
+                    <div class="group"><label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Fecha Inicio</label><input type="date" id="date-start" class="w-full border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none focus:border-brand-red bg-gray-50 focus:bg-white transition" onchange="if(!document.getElementById('date-end').value) document.getElementById('date-end').value=this.value; window.updateQuoteCalculation(); window.checkAvailability()"></div>
+                    <div class="group"><label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Fecha Fin</label><input type="date" id="date-end" class="w-full border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none focus:border-brand-red bg-gray-50 focus:bg-white transition" onchange="window.updateQuoteCalculation(); window.checkAvailability()"></div>
+                    <div class="group col-span-2"><label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Personas</label><input type="number" id="q-guests" min="1" value="100" class="w-full border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none focus:border-brand-red bg-gray-50 focus:bg-white transition" onchange="window.updateQuoteCalculation()"></div>
+                </div>
+                
+                <div class="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-4 border-b border-gray-100 pb-4">
+                    <div class="group"><label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Horario</label><select id="q-horario" class="w-full border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none focus:border-brand-red bg-gray-50 focus:bg-white transition" onchange="window.updateQuoteCalculation()"></select></div>
+                    <div class="group">
+                        <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Días Montaje</label>
+                        <div class="flex items-center gap-1">
+                            <input type="number" id="q-premontaje" value="0" min="0" class="w-full border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none focus:border-brand-red transition text-center bg-gray-50" oninput="window.handleMontajeInput('q')">
+                            <button id="q-btn-montaje" onclick="window.abrirModalMontaje('q')" class="hidden bg-brand-red text-white px-3 py-2 rounded-lg transition hover:scale-105 shadow-sm"><i class="fa-solid fa-calendar-plus"></i></button>
+                        </div>
+                        <p id="q-lbl-fechas-montaje" class="text-[9px] font-bold text-brand-red mt-1 hidden"></p>
+                    </div>
+                    <div class="group"><label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Días Cortesía Montaje</label><input type="number" id="q-premontaje-cortesia" value="0" min="0" class="w-full border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none focus:border-brand-red transition bg-gray-50" oninput="window.updateQuoteCalculation()"></div>
+                    <div class="group"><label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Horas Extras</label><input type="number" id="q-horas" value="0" min="0" class="w-full border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none focus:border-brand-red transition bg-gray-50" oninput="window.updateQuoteCalculation()"></div>
+                </div>
+
+                <div class="mb-6 pb-6 border-b border-gray-100">
+                    <label class="block text-[10px] font-bold text-gray-400 uppercase mb-2">Servicios Adicionales</label>
+                    <div class="flex gap-2 mb-3">
+                        <select id="admin-concept-select" class="w-full border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none focus:border-brand-red transition"><option value="">Selecciona...</option></select>
+                        <button onclick="window.addAdminConcept()" class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 rounded-lg font-bold transition"><i class="fas fa-plus"></i></button>
+                    </div>
+                    <div id="admin-concepts-summary" class="space-y-2"></div>
+                </div>
+                
+                <div id="avail-msg" class="hidden mb-6 p-2 rounded-lg text-center text-xs font-bold border"></div>
+                <div class="space-y-4">
+                    <div><label class="block text-xs font-bold mb-1 text-gray-700 uppercase">Cliente (perfil)</label><select id="cli-select" class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm focus:outline-none focus:border-brand-red transition"><option value="">— Capturar manualmente —</option></select><input type="hidden" id="cli-id"></div>
+                    <div><label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Cliente</label><input id="cli-name" placeholder="Nombre completo o Empresa" class="w-full border border-gray-200 rounded-lg p-2.5 text-sm font-bold text-gray-800 outline-none focus:border-brand-red transition"></div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4"><input id="cli-phone" placeholder="Teléfono (10 dígitos)" class="w-full border border-gray-200 rounded-lg p-2.5 text-xs outline-none focus:border-brand-red transition"><input id="cli-email" placeholder="Correo electrónico" class="w-full border border-gray-200 rounded-lg p-2.5 text-xs outline-none focus:border-brand-red transition"></div><input id="cli-rfc" placeholder="RFC (Opcional)" class="w-full border border-gray-200 rounded-lg p-2.5 text-xs outline-none focus:border-brand-red transition uppercase">
+                </div>
+                <div class="mt-8 pt-4 border-t border-gray-100 text-right"><button id="btn-generate" onclick="window.generatePDF()" disabled class="bg-brand-red text-white px-8 py-3 rounded-xl text-xs font-black uppercase shadow-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition transform active:scale-95 w-full md:w-auto">Generar Cotización <i class="fa-solid fa-arrow-right ml-2"></i></button></div>
+            </div>
+        </div>
+    </div>
+    
+    <div id="montaje-modal" class="fixed inset-0 bg-black/80 z-[200] hidden flex items-center justify-center p-4 backdrop-blur-sm transition-all duration-300">
+        <div class="bg-white w-full max-w-sm rounded-2xl shadow-2xl p-6 animate-enter">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="font-bold text-lg text-gray-800">Días de Montaje</h3>
+                <button onclick="document.getElementById('montaje-modal').classList.add('hidden')" class="text-gray-400 hover:text-red-500 transition"><i class="fas fa-times"></i></button>
+            </div>
+            <p class="text-xs font-medium text-gray-500 mb-6">Selecciona <span class="font-black text-brand-red text-sm" id="montaje-limit-num">0</span> fecha(s) previa(s) al evento.</p>
+            
+            <input type="date" id="montaje-date-input" class="w-full border border-gray-200 rounded-lg p-2.5 text-sm outline-none focus:border-brand-red transition font-medium text-gray-700 mb-3">
+            <button onclick="window.addMontajeDate()" class="w-full bg-brand-dark hover:bg-black text-brand-red py-2 rounded-lg font-bold transition shadow-sm mb-6"><i class="fas fa-plus mr-2"></i>Agregar Fecha</button>
+            
+            <ul id="montaje-dates-list" class="space-y-2 mb-8 max-h-40 overflow-y-auto custom-scroll pr-2"></ul>
+            
+            <button onclick="window.confirmMontajeDates()" class="w-full bg-brand-red hover:bg-red-700 text-white py-3 rounded-xl font-bold text-xs uppercase tracking-widest transition-all shadow-lg hover:scale-105">Confirmar Selección</button>
+        </div>
+    </div>
+
+    <div id="generic-confirm-modal" class="fixed inset-0 bg-black/80 z-[300] hidden flex items-center justify-center p-4"></div>
+    <script src="catalog.js"></script>
+</body>
+</html>
+
+

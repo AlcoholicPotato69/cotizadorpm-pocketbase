@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<!-- DOC: client\cotizadorcp\reports.html | Proposito: Vista de reportes y KPI del negocio. | Ver docs/10-funcionamiento-general-del-codigo.txt -->
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reportes - Casa de Piedra</title>
+    <script src="../../assets/libs/js/tailwindcss.js"></script>
+    <link rel="stylesheet" href="../../assets/libs/css/all.min.css">
+    <script src="../../assets/libs/js/chart.js"></script>
+    <script src="../js/hub-config.js"></script>
+    <script src="../supabase.js"></script>
+    <script>tailwind.config = { theme: { extend: { colors: { brand: { red: '#deac07', dark: '#1a1a1a', gray: '#f3f4f6' } } } } }</script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background-color: #f3f4f6; } 
+        .fade-in { animation: fadeIn 0.5s ease-out; } 
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } } 
+        .scrollbar-hide::-webkit-scrollbar { display: none; } 
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="bg-brand-gray text-gray-800 flex flex-col min-h-screen relative">
+    <div id="toast-container" class="fixed bottom-5 right-5 z-[70] flex flex-col gap-2"></div>
+    <script>const TENANT_SCHEMA='finanzas_casadepiedra';</script>
+  <script src="../js/layout.js"></script>
+    
+    <nav class="bg-brand-red shadow-lg sticky top-16 z-40 border-t border-red-800">
+        <div class="container mx-auto px-4 flex h-14 items-center text-white gap-2 overflow-x-auto no-scrollbar">
+            <a href="catalog.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap"><i class="fa-solid fa-store"></i> Catálogo</a>
+            <a href="cotizacion.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap"><i class="fa-solid fa-calculator"></i> Cotización</a>
+            <a href="orders.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap"><i class="fa-solid fa-file-invoice-dollar"></i> Cotizaciones</a>
+            <a href="contracts.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap flex items-center gap-2"><i class="fa-solid fa-file-signature"></i> Contratos</a>
+            <a href="invoices.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap"><i class="fa-solid fa-file-invoice"></i> Facturas</a>
+            <a href="agenda.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap"><i class="fa-solid fa-calendar-days"></i> Agenda</a>
+            <a href="clientes.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap"><i class="fa-solid fa-users"></i> Clientes</a>
+            <div class="flex-grow"></div>
+</div>
+    </nav>
+    <main class="flex-grow container mx-auto px-4 md:px-6 py-6 md:py-8 max-w-7xl animate-enter">
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+            <div><h2 class="text-2xl font-black text-gray-800 uppercase tracking-tight">Dashboard Financiero</h2><p class="text-xs text-gray-500 font-medium mt-1">Resumen de ingresos y ocupación en tiempo real.</p></div>
+            <div class="flex flex-wrap items-center gap-2 bg-white p-2 rounded-2xl shadow-sm border border-gray-200 w-full md:w-auto">
+                <div class="px-4 border-r border-gray-200 flex items-center flex-grow md:flex-grow-0"><span class="text-[10px] font-black text-gray-400 uppercase mr-1 tracking-wider">Tipo</span><select id="report-type-filter" onchange="window.generateReports()" class="text-xs font-bold text-brand-dark outline-none bg-transparent cursor-pointer hover:text-brand-red transition focus:ring-0 border-none w-full"><option value="all">Todos</option></select></div>
+                <div class="px-4 border-r border-gray-200 flex items-center flex-grow md:flex-grow-0"><span class="text-[10px] font-black text-gray-400 uppercase mr-1 tracking-wider">Mes</span><select id="report-month-filter" onchange="window.generateReports()" class="text-xs font-bold text-brand-dark outline-none bg-transparent cursor-pointer hover:text-brand-red transition focus:ring-0 border-none w-full"></select></div>
+                <div class="px-4 border-r border-gray-200 flex items-center flex-grow md:flex-grow-0"><span class="text-[10px] font-black text-gray-400 uppercase mr-1 tracking-wider">Año</span><select id="report-year-filter" onchange="window.generateReports()" class="text-xs font-bold text-brand-dark outline-none bg-transparent cursor-pointer hover:text-brand-red transition focus:ring-0 border-none w-full"></select></div>
+                <button onclick="window.resetReportFilters()" class="bg-brand-red text-white px-5 py-2 rounded-xl text-[10px] font-bold uppercase hover:bg-red-700 transition shadow-lg flex items-center gap-2 w-full md:w-auto justify-center"><i class="fa-solid fa-rotate-left"></i> Actual</button>
+            </div>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
+            <div class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between hover:shadow-md transition group"><div><p class="text-[10px] font-black text-gray-400 uppercase tracking-wider mb-1">Ingresos (Netos)</p><h3 class="text-xl font-black text-green-600 truncate group-hover:scale-105 transition origin-left" id="rpt-revenue">$0.00</h3></div><div class="mt-2 text-right"><i class="fa-solid fa-sack-dollar text-green-100 text-3xl group-hover:text-green-500 transition-colors"></i></div></div>
+            <div class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between hover:shadow-md transition group"><div><p class="text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1">Total Cotizaciones</p><h3 class="text-2xl font-black text-gray-800" id="rpt-total-count">0</h3></div><div class="mt-2 text-right"><i class="fa-solid fa-list-ol text-gray-100 text-3xl group-hover:text-gray-400 transition-colors"></i></div></div>
+            <div class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between hover:shadow-md transition group"><div><p class="text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1">Aprobadas</p><h3 class="text-2xl font-black text-blue-600" id="rpt-approved-count">0</h3></div><div class="mt-2 text-right"><i class="fa-solid fa-thumbs-up text-blue-100 text-3xl group-hover:text-blue-500 transition-colors"></i></div></div>
+            <div class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between hover:shadow-md transition group"><div><p class="text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1">Finalizadas</p><h3 class="text-2xl font-black text-emerald-600" id="rpt-finalized-count">0</h3></div><div class="mt-2 text-right"><i class="fa-solid fa-flag-checkered text-emerald-100 text-3xl group-hover:text-emerald-500 transition-colors"></i></div></div>
+            <div class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between hover:shadow-md transition group"><div><p class="text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1">Tasa Cierre</p><h3 class="text-2xl font-black text-purple-600" id="rpt-rate">0%</h3></div><div class="mt-2 text-right"><i class="fa-solid fa-chart-pie text-purple-100 text-3xl group-hover:text-purple-500 transition-colors"></i></div></div>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            <div class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+                <p class="text-[10px] font-black text-gray-400 uppercase tracking-wider">Espacio Más Rentado</p>
+                <h3 id="rpt-top-space" class="text-sm font-black text-brand-dark mt-2 truncate">--</h3>
+                <p id="rpt-top-space-count" class="text-[11px] font-bold text-gray-500 mt-1">0 eventos</p>
+            </div>
+            <div class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+                <p class="text-[10px] font-black text-gray-400 uppercase tracking-wider">Día Más Solicitado</p>
+                <h3 id="rpt-top-day" class="text-lg font-black text-blue-600 mt-2">--</h3>
+                <p id="rpt-top-day-count" class="text-[11px] font-bold text-gray-500 mt-1">0 eventos</p>
+            </div>
+            <div class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+                <p class="text-[10px] font-black text-gray-400 uppercase tracking-wider">Día Más Usado para Montaje</p>
+                <h3 id="rpt-top-montaje-day" class="text-lg font-black text-orange-600 mt-2">--</h3>
+                <p id="rpt-top-montaje-count" class="text-[11px] font-bold text-gray-500 mt-1">0 montajes</p>
+            </div>
+            <div class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+                <p class="text-[10px] font-black text-gray-400 uppercase tracking-wider">Ingresos por Conceptos</p>
+                <h3 id="rpt-concepts-revenue" class="text-lg font-black text-emerald-600 mt-2">$0.00</h3>
+                <p class="text-[11px] font-bold text-gray-500 mt-1">Órdenes finalizadas</p>
+            </div>
+        </div>
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 md:gap-8 mb-8">
+            <div class="lg:col-span-2 bg-white p-6 rounded-3xl shadow-sm border border-gray-100 relative">
+                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 border-b border-gray-50 pb-2 gap-2"><h3 class="font-bold text-gray-700 uppercase text-xs tracking-wider">Flujo de Ingresos</h3><span class="text-[9px] font-bold text-gray-300 uppercase bg-gray-50 px-2 py-1 rounded">Mensual / Diario</span></div>
+                <div class="h-64 md:h-72 w-full"><canvas id="timelineChart"></canvas></div>
+            </div>
+            <div class="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 flex flex-col h-full">
+                <h3 class="font-bold text-gray-700 uppercase text-xs tracking-wider mb-6 text-center border-b border-gray-50 pb-2">Top Espacios por Ingreso</h3>
+                <div class="relative h-48 w-full flex items-center justify-center mb-6"><canvas id="revenueChart"></canvas></div>
+                <div class="overflow-y-auto flex-grow max-h-48 scrollbar-hide pr-1">
+                    <table class="w-full"><thead class="sticky top-0 bg-white text-[9px] font-black text-gray-400 uppercase border-b border-gray-100"><tr><th class="text-left pb-2 pl-2">Espacio</th><th class="text-right pb-2">Ingreso</th><th class="text-right pb-2 pr-2">#</th></tr></thead><tbody id="rpt-table-spaces" class="divide-y divide-gray-50 text-xs"></tbody></table>
+                </div>
+            </div>
+        </div>
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 md:gap-8">
+            <div class="bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
+                <h3 class="font-bold text-gray-700 uppercase text-xs tracking-wider mb-6 flex items-center gap-2 border-b border-gray-50 pb-2"><i class="fa-solid fa-calendar-week text-blue-500"></i> Demanda por Día de la Semana</h3>
+                <div class="h-64 w-full"><canvas id="daysChart"></canvas></div>
+            </div>
+            <div class="bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
+                <h3 class="font-bold text-gray-700 uppercase text-xs tracking-wider mb-6 flex items-center gap-2 border-b border-gray-50 pb-2"><i class="fa-solid fa-calendar-check text-orange-500"></i> Días Más Usados para Montaje</h3>
+                <div class="h-64 w-full"><canvas id="montajeDaysChart"></canvas></div>
+            </div>
+            <div class="bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
+                <h3 class="font-bold text-gray-700 uppercase text-xs tracking-wider mb-6 flex items-center gap-2 border-b border-gray-50 pb-2"><i class="fa-solid fa-bell-concierge text-emerald-500"></i> Ingresos por Conceptos</h3>
+                <div class="h-64 w-full"><canvas id="conceptRevenueChart"></canvas></div>
+            </div>
+        </div>
+    <section class="mt-8 bg-white rounded-2xl shadow-md border border-gray-100 p-4">
+    <div class="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
+        <div>
+            <h2 class="text-sm font-black uppercase text-gray-800 flex items-center gap-2">
+                <i class="fa-solid fa-users text-brand-red"></i> Analítica de clientes
+            </h2>
+            <p class="text-xs text-gray-500 mt-1">Quién renta más: frecuencia y gasto (basado en órdenes aprobadas/finalizadas).</p>
+        </div>
+
+        <div class="flex items-center gap-2">
+            <label class="text-xs font-bold uppercase text-gray-600">Espacio</label>
+            <select id="client-space-filter"
+                    class="px-3 py-2 rounded-xl border border-gray-200 bg-white text-sm focus:outline-none focus:border-brand-red transition min-w-[220px]">
+                <option value="">Todos</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+        <div class="rounded-2xl border border-gray-100 p-3">
+            <h3 class="text-xs font-black uppercase text-gray-700 mb-2 flex items-center gap-2">
+                <i class="fa-solid fa-trophy text-amber-500"></i> Top clientes (global)
+            </h3>
+            <div class="overflow-auto">
+                <table class="w-full text-xs">
+                    <thead>
+                        <tr class="text-[11px] uppercase text-gray-500 border-b">
+                            <th class="text-left py-2">Cliente</th>
+                            <th class="text-right py-2">Veces</th>
+                            <th class="text-right py-2">Gasto</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbl-top-clients"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="rounded-2xl border border-gray-100 p-3">
+            <h3 class="text-xs font-black uppercase text-gray-700 mb-2 flex items-center gap-2">
+                <i class="fa-solid fa-chart-column text-blue-500"></i> Top clientes (espacio seleccionado)
+            </h3>
+            <div class="overflow-auto">
+                <table class="w-full text-xs">
+                    <thead>
+                        <tr class="text-[11px] uppercase text-gray-500 border-b">
+                            <th class="text-left py-2">Cliente</th>
+                            <th class="text-right py-2">Veces</th>
+                            <th class="text-right py-2">Gasto</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbl-top-clients-space"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <p class="text-[11px] text-gray-400 mt-3">
+        * "Gasto" suma <span class="font-bold">solo</span> órdenes <span class="font-bold">finalizadas</span>.
+    </p>
+</section>
+
+</main>
+    <script src="reports.js"></script>
+</body>
+</html>
+
+

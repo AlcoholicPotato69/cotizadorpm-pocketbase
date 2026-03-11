@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<!-- DOC: client\cotizadorcp\orders.html | Proposito: Vista de cotizaciones existentes y acciones administrativas. | Ver docs/10-funcionamiento-general-del-codigo.txt -->
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cotizaciones - Casa de Piedra</title>
+    
+    <script src="../../assets/libs/js/tailwindcss.js"></script>
+    <link rel="stylesheet" href="../../assets/libs/css/all.min.css">
+    
+    <script src="../js/hub-config.js"></script>
+    <script src="../supabase.js"></script>
+    <script src="../../assets/libs/js/html2pdf.js"></script>
+    <script src="../../assets/libs/js/chart.js"></script>
+    <script src="../../assets/libs/js/fullcalendar.js"></script>
+    
+    <script>tailwind.config = { theme: { extend: { colors: { brand: { red: '#deac07', dark: '#1a1a1a', gray: '#f3f4f6' } } } } }</script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background-color: #f3f4f6; } 
+        .hidden { display: none !important; } 
+        .fade-in { animation: fadeIn 0.3s ease-out; } 
+        .custom-scroll::-webkit-scrollbar { width: 6px; } 
+        .custom-scroll::-webkit-scrollbar-track { background: #f1f1f1; } 
+        .custom-scroll::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; } 
+        input:read-only { background-color: #f9fafb; color: #6b7280; cursor: not-allowed; }
+        .cal-day { transition: all 0.2s ease; }
+        .cal-day:hover:not(.cal-disabled):not(.cal-occupied) { transform: scale(1.03); }
+        .cal-disabled { opacity: 0.35; pointer-events: none; }
+        .cal-occupied { pointer-events: none; }
+        @media (max-width: 768px) {
+            .fc-toolbar { flex-direction: column; gap: 1rem; }
+            .fc-toolbar-title { font-size: 1.1rem !important; }
+            .fc-button { width: 100%; margin-bottom: 0.25rem; }
+        }
+    </style>
+</head>
+<body class="bg-brand-gray text-gray-800 flex flex-col min-h-screen">
+    <script>const TENANT_SCHEMA='finanzas_casadepiedra';</script>
+    <script src="../js/layout.js"></script>
+    
+    <nav class="bg-brand-red shadow-lg sticky top-16 z-30 border-t border-yellow-600 transition-all duration-300">
+        <div class="container mx-auto px-4 flex h-14 items-center text-white gap-2 overflow-x-auto no-scrollbar">
+            <a href="catalog.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 flex items-center gap-2 transition whitespace-nowrap"><i class="fa-solid fa-store"></i> Catálogo</a>
+            <a href="cotizacion.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 flex items-center gap-2 transition whitespace-nowrap"><i class="fa-solid fa-calculator"></i> Cotización</a>
+            <a href="orders.html" class="bg-white/20 shadow-inner px-4 py-1.5 rounded-full text-xs font-bold uppercase flex items-center gap-2 transition whitespace-nowrap"><i class="fa-solid fa-file-invoice-dollar"></i> Cotizaciones</a>
+            <a href="contracts.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 flex items-center gap-2 transition whitespace-nowrap"><i class="fa-solid fa-file-signature"></i> Contratos</a>
+            <a href="invoices.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 flex items-center gap-2 transition whitespace-nowrap"><i class="fa-solid fa-file-invoice"></i> Facturas</a>
+            <a href="agenda.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 flex items-center gap-2 transition whitespace-nowrap"><i class="fa-solid fa-calendar-days"></i> Agenda</a>
+            <a href="clientes.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 flex items-center gap-2 transition whitespace-nowrap"><i class="fa-solid fa-users"></i> Clientes</a>
+        </div>
+    </nav>
+    
+    <main class="flex-grow container mx-auto px-4 py-8 max-w-7xl animate-enter">
+        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 mb-6 flex flex-col md:flex-row gap-4 justify-between items-center">
+            <h2 class="font-black text-2xl text-gray-800 uppercase tracking-tight">Cotizaciones</h2>
+            <div class="relative w-full md:w-1/2"><i class="fa-solid fa-search absolute left-3 top-3.5 text-gray-400 text-xs"></i><input type="text" id="search-orders" placeholder="Buscar por nombre de cotización, cliente o folio..." class="w-full pl-9 pr-4 py-3 border border-gray-200 rounded-full text-sm outline-none focus:border-brand-red focus:ring-4 focus:ring-red-50 transition"></div>
+        </div>
+        
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            <div class="overflow-x-auto custom-scroll">
+                <table class="w-full text-left border-collapse">
+                    <thead class="bg-gray-100 text-xs uppercase font-black text-gray-500">
+                        <tr>
+                            <th class="p-4 rounded-tl-xl">Folio</th>
+                            <th class="p-4">Cliente</th>
+                            <th class="p-4">Espacio / Fecha</th>
+                            <th class="p-4 text-right">Total</th>
+                            <th class="p-4 text-center">Estatus</th>
+                            <th class="p-4 text-center">Documentos</th>
+                            <th class="p-4 text-center rounded-tr-xl">Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody id="orders-table" class="text-sm text-gray-600 divide-y divide-gray-50"></tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+    
+    <div id="order-edit-modal" class="fixed inset-0 bg-black/80 z-50 hidden flex items-center justify-center p-4 backdrop-blur-sm animate-enter">
+        <div class="bg-white w-full max-w-6xl rounded-2xl shadow-2xl overflow-hidden flex flex-col h-[90vh]">
+            <div class="bg-brand-dark p-4 flex justify-between items-center text-white shrink-0">
+                <h3 class="font-bold uppercase text-xs tracking-wider">Detalle de Cotización</h3>
+                <button onclick="window.askCloseEditModal()" class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10 transition"><i class="fa-solid fa-times"></i></button>
+            </div>
+            
+            <div class="flex-grow flex flex-col md:flex-row overflow-hidden">
+                <div class="w-full md:w-2/3 p-6 overflow-y-auto custom-scroll space-y-6">
+                    <input type="hidden" id="oed-id">
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="bg-gray-50 p-4 rounded-xl border border-gray-100">
+                            <h4 class="font-bold text-xs uppercase text-brand-red mb-3 border-b pb-1">Datos del Cliente</h4>
+                            <div class="space-y-3">
+                                <div>
+                                    <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Perfil Guardado</label>
+                                    <select id="oed-client-profile" class="w-full border rounded p-1.5 text-xs bg-white focus:border-brand-red outline-none"></select>
+                                    <input type="hidden" id="oed-client-id">
+                                </div>
+                                <div><label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Nombre / Razón Social</label><input id="oed-client" class="w-full border-b border-gray-200 p-1 text-sm font-bold bg-transparent outline-none focus:border-brand-red"></div>
+                                <div class="grid grid-cols-2 gap-3">
+                                    <div><label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Teléfono</label><input id="oed-phone" class="w-full border-b border-gray-200 p-1 text-xs bg-transparent outline-none focus:border-brand-red"></div>
+                                    <div><label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Email</label><input id="oed-email" class="w-full border-b border-gray-200 p-1 text-xs bg-transparent outline-none focus:border-brand-red"></div>
+                                </div>
+                                <div><label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">RFC</label><input id="fiscal-rfc-re" class="w-full border-b border-gray-200 p-1 text-xs bg-transparent outline-none focus:border-brand-red uppercase"></div>
+                            </div>
+                        </div>
+
+                        <div class="bg-gray-50 p-4 rounded-xl border border-gray-100">
+                            <h4 class="font-bold text-xs uppercase text-brand-red mb-3 border-b pb-1">Configuración del Evento</h4>
+                            <div class="space-y-3">
+                                <div>
+                                    <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Nombre Cotización</label>
+                                    <input id="oed-quote-name" class="w-full border rounded p-2 text-xs font-bold bg-white focus:border-brand-red outline-none" placeholder="Ej. BODA - Cliente - Espacio">
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Espacios En Esta Cotización</label>
+                                    <div class="flex gap-2">
+                                        <select id="oed-space-add" class="w-full border rounded p-2 text-xs font-bold bg-white focus:border-brand-red outline-none"></select>
+                                        <button type="button" onclick="window.addSpaceToOrderQuote()" class="bg-gray-900 text-white px-3 rounded-lg text-[10px] font-bold uppercase hover:bg-brand-red transition">Agregar</button>
+                                    </div>
+                                    <div id="oed-spaces-tabs" class="flex flex-wrap gap-2 mt-2"></div>
+                                </div>
+                                <div><label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Espacio Activo</label><select id="oed-space" class="w-full border rounded p-2 text-xs font-bold bg-white focus:border-brand-red outline-none"></select></div>
+                                <div class="grid grid-cols-2 gap-3">
+                                    <div><label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Fecha Inicio</label><input type="date" id="oed-start" class="w-full border rounded p-2 text-xs font-bold bg-white focus:border-brand-red outline-none"></div>
+                                    <div><label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Fecha Fin</label><input type="date" id="oed-end" class="w-full border rounded p-2 text-xs font-bold bg-white focus:border-brand-red outline-none"></div>
+                                </div>
+                                <div><label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Personas (Asistentes)</label><input type="number" id="oed-guests" min="1" class="w-full border rounded p-2 text-xs font-bold bg-white focus:border-brand-red outline-none" onchange="window.recalcTotal()"></div>
+                                
+                                <div class="pt-2">
+                                    <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Estatus</label>
+                                    <select id="oed-status" class="w-full border border-gray-300 rounded p-2 text-xs font-bold bg-white focus:border-brand-red outline-none">
+                                        <option value="pendiente">Pendiente</option>
+                                        <option value="aprobada">Aprobada</option>
+                                        <option value="rechazada">Rechazada</option>
+                                        <option value="finalizada">Finalizada</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-gray-50 p-4 rounded-xl border border-gray-100">
+                        <h4 class="font-bold text-xs uppercase text-brand-red mb-3 border-b pb-1">Logística y Precios Especiales</h4>
+                        <div class="grid grid-cols-1 sm:grid-cols-5 gap-4 mb-2">
+                            <div class="sm:col-span-5 flex flex-wrap gap-4 p-2 bg-white rounded-lg border border-gray-100">
+                                <label class="flex items-center gap-2 text-[11px] font-bold text-gray-600 cursor-pointer">
+                                    <input id="oed-chk-premontaje" type="checkbox" class="accent-brand-red" onchange="window.toggleOrderPremontaje()">
+                                    ¿Necesitas días de premontaje?
+                                </label>
+                                <label class="flex items-center gap-2 text-[11px] font-bold text-gray-600 cursor-pointer">
+                                    <input id="oed-chk-horas" type="checkbox" class="accent-brand-red" onchange="window.toggleOrderHoras()">
+                                    ¿Necesitas horas extra?
+                                </label>
+                            </div>
+                            <div class="group sm:col-span-2">
+                                <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Horario</label>
+                                <select id="oed-horario" class="w-full border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none focus:border-brand-red bg-white transition" onchange="window.toggleCustomHorario('oed'); window.recalcTotal()"></select>
+                            </div>
+                            <div id="oed-premontaje-fields" class="hidden sm:col-span-3 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div class="group">
+                                    <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Días Montaje</label>
+                                    <div class="flex items-center gap-1">
+                                        <input type="number" id="oed-premontaje" value="0" min="0" class="w-full border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none focus:border-brand-red transition text-center" oninput="window.handleMontajeInput('oed')">
+                                        <button id="oed-btn-montaje" onclick="window.abrirModalMontaje('oed')" class="hidden bg-brand-red hover:bg-red-700 text-white px-2 py-1.5 rounded-lg transition shadow-sm"><i class="fa-solid fa-calendar-plus text-xs"></i></button>
+                                    </div>
+                                    <p id="oed-lbl-fechas-montaje" class="text-[9px] font-bold text-brand-red mt-1 hidden"></p>
+                                </div>
+                                <div class="group">
+                                    <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Días Cortesía Montaje</label>
+                                    <input type="number" id="oed-premontaje-cortesia" value="0" min="0" class="w-full border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none focus:border-brand-red transition text-center bg-white" oninput="window.recalcTotal()">
+                                </div>
+                            </div>
+                            <div id="oed-horas-fields" class="hidden sm:col-span-5 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                <div class="group">
+                                    <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Horas Extras</label>
+                                    <input type="number" id="oed-horas" value="0" min="0" class="w-full border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none focus:border-brand-red transition text-center bg-white" oninput="window.recalcTotal()">
+                                </div>
+                                <div class="group">
+                                    <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Costo por Hora Extra</label>
+                                    <input type="number" id="oed-horas-price" value="0" min="0" class="w-full border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none focus:border-brand-red transition text-right bg-white" oninput="if(this.value<0)this.value=0; window.recalcTotal()">
+                                </div>
+                                <div class="group">
+                                    <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Horas Extra Cortesía</label>
+                                    <input type="number" id="oed-horas-cortesia" value="0" min="0" class="w-full border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none focus:border-brand-red transition text-center bg-white" oninput="window.recalcTotal()">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="oed-horario-custom" class="hidden bg-yellow-50/80 p-3 rounded-lg border border-yellow-200 shadow-inner mt-4 animate-enter">
+                            <p class="text-[10px] font-bold text-yellow-700 uppercase mb-2"><i class="fa-solid fa-clock mr-1"></i> Configurar Horario Personalizado</p>
+                            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 items-center">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-[10px] font-bold text-gray-500 uppercase w-8">De:</span>
+                                    <input type="time" id="oed-horario-start" class="w-full border border-gray-200 rounded p-2 text-xs outline-none focus:border-brand-red bg-white" onchange="window.recalcTotal()">
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <span class="text-[10px] font-bold text-gray-500 uppercase w-8">A:</span>
+                                    <input type="time" id="oed-horario-end" class="w-full border border-gray-200 rounded p-2 text-xs outline-none focus:border-brand-red bg-white" onchange="window.recalcTotal()">
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <span class="text-[10px] font-bold text-gray-500 uppercase">Costo $:</span>
+                                    <input type="number" id="oed-horario-price" placeholder="0.00" min="0" class="w-full border border-yellow-300 rounded p-2 text-xs outline-none focus:border-brand-red bg-white font-bold text-right text-brand-dark" oninput="if(this.value<0)this.value=0; window.recalcTotal()">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <h4 class="font-bold text-xs uppercase text-gray-600 mb-2 flex justify-between">Conceptos Libres (Extras)
+                            <div class="flex gap-2">
+                                <select id="new-concept-select" class="border rounded text-[10px] px-2 py-1 w-40"></select>
+                                <input id="new-concept-amount" type="number" min="0" placeholder="$" class="border rounded text-[10px] px-2 py-1 w-20">
+                                <button onclick="window.addConceptRow()" class="bg-gray-200 hover:bg-gray-300 px-2 py-1 rounded text-[10px] font-bold"><i class="fa-solid fa-plus"></i></button>
+                            </div>
+                        </h4>
+                        <table class="w-full text-left text-xs border border-gray-200 rounded-lg overflow-hidden">
+                            <thead class="bg-gray-100 text-gray-500 font-bold"><tr><th class="p-2">Concepto</th><th class="p-2 text-right">Monto</th><th class="p-2 text-center w-10"></th></tr></thead>
+                            <tbody id="concepts-list" class="divide-y divide-gray-100 bg-white"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="w-full md:w-1/3 bg-gray-100 border-l border-gray-200 p-6 flex flex-col justify-between shadow-inner overflow-y-auto custom-scroll">
+                    <div class="space-y-6">
+                        
+                        <div>
+                            <h4 class="font-black text-sm uppercase text-gray-700 mb-3"><i class="fa-solid fa-list-check text-brand-red mr-1"></i> Resumen del Evento</h4>
+                            <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm space-y-3 text-xs text-gray-600">
+                                <div class="flex justify-between items-center border-b border-gray-50 pb-2"><span class="font-bold text-gray-400">Fechas</span><span id="sum-dates" class="font-bold text-right text-gray-800">--</span></div>
+                                <div class="flex justify-between items-center border-b border-gray-50 pb-2"><span class="font-bold text-gray-400">Asistentes</span><span id="sum-guests" class="font-bold text-right text-gray-800">--</span></div>
+                                <div class="flex justify-between items-center border-b border-gray-50 pb-2"><span class="font-bold text-gray-400">Horario</span><span id="sum-schedule" class="font-bold text-right text-gray-800 truncate max-w-[140px]">--</span></div>
+                                <div class="flex justify-between items-center border-b border-gray-50 pb-2"><span class="font-bold text-gray-400">Montaje</span><span id="sum-montaje" class="font-bold text-right text-gray-800 text-[10px]">--</span></div>
+                                <div class="flex justify-between items-center"><span class="font-bold text-gray-400">Horas Extras</span><span id="sum-hextras" class="font-bold text-right text-gray-800">--</span></div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <h4 class="font-black text-sm uppercase text-gray-700 mb-3"><i class="fa-solid fa-calculator text-brand-red mr-1"></i> Resumen Financiero</h4>
+                            <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm space-y-2">
+                                <div class="flex justify-between text-xs text-gray-500"><span>Renta Base + Logística</span><span class="font-bold" id="lbl-subtotal-base">$0.00</span></div>
+                                
+                                <div id="oed-summary-concepts" class="space-y-1 border-b border-dashed border-gray-200 pb-2 mb-2"></div>
+                                
+                                <div class="flex justify-between items-center text-xs text-gray-500">
+                                    <span>Ajuste Global</span>
+                                    <div class="flex items-center gap-1">
+                                        <select id="oed-adj-type" onchange="window.recalcTotal()" class="border rounded p-0.5 text-[10px]"><option value="ninguno">-</option><option value="descuento">Desc</option><option value="aumento">Aum</option></select>
+                                        <input id="oed-adj-val" onchange="window.recalcTotal()" type="number" class="w-12 border rounded p-0.5 text-[10px] text-right" placeholder="0">
+                                        <select id="oed-adj-unit" onchange="window.recalcTotal()" class="border rounded p-0.5 text-[10px]"><option value="fixed">$</option><option value="percent">%</option></select>
+                                    </div>
+                                </div>
+                                <div class="flex justify-between text-xs text-gray-500 font-bold border-b border-dashed pb-2"><span>Total Ajuste</span><span id="lbl-adjustment">$0.00</span></div>
+                                
+                                <div class="pt-1"><p class="text-[10px] font-bold uppercase text-gray-400 mb-1">Impuestos</p><div id="oed-taxes-list" class="space-y-1"></div></div>
+                                <div id="oed-tax-summary-display" class="pt-2 border-t border-gray-100 space-y-1"></div>
+                                
+                                <div class="pt-4 mt-2 border-t border-gray-200">
+                                    <p class="text-[10px] font-black uppercase text-gray-400 text-right">Total Neto</p>
+                                    <input id="oed-price" readonly class="w-full text-right text-3xl font-black bg-transparent outline-none text-gray-800" value="0.00">
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                    <div class="mt-6">
+                        <button id="btn-save-progress" onclick="window.attemptSaveOrder()" class="w-full bg-brand-dark text-white py-3 rounded-xl font-bold uppercase text-xs shadow-lg hover:bg-gray-800 transition">Guardar</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="montaje-modal" class="fixed inset-0 bg-black/80 z-[200] hidden flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="bg-white w-full max-w-3xl rounded-2xl shadow-2xl overflow-hidden animate-enter">
+            <div class="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
+                <div>
+                    <h3 class="font-black text-sm uppercase tracking-wide text-gray-800">Seleccionar Fechas de Premontaje</h3>
+                    <p class="text-[10px] text-gray-500">Selecciona inicio/fin y se aplicará el rango exacto requerido.</p>
+                </div>
+                <button onclick="window.closeModal('montaje-modal')" class="w-8 h-8 rounded-full hover:bg-gray-100 text-gray-500"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="p-5 grid grid-cols-1 lg:grid-cols-3 gap-5">
+                <div class="lg:col-span-2">
+                    <p id="montaje-month-label" class="hidden"></p>
+                    <div id="montaje-fc" class="h-[460px]"></div>
+                </div>
+                <div class="space-y-3">
+                    <div class="bg-gray-50 border border-gray-200 rounded-xl p-3">
+                        <p class="text-[10px] font-bold uppercase text-gray-400 mb-2">Selección</p>
+                        <div class="space-y-2 text-xs">
+                            <div class="flex justify-between"><span class="text-gray-500 font-bold">Inicio</span><span id="montaje-picked-start" class="font-black text-gray-800">--</span></div>
+                            <div class="flex justify-between"><span class="text-gray-500 font-bold">Fin</span><span id="montaje-picked-end" class="font-black text-gray-800">--</span></div>
+                            <div class="flex justify-between"><span class="text-gray-500 font-bold">Días requeridos</span><span id="montaje-limit-num" class="font-black text-brand-red">0</span></div>
+                        </div>
+                        <button onclick="window.applyMontajeDatePickerSelection()" class="mt-3 w-full bg-brand-red text-white py-2 rounded-lg text-xs font-black uppercase hover:bg-red-700 transition">Aplicar Fechas</button>
+                    </div>
+                    <div class="bg-gray-50 border border-gray-200 rounded-xl p-3">
+                        <p class="text-[10px] font-bold uppercase text-gray-400 mb-2">Reservas Confirmadas</p>
+                        <div id="montaje-date-reserved-list" class="max-h-56 overflow-y-auto custom-scroll space-y-1 text-[11px]"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="docs-modal" class="fixed inset-0 bg-black/80 z-[60] hidden flex items-center justify-center p-4 backdrop-blur-sm animate-enter">
+        <div class="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden p-6">
+            <div class="flex justify-between items-start mb-6">
+                <div>
+                    <h3 class="font-black text-xl text-gray-800" id="doc-client">Cliente</h3>
+                    <p class="text-xs text-brand-red font-bold uppercase tracking-wider" id="doc-folio">Folio</p>
+                </div>
+                <button onclick="window.closeModal('docs-modal')" class="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500"><i class="fa-solid fa-times"></i></button>
+            </div>
+            <div class="bg-gray-50 p-4 rounded-xl mb-6 border border-gray-100 flex justify-between items-center">
+                <div><p class="text-[10px] uppercase text-gray-400 font-bold">Espacio</p><p class="text-xs font-bold text-gray-700" id="doc-space">---</p></div>
+                <div class="text-right"><p class="text-[10px] uppercase text-gray-400 font-bold">Fechas</p><p class="text-xs font-bold text-gray-700" id="doc-dates">---</p></div>
+            </div>
+            <div class="space-y-3" id="docs-list"></div>
+        </div>
+    </div>
+
+    <div id="preview-modal" class="fixed inset-0 bg-black/90 z-[70] hidden flex items-center justify-center p-4">
+        <div class="bg-white w-full max-w-4xl h-[90vh] rounded-2xl flex flex-col overflow-hidden">
+            <div class="bg-gray-900 p-3 flex justify-between items-center text-white shrink-0">
+                <div class="flex items-center gap-4">
+                    <h3 class="font-bold text-sm uppercase tracking-widest flex items-center gap-2"><i class="fa-solid fa-eye text-brand-red"></i> Vista Previa</h3>
+                    <div id="pdf-admin-data" class="hidden text-xs bg-gray-800 px-3 py-1 rounded border border-gray-700"><span class="text-gray-400 mr-2">Folio:</span><span class="font-mono font-bold" id="prev-order-num">---</span></div>
+                </div>
+                <div class="flex gap-3">
+                    <button onclick="window.closeModal('preview-modal')" class="text-gray-400 hover:text-white text-xs uppercase font-bold px-3">Cerrar</button>
+                    <button id="btn-download-preview" class="bg-brand-red hover:bg-red-600 text-white px-5 py-2 rounded-full text-xs font-bold uppercase shadow-lg transition flex items-center gap-2"><i class="fa-solid fa-download"></i> <span class="hidden sm:inline">Descargar</span></button>
+                </div>
+            </div>
+            <div id="preview-container" class="flex-grow bg-gray-200 overflow-y-auto custom-scroll flex justify-center items-start p-8">
+                <div id="pdf-content" class="bg-white shadow-2xl relative text-gray-800 hidden"></div>
+                <embed id="doc-preview" type="application/pdf" class="w-full h-full hidden rounded shadow-lg">
+            </div>
+        </div>
+    </div>
+
+    <div id="generic-confirm-modal" class="fixed inset-0 bg-black/80 z-[300] hidden flex items-center justify-center p-4">
+        <div class="bg-white w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden p-6 text-center">
+            <h3 class="font-bold text-lg mb-2 text-gray-800" id="confirm-title">¿Confirmar Acción?</h3>
+            <div class="flex justify-center gap-3 mt-6">
+                <button id="btn-cancel-action" class="text-gray-500 hover:text-gray-800 text-xs font-bold px-4 transition">Cancelar</button>
+                <button id="btn-confirm-action" class="bg-brand-dark text-white px-6 py-2 rounded-xl font-bold text-xs uppercase shadow-lg hover:bg-black transition">Confirmar</button>
+            </div>
+        </div>
+    </div>
+    <div id="toast-container" class="fixed top-20 right-4 z-[310] flex flex-col items-end pointer-events-none"></div>
+    <script src="orders.js"></script>
+</body>
+</html>
+
+

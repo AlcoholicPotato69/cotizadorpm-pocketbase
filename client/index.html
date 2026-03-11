@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<!-- DOC: client\index.html | Proposito: Vista del sistema de cotizacion. | Ver docs/10-funcionamiento-general-del-codigo.txt -->
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Marketing Hub - Plaza Mayor</title>
+    
+    <script src="../assets/libs/js/tailwindcss.js"></script>
+    <link rel="stylesheet" href="../assets/libs/css/all.min.css">
+    <script src="./js/hub-config.js"></script>
+    <script src="./supabase.js"></script>
+    <script src="../assets/libs/js/jquery.js"></script>
+    
+    <script>
+        tailwind.config = { 
+            theme: { 
+                extend: { 
+                    colors: { 
+                        brand: { 
+                            red: '#D32F2F',
+                            cp: '#deac07', 
+                            dark: '#1a1a1a', 
+                            gray: '#f3f4f6',
+                            light: '#ffffff'
+                        } 
+                    },
+                    fontFamily: {
+                        sans: ['"Segoe UI"', 'sans-serif']
+                    },
+                    animation: {
+                        'enter': 'enter 0.6s cubic-bezier(0.2, 0.8, 0.2, 1)',
+                        'float': 'float 6s ease-in-out infinite',
+                    },
+                    keyframes: {
+                        enter: {
+                            '0%': { opacity: '0', transform: 'translateY(20px) scale(0.95)' },
+                            '100%': { opacity: '1', transform: 'translateY(0) scale(1)' },
+                        },
+                        float: {
+                            '0%, 100%': { transform: 'translateY(0)' },
+                            '50%': { transform: 'translateY(-10px)' },
+                        }
+                    }
+                } 
+            } 
+        }
+    </script>
+    <style>
+        body { background-color: #f3f4f6; overflow-x: hidden; }
+        .hidden { display: none !important; }
+        
+        /* Fondo Login Corporativo */
+        .login-bg { 
+            background: radial-gradient(circle at top right, #2d2d2d 0%, #1a1a1a 100%);
+            position: relative;
+        }
+        .login-bg::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; h-1;
+            background: linear-gradient(90deg, #D32F2F, #b71c1c);
+            height: 4px;
+        }
+
+        /* Tarjetas Interactivas */
+        .module-card {
+            transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+            border: 1px solid rgba(0,0,0,0.05);
+        }
+        .module-card:hover {
+            transform: translateY(-8px) scale(1.02);
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+            border-color: #D32F2F;
+        }
+        
+        .module-card.cp:hover { border-color: #deac07; }
+        .module-card.cp:hover .module-icon { background-color: #deac07; color: white; }
+
+        .module-card:hover .module-icon {
+            transform: scale(1.1) rotate(5deg);
+            background-color: #D32F2F;
+            color: white;
+        }
+        .module-card:active {
+            transform: scale(0.98);
+        }
+
+        /* Botón animado */
+        .btn-animate { transition: all 0.2s; position: relative; overflow: hidden; }
+        .btn-animate:active { transform: scale(0.95); }
+        
+        /* Scrollbar limpio */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    </style>
+
+    <script>
+      // Hide notifications UI when localMode=true
+      (function(){
+        try {
+          if (window.HUB_CONFIG && window.HUB_CONFIG.localMode) {
+            document.documentElement.classList.add('hub-localmode');
+          }
+        } catch(e){}
+      })();
+    </script>
+    <style>
+      .hub-localmode #btn-toggle-notifs,
+      .hub-localmode #dash-notif-dropdown,
+      .hub-localmode #dash-notif-badge { display:none !important; }
+    </style>
+    
+</head>
+<body class="bg-brand-gray text-gray-800 min-h-screen flex flex-col">
+
+    <main id="main-container" class="flex-grow flex items-center justify-center p-4 md:p-8 transition-all duration-500 login-bg">
+
+        <div id="view-login" class="w-full max-w-sm bg-white rounded-3xl shadow-2xl overflow-hidden animate-enter hidden relative group">
+            <div class="h-2 bg-gradient-to-r from-brand-red to-red-800 w-full"></div>
+            <div class="p-6 md:p-10">
+                <div class="text-center mb-8">
+                    <div class="inline-block p-4 rounded-full bg-red-50 mb-4 animate-float">
+                        <img src="logo.png" class="h-12 object-contain" onerror="this.style.display='none'; this.parentElement.innerHTML='<i class=\'fa-solid fa-layer-group text-3xl text-brand-red\'></i>'">
+                    </div>
+                    <h2 class="text-3xl font-black text-gray-800 tracking-tight uppercase">Marketing<span class="text-brand-red">Hub</span></h2>
+                    <p class="text-sm text-gray-500 font-medium mt-1">Acceso Administrativo</p>
+                </div>
+
+                <form id="login-form" class="space-y-5">
+                    <div class="space-y-1">
+                        <label class="text-[10px] font-bold text-gray-400 uppercase tracking-wider ml-1">Credenciales</label>
+                        <div class="relative group">
+                            <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                                <i class="fa-solid fa-envelope text-gray-400 group-focus-within:text-brand-red transition-colors"></i>
+                            </div>
+                            <input type="email" id="email" class="w-full pl-11 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-semibold focus:bg-white focus:border-brand-red focus:ring-4 focus:ring-red-50 outline-none transition-all duration-300" placeholder="usuario@plazamayor.com" required>
+                        </div>
+                    </div>
+                    
+                    <div class="relative group">
+                        <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                            <i class="fa-solid fa-lock text-gray-400 group-focus-within:text-brand-red transition-colors"></i>
+                        </div>
+                        <input type="password" id="password" class="w-full pl-11 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-semibold focus:bg-white focus:border-brand-red focus:ring-4 focus:ring-red-50 outline-none transition-all duration-300" placeholder="••••••••" required>
+                    </div>
+
+                    <button type="submit" class="w-full bg-brand-red text-white py-4 rounded-xl font-bold uppercase tracking-wider shadow-lg shadow-red-200 btn-animate hover:bg-red-700 mt-4 flex justify-center items-center gap-2 group-btn">
+                        <span>Iniciar Sesión</span> <i class="fa-solid fa-arrow-right group-btn-hover:translate-x-1 transition-transform"></i>
+                    </button>
+                </form>
+
+                <div id="login-error" class="hidden mt-6 bg-red-50 border border-red-100 text-red-600 px-4 py-3 rounded-xl text-xs font-bold flex items-center gap-3 animate-enter">
+                    <i class="fa-solid fa-circle-exclamation text-lg"></i>
+                    <span>Acceso denegado. Verifique sus datos.</span>
+                </div>
+            </div>
+            <div class="bg-gray-50 px-6 md:px-10 py-4 text-center border-t border-gray-100">
+                <p class="text-[10px] text-gray-400 font-bold uppercase">&copy; 2026 Plaza Mayor</p>
+            </div>
+        </div>
+
+        <div id="view-dashboard" class="hidden w-full max-w-7xl animate-enter px-0 md:px-4">
+            
+            <div class="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 md:mb-10 border-b border-gray-200 pb-6 gap-4">
+                <div>
+                    <h1 class="text-4xl md:text-5xl font-black text-gray-800 tracking-tight mb-2">Hola, <span class="text-brand-red" id="dash-user-name">...</span></h1>
+                    <p class="text-gray-500 font-medium text-sm flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> Panel de Control y Herramientas
+                    </p>
+                </div>
+                
+                <div class="flex items-center gap-3">
+                    <div class="relative">
+                        <button id="btn-toggle-notifs" class="w-12 h-12 rounded-2xl bg-white border border-gray-200 hover:border-brand-red hover:shadow-lg hover:-translate-y-1 transition-all flex items-center justify-center group relative">
+                            <i class="fa-regular fa-bell text-gray-400 group-hover:text-brand-red text-lg transition-colors"></i>
+                            <span id="dash-badge" class="absolute -top-1 -right-1 bg-brand-red text-white text-[10px] font-black w-5 h-5 flex items-center justify-center rounded-full hidden border-2 border-brand-gray">0</span>
+                        </button>
+
+                        <div id="dash-notif-dropdown" class="absolute top-14 right-0 w-80 bg-white rounded-2xl shadow-2xl border border-gray-100 hidden flex flex-col z-50 overflow-hidden transform origin-top-right transition-all">
+                            <div class="px-5 py-3 border-b border-gray-50 bg-gray-50/50 flex justify-between items-center">
+                                <h4 class="text-[10px] font-black text-gray-500 uppercase tracking-widest">Novedades</h4>
+                                <button id="btn-clear-notifs" class="text-[9px] font-bold text-red-400 hover:text-red-600 uppercase transition">Limpiar</button>
+                            </div>
+                            <div id="dash-notif-list" class="flex-col max-h-80 overflow-y-auto custom-scroll">
+                                </div>
+                        </div>
+                    </div>
+
+                    <button id="btn-logout" class="w-12 h-12 rounded-2xl bg-brand-dark text-white border border-brand-dark hover:bg-red-700 hover:border-red-700 hover:shadow-lg hover:-translate-y-1 transition-all flex items-center justify-center shadow-md" title="Cerrar Sesión">
+                        <i class="fa-solid fa-right-from-bracket"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div id="apps-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6">
+                <div class="col-span-full text-center py-20 text-gray-400 animate-pulse">
+                    <i class="fa-solid fa-circle-notch fa-spin text-4xl mb-4 text-brand-red"></i><br>
+                    <span class="font-bold text-sm uppercase tracking-widest">Cargando ecosistema...</span>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // --- CONFIGURACIÓN ---
+        const HUB_URL = (window.HUB_CONFIG && window.HUB_CONFIG.supabaseUrl) || 'http://127.0.0.1:54321';
+        const HUB_KEY = (window.HUB_CONFIG && window.HUB_CONFIG.supabaseAnonKey) || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0';
+        let hubSupabase;
+        let currentUser = null;
+
+        // --- UTILIDADES UI ---
+        function getTextColorClass(c){ const map={red:'text-brand-red',blue:'text-blue-600',green:'text-green-600',purple:'text-purple-600',cyan:'text-cyan-600',orange:'text-orange-600',pink:'text-pink-600'}; return map[c]||'text-gray-600'; }
+        function getBgColorClass(c){ const map={red:'bg-red-50',blue:'bg-blue-50',green:'bg-green-50',purple:'bg-purple-50',cyan:'bg-cyan-50',orange:'bg-orange-50',pink:'bg-pink-50'}; return map[c]||'bg-gray-50'; }
+        function getBorderColorClass(c){ const map={red:'border-brand-red',blue:'border-blue-600',green:'border-green-600',purple:'border-purple-600',cyan:'border-cyan-600',orange:'border-orange-600',pink:'border-pink-600'}; return map[c]||'border-gray-500'; }
+
+        // --- INICIALIZACIÓN SEGURA ---
+        document.addEventListener('DOMContentLoaded', async () => {
+            
+            // 1. Verificación Crítica de Supabase
+            if (typeof supabase === 'undefined') {
+                console.error("CRÍTICO: Librería Supabase no cargada. Verifique el CDN en el <head>.");
+                alert("Error de sistema: Librería no encontrada. Revise su conexión.");
+                return;
+            }
+
+            // 2. Inicializar Cliente
+            hubSupabase = window.globalSupabase || window.supabaseClient || window.supabase.createClient(HUB_URL, HUB_KEY);
+            
+            // 3. LISTENERS DE EVENTOS (Ahora es seguro asignarlos)
+            
+            // A. Formulario Login
+            const loginForm = document.getElementById('login-form');
+            if (loginForm) {
+                loginForm.addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    const email = document.getElementById('email').value;
+                    const password = document.getElementById('password').value;
+                    const btn = e.target.querySelector('button');
+                    const originalContent = btn.innerHTML;
+
+                    btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> VERIFICANDO...';
+                    btn.disabled = true;
+                    document.getElementById('login-error').classList.add('hidden');
+
+                    const { data, error } = await hubSupabase.auth.signInWithPassword({ email, password });
+
+                    if (error) {
+                        document.getElementById('login-error').classList.remove('hidden');
+                        btn.innerHTML = originalContent;
+                        btn.disabled = false;
+                    } else {
+                        window.location.reload();
+                    }
+                });
+            }
+
+            // B. Botones Dashboard
+            const btnToggle = document.getElementById('btn-toggle-notifs');
+            if(btnToggle) btnToggle.addEventListener('click', toggleDashboardNotifs);
+
+            const btnClear = document.getElementById('btn-clear-notifs');
+            if(btnClear) btnClear.addEventListener('click', clearAllNotifs);
+
+            const btnLogout = document.getElementById('btn-logout');
+            if(btnLogout) btnLogout.addEventListener('click', dashboardLogout);
+
+            // C. Click fuera para cerrar dropdown
+            document.addEventListener('click', (e) => {
+                const drop = document.getElementById('dash-notif-dropdown');
+                const btn = document.getElementById('btn-toggle-notifs');
+                // Si el click NO fue en el dropdown NI en el botón
+                if (drop && !drop.classList.contains('hidden') && !drop.contains(e.target) && !btn.contains(e.target)) {
+                    drop.classList.add('hidden');
+                }
+            });
+
+            // 4. Lógica de Sesión
+            const { data: { session } } = await hubSupabase.auth.getSession();
+            if (session) {
+                currentUser = session.user;
+                await showDashboard(currentUser);
+            } else {
+                showLogin();
+            }
+        });
+
+        function showLogin() {
+            document.getElementById('view-login').classList.remove('hidden');
+            document.getElementById('view-dashboard').classList.add('hidden');
+            document.getElementById('main-container').classList.add('login-bg');
+            document.getElementById('main-container').classList.remove('bg-brand-gray');
+        }
+
+        async function showDashboard(user) {
+            // Carga silenciosa de layout.js para mantener la sesión global activa al navegar
+            if (!document.querySelector('script[src="./js/layout.js"]')) {
+                const layoutScript = document.createElement('script');
+                layoutScript.src = "./js/layout.js";
+                document.body.appendChild(layoutScript);
+            }
+
+            // Obtener perfil para nombre y roles
+            const { data: profileList, error: profileError } = await hubSupabase
+                .from('profiles')
+                .select('role, username, allowed_tenants')
+                .eq('id', user.id);
+
+            if (profileError) { console.warn('No se pudo cargar el perfil:', profileError); }
+
+            const profile = (profileList && profileList.length) ? profileList[0] : null;
+            
+            // Determinar nombre a mostrar
+            let displayName = '';
+            if (profile && profile.username) {
+                displayName = profile.username;
+            } else {
+                const simpleName = user.email.split('@')[0];
+                displayName = simpleName.charAt(0).toUpperCase() + simpleName.slice(1);
+            }
+
+            const nameElement = document.getElementById('dash-user-name');
+            if(nameElement) nameElement.innerText = displayName;
+
+            // Transición de vistas
+            document.getElementById('view-login').classList.add('hidden');
+            document.getElementById('view-dashboard').classList.remove('hidden');
+            document.getElementById('main-container').classList.remove('login-bg');
+            document.getElementById('main-container').classList.add('bg-brand-gray');
+            
+            // Cargar contenido
+            loadApps(user, profile);
+            if (!(window.HUB_CONFIG && window.HUB_CONFIG.localMode)) { loadNotifications(user.id); }
+}
+
+        async function loadApps(user, preloadedProfile) {
+            const grid = document.getElementById('apps-grid');
+                        if (window.HUB_CONFIG && window.HUB_CONFIG.localMode) {
+                            const p = preloadedProfile || {};
+                            const userRole = String(p.role || 'user').toLowerCase().trim();
+                            const allowedTenants = Array.isArray(p.allowed_tenants)
+                                ? p.allowed_tenants.map(t => String(t).toLowerCase().trim())
+                                : [];
+                            const isAdmin = userRole === 'admin';
+
+                            const hasPM = isAdmin || allowedTenants.includes('plaza_mayor');
+                            const hasCP = isAdmin || allowedTenants.includes('casa_de_piedra');
+
+                            const pmLogo = (window.HUB_CONFIG && window.HUB_CONFIG.companyLogoUrl) || 'http://127.0.0.1:54321/storage/v1/object/public/Espacios/logo.png';
+                            const cpLogo = (window.HUB_CONFIG && (window.HUB_CONFIG.companyLogoUrlCP || window.HUB_CONFIG.cpLogoUrl)) || 'http://127.0.0.1:54321/storage/v1/object/public/Espacios/logocp.png';
+
+                            function cardHTML(app) {
+                                const colorKey = app.color || 'gray';
+                                const isCPCard = colorKey === 'cp';
+
+                                const textColor = isCPCard ? 'text-brand-cp' : getTextColorClass(colorKey);
+                                const bgColor   = isCPCard ? 'bg-yellow-50'   : getBgColorClass(colorKey);
+                                const cardClass = 'module-card ' + (isCPCard ? 'cp ' : '') + 'bg-white rounded-2xl p-6 relative overflow-hidden group cursor-pointer block';
+
+                                const iconHTML = app.logoUrl
+                                    ? `<img src="${app.logoUrl}" alt="${app.name || ''}" class="h-8 object-contain" />`
+                                    : `<i class="fa-solid ${app.icon || 'fa-cube'}"></i>`;
+
+                                return `
+                                <a href="${app.url_path || '#'}" class="${cardClass}">
+                                    <div class="absolute -right-6 -bottom-6 w-24 h-24 rounded-full opacity-10 ${bgColor} group-hover:scale-150 transition-transform duration-500 ease-out"></div>
+                                    <div class="relative z-10 flex flex-col h-full justify-between">
+                                        <div>
+                                            <div class="flex justify-between items-start mb-6">
+                                                <div class="module-icon w-12 h-12 rounded-xl ${bgColor} flex items-center justify-center text-xl ${textColor}">${iconHTML}</div>
+                                            </div>
+                                            <h3 class="font-black text-lg text-gray-800 mb-2">${app.name || ''}</h3>
+                                            <p class="text-sm text-gray-500 font-medium leading-relaxed">${app.description || ''}</p>
+                                        </div>
+                                        <div class="mt-6 flex items-center justify-between">
+                                            <span class="text-xs font-black uppercase tracking-widest ${textColor}">Abrir</span>
+                                            <i class="fa-solid fa-arrow-right text-gray-300 group-hover:text-gray-400 transition"></i>
+                                        </div>
+                                    </div>
+                                </a>`;
+                            }
+
+                            function buildModules(prefix, colorKey) {
+                                return [
+                                    { name: 'Catálogo',  description: 'Catálogo y cotización de conceptos.', icon: 'fa-cart-shopping', url_path: `${prefix}/catalog.html`,  color: colorKey },
+                                    { name: 'Órdenes',   description: 'Gestión de órdenes y seguimiento.',   icon: 'fa-clipboard-list', url_path: `${prefix}/orders.html`,   color: colorKey },
+                                    { name: 'Agenda',   description: 'Calendario y agenda de entregas.',    icon: 'fa-calendar-days', url_path: `${prefix}/agenda.html`,   color: colorKey },
+                                    { name: 'Contratos',description: 'Plantillas y generación de contratos.',icon:'fa-file-signature', url_path: `${prefix}/contracts.html`, color: colorKey },
+                                    { name: 'Facturas', description: 'Gestión de facturación y recibos.',   icon: 'fa-file-invoice-dollar', url_path: `${prefix}/invoices.html`, color: colorKey },
+                                    { name: 'Reportes', description: 'Reportes y métricas del cotizador.',  icon: 'fa-chart-pie',     url_path: `${prefix}/reports.html`,  color: colorKey },
+                                ];
+                            }
+
+                            grid.innerHTML = '';
+
+                            // Admin (o usuario con ambos tenants): muestra SOLO 2 tarjetas de cotizadores
+                            if (isAdmin || (hasPM && hasCP)) {
+                                const cotizadores = [
+                                    { name: 'Cotizador - Plaza Mayor', description: 'Acceso al cotizador de Plaza Mayor.', icon: 'fa-store', url_path: 'cotizador/catalog.html', color: 'red', logoUrl: pmLogo },
+                                    { name: 'Cotizador - Casa de Piedra', description: 'Acceso al cotizador de Casa de Piedra.', icon: 'fa-gem', url_path: 'cotizadorcp/catalog.html', color: 'cp', logoUrl: cpLogo },
+                                ];
+                                cotizadores.forEach(app => grid.innerHTML += cardHTML(app));
+                                return;
+                            }
+
+                            // Solo Plaza Mayor: muestra módulos individuales
+                            if (hasPM) {
+                                buildModules('cotizador', 'red').forEach(app => grid.innerHTML += cardHTML(app));
+                                return;
+                            }
+
+                            // Solo Casa de Piedra: muestra módulos individuales con color CP
+                            if (hasCP) {
+                                buildModules('cotizadorcp', 'cp').forEach(app => grid.innerHTML += cardHTML(app));
+                                return;
+                            }
+
+                            // Sin acceso
+                            grid.innerHTML = `
+                                <div class="col-span-full flex flex-col items-center justify-center text-gray-400 py-20 animate-enter">
+                                    <i class="fa-solid fa-folder-open text-6xl mb-4 text-gray-200"></i>
+                                    <p class="font-bold text-lg">Sin módulos asignados</p>
+                                    <p class="text-xs">Contacta al administrador del sistema.</p>
+                                </div>`;
+                            return;
+                        }
+
+            const profile = preloadedProfile; 
+            const userRole = (profile?.role || 'usuario').toLowerCase().trim();
+
+            const { data: roleData } = await hubSupabase.from('roles').select('allowed_modules').eq('name', userRole).single();
+            let allowedModulesIds = userRole === 'admin' ? ['*'] : (roleData?.allowed_modules?.map(id => Number(id)) || []); 
+
+            const { data: allModules } = await hubSupabase.from('modules').select('*').eq('active', true).order('orden', { ascending: true });
+
+            const filteredModules = allModules ? allModules.filter(module => allowedModulesIds.includes('*') || allowedModulesIds.includes(module.id)) : [];
+
+            grid.innerHTML = '';
+            if (filteredModules.length === 0) {
+                grid.innerHTML = `
+                <div class="col-span-full flex flex-col items-center justify-center text-gray-400 py-20 animate-enter">
+                    <i class="fa-solid fa-folder-open text-6xl mb-4 text-gray-200"></i>
+                    <p class="font-bold text-lg">Sin módulos asignados</p>
+                    <p class="text-xs">Contacta al administrador del sistema.</p>
+                </div>`;
+                return;
+            }
+
+            filteredModules.forEach(app => {
+                const colorKey = app.color || 'gray'; 
+                const borderColor = getBorderColorClass(colorKey);
+                const textColor = getTextColorClass(colorKey);
+                const bgColor = getBgColorClass(colorKey);
+
+                grid.innerHTML += `
+                <a href="${app.url_path || '#'}" class="module-card bg-white rounded-2xl p-6 relative overflow-hidden group cursor-pointer block">
+                    <div class="absolute -right-6 -bottom-6 w-24 h-24 rounded-full ${bgColor} opacity-50 group-hover:scale-150 transition-transform duration-500 ease-out"></div>
+                    <div class="relative z-10 flex flex-col h-full justify-between">
+                        <div class="flex justify-between items-start mb-6">
+                            <div class="module-icon w-12 h-12 rounded-xl ${bgColor} flex items-center justify-center text-xl ${textColor} transition-all duration-300 shadow-sm">
+                                <i class="${app.icon || 'fa-solid fa-cube'}"></i>
+                            </div>
+                            <div class="w-8 h-8 rounded-full border border-gray-100 flex items-center justify-center text-gray-300 group-hover:border-brand-red group-hover:text-brand-red transition-colors bg-white">
+                                <i class="fa-solid fa-arrow-right -rotate-45 group-hover:rotate-0 transition-transform duration-300"></i>
+                            </div>
+                        </div>
+                        <div>
+                            <h3 class="text-xl font-black text-gray-800 mb-2 leading-tight group-hover:text-brand-red transition-colors">${app.name || 'Sin Título'}</h3>
+                            <p class="text-xs text-gray-500 font-medium line-clamp-2 leading-relaxed">${app.description || 'Acceso directo al módulo del sistema.'}</p>
+                        </div>
+                    </div>
+                </a>`;
+            });
+        }
+
+        // --- SISTEMA DE NOTIFICACIONES ---
+        function getManualLink(type, originalLink) {
+            const t = (type || '').toLowerCase();
+            const pathPrefix = './'; 
+
+            if (t.includes('calendar')) return pathPrefix + 'calendar/index.html';
+            if (t.includes('ticket')) return pathPrefix + 'tickets/index.html';
+            if (t.includes('orden') || t.includes('order')) return pathPrefix + 'cotizador/orders.html';
+            if (t.includes('cotiza') || t.includes('catalog')) return pathPrefix + 'cotizador/catalog.html';
+            if (t.includes('fina')) return pathPrefix + 'finanzas/index.html';
+            
+            return originalLink || '#';
+        }
+
+        async function loadNotifications(userId) {
+            hubSupabase.channel('dash-notif-v1')
+                .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'hub_notifications', filter: `user_id=eq.${userId}` }, 
+                () => { fetchNotifs(userId); playSound(); })
+                .subscribe();
+
+            await fetchNotifs(userId);
+        }
+
+        async function fetchNotifs(userId) {
+            const { data } = await hubSupabase.from('hub_notifications')
+                .select('*')
+                .eq('user_id', userId)
+                .order('created_at', { ascending: false })
+                .limit(10);
+            renderNotifs(data || []);
+        }
+
+        function renderNotifs(data) {
+            const list = document.getElementById('dash-notif-list');
+            const badge = document.getElementById('dash-badge');
+            
+            list.innerHTML = '';
+            
+            if (data.length > 0) {
+                badge.innerText = data.length;
+                badge.classList.remove('hidden');
+                
+                data.forEach(n => {
+                    const sourceType = n.source_app || n.type || 'system';
+                    let icon = 'fa-bell text-gray-400'; let bgIcon = 'bg-gray-50';
+                    
+                    if (sourceType.includes('calendar')) { icon = 'fa-calendar text-blue-500'; bgIcon = 'bg-blue-50'; }
+                    else if (sourceType.includes('ticket')) { icon = 'fa-ticket text-orange-500'; bgIcon = 'bg-orange-50'; }
+                    else if (sourceType.includes('finanzas') || sourceType.includes('order')) { icon = 'fa-file-invoice-dollar text-brand-red'; bgIcon = 'bg-red-50'; }
+                    
+                    const smartLink = getManualLink(sourceType, n.link);
+
+                    list.innerHTML += `
+                    <div class="p-4 hover:bg-gray-50 transition cursor-pointer flex gap-3 items-start border-b border-gray-50 last:border-0 relative group" onclick="window.location.href='${smartLink}'">
+                        <div class="w-8 h-8 rounded-full ${bgIcon} flex items-center justify-center shrink-0 mt-0.5">
+                            <i class="fa-solid ${icon}"></i>
+                        </div>
+                        <div class="flex-grow">
+                            <p class="text-xs font-bold text-gray-800 mb-0.5">${n.title}</p>
+                            <p class="text-[11px] text-gray-500 leading-snug">${n.message}</p>
+                            <span class="text-[9px] text-gray-300 font-mono mt-1 block">${new Date(n.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                        </div>
+                        <button onclick="event.stopPropagation(); window.deleteNotif('${n.id}')" class="absolute top-2 right-2 text-gray-300 hover:text-red-500 p-2 opacity-0 group-hover:opacity-100 transition" title="Borrar notificación">
+                            <i class="fa-solid fa-times"></i>
+                        </button>
+                    </div>`;
+                });
+            } else {
+                badge.classList.add('hidden');
+                list.innerHTML = `
+                <div class="p-8 text-center flex flex-col items-center">
+                    <div class="w-10 h-10 bg-gray-50 rounded-full flex items-center justify-center mb-2">
+                        <i class="fa-regular fa-bell-slash text-gray-300"></i>
+                    </div>
+                    <p class="text-xs text-gray-400 font-medium">Todo al día</p>
+                </div>`;
+            }
+        }
+
+        // --- FUNCIONES GLOBALES (Para onclick) ---
+        function toggleDashboardNotifs() {
+            const drop = document.getElementById('dash-notif-dropdown');
+            drop.classList.toggle('hidden');
+        }
+
+        window.deleteNotif = async function(id) {
+            if(currentUser) {
+                await hubSupabase.from('hub_notifications').delete().eq('id', id);
+                fetchNotifs(currentUser.id);
+            }
+        }
+
+        async function clearAllNotifs() {
+            if(currentUser && confirm('¿Estás seguro de borrar todas las notificaciones?')) {
+                await hubSupabase.from('hub_notifications').delete().eq('user_id', currentUser.id);
+                fetchNotifs(currentUser.id);
+            }
+        }
+
+        async function dashboardLogout() {
+            localStorage.removeItem('hub_user_cache_name');
+            localStorage.removeItem('hub_user_cache_email');
+            localStorage.removeItem('hub_user_cache_role');
+            await hubSupabase.auth.signOut();
+            window.location.reload();
+        }
+
+        function playSound() {
+            const audio = new Audio('../assets/sfx/notify.wav'); 
+            audio.volume = 0.2; 
+            audio.play().catch(()=>{});
+        }
+    </script>
+</body>
+</html>

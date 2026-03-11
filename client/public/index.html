@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<!-- DOC: client\public\index.html | Proposito: Vista del sistema de cotizacion. | Ver docs/10-funcionamiento-general-del-codigo.txt -->
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Portales de Cotización</title>
+    
+    <script src="assets/libs/js/tailwindcss.js"></script>
+    <link href="assets/libs/css/all.min.css" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700;800&family=Playfair+Display:wght@400;500;600;700;900&display=swap" rel="stylesheet">
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { 
+                        sans: ['"Montserrat"', 'sans-serif'],
+                        serif: ['"Playfair Display"', 'serif']
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-[#f0f0f0] min-h-screen flex flex-col items-center justify-center p-6 relative overflow-hidden">
+
+    <div class="absolute top-0 left-0 w-full h-96 bg-gradient-to-b from-gray-200 to-transparent -z-10"></div>
+
+    <div class="text-center mb-12 relative z-10">
+        <h1 class="text-sm font-bold text-gray-400 tracking-[0.3em] uppercase mb-2">Portal de Servicios</h1>
+        <h2 class="text-3xl md:text-4xl font-serif text-gray-800">Selecciona un Recinto</h2>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl w-full relative z-10">
+        
+        <a href="public_plazamayor.html" class="group bg-white rounded-3xl p-10 shadow-lg hover:shadow-2xl hover:-translate-y-2 transition-all duration-500 flex flex-col items-center justify-center text-center border-t-[5px] border-[#cc0000]">
+            <div class="h-24 flex items-center justify-center mb-6">
+                <img src="assets/img/logo.png" alt="Plaza Mayor" class="max-h-full object-contain filter grayscale group-hover:filter-none transition-all duration-500 opacity-70 group-hover:opacity-100" onerror="this.outerHTML='<h3 class=\'text-2xl font-bold text-[#cc0000]\'>Plaza Mayor</h3>'">
+            </div>
+            <h3 class="text-xl font-bold text-gray-800 mb-2">Plaza Mayor</h3>
+            <p class="text-xs text-gray-500 uppercase tracking-widest font-medium">Espacios Comerciales</p>
+            <div class="mt-8 w-12 h-12 rounded-full bg-gray-50 text-[#cc0000] flex items-center justify-center group-hover:bg-[#cc0000] group-hover:text-white transition-colors duration-300">
+                <i class="fas fa-arrow-right"></i>
+            </div>
+        </a>
+
+        <a href="public_casadepiedra.html" class="group bg-white rounded-3xl p-10 shadow-lg hover:shadow-2xl hover:-translate-y-2 transition-all duration-500 flex flex-col items-center justify-center text-center border-t-[5px] border-[#deac07]">
+            <div class="h-24 flex items-center justify-center mb-6">
+                <img src="assets/img/logocp.png" alt="Casa de Piedra" class="max-h-full object-contain filter grayscale group-hover:filter-none transition-all duration-500 opacity-70 group-hover:opacity-100" onerror="this.outerHTML='<h3 class=\'text-2xl font-serif text-[#deac07]\'>Casa de Piedra</h3>'">
+            </div>
+            <h3 class="text-xl font-serif font-bold text-gray-800 mb-2">Casa de Piedra</h3>
+            <p class="text-xs text-gray-500 uppercase tracking-widest font-medium">Salones y Eventos</p>
+            <div class="mt-8 w-12 h-12 rounded-full bg-gray-50 text-[#deac07] flex items-center justify-center group-hover:bg-[#deac07] group-hover:text-white transition-colors duration-300">
+                <i class="fas fa-arrow-right"></i>
+            </div>
+        </a>
+
+    </div>
+
+    <div class="mt-16 text-center relative z-10">
+        <p class="text-[10px] text-gray-400 tracking-[0.2em] uppercase font-light">&copy; 2026 Sistema Central de Cotizaciones.</p>
+    </div>
+
+</body>
+</html>

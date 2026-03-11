@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Contrato de Espacios Publicitarios - Plaza Mayor</title>
+    <style>
+        body {
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            line-height: 1.5;
+            color: #2c3e50;
+            margin: 0;
+            padding: 30px;
+            background-color: #f8f9fa;
+        }
+        .contract-wrapper {
+            max-width: 900px;
+            margin: auto;
+            background: #ffffff;
+            padding: 60px;
+            border: 1px solid #e1e4e8;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        }
+        .header-main {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            border-bottom: 3px solid #1a252f;
+            padding-bottom: 20px;
+            margin-bottom: 30px;
+        }
+        .brand-name {
+            font-size: 24px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #1a252f;
+        }
+        .doc-type {
+            text-align: right;
+            font-size: 0.85em;
+            color: #7f8c8d;
+        }
+        .summary-box {
+            background: #fdfdfd;
+            border: 1px border #eee;
+            margin: 20px 0;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            font-size: 0.9em;
+        }
+        h2 {
+            font-size: 1.1em;
+            text-transform: uppercase;
+            background: #f1f4f6;
+            padding: 8px 15px;
+            margin-top: 25px;
+            border-left: 4px solid #1a252f;
+        }
+        .data-grid {
+            width: 100%;
+            margin: 15px 0;
+            border-collapse: collapse;
+        }
+        .data-grid td {
+            padding: 10px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .label {
+            font-weight: bold;
+            width: 35%;
+            color: #34495e;
+        }
+        .clause {
+            font-size: 0.95em;
+            text-align: justify;
+            margin-bottom: 12px;
+        }
+        .highlight {
+            font-weight: 600;
+            color: #000;
+        }
+        .footer-signatures {
+            margin-top: 50px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 50px;
+            text-align: center;
+        }
+        .signature-box {
+            margin-top: 40px;
+        }
+        .line {
+            border-top: 1px solid #000;
+            margin-bottom: 10px;
+        }
+        @media print {
+            body { background: none; padding: 0; }
+            .contract-wrapper { box-shadow: none; border: none; width: 100%; padding: 20px; }
+            .header-main { border-bottom-color: #000; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="contract-wrapper">
+    <div class="header-main">
+        <div class="brand-name">Plaza Mayor<br><small style="font-size: 0.5em; vertical-align: middle;">MKT & PUBLICIDAD</small></div>
+        <div class="doc-type">
+            <strong>CONTRATO DE EXHIBICIÓN PUBLICITARIA</strong><br>
+            Folio: {{NUM_CONTRATO}}<br>
+            Orden: {{NUM_ORDEN}}
+        </div>
+    </div>
+
+    <div class="summary-box">
+        <div><strong>Fecha de Contratación:</strong> {{FECHA_HOY}}</div>
+        <div style="text-align: right;"><strong>Vigencia:</strong> {{FECHA_INICIO}} al {{FECHA_FIN}}</div>
+    </div>
+
+    <section>
+        <h2>1. Datos del Anunciante</h2>
+        <table class="data-grid">
+            <tr>
+                <td class="label">Razón Social:</td>
+                <td>{{CLIENTE}}</td>
+            </tr>
+            <tr>
+                <td class="label">R.F.C:</td>
+                <td>{{RFC}}</td>
+            </tr>
+            <tr>
+                <td class="label">Contacto / Email:</td>
+                <td>{{EMAIL}}</td>
+            </tr>
+            <tr>
+                <td class="label">Teléfono:</td>
+                <td>{{TELEFONO}}</td>
+            </tr>
+        </table>
+    </section>
+
+    <section>
+        <h2>2. Especificaciones del Espacio</h2>
+        <table class="data-grid">
+            <tr>
+                <td class="label">Ubicación / Espacio:</td>
+                <td><span class="highlight">{{ESPACIO}}</span></td>
+            </tr>
+            <tr>
+                <td class="label">Clave de Inventario:</td>
+                <td>{{CLAVE}}</td>
+            </tr>
+            <tr>
+                <td class="label">Inversión Total:</td>
+                <td><span class="highlight">{{MONTO_TOTAL}}</span></td>
+            </tr>
+        </table>
+    </section>
+
+    <section>
+        <h2>3. Condiciones Generales</h2>
+        <div class="clause">
+            <strong>Instalación:</strong> El anunciante es responsable de entregar el arte/material publicitario con al menos 72 horas de antelación al inicio de la vigencia ({{FECHA_INICIO}}). Plaza Mayor se reserva el derecho de rechazar contenidos que atenten contra la moral o la imagen de la plaza.
+        </div>
+        <div class="clause">
+            <strong>Mantenimiento:</strong> Plaza Mayor se compromete a mantener el espacio en óptimas condiciones de limpieza e iluminación. En caso de fallas técnicas en pantallas digitales, el tiempo perdido será compensado al final del periodo contratado.
+        </div>
+        <div class="clause">
+            <strong>Responsabilidad:</strong> El anunciante garantiza que posee los derechos de propiedad intelectual del contenido exhibido, deslindando a Plaza Mayor de cualquier conflicto legal con terceros.
+        </div>
+    </section>
+
+    <div class="footer-signatures">
+        <div class="signature-box">
+            <div class="line"></div>
+            <strong>PLAZA MAYOR</strong><br>
+            Departamento Comercial
+        </div>
+        <div class="signature-box">
+            <div class="line"></div>
+            <strong>{{CLIENTE}}</strong><br>
+            El Anunciante
+        </div>
+    </div>
+    
+    <div style="margin-top: 30px; font-size: 0.7em; color: #95a5a6; text-align: center;">
+        Este documento es una orden de servicio vinculante. Fecha de impresión: {{FECHA_HOY}}.
+    </div>
+</div>
+
+</body>
+</html>
