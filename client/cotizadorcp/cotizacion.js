@@ -140,7 +140,7 @@ window.addEventListener('click', function(e) {
 });
 
 document.addEventListener('DOMContentLoaded', async () => {
-    if (window.supabase) { if(!window.finSupabase) window.finSupabase = window.supabase.createClient(SB_URL, SB_KEY, { db: { schema: FIN_SCHEMA } }); if(!window.globalSupabase) window.globalSupabase = window.supabase.createClient(SB_URL, SB_KEY); }
+    if (window.PB_CLIENT) { if(!window.finSupabase) window.finSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY, { db: { schema: FIN_SCHEMA } }); if(!window.globalSupabase) window.globalSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY); }
     const { data: { session } } = await window.globalSupabase.auth.getSession(); if (!session) return;
     const { data: profile } = await window.globalSupabase.from('profiles').select('*').eq('id', session.user.id).single();
     const userRole = String(profile?.role || '').toLowerCase().trim(); const roleHasAccess = (userRole === 'admin') || (userRole === 'casa_de_piedra') || (userRole === 'ambos');
@@ -240,7 +240,7 @@ window.addHorarioRow = function(data = null) {
 window.openManagerModal = function(id){
     if (!myPermissions.catalog_manage) return window.showToast("No tienes permisos.", "error"); 
     document.getElementById('mgr-id').value = id || ''; const container = document.getElementById('mgr-taxes-list'); document.querySelectorAll('.day-block-check').forEach(cb => cb.checked = false);
-    if(container) { container.innerHTML = ''; let currentTaxes = []; if(id) { const s = allSpaces.find(x => x.id === id); currentTaxes = parseIds(s.impuestos_ids); } dbTaxes.forEach(t => { const isChecked = currentTaxes.some(cid => String(cid) === String(t.id)) ? 'checked' : ''; container.innerHTML += `<label class="flex items-center gap-2 p-2 border rounded bg-white hover:bg-gray-50 cursor-pointer"><input type="checkbox" value="${t.id}" class="tax-check accent-brand-red cursor-pointer" ${isChecked}><span class="text-[10px] font-bold uppercase text-gray-600 cursor-pointer select-none">${t.nombre} (${t.porcentaje}%)</span></label>`; }); }
+    if(container) { container.innerHTML = ''; let currentTaxes = []; if(id) { const s = allSpaces.find(x => x.id === id); currentTaxes = parseIds((s && (s.impuestos_ids || s.impuestos)) || []); } dbTaxes.forEach(t => { const isChecked = currentTaxes.some(cid => String(cid) === String(t.id)) ? 'checked' : ''; container.innerHTML += `<label class="flex items-center gap-2 p-2 border rounded bg-white hover:bg-gray-50 cursor-pointer"><input type="checkbox" value="${t.id}" class="tax-check accent-brand-red cursor-pointer" ${isChecked}><span class="text-[10px] font-bold uppercase text-gray-600 cursor-pointer select-none">${t.nombre} (${t.porcentaje}%)</span></label>`; }); }
 
     const rangesContainer = document.getElementById('mgr-ranges-container'); rangesContainer.innerHTML = '';
     const horariosContainer = document.getElementById('mgr-horarios-container'); horariosContainer.innerHTML = '';
@@ -434,7 +434,7 @@ window.updateQuoteCalculation = function() {
     if(currentSpace.ajuste_tipo === 'aumento') subtotal += subtotal * (currentSpace.ajuste_porcentaje/100);
     if(currentSpace.ajuste_tipo === 'descuento') subtotal -= subtotal * (currentSpace.ajuste_porcentaje/100);
 
-    let taxAmt = 0; const sTaxes = parseIds(currentSpace.impuestos_ids);
+    let taxAmt = 0; const sTaxes = parseIds(currentSpace.impuestos_ids || currentSpace.impuestos);
     if(sTaxes.length && dbTaxes.length) { sTaxes.forEach(tid => { const t = dbTaxes.find(x=>String(x.id)===String(tid)); if(t) { const rate = t.porcentaje > 1 ? t.porcentaje/100 : t.porcentaje; taxAmt += subtotal * rate; } }); }
 
     currentPricing = { subtotal: subtotal, taxes: taxAmt, final: subtotal + taxAmt };
@@ -463,7 +463,7 @@ window.generatePDF = async function() {
     if(hrsE > 0) conceptosB2B.push({ description: `Horas Extras (${hrsE} hrs)`, amount: (hrsE * pHora), value: (hrsE * pHora), unit: 'fixed', type: 'b2b_horas', meta: { hours: hrsE, unit_price: pHora } });
     adminSelectedConcepts.forEach(c => conceptosB2B.push(c));
 
-    const payload = { cliente_id: (document.getElementById('cli-id') ? (document.getElementById('cli-id').value || null) : null), espacio_id: currentSpace.id, espacio_nombre: currentSpace.nombre, espacio_clave: currentSpace.clave, cliente_nombre: cli.name, cliente_rfc: cli.rfc, cliente_contacto: cli.phone, cliente_email: cli.email, fecha_inicio: document.getElementById('date-start').value, fecha_fin: document.getElementById('date-end').value, precio_final: currentPricing.final, desglose_precios: { subtotal_antes_impuestos: currentPricing.subtotal, impuestos_detalle: parseIds(currentSpace.impuestos_ids), tax_total: currentPricing.taxes }, conceptos_adicionales: conceptosB2B, status: 'pendiente', creado_por: (await window.globalSupabase.auth.getUser()).data.user.id, personas: guests };
+    const payload = { cliente_id: (document.getElementById('cli-id') ? (document.getElementById('cli-id').value || null) : null), espacio_id: currentSpace.id, espacio_nombre: currentSpace.nombre, espacio_clave: currentSpace.clave, cliente_nombre: cli.name, cliente_rfc: cli.rfc, cliente_contacto: cli.phone, cliente_email: cli.email, fecha_inicio: document.getElementById('date-start').value, fecha_fin: document.getElementById('date-end').value, precio_final: currentPricing.final, desglose_precios: { subtotal_antes_impuestos: currentPricing.subtotal, impuestos_detalle: parseIds(currentSpace.impuestos_ids || currentSpace.impuestos), tax_total: currentPricing.taxes }, conceptos_adicionales: conceptosB2B, status: 'pendiente', creado_por: (await window.globalSupabase.auth.getUser()).data.user.id, personas: guests };
     
     await window.finSupabase.from('cotizaciones').insert(payload);
     window.showToast("Cotización Creada"); setTimeout(()=>window.location.href='orders.html', 1000); 
@@ -1452,7 +1452,7 @@ window.updateQuoteCalculation = function(){
             if(space.ajuste_tipo === 'descuento') subSpace -= subSpace * ((parseFloat(space.ajuste_porcentaje) || 0) / 100);
         }
         let spaceTaxTotal = 0;
-        const taxIds = parseIds(space.impuestos_ids);
+        const taxIds = parseIds(space.impuestos_ids || space.impuestos);
         taxIds.forEach(tid => { const t = dbTaxes.find(x => String(x.id) === String(tid)); if(t){ const rate = parseFloat(t.porcentaje || 0) > 1 ? (parseFloat(t.porcentaje) / 100) : parseFloat(t.porcentaje || 0); spaceTaxTotal += subSpace * rate; } });
         subtotal += subSpace; taxesTotal += spaceTaxTotal;
         spacesPricing.push({ spaceId: space.id, spaceName: space.nombre, spaceKey: space.clave, startDate: cfg.startDate, endDate: cfg.endDate, guests, maxCapacity, capacityOk, blockedOk, horarioValue: cfg.horarioValue, horarioText: cfg.horarioText || cfg.horarioValue || '', horarioCost, premontajeDays: parseInt(cfg.premontajeDays, 10) || 0, premontajeCourtesyDays: parseInt(cfg.premontajeCourtesyDays, 10) || 0, premontajeDates: __cpSafeArray(cfg.premontajeDates), premontajeCost: prem.total, premontajeBreakdown: prem.breakdown, horasExtra: extraHours, horasExtraCourtesy: courtesyHours, horasExtraBillable: billableHours, horasExtraUnit: horaUnit, horasExtraCost: horasCost, subtotalBeforeTax: subSpace, taxIds, taxTotal: spaceTaxTotal });
@@ -1601,4 +1601,5 @@ window.generatePDF = async function(){
     window.showToast("Cotización Creada");
     setTimeout(()=>window.location.href='orders.html', 1000);
 }
+
 

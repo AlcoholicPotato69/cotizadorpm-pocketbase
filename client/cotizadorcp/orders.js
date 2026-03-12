@@ -43,6 +43,60 @@ async function loadClientProfilesForOrderModal() {
 const _p = (window.location.pathname || '') + ' ' + (window.location.href || '');
 const _isCP = /\/cotizadorcp(\/|$)/.test(window.location.pathname || '') || _p.includes('cotizadorcp');
 const COMPANY_LOGO_URL = _isCP ? ((window.HUB_CONFIG && (window.HUB_CONFIG.companyLogoUrlCP || window.HUB_CONFIG.cpLogoUrl)) || 'http://127.0.0.1:54321/storage/v1/object/public/Espacios/logocp.png') : ((window.HUB_CONFIG && window.HUB_CONFIG.companyLogoUrl) || 'http://127.0.0.1:54321/storage/v1/object/public/Espacios/logo.png');
+let __CP_LETTERHEAD_URL = (window.HUB_CONFIG && (window.HUB_CONFIG.cpPdfLetterheadUrl || window.HUB_CONFIG.pdfLetterheadCasaPiedraUrl)) || '../public/assets/img/cp-letterhead-default.png';
+const __PDF_PAGE_WIDTH_PX = 816;
+const __PDF_PAGE_HEIGHT_PX = 1056;
+const __LETTERHEAD_DESIGN_WIDTH_PX = 1275;
+const __LETTERHEAD_DESIGN_HEIGHT_PX = 1650;
+const __LETTERHEAD_MARGINS_DESIGN_PX = { top: 202.2, right: 61.1, bottom: 113.38, left: 61.1 };
+const __CP_CFG_LETTERHEAD_KEY = 'pdf_letterhead_path';
+const __CP_LETTERHEAD_PATH = 'membretes_pdf';
+
+function __orderCssSafeUrl(url) {
+    return String(url || '')
+        .replace(/\\/g, '/')
+        .replace(/'/g, "\\'")
+        .replace(/\)/g, '\\)');
+}
+
+function __orderBasename(path) {
+    const normalized = String(path || '').replace(/\\/g, '/');
+    const parts = normalized.split('/').filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : '';
+}
+
+function __orderLetterheadFrame() {
+    const sx = __PDF_PAGE_WIDTH_PX / __LETTERHEAD_DESIGN_WIDTH_PX;
+    const sy = __PDF_PAGE_HEIGHT_PX / __LETTERHEAD_DESIGN_HEIGHT_PX;
+    const top = __LETTERHEAD_MARGINS_DESIGN_PX.top * sy;
+    const right = __LETTERHEAD_MARGINS_DESIGN_PX.right * sx;
+    const bottom = __LETTERHEAD_MARGINS_DESIGN_PX.bottom * sy;
+    const left = __LETTERHEAD_MARGINS_DESIGN_PX.left * sx;
+    return {
+        top,
+        right,
+        bottom,
+        left,
+        width: __PDF_PAGE_WIDTH_PX - left - right,
+        height: __PDF_PAGE_HEIGHT_PX - top - bottom
+    };
+}
+
+function __orderWrapLetterheadPage(innerHtml, options = {}) {
+    const frame = __orderLetterheadFrame();
+    const baseWidth = Math.max(1, parseFloat(options.baseWidth) || __PDF_PAGE_WIDTH_PX);
+    const baseHeight = Math.max(1, parseFloat(options.baseHeight) || __PDF_PAGE_HEIGHT_PX);
+    const scale = Math.min(frame.width / baseWidth, frame.height / baseHeight);
+    const finalW = baseWidth * scale;
+    const finalH = baseHeight * scale;
+    const left = frame.left + ((frame.width - finalW) / 2);
+    const top = frame.top + ((frame.height - finalH) / 2);
+    const bgUrl = __orderCssSafeUrl(__CP_LETTERHEAD_URL);
+    const imageLayer = bgUrl
+        ? `<img src='${bgUrl}' crossorigin='anonymous' onerror='this.style.display=\"none\"' style='position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;'>`
+        : '';
+    return `<div style="position:relative;width:${__PDF_PAGE_WIDTH_PX}px;height:${__PDF_PAGE_HEIGHT_PX}px;box-sizing:border-box;overflow:hidden;background:#f5f5f5;">${imageLayer}<div style="position:absolute;left:${left.toFixed(2)}px;top:${top.toFixed(2)}px;width:${baseWidth}px;height:${baseHeight}px;transform:scale(${scale.toFixed(6)});transform-origin:top left;overflow:hidden;z-index:1;">${innerHtml}</div></div>`;
+}
 
 const SB_URL = window.HUB_CONFIG?.supabaseUrl || window.ENV?.SUPABASE_URL || '';
 const SB_KEY = window.HUB_CONFIG?.supabaseAnonKey || window.ENV?.SUPABASE_ANON_KEY || '';
@@ -67,6 +121,69 @@ const __ORDER_DATE_PICKER = { target: 'start', month: 0, year: 0, start: '', end
 const __ORDER_MONTAJE_PICKER = { month: 0, year: 0, start: '', end: '', reserved: new Set(), maxDate: '' };
 let __orderEventPickerCal = null;
 let __orderMontajePickerCal = null;
+
+function __cpNativeCotizaciones() {
+    return window.PB_SERVICES && window.PB_SERVICES.cotizaciones ? window.PB_SERVICES.cotizaciones : null;
+}
+
+async function __cpQuotesList(params) {
+    const svc = __cpNativeCotizaciones();
+    if (svc) {
+        try {
+            const out = await svc.list(params || {}, { schema: FIN_SCHEMA });
+            return { data: out.items || [], error: null };
+        } catch (error) {
+            return { data: null, error };
+        }
+    }
+    const query = window.finSupabase.from('cotizaciones').select('*');
+    if (params && params.filter && params.filter.indexOf('status = "aprobada"') !== -1) query.eq('status', 'aprobada');
+    if (params && params.sort) query.order(String(params.sort).replace('-', ''), { ascending: !String(params.sort).startsWith('-') });
+    const result = await query;
+    return { data: result.data || [], error: result.error || null };
+}
+
+async function __cpQuoteGetById(id) {
+    const svc = __cpNativeCotizaciones();
+    if (svc) {
+        try {
+            const data = await svc.get(id, { schema: FIN_SCHEMA });
+            return { data: data || null, error: null };
+        } catch (error) {
+            return { data: null, error };
+        }
+    }
+    const result = await window.finSupabase.from('cotizaciones').select('*').eq('id', id).maybeSingle();
+    return { data: result && result.data ? result.data : null, error: result && result.error ? result.error : null };
+}
+
+async function __cpQuotesUpdate(id, payload) {
+    const svc = __cpNativeCotizaciones();
+    if (svc) {
+        try {
+            await svc.update(id, payload || {}, { schema: FIN_SCHEMA });
+            return { error: null };
+        } catch (error) {
+            return { error };
+        }
+    }
+    const result = await window.finSupabase.from('cotizaciones').update(payload || {}).eq('id', id);
+    return { error: result && result.error ? result.error : null };
+}
+
+async function __cpQuotesDelete(id) {
+    const svc = __cpNativeCotizaciones();
+    if (svc) {
+        try {
+            await svc.remove(id, { schema: FIN_SCHEMA });
+            return { error: null };
+        } catch (error) {
+            return { error };
+        }
+    }
+    const result = await window.finSupabase.from('cotizaciones').delete().eq('id', id);
+    return { error: result && result.error ? result.error : null };
+}
 
 window.safeFormatDate = function(dateStr) { if (!dateStr) return '--'; const parts = dateStr.split('-'); if (parts.length !== 3) return dateStr; return `${parts[2]}/${parts[1]}/${parts[0]}`; };
 window.parseIds = function(v){ if(!v) return []; if(Array.isArray(v)) return v; if(typeof v === 'string'){ try { const parsed = JSON.parse(v); return Array.isArray(parsed) ? parsed : []; } catch(e){ return v.split(',').map(x=>x.trim()).filter(Boolean); } } return []; };
@@ -254,7 +371,29 @@ window.askCloseEditModal = function() {
     );
 };
 
-window.askDeleteOrder = function(id, e) { if(e) e.stopPropagation(); window.openConfirm("¿Eliminar cotización y TODOS sus archivos? Esta acción es irreversible.", async () => { try { window.showToast("Eliminando archivos...", "info"); const { data: files } = await window.globalSupabase.storage.from('documentos').list(`${id}`, { limit: 100 }); if (files && files.length > 0) { await window.globalSupabase.storage.from('documentos').remove(files.map(x => `${id}/${x.name}`)); } const { data: receiptFiles } = await window.globalSupabase.storage.from('documentos-cp').list(`${id}/recibos`); if (receiptFiles && receiptFiles.length > 0) { await window.globalSupabase.storage.from('documentos-cp').remove(receiptFiles.map(x => `${id}/recibos/${x.name}`)); } await window.finSupabase.from('cotizaciones').delete().eq('id', id); window.showToast("Cotización eliminada", "success"); window.loadOrders(); } catch (err) { window.showToast("Error: " + err.message, "error"); } }, true); };
+window.askDeleteOrder = function(id, e) {
+    if (e) e.stopPropagation();
+    window.openConfirm("¿Eliminar cotización y TODOS sus archivos? Esta acción es irreversible.", async () => {
+        try {
+            window.showToast("Eliminando archivos...", "info");
+            const prefix = String(id || "");
+            const { data: files } = await window.globalSupabase.storage.from('documentos-cp').list(prefix, { limit: 200 });
+            if (files && files.length > 0) {
+                await window.globalSupabase.storage.from('documentos-cp').remove(files.map(x => `${prefix}/${x.name}`));
+            }
+            const { data: receiptFiles } = await window.globalSupabase.storage.from('documentos-cp').list(`${prefix}/recibos`, { limit: 200 });
+            if (receiptFiles && receiptFiles.length > 0) {
+                await window.globalSupabase.storage.from('documentos-cp').remove(receiptFiles.map(x => `${prefix}/recibos/${x.name}`));
+            }
+            const { error } = await __cpQuotesDelete(id);
+            if (error) throw error;
+            window.showToast("Cotización eliminada", "success");
+            window.loadOrders();
+        } catch (err) {
+            window.showToast("Error: " + err.message, "error");
+        }
+    }, true);
+};
 
 window.addEventListener('click', function(e) {
     const editModal = document.getElementById('order-edit-modal');
@@ -277,9 +416,9 @@ window.addEventListener('click', function(e) {
 });
 
 document.addEventListener('DOMContentLoaded', async () => {
-    if (window.supabase) {
-        if(!window.finSupabase) window.finSupabase = window.supabase.createClient(SB_URL, SB_KEY, { db: { schema: FIN_SCHEMA } });
-        if(!window.globalSupabase) window.globalSupabase = window.supabase.createClient(SB_URL, SB_KEY);
+    if (window.PB_CLIENT) {
+        if(!window.finSupabase) window.finSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY, { db: { schema: FIN_SCHEMA } });
+        if(!window.globalSupabase) window.globalSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY);
     }
     const { data: { session } } = await window.globalSupabase.auth.getSession(); if (!session) return;
     
@@ -338,7 +477,16 @@ async function loadTaxes() { const { data } = await window.finSupabase.from('imp
 async function loadSpaces() { const { data } = await window.finSupabase.from('espacios').select('*'); allSpaces = data || []; }
 async function loadConcepts() { const { data } = await window.finSupabase.from('conceptos_catalogo').select('*').eq('activo', true); catalogConcepts = data || []; }
 
-window.loadOrders = async function() { const { data } = await window.finSupabase.from('cotizaciones').select('*').order('created_at', {ascending:false}); allOrders = data || []; renderOrdersTable(allOrders); };
+window.loadOrders = async function() {
+    const { data, error } = await __cpQuotesList({ sort: '-created_at' });
+    if (error) {
+        window.showToast(`No se pudieron cargar cotizaciones: ${error.message || error}`, 'error');
+        allOrders = [];
+    } else {
+        allOrders = data || [];
+    }
+    renderOrdersTable(allOrders);
+};
 
 function renderOrdersTable(data) {
     const t = document.getElementById('orders-table'); if(!t) return; t.innerHTML = ''; 
@@ -871,10 +1019,7 @@ async function __orderUploadApprovalSnapshotBlob(orderId, blob, formData = {}) {
     const path = `${id}/cotizacion_aprobada_${folioUnificado}.pdf`;
     const { error: upErr } = await window.globalSupabase.storage.from('documentos-cp').upload(path, blob, { upsert: true });
     if (upErr) throw upErr;
-    const { error: updErr } = await window.finSupabase
-        .from('cotizaciones')
-        .update({ status: 'aprobada', url_cotizacion_final: path })
-        .eq('id', id);
+    const { error: updErr } = await __cpQuotesUpdate(id, { status: 'aprobada', url_cotizacion_final: path });
     if (updErr) throw updErr;
     return { path, folioUnificado };
 }
@@ -890,7 +1035,7 @@ async function __orderFinalizePendingSnapshot(options = {}) {
     try {
         let order = allOrders.find(o => String(o.id) === orderId) || null;
         if (!order) {
-            const { data, error } = await window.finSupabase.from('cotizaciones').select('*').eq('id', orderId).maybeSingle();
+            const { data, error } = await __cpQuoteGetById(orderId);
             if (error || !data) throw (error || new Error('No se encontró cotización para snapshot.'));
             order = data;
         }
@@ -925,7 +1070,7 @@ async function __orderProcessSnapshotQueue() {
             try {
                 let order = allOrders.find(o => String(o.id) === String(orderId)) || null;
                 if (!order) {
-                    const { data, error } = await window.finSupabase.from('cotizaciones').select('*').eq('id', orderId).maybeSingle();
+                    const { data, error } = await __cpQuoteGetById(orderId);
                     if (error || !data) throw (error || new Error('No se encontró cotización en cola.'));
                     order = data;
                 }
@@ -1099,8 +1244,8 @@ window.processSaveOrder = async function(options = {}) {
             formData.numero_orden = sourceId.split('-')[0].toUpperCase();
         }
 
-        const { error } = await window.finSupabase.from('cotizaciones').update(formData).eq('id', orderId);
-        if (error) throw error; 
+        const { error } = await __cpQuotesUpdate(orderId, formData);
+        if (error) throw error;
         currentPreviewOrder = { ...currentPreviewOrder, ...formData, id: orderId };
         if (statusEl && statusEl.value !== String(formData.status || '')) statusEl.value = String(formData.status || '');
         __orderApplyStatusVisual();
@@ -1230,7 +1375,8 @@ window.confirmAndGeneratePurchaseOrder = async function() {
             const folioUnificado = currentPreviewOrder.numero_orden || currentPreviewOrder.id.split('-')[0].toUpperCase();
             const path = `${currentPreviewOrder.id}/orden_compra_${folioUnificado}.pdf`;
             await window.globalSupabase.storage.from('documentos-cp').upload(path, pdfBlob, { upsert: true });
-            await window.finSupabase.from('cotizaciones').update({ url_orden_compra: path, fecha_orden_compra: new Date().toISOString() }).eq('id', currentPreviewOrder.id);
+            const ocUpdate = await __cpQuotesUpdate(currentPreviewOrder.id, { url_orden_compra: path, fecha_orden_compra: new Date().toISOString() });
+            if (ocUpdate.error) throw ocUpdate.error;
             __orderBroadcastRefresh('purchase_order');
             const link = document.createElement('a');
             link.href = URL.createObjectURL(pdfBlob);
@@ -1264,7 +1410,20 @@ window.openDocsModal = function(id) {
     if (order.url_orden_compra) createBtn('Ver Orden de Compra', 'fa-solid fa-file-contract', 'purple', `window.openStoredDocument('${order.url_orden_compra}')`); else if(['aprobada', 'finalizada'].includes(order.status)) createBtn('Generar Orden de Compra', 'fa-solid fa-plus', 'purple', `window.previewOrderForGeneration('${order.id}')`); else list.innerHTML += `<div class="w-full px-4 py-3 rounded-xl border border-gray-100 bg-gray-50 flex items-center gap-3 mb-2 opacity-60"><i class="fa-solid fa-lock text-gray-400"></i><span class="text-xs font-bold text-gray-400">Orden de Compra (Pendiente)</span></div>`; 
     if (order.contrato_url) createBtn('Ver Contrato Firmado', 'fa-solid fa-file-signature', 'indigo', `window.openStoredDocument('${order.contrato_url}')`); else list.innerHTML += `<div class="w-full px-4 py-3 rounded-xl border border-gray-100 bg-gray-50 flex items-center gap-3 mb-2 opacity-60"><i class="fa-solid fa-signature text-gray-400"></i><span class="text-xs font-bold text-gray-400">Contrato (Pendiente Firma)</span></div>`; 
     if (order.factura_pdf_url) { createBtn('Ver Factura (PDF)', 'fa-solid fa-file-pdf', 'red', `window.openStoredDocument('${order.factura_pdf_url}')`); if(order.factura_xml_url) createBtn('Descargar XML', 'fa-solid fa-file-code', 'orange', `window.openStoredDocument('${order.factura_xml_url}')`); } else list.innerHTML += `<div class="w-full px-4 py-3 rounded-xl border border-gray-100 bg-gray-50 flex items-center gap-3 mb-2 opacity-60"><i class="fa-solid fa-file-invoice-dollar text-gray-400"></i><span class="text-xs font-bold text-gray-400">Factura (Pendiente)</span></div>`; 
-    if (order.historial_pagos?.length > 0) { const divider = document.createElement('div'); divider.className = 'border-t border-gray-100 my-2 pt-2 text-[10px] font-bold text-gray-400 uppercase text-center'; divider.innerText = 'Historial de Recibos'; list.appendChild(divider); order.historial_pagos.forEach((p, i) => createBtn(`Recibo #${i+1}`, 'fa-solid fa-receipt', 'green', `window.openStoredDocument('${p.file_path}')`)); } window.openModal('docs-modal');
+    if (order.historial_pagos?.length > 0) {
+        const divider = document.createElement('div');
+        divider.className = 'border-t border-gray-100 my-2 pt-2 text-[10px] font-bold text-gray-400 uppercase text-center';
+        divider.innerText = 'Historial de Recibos';
+        list.appendChild(divider);
+        let recNo = 0;
+        order.historial_pagos.forEach((p) => {
+            const type = String(p?.type || p?.tipo || '').toLowerCase();
+            const isConstancia = type === 'constancia_liquidacion' || p?.closed === true || p?.is_closure === true;
+            const label = isConstancia ? 'Constancia de Liquidación' : `Recibo #${++recNo}`;
+            const icon = isConstancia ? 'fa-solid fa-circle-check' : 'fa-solid fa-receipt';
+            createBtn(label, icon, 'green', `window.openStoredDocument('${p.file_path}')`);
+        });
+    } window.openModal('docs-modal');
 };
 
 window.openPDFPreview = function(id, type) { const o = allOrders.find(x => x.id === id); if(!o) return; currentPreviewOrder = { ...o, docType: type }; const content = window.getOrderHTML(o, type); const pdfContainer = document.getElementById('pdf-content'); const embedViewer = document.getElementById('doc-preview'); const btnDownload = document.getElementById('btn-download-preview'); pdfContainer.classList.remove('hidden'); embedViewer.classList.add('hidden'); pdfContainer.innerHTML = content; btnDownload.innerHTML = '<i class="fa-solid fa-download"></i> Descargar'; btnDownload.className = "bg-brand-red hover:bg-red-600 text-white px-5 py-2 rounded-full text-xs font-bold uppercase shadow-lg transition flex items-center gap-2"; btnDownload.onclick = window.downloadPDFFromPreview; window.openModal('preview-modal'); };
@@ -1295,9 +1454,17 @@ window.downloadPDFFromPreview = async function() {
     }
 };
 
+function __cpOrdersTransparentPdfHtml(html) {
+    return String(html || '')
+        .replace(/\bbg-(?:white|gray-\d{2,3}|red-\d{2,3}|green-\d{2,3}|blue-\d{2,3}|amber-\d{2,3}|purple-\d{2,3}|brand-red)\b/g, '')
+        .replace(/background:\s*#(?:[0-9a-f]{3,8});?/gi, 'background: transparent;')
+        .replace(/background:\s*rgba?\([^)]+\);?/gi, 'background: transparent;')
+        .replace(/\s{2,}/g, ' ');
+}
+
 window.getOrderHTML = function(o, type) { 
     const isOrder = type === 'order'; 
-    const logoImg = `<img src="${COMPANY_LOGO_URL}" class="h-16 object-contain" crossorigin="anonymous">`; 
+    const logoImg = ''; 
     const now = new Date(); const dateStr = now.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' }); const genDateTime = now.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'medium' }); let docTitle = isOrder ? "ORDEN DE COMPRA" : "COTIZACIÓN"; 
     
     const folioUnificado = o.numero_orden || o.id.split('-')[0].toUpperCase();
@@ -1305,7 +1472,7 @@ window.getOrderHTML = function(o, type) {
     const descHTML = isOrder ? '' : `<p class="text-[9px] text-gray-500 italic mt-0.5 truncate max-w-xs">${space?.descripcion || ''}</p>`;
     const footerHubHTML = `<div class="w-full text-center mt-10"><p class="text-[10px] text-gray-400 font-medium leading-tight">Generado el ${genDateTime}<br>a través de Marketing Hub</p></div>`; 
     
-    const renderHeader = (title) => `<div class="flex justify-between items-start border-b-4 border-brand-red pb-3 mb-2">${logoImg}<div class="text-right"><h1 class="text-2xl font-black text-gray-800 tracking-tighter uppercase">${title}</h1><p class="text-sm font-mono text-brand-red font-bold mt-1">FOLIO: ${folioUnificado}</p><p class="text-[10px] text-gray-500 mt-1">${dateStr}</p></div></div>`; 
+    const renderHeader = (title) => `<div class="flex justify-end items-start border-b-4 border-brand-red pb-3 mb-2">${logoImg}<div class="text-right"><h1 class="text-2xl font-black text-gray-800 tracking-tighter uppercase">${title}</h1><p class="text-sm font-mono text-brand-red font-bold mt-1">FOLIO: ${folioUnificado}</p><p class="text-[10px] text-gray-500 mt-1">${dateStr}</p></div></div>`; 
     
     let clientName = o.cliente_nombre || 'Cliente'; let clientRfc = o.cliente_rfc; let nameSizeClass = 'text-xl'; if (clientName.length > 35) nameSizeClass = 'text-xs'; else if (clientName.length > 25) nameSizeClass = 'text-sm'; 
     const guests = o.personas || 1;
@@ -1411,7 +1578,7 @@ window.getOrderHTML = function(o, type) {
             </div>
         </div>` : '';
 
-    let page1Content = `
+    const page1Raw = `
         <div style="height: 1054px; overflow: hidden; padding: 48px 64px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between;">
             <div>
                 ${renderHeader(docTitle)}
@@ -1436,11 +1603,11 @@ window.getOrderHTML = function(o, type) {
                 ${footerHubHTML}
             </div>
         </div>`;
+    let page1Content = __orderWrapLetterheadPage(page1Raw, { baseWidth: 816, baseHeight: 1054 });
 
     let page2Content = '';
     if (!isOrder) {
-        page2Content = `
-            <div class="html2pdf__page-break"></div>
+        const page2Raw = `
             <div style="height: 1054px; overflow: hidden; padding: 48px 64px; box-sizing: border-box;">
                 ${renderHeader("CONDICIONES GENERALES")}
                 <div class="text-xs text-gray-800 space-y-3 text-justify leading-relaxed mt-6">
@@ -1453,8 +1620,10 @@ window.getOrderHTML = function(o, type) {
                     <p><strong>Estacionamiento:</strong> Cortesía. Valet Parking se cotiza aparte con proveedor autorizado por Casa de Piedra.</p>
                 </div>
             </div>`;
+        page2Content = `<div class="html2pdf__page-break"></div>${__orderWrapLetterheadPage(page2Raw, { baseWidth: 816, baseHeight: 1054 })}`;
     }
-    return `<div style="width:816px;margin:0;padding:0;box-sizing:border-box;background:#ffffff;">${page1Content}${page2Content}</div>`; 
+    const raw = `<div style="width:816px;margin:0;padding:0;box-sizing:border-box;background:#ffffff;">${page1Content}${page2Content}</div>`;
+    return __cpOrdersTransparentPdfHtml(raw); 
 };
 
 // =========================================================================
@@ -1605,19 +1774,21 @@ function __orderDefaultTaxIds(space) {
 async function __orderLoadPremontajePctConfig() {
     __orderPremontajePct = 25;
     __orderHoraExtraCfg = { mode: 'percent', value: 100, allowCustom: true };
+    __CP_LETTERHEAD_URL = (window.HUB_CONFIG && (window.HUB_CONFIG.cpPdfLetterheadUrl || window.HUB_CONFIG.pdfLetterheadCasaPiedraUrl)) || '../public/assets/img/cp-letterhead-default.png';
     try {
         const { data, error } = await window.finSupabase
             .from('configuracion')
             .select('clave,valor_json,valor_num')
-            .in('clave', ['premontaje_pct', 'hora_extra_cfg']);
+            .in('clave', ['premontaje_pct', 'hora_extra_cfg', __CP_CFG_LETTERHEAD_KEY]);
         if (error) throw error;
-        (Array.isArray(data) ? data : []).forEach(row => {
+        const rows = Array.isArray(data) ? data : [];
+        for (const row of rows) {
             const key = String(row?.clave || '').toLowerCase();
             if (key === 'premontaje_pct') {
                 const raw = row?.valor_num ?? row?.valor_json?.value ?? row?.valor_json?.percent;
                 const parsed = parseFloat(raw);
                 if (Number.isFinite(parsed) && parsed >= 0) __orderPremontajePct = parsed;
-                return;
+                continue;
             }
             if (key === 'hora_extra_cfg') {
                 const modeRaw = String(row?.valor_json?.mode || '').toLowerCase();
@@ -1627,11 +1798,30 @@ async function __orderLoadPremontajePctConfig() {
                 const value = Number.isFinite(parsedVal) && parsedVal >= 0 ? parsedVal : 100;
                 const allowCustom = row?.valor_json?.allow_custom !== false;
                 __orderHoraExtraCfg = { mode, value, allowCustom };
+                continue;
             }
-        });
+            if (key === __CP_CFG_LETTERHEAD_KEY) {
+                const cfg = row?.valor_json || {};
+                const rawPath = cfg.path || cfg.file_path || cfg.value || '';
+                const safePath = rawPath || (cfg.file_name ? `${__CP_LETTERHEAD_PATH}/${cfg.file_name}` : '');
+                if (!safePath) continue;
+                const normalizedPath = String(safePath || '');
+                const { data: signed, error: signedError } = await window.globalSupabase.storage.from('documentos-cp').createSignedUrl(normalizedPath, 3600);
+                if (!signedError && signed?.signedUrl) {
+                    __CP_LETTERHEAD_URL = signed.signedUrl;
+                    continue;
+                }
+                const fallbackName = __orderBasename(normalizedPath);
+                if (!fallbackName) continue;
+                const fallbackPath = `${__CP_LETTERHEAD_PATH}/${fallbackName}`;
+                const { data: fallbackSigned, error: fallbackErr } = await window.globalSupabase.storage.from('documentos-cp').createSignedUrl(fallbackPath, 3600);
+                if (!fallbackErr && fallbackSigned?.signedUrl) __CP_LETTERHEAD_URL = fallbackSigned.signedUrl;
+            }
+        }
     } catch (e) {
         __orderPremontajePct = 25;
         __orderHoraExtraCfg = { mode: 'percent', value: 100, allowCustom: true };
+        __CP_LETTERHEAD_URL = (window.HUB_CONFIG && (window.HUB_CONFIG.cpPdfLetterheadUrl || window.HUB_CONFIG.pdfLetterheadCasaPiedraUrl)) || '../public/assets/img/cp-letterhead-default.png';
     }
 }
 
@@ -3191,4 +3381,5 @@ window.attemptSaveOrder = function() {
 document.addEventListener('DOMContentLoaded', async () => {
     await __orderLoadPremontajePctConfig();
 });
+
 

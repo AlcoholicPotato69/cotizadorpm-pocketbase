@@ -183,9 +183,59 @@ const __isCPLogo = /\/cotizadorcp(\/|$)/.test(window.location.pathname || '') ||
 const LOGO_URL = __isCPLogo
   ? ((window.HUB_CONFIG && (window.HUB_CONFIG.companyLogoUrlCP || window.HUB_CONFIG.cpLogoUrl)) || 'http://127.0.0.1:54321/storage/v1/object/public/Espacios/logocp.png')
   : ((window.HUB_CONFIG && window.HUB_CONFIG.companyLogoUrl) || 'http://127.0.0.1:54321/storage/v1/object/public/Espacios/logo.png');
+let CP_PDF_LETTERHEAD_URL = (window.HUB_CONFIG && (window.HUB_CONFIG.cpPdfLetterheadUrl || window.HUB_CONFIG.pdfLetterheadCasaPiedraUrl)) || '../public/assets/img/cp-letterhead-default.png';
+const RECEIPT_PAGE_WIDTH_PX = 816;
+const RECEIPT_PAGE_HEIGHT_PX = 1056;
+const LETTERHEAD_DESIGN_WIDTH_PX = 1275;
+const LETTERHEAD_DESIGN_HEIGHT_PX = 1650;
+const LETTERHEAD_MARGINS_DESIGN_PX = { top: 202.2, right: 61.1, bottom: 113.38, left: 61.1 };
+
+function __contractsCssSafeUrl(url) {
+    return String(url || '')
+        .replace(/\\/g, '/')
+        .replace(/'/g, "\\'")
+        .replace(/\)/g, '\\)');
+}
+
+function __contractsLetterheadFrame() {
+    const sx = RECEIPT_PAGE_WIDTH_PX / LETTERHEAD_DESIGN_WIDTH_PX;
+    const sy = RECEIPT_PAGE_HEIGHT_PX / LETTERHEAD_DESIGN_HEIGHT_PX;
+    const top = LETTERHEAD_MARGINS_DESIGN_PX.top * sy;
+    const right = LETTERHEAD_MARGINS_DESIGN_PX.right * sx;
+    const bottom = LETTERHEAD_MARGINS_DESIGN_PX.bottom * sy;
+    const left = LETTERHEAD_MARGINS_DESIGN_PX.left * sx;
+    return {
+        top,
+        right,
+        bottom,
+        left,
+        width: RECEIPT_PAGE_WIDTH_PX - left - right,
+        height: RECEIPT_PAGE_HEIGHT_PX - top - bottom
+    };
+}
+
+function __contractsWrapLetterheadPage(innerHtml, options = {}) {
+    const frame = __contractsLetterheadFrame();
+    const baseWidth = Math.max(1, parseFloat(options.baseWidth) || RECEIPT_PAGE_WIDTH_PX);
+    const baseHeight = Math.max(1, parseFloat(options.baseHeight) || RECEIPT_PAGE_HEIGHT_PX);
+    const scale = Math.min(frame.width / baseWidth, frame.height / baseHeight);
+    const finalW = baseWidth * scale;
+    const finalH = baseHeight * scale;
+    const left = frame.left + ((frame.width - finalW) / 2);
+    const top = frame.top + ((frame.height - finalH) / 2);
+    const bgUrl = __contractsCssSafeUrl(CP_PDF_LETTERHEAD_URL);
+    const imageLayer = bgUrl
+        ? `<img src='${bgUrl}' crossorigin='anonymous' onerror='this.style.display=\"none\"' style='position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;'>`
+        : '';
+    const idAttr = options.id ? ` id="${options.id}"` : '';
+    return `<div${idAttr} class="bg-white font-sans text-gray-800 relative leading-relaxed" style="width:${RECEIPT_PAGE_WIDTH_PX}px;min-height:${RECEIPT_PAGE_HEIGHT_PX}px;height:${RECEIPT_PAGE_HEIGHT_PX}px;box-sizing:border-box;overflow:hidden;background:#f5f5f5;">${imageLayer}<div style="position:absolute;left:${left.toFixed(2)}px;top:${top.toFixed(2)}px;width:${baseWidth}px;height:${baseHeight}px;transform:scale(${scale.toFixed(6)});transform-origin:top left;overflow:hidden;z-index:1;">${innerHtml}</div></div>`;
+}
 // Aislar plantillas por tenant: Casa de Piedra usa su propio bucket
 const TEMPLATE_BUCKET = 'documentos-cp';
 const TEMPLATE_PATH = 'templates_contratos';
+const LETTERHEAD_PATH = 'membretes_pdf';
+const CFG_TEMPLATE_DEFAULT_KEY = 'contract_template_default';
+const CFG_LETTERHEAD_KEY = 'pdf_letterhead_path';
 
 const AVAILABLE_VARS = [
     { key: '{{CLIENTE}}', desc: 'Nombre del Cliente' },
@@ -205,18 +255,95 @@ const AVAILABLE_VARS = [
 let approvedOrders = [], selectedOrder = null, templates = [], signedFileToUpload = null, externalReceiptFile = null;
 let currentRemainingBalance = 0;
 let pendingAction = null;
+let defaultTemplateFile = '';
+
+function __contractsPayments(order) {
+    return Array.isArray(order?.historial_pagos) ? order.historial_pagos : [];
+}
+
+function __contractsConstanciaEntry(order) {
+    return __contractsPayments(order).find((item) => {
+        const t = String(item?.type || item?.tipo || '').toLowerCase();
+        return t === 'constancia_liquidacion' || item?.closed === true || item?.is_closure === true;
+    }) || null;
+}
+
+function __contractsIsClosed(order) {
+    return !!__contractsConstanciaEntry(order);
+}
+
+function __contractsTransparentPdfHtml(html) {
+    return String(html || '')
+        .replace(/\bbg-(?:white|gray-\d{2,3}|red-\d{2,3}|green-\d{2,3}|blue-\d{2,3}|amber-\d{2,3}|purple-\d{2,3}|brand-red)\b/g, '')
+        .replace(/background:\s*#(?:[0-9a-f]{3,8});?/gi, 'background: transparent;')
+        .replace(/background:\s*rgba?\([^)]+\);?/gi, 'background: transparent;')
+        .replace(/\s{2,}/g, ' ');
+}
+
+function __contractsBasename(path) {
+    const normalized = String(path || '').replace(/\\/g, '/');
+    const parts = normalized.split('/').filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : '';
+}
+
+async function __contractsSignedUrl(path) {
+    const cleanPath = String(path || '').trim();
+    if (!cleanPath) return null;
+    const { data, error } = await window.globalSupabase.storage.from(TEMPLATE_BUCKET).createSignedUrl(cleanPath, 3600);
+    if (error || !data?.signedUrl) return null;
+    return data.signedUrl;
+}
+
+async function __contractsLoadPreferences() {
+    defaultTemplateFile = '';
+    CP_PDF_LETTERHEAD_URL = (window.HUB_CONFIG && (window.HUB_CONFIG.cpPdfLetterheadUrl || window.HUB_CONFIG.pdfLetterheadCasaPiedraUrl)) || '../public/assets/img/cp-letterhead-default.png';
+    try {
+        const { data, error } = await window.finSupabase
+            .from('configuracion')
+            .select('*')
+            .in('clave', [CFG_TEMPLATE_DEFAULT_KEY, CFG_LETTERHEAD_KEY]);
+        if (error) throw error;
+        const rows = Array.isArray(data) ? data : [];
+        rows.forEach(row => {
+            const key = String(row?.clave || '').toLowerCase();
+            const cfg = row?.valor_json || {};
+            if (key === CFG_TEMPLATE_DEFAULT_KEY) {
+                const fromPath = cfg.path || cfg.file_path || cfg.value || '';
+                defaultTemplateFile = cfg.file_name || __contractsBasename(fromPath) || '';
+            }
+        });
+        const letterheadRow = rows.find(row => String(row?.clave || '').toLowerCase() === CFG_LETTERHEAD_KEY);
+        const letterheadCfg = letterheadRow?.valor_json || {};
+        const savedPath = letterheadCfg.path || letterheadCfg.file_path || letterheadCfg.value || '';
+        const safePath = savedPath || (letterheadCfg.file_name ? `${LETTERHEAD_PATH}/${letterheadCfg.file_name}` : '');
+        if (safePath) {
+            const signed = await __contractsSignedUrl(safePath);
+            if (signed) CP_PDF_LETTERHEAD_URL = signed;
+        }
+    } catch (_) {}
+}
+
+function __contractsApplyTemplateDefault() {
+    const selector = document.getElementById('template-selector');
+    if (!selector) return;
+    if (defaultTemplateFile) {
+        const exists = Array.from(selector.options || []).some(opt => opt.value === defaultTemplateFile);
+        if (exists) selector.value = defaultTemplateFile;
+    }
+    if (selectedOrder && selector.value) window.loadSelectedTemplate();
+}
 
 // --- INICIALIZACIÓN SEGURA ---
 document.addEventListener('DOMContentLoaded', async () => {
     // 1. Verificar librerías
-    if (typeof window.supabase === 'undefined') {
+    if (typeof window.PB_CLIENT === 'undefined') {
         alert("Error crítico: No se pudo cargar la librería de conexión. Revisa tu internet o los bloqueadores de anuncios.");
         return;
     }
 
     // 2. Inicializar Clientes
-    if(!window.finSupabase) window.finSupabase = window.supabase.createClient(SB_URL, SB_KEY, { db: { schema: FIN_SCHEMA } });
-    if(!window.globalSupabase) window.globalSupabase = window.supabase.createClient(SB_URL, SB_KEY);
+    if(!window.finSupabase) window.finSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY, { db: { schema: FIN_SCHEMA } });
+    if(!window.globalSupabase) window.globalSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY);
 
     // 3. Verificar Sesión
     const { data: { session } } = await window.globalSupabase.auth.getSession();
@@ -226,10 +353,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 4. Cargar Datos
     await loadApprovedOrders();
-    
+    await __contractsLoadPreferences();
+
     setContractPreviewSrcdoc(null);
-window.loadTemplatesList(); 
-    renderVariablesCheatSheet();
+    await window.loadTemplatesList();
 
     // Filtros
     document.getElementById('search-approved').addEventListener('input', (e) => {
@@ -344,8 +471,23 @@ function selectOrder(order) {
     const btnGen = document.getElementById('btn-gen-receipt');
     const statusMsg = document.getElementById('payment-status-message');
 
-    // Estado Liquidada (Recibos)
-    if (currentRemainingBalance <= 0.1) {
+    const paymentClosed = __contractsIsClosed(order);
+
+    // Estado Liquidada / Cerrada (Recibos)
+    if (paymentClosed) {
+        amountInput.value = '0.00';
+        amountInput.disabled = true;
+        amountInput.classList.add('bg-gray-100', 'text-gray-400', 'cursor-not-allowed');
+
+        btnGen.disabled = true;
+        btnGen.classList.add('bg-gray-300', 'cursor-not-allowed');
+        btnGen.classList.remove('bg-green-600', 'hover:bg-green-700', 'bg-brand-dark', 'hover:bg-black');
+        btnGen.innerHTML = '<i class="fa-solid fa-circle-check"></i> PAGADO';
+
+        statusMsg.classList.remove('hidden');
+        statusMsg.innerHTML = '<i class="fa-solid fa-check-circle mr-1"></i> PAGADO';
+        window.showToast('PAGADO', 'info');
+    } else if (currentRemainingBalance <= 0.1) {
         amountInput.value = '0.00';
         amountInput.disabled = true;
         amountInput.classList.add('bg-gray-100', 'text-gray-400', 'cursor-not-allowed');
@@ -353,9 +495,10 @@ function selectOrder(order) {
         btnGen.disabled = false;
         btnGen.classList.remove('bg-gray-400', 'cursor-not-allowed', 'bg-brand-dark', 'hover:bg-black');
         btnGen.classList.add('bg-green-600', 'hover:bg-green-700');
-        btnGen.innerHTML = '<i class="fa-solid fa-print"></i> Descargar Constancia';
+        btnGen.innerHTML = '<i class="fa-solid fa-file-circle-check"></i> Generar Constancia';
         
         statusMsg.classList.remove('hidden');
+        statusMsg.innerHTML = '<i class="fa-solid fa-check-circle mr-1"></i> LIQUIDADA';
     } else {
         amountInput.value = currentRemainingBalance.toFixed(2);
         amountInput.disabled = false;
@@ -373,6 +516,7 @@ function selectOrder(order) {
     switchTab('receipt'); 
     
     updateReceiptPreview();
+    __contractsApplyTemplateDefault();
     setTimeout(window.adjustPreviewScale, 100);
 }
 
@@ -416,11 +560,17 @@ window.saveContractNumber = function() {
 function renderPaymentHistory(history) {
     const container = document.getElementById('payments-history-list'); container.innerHTML = '';
     if(!history || history.length === 0) { container.innerHTML = '<p class="text-[10px] text-gray-400 italic text-center py-2">Sin pagos registrados.</p>'; return; }
+    let receiptIdx = 0;
+    const paymentClosed = __contractsIsClosed(selectedOrder);
     history.forEach((pay, idx) => {
+        const isConstancia = String(pay?.type || pay?.tipo || '').toLowerCase() === 'constancia_liquidacion' || pay?.closed === true || pay?.is_closure === true;
+        const label = isConstancia
+            ? `CONSTANCIA - ${new Date(pay.date).toLocaleDateString()}`
+            : `#${++receiptIdx} - ${new Date(pay.date).toLocaleDateString()}`;
         const div = document.createElement('div'); div.className = "flex justify-between items-center bg-white p-2 rounded border border-gray-100 text-[10px]";
         const viewBtn = pay.file_path ? `<button onclick="window.openStoredReceipt('${pay.file_path}')" class="text-blue-500 hover:text-blue-700 font-bold ml-2 cursor-pointer" title="Ver PDF"><i class="fa-solid fa-file-pdf"></i></button>` : '';
-        const delBtn = `<button onclick="window.deleteReceipt(${idx})" class="text-gray-400 hover:text-red-500 ml-2" title="Eliminar"><i class="fa-solid fa-trash"></i></button>`;
-        div.innerHTML = `<div><span class="font-bold text-gray-700">#${idx+1} - ${new Date(pay.date).toLocaleDateString()}</span><span class="block text-gray-400 truncate w-32">${pay.concept}</span></div><div class="flex items-center"><span class="font-mono font-bold">${formatMoney(pay.amount)}</span>${viewBtn}${delBtn}</div>`;
+        const delBtn = (!paymentClosed && !isConstancia) ? `<button onclick="window.deleteReceipt(${idx})" class="text-gray-400 hover:text-red-500 ml-2" title="Eliminar"><i class="fa-solid fa-trash"></i></button>` : '';
+        div.innerHTML = `<div><span class="font-bold text-gray-700">${label}</span><span class="block text-gray-400 truncate w-32">${pay.concept}</span></div><div class="flex items-center"><span class="font-mono font-bold">${formatMoney(pay.amount)}</span>${viewBtn}${delBtn}</div>`;
         container.appendChild(div);
     });
 }
@@ -493,9 +643,57 @@ window.downloadReceiptPDF = async function() {
     html2pdf().set(opt).from(element).save().then(() => hiddenContainer.innerHTML = ''); 
 }
 
+window.generateAndSaveLiquidationCertificate = async function() {
+    if (!selectedOrder) return;
+    if (__contractsIsClosed(selectedOrder)) return window.showToast("PAGADO", "info");
+    const btn = document.getElementById('btn-gen-receipt');
+    btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generando constancia...';
+    try {
+        const hiddenContainer = document.getElementById('receipt-pdf-render');
+        hiddenContainer.innerHTML = getReceiptHTML(false);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        const element = hiddenContainer.firstElementChild;
+        const fileName = `Constancia_Liquidacion_${selectedOrder.numero_orden || selectedOrder.id.slice(0, 6)}_${Date.now()}.pdf`;
+        const pdfBlob = await html2pdf().set({ margin: 0, filename: fileName, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2, useCORS: true }, jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' } }).from(element).output('blob');
+        hiddenContainer.innerHTML = '';
+        const filePath = `${selectedOrder.id}/constancias/${fileName}`;
+        const { error: upErr } = await window.globalSupabase.storage.from('documentos-cp').upload(filePath, pdfBlob);
+        if (upErr) throw upErr;
+
+        const history = __contractsPayments(selectedOrder).filter((p) => String(p?.type || p?.tipo || '').toLowerCase() !== 'constancia_liquidacion');
+        const closureEntry = {
+            date: new Date().toISOString(),
+            amount: 0,
+            concept: 'Constancia de Liquidación',
+            reference: selectedOrder.numero_orden || selectedOrder.id,
+            bank: 'Sistema',
+            account: '--',
+            file_path: filePath,
+            type: 'constancia_liquidacion',
+            closed: true
+        };
+        const updatedHistory = [...history, closureEntry];
+        const { error: dbErr } = await window.finSupabase.from('cotizaciones').update({ historial_pagos: updatedHistory }).eq('id', selectedOrder.id);
+        if (dbErr) throw dbErr;
+
+        const link = document.createElement('a'); link.href = URL.createObjectURL(pdfBlob); link.download = fileName; link.click();
+        window.showToast("Constancia guardada. Estado: PAGADO", "success");
+        selectedOrder.historial_pagos = updatedHistory;
+        loadApprovedOrders();
+        selectOrder(selectedOrder);
+    } catch (e) {
+        console.error(e);
+        window.showToast("Error al generar constancia: " + (e.message || e), "error");
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-circle-check"></i> PAGADO';
+    }
+}
+
 window.generateAndSaveReceipt = async function() {
     if(!selectedOrder) return;
-    if (currentRemainingBalance <= 0.01) { window.downloadReceiptPDF(); return; }
+    if (__contractsIsClosed(selectedOrder)) return window.showToast("PAGADO", "info");
+    if (currentRemainingBalance <= 0.01) { await window.generateAndSaveLiquidationCertificate(); return; }
     const amount = parseFloat(document.getElementById('rcp-amount').value);
     if (amount <= 0) return window.showToast("El monto debe ser mayor a 0.", "error");
     pendingAction = 'receipt';
@@ -525,10 +723,13 @@ window.generateAndSaveReceipt = async function() {
 }
 
 window.deleteReceipt = function(index) {
+    if (__contractsIsClosed(selectedOrder)) return window.showToast("PAGADO", "info");
     window.openCustomConfirm("¿Eliminar este recibo? El saldo aumentará.", async () => {
         try {
             const history = [...selectedOrder.historial_pagos];
             const item = history[index];
+            const itemType = String(item?.type || item?.tipo || '').toLowerCase();
+            if (itemType === 'constancia_liquidacion') return window.showToast("La constancia de liquidación no se puede eliminar.", "error");
             if(item.file_path) await window.globalSupabase.storage.from('documentos-cp').remove([item.file_path]);
             history.splice(index, 1);
             await window.finSupabase.from('cotizaciones').update({ historial_pagos: history }).eq('id', selectedOrder.id);
@@ -540,12 +741,37 @@ window.deleteReceipt = function(index) {
     });
 }
 
-window.openTemplateManager = () => window.openModal('templates-modal');
-window.loadTemplatesList = async function() { const c = document.getElementById('templates-list-container'); const s = document.getElementById('template-selector'); if(!c || !s) return; const { data } = await window.globalSupabase.storage.from(TEMPLATE_BUCKET).list(TEMPLATE_PATH); c.innerHTML = ''; s.innerHTML = '<option value="">-- Seleccionar Plantilla --</option>'; templates = data||[]; templates.forEach(f => { c.innerHTML += `<div class="flex justify-between items-center bg-gray-50 p-2 rounded border border-gray-100"><span class="text-xs font-bold text-gray-700 truncate">${f.name}</span><button onclick="window.deleteTemplate('${f.name}')" class="text-red-400 hover:text-red-600 px-2"><i class="fa-solid fa-trash"></i></button></div>`; const opt = document.createElement('option'); opt.value = f.name; opt.innerText = f.name.replace(/\.[^/.]+$/, ""); s.appendChild(opt); }); };
-window.uploadTemplate = async function() { const n = document.getElementById('new-template-name'); const f = document.getElementById('new-template-file').files[0]; if (!f || !n.value) return window.showToast("Faltan datos", "error"); const p = `${TEMPLATE_PATH}/${n.value}.${f.name.split('.').pop()}`; await window.globalSupabase.storage.from(TEMPLATE_BUCKET).upload(p, f); window.showToast("Guardada"); n.value=''; window.loadTemplatesList(); }
+window.loadTemplatesList = async function() {
+    const selector = document.getElementById('template-selector');
+    if (!selector) return;
+    const { data, error } = await window.globalSupabase.storage.from(TEMPLATE_BUCKET).list(TEMPLATE_PATH);
+    if (error) {
+        selector.innerHTML = '<option value="">-- Seleccionar Plantilla --</option>';
+        templates = [];
+        return;
+    }
+    templates = (data || [])
+        .map(file => ({
+            name: file?.name || __contractsBasename(file?.path || ''),
+            path: file?.path || `${TEMPLATE_PATH}/${file?.name || ''}`
+        }))
+        .filter(file => !!file.name);
+    selector.innerHTML = '<option value="">-- Seleccionar Plantilla --</option>';
+    templates.forEach(file => {
+        const opt = document.createElement('option');
+        opt.value = file.name;
+        opt.innerText = file.name.replace(/\.[^/.]+$/, '');
+        selector.appendChild(opt);
+    });
+    __contractsApplyTemplateDefault();
+};
 window.loadSelectedTemplate = async function() {
     const fileName = document.getElementById('template-selector').value;
-    if(!fileName || !selectedOrder) return;
+    if(!fileName) {
+        setContractPreviewSrcdoc(null);
+        return;
+    }
+    if(!selectedOrder) return;
 
     try {
         const { data, error } = await window.globalSupabase
@@ -608,7 +834,6 @@ window.printContract = function() {
     btnFinalize.classList.add('bg-green-600', 'hover:bg-green-700', 'shadow-lg');
 };
 
-window.deleteTemplate = async function(fileName) { window.openCustomConfirm("¿Eliminar esta plantilla?", async () => { const { error } = await window.globalSupabase.storage.from(TEMPLATE_BUCKET).remove([`${TEMPLATE_PATH}/${fileName}`]); if(!error) { window.showToast("Eliminada"); window.loadTemplatesList(); } else window.showToast("Error al eliminar", "error"); }); }
 window.openFinalizeModal = function() { pendingAction = 'finalize'; if(!validateRequiredData()) return; const contractNum = document.getElementById('contract-num-assign').value; if(!contractNum) return window.showToast("Asigna un Número de Contrato.", "error"); window.openModal('finalize-modal'); }
 
 window.confirmFinalize = async function() { 
@@ -655,6 +880,7 @@ window.confirmFinalize = async function() {
 // --- NUEVA LÓGICA: RECIBOS EXTERNOS ---
 window.openUploadReceiptModal = function() {
     if(!selectedOrder) return;
+    if (__contractsIsClosed(selectedOrder)) return window.showToast("PAGADO", "info");
     
     // Limpiar campos
     document.getElementById('ext-receipt-file').value = '';
@@ -713,6 +939,7 @@ window.handleReceiptFileSelect = function(input) {
 
 window.saveExternalReceipt = async function() {
     if(!selectedOrder || !externalReceiptFile) return;
+    if (__contractsIsClosed(selectedOrder)) return window.showToast("PAGADO", "info");
     
     const amount = parseFloat(document.getElementById('up-rcp-amount').value);
     if(isNaN(amount) || amount <= 0) return window.showToast("Monto inválido", "error");
@@ -758,7 +985,19 @@ window.saveExternalReceipt = async function() {
     }
 }
 
-function renderVariablesCheatSheet() { const container = document.getElementById('variables-list'); container.innerHTML = ''; AVAILABLE_VARS.forEach(v => { const badge = document.createElement('span'); badge.className = 'var-tag'; badge.innerText = v.key; badge.title = v.desc; badge.onclick = () => { navigator.clipboard.writeText(v.key); window.showToast("Copiado"); }; container.appendChild(badge); }); }
+function renderVariablesCheatSheet() {
+    const container = document.getElementById('variables-list');
+    if (!container) return;
+    container.innerHTML = '';
+    AVAILABLE_VARS.forEach(v => {
+        const badge = document.createElement('span');
+        badge.className = 'var-tag';
+        badge.innerText = v.key;
+        badge.title = v.desc;
+        badge.onclick = () => { navigator.clipboard.writeText(v.key); window.showToast("Copiado"); };
+        container.appendChild(badge);
+    });
+}
 
 // --- GENERADOR PDF UNIFICADO (DISEÑO PREMIUM) ---
 function getReceiptHTML(isVisual = false) {
@@ -781,13 +1020,12 @@ function getReceiptHTML(isVisual = false) {
                 </tr>
             `;
         });
-        let watermark = `<div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-45deg); font-size: 110px; color: rgba(34, 197, 94, 0.12); font-weight: 900; border: 12px solid rgba(34, 197, 94, 0.12); padding: 40px; z-index: 0; pointer-events: none; white-space: nowrap;">LIQUIDADO</div>`;
-        return `
-            <div id="receipt-print-area" class="bg-white font-sans text-gray-800 w-full h-full relative leading-relaxed" style="width: 816px; min-height: 1056px; padding: 70px 90px; box-sizing: border-box; overflow: hidden; display: flex; flex-direction: column;">
+        let watermark = `<div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-45deg); font-size: 118px; color: rgba(34, 197, 94, 0.16); font-weight: 900; z-index: 0; pointer-events: none; white-space: nowrap;">LIQUIDADO</div>`;
+        const receiptRaw = `
+            <div class="font-sans text-gray-800 w-full h-full relative leading-relaxed" style="width: 816px; min-height: 1056px; padding: 70px 90px; box-sizing: border-box; overflow: hidden; display: flex; flex-direction: column;">
                 ${watermark}
                 <div style="position: relative; z-index: 10; flex-grow: 1;">
-                    <div class="flex justify-between items-start mb-10 border-b-4 border-green-600 pb-4">
-                        <img src="${LOGO_URL}" class="h-16 object-contain" crossorigin="anonymous">
+                    <div class="flex justify-end items-start mb-10 border-b-4 border-green-600 pb-4">
                         <div class="text-right"><h1 class="text-2xl font-black uppercase text-gray-900 tracking-tighter">Constancia de Liquidación</h1><p class="text-sm text-gray-500 font-mono mt-1">EMISIÓN: ${dateStr} ${timeStr}</p></div>
                     </div>
                     <div class="mb-8 p-8 bg-gray-50 rounded-xl border border-gray-200 shadow-sm">
@@ -803,6 +1041,7 @@ function getReceiptHTML(isVisual = false) {
                     <div class="text-[10px] text-center text-gray-400 mt-4"><p class="mb-1">Este documento certifica que la orden de referencia ha sido liquidada en su totalidad.</p><p>Generado digitalmente a través de Marketing Hub.</p></div>
                 </div>
             </div>`;
+        return __contractsWrapLetterheadPage(__contractsTransparentPdfHtml(receiptRaw), { baseWidth: 816, baseHeight: 1056, id: 'receipt-print-area' });
     }
     
     const amount = parseFloat(document.getElementById('rcp-amount').value) || 0;
@@ -812,11 +1051,10 @@ function getReceiptHTML(isVisual = false) {
     const ref = document.getElementById('rcp-ref').value;
     let projectedRemaining = currentRemainingBalance - amount; if (projectedRemaining < 0) projectedRemaining = 0;
 
-    return `
-        <div id="receipt-print-area" class="bg-white font-sans text-gray-800 w-full h-full relative leading-relaxed" style="width: 816px; min-height: 1056px; padding: 70px 90px; box-sizing: border-box; display: flex; flex-direction: column;">
+    const receiptRaw = `
+        <div class="font-sans text-gray-800 w-full h-full relative leading-relaxed" style="width: 816px; min-height: 1056px; padding: 70px 90px; box-sizing: border-box; display: flex; flex-direction: column;">
             <div style="flex-grow: 1;">
-                <div class="flex justify-between items-start mb-10 border-b-4 border-brand-red pb-4">
-                    <img src="${LOGO_URL}" class="h-16 object-contain" crossorigin="anonymous">
+                <div class="flex justify-end items-start mb-10 border-b-4 border-brand-red pb-4">
                     <div class="text-right"><h1 class="text-3xl font-black uppercase text-gray-900 tracking-tighter">Recibo de Pago</h1><p class="text-sm text-gray-500 font-mono mt-1">FECHA: ${dateStr}</p><p class="text-xs text-gray-400 font-mono">HORA: ${timeStr}</p></div>
                 </div>
                 <div class="mb-8 p-8 bg-gray-50 rounded-xl border border-gray-200 shadow-sm">
@@ -836,4 +1074,6 @@ function getReceiptHTML(isVisual = false) {
                 <div class="text-[10px] text-center text-gray-400 mt-4"><p class="mb-1">Este documento es un comprobante de pago interno. No válido como factura fiscal.</p><p>Generado digitalmente a través de Marketing Hub.</p></div>
             </div>
         </div>`;
+    return __contractsWrapLetterheadPage(__contractsTransparentPdfHtml(receiptRaw), { baseWidth: 816, baseHeight: 1056, id: 'receipt-print-area' });
 }
+

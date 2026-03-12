@@ -8,7 +8,7 @@
     
     <script src="assets/libs/js/tailwindcss.js"></script>
     <script src="assets/libs/js/env.js"></script> 
-    <script src="assets/libs/js/supabase.js"></script>
+    <script src="assets/libs/js/pb-client.js"></script>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
@@ -260,7 +260,7 @@
         const SUPABASE_ANON_KEY = window.ENV ? window.ENV.SUPABASE_ANON_KEY : '';
         const ESQUEMA_DB = (window.ENV && window.ENV.SCHEMA_CASA_PIEDRA) ? window.ENV.SCHEMA_CASA_PIEDRA : 'finanzas_casadepiedra';
 
-        const clienteSupabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { db: { schema: ESQUEMA_DB } });
+        const clienteSupabase = window.PB_CLIENT.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { db: { schema: ESQUEMA_DB } });
         function repararImagen(url) { if(!url) return 'assets/img/placeholder_cp.png'; if(url.includes('127.0.0.1:55551')) return url.replace('http://127.0.0.1:55551', SUPABASE_URL); return url; }
 
         const grid = document.getElementById('espacios-grid');
@@ -996,4 +996,6 @@
     </script>
 </body>
 </html>
+
+
 

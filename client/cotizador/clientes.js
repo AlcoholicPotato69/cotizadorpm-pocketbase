@@ -270,8 +270,18 @@ function createQuoteDocButton(container, label, icon, action, muted=false) {
   container.appendChild(btn);
 }
 
-function openClientQuoteDocs(quoteId) {
-  const row = clientHistoryRows.find(x => x.id === quoteId);
+
+async function fetchLatestClientQuoteRow(quoteId) {
+  const cols = 'id,numero_orden,nombre_cotizacion,detalles_evento,cliente_id,cliente_nombre,cliente_email,espacio_nombre,fecha_inicio,fecha_fin,precio_final,status,created_at,url_cotizacion_final,url_orden_compra,contrato_url,factura_pdf_url,factura_xml_url,historial_pagos';
+  try {
+    const { data, error } = await window.finSupabase.from('cotizaciones').select(cols).eq('id', quoteId).maybeSingle();
+    if (!error && data) return data;
+  } catch (_) {}
+  return clientHistoryRows.find(x => x.id === quoteId) || null;
+}
+
+async function openClientQuoteDocs(quoteId) {
+  const row = await fetchLatestClientQuoteRow(quoteId);
   if (!row) return window.showToast?.("No se encontró la cotización.", "error");
   const title = document.getElementById('qdocs-title');
   const sub = document.getElementById('qdocs-sub');
@@ -393,9 +403,9 @@ async function saveClient() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  if (!window.supabase) return;
-  if (!window.finSupabase) window.finSupabase = window.supabase.createClient(SB_URL, SB_KEY, { db: { schema: FIN_SCHEMA } });
-  if (!window.globalSupabase) window.globalSupabase = window.supabase.createClient(SB_URL, SB_KEY);
+  if (!window.PB_CLIENT) return;
+  if (!window.finSupabase) window.finSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY, { db: { schema: FIN_SCHEMA } });
+  if (!window.globalSupabase) window.globalSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY);
 
   const { data: { session } } = await window.globalSupabase.auth.getSession();
   if (!session) return;
@@ -446,4 +456,5 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('btn-save-client')?.addEventListener('click', saveClient);
   await loadClients();
 });
+
 

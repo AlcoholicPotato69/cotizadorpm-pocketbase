@@ -9,8 +9,8 @@
   <script src="../../assets/libs/js/tailwindcss.js"></script>
   <link rel="stylesheet" href="../../assets/libs/css/all.min.css">
 
-  <!-- Supabase + Hub config + Layout (fijo para que SI renderice layout) -->
-  <script src="../supabase.js"></script>
+  <!-- PocketBase + Hub config + Layout (fijo para que SI renderice layout) -->
+  <script src="../services/pb-client.js"></script>
   <script src="../js/hub-config.js"></script>
   <script src="../js/layout.js"></script>
 
@@ -35,26 +35,71 @@
 
   <style>
     body { font-family: 'Segoe UI', sans-serif; background-color: #f3f4f6; overflow-x: hidden; }
+    body.tenant-pm {
+      --tenant-primary: #D32F2F;
+      --tenant-primary-dark: #991b1b;
+      --tenant-soft: #fef2f2;
+      --tenant-muted: rgba(255,255,255,0.18);
+    }
+    body.tenant-cp {
+      --tenant-primary: #deac07;
+      --tenant-primary-dark: #c18e00;
+      --tenant-soft: #fff7dc;
+      --tenant-muted: rgba(255,255,255,0.18);
+    }
     .hidden { display: none !important; }
     .custom-scroll::-webkit-scrollbar { width: 6px; }
     .custom-scroll::-webkit-scrollbar-track { background: transparent; }
     .custom-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
 
-    /* Dropdown Nav */
-    .dropdown-menu {
-      display: none; position: absolute; top: 100%; left: 0;
-      background: white; min-width: 220px;
-      box-shadow: 0 10px 30px -5px rgba(0,0,0,0.2);
-      border-radius: 0 0 16px 16px; overflow: hidden;
-      z-index: 50; padding: 8px 0; border: 1px solid #f3f4f6;
+    .theme-nav {
+      background-color: var(--tenant-primary, #D32F2F);
+      border-top-color: var(--tenant-primary-dark, #991b1b);
+      transition: background-color 0.45s ease, border-color 0.45s ease;
     }
-    .nav-item:hover .dropdown-menu { display: block; animation: enter 0.2s ease-out; }
-    .dropdown-item {
-      display: block; padding: 12px 20px; font-size: 0.8rem;
-      font-weight: bold; color: #4b5563; transition: 0.2s;
-      display: flex; align-items: center; gap: 10px;
+    .tool-tab {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+      border: 1px solid rgba(255,255,255,0.34);
+      border-radius: 999px;
+      padding: 8px 14px;
+      font-size: 11px;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #fff;
+      background: var(--tenant-muted);
+      transition: all 0.35s ease;
     }
-    .dropdown-item:hover { background-color: #fef2f2; color: #D32F2F; }
+    .tool-tab:hover { background: rgba(255,255,255,0.30); }
+    .tool-tab.is-active {
+      background: #fff;
+      color: var(--tenant-primary, #D32F2F);
+      border-color: #fff;
+      box-shadow: 0 10px 24px -10px rgba(0,0,0,0.45);
+    }
+    .tenant-chip {
+      transition: all 0.35s ease;
+    }
+    .tenant-chip.is-active {
+      background: #fff;
+      color: var(--tenant-primary, #D32F2F);
+      box-shadow: 0 8px 20px -10px rgba(0,0,0,0.45);
+    }
+    .tenant-refresh {
+      transition: color 0.35s ease, background-color 0.35s ease;
+    }
+    .tenant-refresh:hover {
+      color: var(--tenant-primary, #D32F2F);
+      background-color: var(--tenant-soft, #fef2f2);
+    }
+    .tenant-title {
+      transition: color 0.45s ease;
+    }
+    body.tenant-pm .tenant-title { color: #1f2937; }
+    body.tenant-cp .tenant-title { color: #b58500; }
 
     /* Card Hover Effect */
     .hover-card { transition: all 0.3s ease; }
@@ -66,39 +111,38 @@
   </style>
 </head>
 
-<body class="bg-brand-gray text-gray-800 flex flex-col min-h-screen">
+<body class="bg-brand-gray text-gray-800 flex flex-col min-h-screen tenant-pm">
 
   <div id="toast-container" class="fixed bottom-5 right-5 z-[70] flex flex-col gap-2"></div>
 
-  <nav class="bg-brand-red shadow-lg sticky top-16 z-40 flex-shrink-0 border-t border-red-800">
-    <div class="container mx-auto px-6 flex h-14 gap-6 items-center text-white">
+  <nav id="config-toolbar" class="theme-nav shadow-lg sticky top-16 z-40 flex-shrink-0 border-t">
+    <div class="container mx-auto px-6 flex h-14 gap-4 items-center text-white">
 
-      <!-- Dropdown Secciones -->
-      <div class="nav-item relative h-full flex items-center cursor-pointer group">
-        <span class="text-xs font-bold uppercase tracking-wider flex items-center gap-2 transition">
-          <i class="fa-solid fa-coins"></i> Finanzas
-          <i class="fa-solid fa-chevron-down text-[10px] opacity-50"></i>
-        </span>
-        <div class="dropdown-menu">
-          <a id="menu-concepts" href="#" onclick="switchView('v_concepts'); return false;" class="dropdown-item">
-            <i class="fa-solid fa-tags text-gray-400"></i> Conceptos adicionales
-          </a>
-          <a id="menu-taxes" href="#" onclick="switchView('v_taxes'); return false;" class="dropdown-item">
-            <i class="fa-solid fa-percent text-gray-400"></i> Impuestos
-          </a>
-        </div>
+      <div class="flex items-center gap-2">
+        <button type="button" id="menu-concepts" onclick="switchView('v_concepts'); return false;" class="tool-tab is-active">
+          <i class="fa-solid fa-tags"></i> Conceptos adicionales
+        </button>
+        <button type="button" id="menu-taxes" onclick="switchView('v_taxes'); return false;" class="tool-tab">
+          <i class="fa-solid fa-percent"></i> Impuestos
+        </button>
+        <button type="button" id="menu-docs" onclick="switchView('v_docs'); return false;" class="tool-tab">
+          <i class="fa-solid fa-file-lines"></i> Documentos
+        </button>
+        <button type="button" id="menu-cp-settings" onclick="switchView('v_cp_settings'); return false;" class="tool-tab hidden">
+          <i class="fa-solid fa-sliders"></i> Config CP
+        </button>
       </div>
 
       <!-- Tabs Tenant -->
       <div class="ml-auto flex items-center gap-2">
         <div class="bg-white/15 rounded-full p-1 flex gap-1">
-          <button id="btn-tenant-pm"
-            class="px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider bg-white text-brand-red shadow-sm"
+          <button type="button" id="btn-tenant-pm"
+            class="tenant-chip is-active px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider"
             onclick="setTenant('pm')">
             Plaza Mayor
           </button>
-          <button id="btn-tenant-cp"
-            class="px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider text-white/90 hover:bg-white/20 transition rounded-full"
+          <button type="button" id="btn-tenant-cp"
+            class="tenant-chip px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider text-white/90 hover:bg-white/20"
             onclick="setTenant('cp')">
             Casa de Piedra
           </button>
@@ -114,12 +158,12 @@
       <div class="bg-white rounded-3xl border border-gray-100 shadow-sm p-5 flex items-center justify-between">
         <div>
           <div class="text-[10px] font-black uppercase tracking-wider text-gray-400">Configuración</div>
-          <div id="tenant-label" class="text-lg font-black text-gray-800">Plaza Mayor</div>
+          <div id="tenant-label" class="tenant-title text-lg font-black text-gray-800">Plaza Mayor</div>
           <div class="text-xs font-bold text-gray-500 mt-1">
-            Admin: gestiona <span class="text-gray-700">Conceptos adicionales</span> e <span class="text-gray-700">Impuestos</span> por tenant.
+            Admin: gestiona <span class="text-gray-700">Conceptos adicionales</span>, <span class="text-gray-700">Impuestos</span> y <span class="text-gray-700">Documentos</span> por tenant.
           </div>
         </div>
-        <button onclick="refreshCurrent()" class="w-10 h-10 rounded-2xl bg-gray-50 text-gray-400 hover:text-brand-red hover:bg-red-50 transition flex items-center justify-center">
+        <button type="button" onclick="refreshCurrent()" class="tenant-refresh w-10 h-10 rounded-2xl bg-gray-50 text-gray-400 flex items-center justify-center">
           <i class="fa-solid fa-rotate"></i>
         </button>
       </div>
@@ -137,7 +181,7 @@
             <input id="cfg-premontaje-pct" type="number" min="0" step="0.01"
               class="w-28 p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-blue-600 text-sm font-bold text-right transition"
               placeholder="25">
-            <button id="btn-save-premontaje" onclick="savePremontajePct()"
+            <button type="button" id="btn-save-premontaje" onclick="savePremontajePct()"
               class="bg-blue-600 text-white py-3 px-4 rounded-xl font-bold text-xs uppercase hover:bg-blue-700 shadow-lg shadow-blue-200 transition transform active:scale-95">
               Guardar
             </button>
@@ -161,7 +205,7 @@
             </div>
           </div>
           <div class="flex items-center gap-2">
-            <button id="btn-save-hora-extra" onclick="saveHoraExtraCfg()"
+            <button type="button" id="btn-save-hora-extra" onclick="saveHoraExtraCfg()"
               class="bg-blue-600 text-white py-3 px-4 rounded-xl font-bold text-xs uppercase hover:bg-blue-700 shadow-lg shadow-blue-200 transition transform active:scale-95">
               Guardar
             </button>
@@ -233,11 +277,11 @@
             </label>
 
             <div class="flex gap-2 pt-2">
-              <button onclick="resetCptForm()" id="btn-cpt-cancel"
+              <button type="button" onclick="resetCptForm()" id="btn-cpt-cancel"
                 class="hidden flex-1 border border-gray-200 text-gray-500 py-3 rounded-xl font-bold text-xs uppercase hover:bg-gray-50 transition">
                 Cancelar
               </button>
-              <button onclick="saveConcept()" id="btn-cpt-save"
+              <button type="button" onclick="saveConcept()" id="btn-cpt-save"
                 class="flex-1 bg-blue-600 text-white py-3 rounded-xl font-bold text-xs uppercase hover:bg-blue-700 shadow-lg shadow-blue-200 transition transform active:scale-95">
                 Guardar
               </button>
@@ -252,7 +296,7 @@
         <div class="md:col-span-2 bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
           <div class="p-6 bg-white border-b border-gray-50 flex justify-between items-center">
             <h3 class="font-black text-gray-800 text-lg">Catálogo de Servicios</h3>
-            <button onclick="loadConcepts()"
+            <button type="button" onclick="loadConcepts()"
               class="w-8 h-8 rounded-full bg-gray-50 text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition flex items-center justify-center">
               <i class="fa-solid fa-rotate"></i>
             </button>
@@ -299,11 +343,11 @@
             </label>
 
             <div class="flex gap-2 pt-2">
-              <button onclick="resetTaxForm()" id="btn-tax-cancel"
+              <button type="button" onclick="resetTaxForm()" id="btn-tax-cancel"
                 class="hidden flex-1 border border-gray-200 text-gray-500 py-3 rounded-xl font-bold text-xs uppercase hover:bg-gray-50 transition">
                 Cancelar
               </button>
-              <button onclick="saveTax()" id="btn-tax-save"
+              <button type="button" onclick="saveTax()" id="btn-tax-save"
                 class="flex-1 bg-purple-600 text-white py-3 rounded-xl font-bold text-xs uppercase hover:bg-purple-700 shadow-lg shadow-purple-200 transition transform active:scale-95">
                 Guardar
               </button>
@@ -318,7 +362,7 @@
         <div class="md:col-span-2 bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
           <div class="p-6 bg-white border-b border-gray-50 flex justify-between items-center">
             <h3 class="font-black text-gray-800 text-lg">Catálogo de Impuestos</h3>
-            <button onclick="loadTaxesConfig()"
+            <button type="button" onclick="loadTaxesConfig()"
               class="w-8 h-8 rounded-full bg-gray-50 text-gray-400 hover:text-purple-600 hover:bg-purple-50 transition flex items-center justify-center">
               <i class="fa-solid fa-rotate"></i>
             </button>
@@ -339,12 +383,101 @@
       </div>
     </div>
 
+    <div id="v_docs" class="view hidden fade-in">
+      <div class="grid grid-cols-1 xl:grid-cols-2 gap-8">
+        <div class="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+          <div class="p-6 border-b border-gray-100 bg-gray-50">
+            <h3 class="font-black text-gray-800 text-lg">Plantillas de Contrato</h3>
+            <p class="text-xs text-gray-500 mt-1">Sube archivos HTML/TXT por tenant y define la plantilla predeterminada para <span id="docs-template-tenant" class="font-bold text-gray-700">Plaza Mayor</span>.</p>
+          </div>
+          <div class="p-6 space-y-4">
+            <div class="grid grid-cols-1 gap-3">
+              <input id="doc-template-name" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-blue-600 text-sm font-bold transition" placeholder="Nombre (opcional)">
+              <input id="doc-template-file" type="file" accept=".html,.txt"
+                class="w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700">
+              <button type="button" id="btn-upload-template-doc" onclick="uploadContractTemplate(event)"
+                class="bg-blue-600 text-white py-3 px-4 rounded-xl font-bold text-xs uppercase hover:bg-blue-700 shadow-lg shadow-blue-200 transition transform active:scale-95">
+                Subir plantilla
+              </button>
+            </div>
+
+            <div>
+              <label class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2">Plantilla predeterminada</label>
+              <div class="flex gap-2">
+                <select id="doc-template-default" class="flex-1 p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-blue-600 text-xs font-bold transition">
+                  <option value="">-- Seleccionar --</option>
+                </select>
+                <button type="button" id="btn-save-template-default" onclick="saveDefaultTemplate(event)"
+                  class="bg-gray-900 text-white py-3 px-4 rounded-xl font-bold text-xs uppercase hover:bg-black transition">
+                  Guardar
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2">Plantillas cargadas</label>
+              <div id="doc-template-list" class="space-y-2 max-h-64 overflow-y-auto custom-scroll"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+          <div class="p-6 border-b border-gray-100 bg-gray-50">
+            <h3 class="font-black text-gray-800 text-lg">Membretes PDF</h3>
+            <p class="text-xs text-gray-500 mt-1">El PDF de cotización/orden usa el membrete seleccionado para <span id="docs-letterhead-tenant" class="font-bold text-gray-700">Plaza Mayor</span>.</p>
+          </div>
+          <div class="p-6 space-y-4">
+            <div class="grid grid-cols-1 gap-3">
+              <input id="doc-letterhead-name" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-blue-600 text-sm font-bold transition" placeholder="Nombre (opcional)">
+              <input id="doc-letterhead-file" type="file" accept=".png,.jpg,.jpeg,.webp"
+                class="w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700">
+              <button type="button" id="btn-upload-letterhead-doc" onclick="uploadLetterheadFile(event)"
+                class="bg-blue-600 text-white py-3 px-4 rounded-xl font-bold text-xs uppercase hover:bg-blue-700 shadow-lg shadow-blue-200 transition transform active:scale-95">
+                Subir membrete
+              </button>
+            </div>
+
+            <div>
+              <label class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2">Membrete activo</label>
+              <div class="flex gap-2">
+                <select id="doc-letterhead-default" onchange="previewSelectedLetterhead()" class="flex-1 p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-blue-600 text-xs font-bold transition">
+                  <option value="">-- Seleccionar --</option>
+                </select>
+                <button type="button" id="btn-save-letterhead-default" onclick="saveDefaultLetterhead(event)"
+                  class="bg-gray-900 text-white py-3 px-4 rounded-xl font-bold text-xs uppercase hover:bg-black transition">
+                  Guardar
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2">Membretes cargados</label>
+              <div id="doc-letterhead-list" class="space-y-2 max-h-40 overflow-y-auto custom-scroll"></div>
+            </div>
+
+            <div class="border border-gray-200 rounded-xl p-3 bg-gray-50">
+              <div class="text-[10px] font-black uppercase tracking-wider text-gray-400 mb-2">Vista rápida</div>
+              <img id="doc-letterhead-preview" class="w-full h-auto rounded border border-gray-200 bg-white hidden" alt="Vista previa membrete">
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="v_cp_settings" class="view hidden fade-in">
+      <div class="bg-white rounded-2xl border border-amber-100 shadow-sm p-5">
+        <div class="text-[10px] font-black uppercase tracking-wider text-amber-500">Casa de Piedra</div>
+        <div class="text-sm font-black text-gray-800 mt-1">Configuración de Premontaje y Horas Extra</div>
+        <div class="text-xs text-gray-500 mt-1">Usa esta sección para configurar porcentaje de premontaje y regla de horas extra para CP.</div>
+      </div>
+    </div>
+
   </main>
 
   <script>
-    let pmSupabase = null;
-    let cpSupabase = null;
-    let activeSupabase = null;
+    let pmPocketBase = null;
+    let cpPocketBase = null;
+    let activePocketBase = null;
 
     let isAdminUser = false;
     let currentView = 'v_concepts';
@@ -352,6 +485,12 @@
 
     const PM_SCHEMA = (window.HUB_CONFIG && window.HUB_CONFIG.finanzasSchema) ? window.HUB_CONFIG.finanzasSchema : 'finanzas';
     const CP_SCHEMA = 'finanzas_casadepiedra';
+    const DOC_TEMPLATE_PATH = 'templates_contratos';
+    const DOC_LETTERHEAD_PATH = 'membretes_pdf';
+    const CFG_TEMPLATE_DEFAULT_KEY = 'contract_template_default';
+    const CFG_LETTERHEAD_KEY = 'pdf_letterhead_path';
+    let docsDefaultTemplateFile = '';
+    let docsDefaultLetterheadFile = '';
 
     function _toast(msg, type){
       if (window.showToast) return window.showToast(msg, type);
@@ -360,8 +499,282 @@
     }
 
     function getDB(){
-      return activeSupabase || pmSupabase || window.finSupabase || window.supabaseClient;
+      return activePocketBase || pmPocketBase || window.finSupabase || window.pbClient;
     }
+
+    function getTenantBucket(){
+      return currentTenant === 'cp' ? 'documentos-cp' : 'documentos';
+    }
+
+    function baseName(path){
+      const normalized = String(path || '').replace(/\\/g, '/');
+      const parts = normalized.split('/').filter(Boolean);
+      return parts.length ? parts[parts.length - 1] : '';
+    }
+
+    function sanitizeName(v){
+      return String(v || '')
+        .trim()
+        .replace(/\s+/g, '_')
+        .replace(/[^a-zA-Z0-9_\-.]/g, '');
+    }
+
+    function updateDocsTenantLabels() {
+      const tenantLabel = currentTenant === 'cp' ? 'Casa de Piedra' : 'Plaza Mayor';
+      const tpl = document.getElementById('docs-template-tenant');
+      const ltr = document.getElementById('docs-letterhead-tenant');
+      if (tpl) tpl.innerText = tenantLabel;
+      if (ltr) ltr.innerText = tenantLabel;
+    }
+
+    async function getSignedStorageUrl(path){
+      const cleanPath = String(path || '').trim();
+      if (!cleanPath) return null;
+      const { data, error } = await window.globalSupabase.storage.from(getTenantBucket()).createSignedUrl(cleanPath, 3600);
+      if (error || !data?.signedUrl) return null;
+      return data.signedUrl;
+    }
+
+    async function loadDocsConfig(){
+      const tplList = document.getElementById('doc-template-list');
+      const ltrList = document.getElementById('doc-letterhead-list');
+      const tplSel = document.getElementById('doc-template-default');
+      const ltrSel = document.getElementById('doc-letterhead-default');
+      if (!tplList || !ltrList || !tplSel || !ltrSel) return;
+
+      updateDocsTenantLabels();
+      docsDefaultTemplateFile = '';
+      docsDefaultLetterheadFile = '';
+      tplSel.innerHTML = '<option value="">-- Seleccionar --</option>';
+      ltrSel.innerHTML = '<option value="">-- Seleccionar --</option>';
+      tplList.innerHTML = '<div class="text-xs text-gray-400 italic p-2">Cargando...</div>';
+      ltrList.innerHTML = '<div class="text-xs text-gray-400 italic p-2">Cargando...</div>';
+
+      try {
+        const db = getDB();
+        const { data, error } = await db
+          .from('configuracion')
+          .select('*')
+          .in('clave', [CFG_TEMPLATE_DEFAULT_KEY, CFG_LETTERHEAD_KEY]);
+        if (error) throw error;
+        (Array.isArray(data) ? data : []).forEach(row => {
+          const key = String(row?.clave || '').toLowerCase();
+          const cfg = row?.valor_json || {};
+          if (key === CFG_TEMPLATE_DEFAULT_KEY) {
+            docsDefaultTemplateFile = cfg.file_name || baseName(cfg.path || cfg.file_path || cfg.value || '');
+          }
+          if (key === CFG_LETTERHEAD_KEY) {
+            docsDefaultLetterheadFile = cfg.file_name || baseName(cfg.path || cfg.file_path || cfg.value || '');
+          }
+        });
+      } catch (_) {}
+
+      await Promise.all([loadTemplateFiles(), loadLetterheadFiles()]);
+      await previewSelectedLetterhead();
+    }
+
+    async function loadTemplateFiles(){
+      const tplList = document.getElementById('doc-template-list');
+      const tplSel = document.getElementById('doc-template-default');
+      if (!tplList || !tplSel) return;
+      tplList.innerHTML = '';
+      tplSel.innerHTML = '<option value="">-- Seleccionar --</option>';
+      const bucket = getTenantBucket();
+      const { data, error } = await window.globalSupabase.storage.from(bucket).list(DOC_TEMPLATE_PATH);
+      if (error) {
+        tplList.innerHTML = `<div class="text-xs text-red-500 p-2">Error: ${error.message || error}</div>`;
+        return;
+      }
+      const files = (Array.isArray(data) ? data : [])
+        .map(file => ({ name: file?.name || baseName(file?.path || ''), path: file?.path || `${DOC_TEMPLATE_PATH}/${file?.name || ''}` }))
+        .filter(file => !!file.name)
+        .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+      if (!files.length) {
+        tplList.innerHTML = '<div class="text-xs text-gray-400 italic p-2">Sin plantillas cargadas.</div>';
+      }
+      files.forEach(file => {
+        const row = document.createElement('div');
+        row.className = 'flex items-center justify-between bg-gray-50 border border-gray-100 rounded-lg p-2';
+        row.innerHTML = `<span class="text-xs font-bold text-gray-700 truncate pr-2">${file.name}</span><button type="button" onclick="deleteContractTemplate('${encodeURIComponent(file.path)}')" class="text-red-500 hover:text-red-700 text-xs font-bold px-2">Eliminar</button>`;
+        tplList.appendChild(row);
+        const opt = document.createElement('option');
+        opt.value = file.name;
+        opt.innerText = file.name;
+        tplSel.appendChild(opt);
+      });
+      if (docsDefaultTemplateFile) tplSel.value = docsDefaultTemplateFile;
+    }
+
+    async function loadLetterheadFiles(){
+      const ltrList = document.getElementById('doc-letterhead-list');
+      const ltrSel = document.getElementById('doc-letterhead-default');
+      if (!ltrList || !ltrSel) return;
+      ltrList.innerHTML = '';
+      ltrSel.innerHTML = '<option value="">-- Seleccionar --</option>';
+      const bucket = getTenantBucket();
+      const { data, error } = await window.globalSupabase.storage.from(bucket).list(DOC_LETTERHEAD_PATH);
+      if (error) {
+        ltrList.innerHTML = `<div class="text-xs text-red-500 p-2">Error: ${error.message || error}</div>`;
+        return;
+      }
+      const files = (Array.isArray(data) ? data : [])
+        .map(file => ({ name: file?.name || baseName(file?.path || ''), path: file?.path || `${DOC_LETTERHEAD_PATH}/${file?.name || ''}` }))
+        .filter(file => !!file.name)
+        .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+      if (!files.length) {
+        ltrList.innerHTML = '<div class="text-xs text-gray-400 italic p-2">Sin membretes cargados.</div>';
+      }
+      files.forEach(file => {
+        const row = document.createElement('div');
+        row.className = 'flex items-center justify-between bg-gray-50 border border-gray-100 rounded-lg p-2';
+        row.innerHTML = `<span class="text-xs font-bold text-gray-700 truncate pr-2">${file.name}</span><button type="button" onclick="deleteLetterheadFile('${encodeURIComponent(file.path)}')" class="text-red-500 hover:text-red-700 text-xs font-bold px-2">Eliminar</button>`;
+        ltrList.appendChild(row);
+        const opt = document.createElement('option');
+        opt.value = file.name;
+        opt.innerText = file.name;
+        ltrSel.appendChild(opt);
+      });
+      if (docsDefaultLetterheadFile) ltrSel.value = docsDefaultLetterheadFile;
+    }
+
+    window.uploadContractTemplate = async (event) => {
+      if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      if (!isAdminUser) return _toast("Acceso restringido: solo Administrador.", "error");
+      const fileInput = document.getElementById('doc-template-file');
+      const nameInput = document.getElementById('doc-template-name');
+      const btn = document.getElementById('btn-upload-template-doc');
+      const file = fileInput?.files?.[0];
+      if (!file) return _toast("Selecciona un archivo de plantilla", "error");
+      const ext = (file.name.split('.').pop() || 'html').toLowerCase();
+      const base = sanitizeName(nameInput?.value || file.name.replace(/\.[^/.]+$/, '')) || `plantilla_${Date.now()}`;
+      const fileName = `${base}.${ext}`;
+      const path = `${DOC_TEMPLATE_PATH}/${fileName}`;
+      if (btn) { btn.disabled = true; btn.innerText = "..."; }
+      try {
+        const bucket = getTenantBucket();
+        const { error } = await window.globalSupabase.storage.from(bucket).upload(path, file);
+        if (error) throw error;
+        _toast("Plantilla subida", "success");
+        if (nameInput) nameInput.value = '';
+        if (fileInput) fileInput.value = '';
+        await loadDocsConfig();
+      } catch (e) {
+        _toast("No se pudo subir plantilla: " + (e.message || e), "error");
+      } finally {
+        if (btn) { btn.disabled = false; btn.innerText = "Subir plantilla"; }
+      }
+    };
+
+    window.uploadLetterheadFile = async (event) => {
+      if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      if (!isAdminUser) return _toast("Acceso restringido: solo Administrador.", "error");
+      const fileInput = document.getElementById('doc-letterhead-file');
+      const nameInput = document.getElementById('doc-letterhead-name');
+      const btn = document.getElementById('btn-upload-letterhead-doc');
+      const file = fileInput?.files?.[0];
+      if (!file) return _toast("Selecciona un archivo de membrete", "error");
+      const ext = (file.name.split('.').pop() || 'png').toLowerCase();
+      const base = sanitizeName(nameInput?.value || file.name.replace(/\.[^/.]+$/, '')) || `membrete_${Date.now()}`;
+      const fileName = `${base}.${ext}`;
+      const path = `${DOC_LETTERHEAD_PATH}/${fileName}`;
+      if (btn) { btn.disabled = true; btn.innerText = "..."; }
+      try {
+        const bucket = getTenantBucket();
+        const { error } = await window.globalSupabase.storage.from(bucket).upload(path, file);
+        if (error) throw error;
+        _toast("Membrete subido", "success");
+        if (nameInput) nameInput.value = '';
+        if (fileInput) fileInput.value = '';
+        await loadDocsConfig();
+      } catch (e) {
+        _toast("No se pudo subir membrete: " + (e.message || e), "error");
+      } finally {
+        if (btn) { btn.disabled = false; btn.innerText = "Subir membrete"; }
+      }
+    };
+
+    window.saveDefaultTemplate = async (event) => {
+      if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      if (!isAdminUser) return _toast("Acceso restringido: solo Administrador.", "error");
+      const sel = document.getElementById('doc-template-default');
+      const fileName = String(sel?.value || '').trim();
+      if (!fileName) return _toast("Selecciona una plantilla", "error");
+      const payload = {
+        clave: CFG_TEMPLATE_DEFAULT_KEY,
+        valor_json: {
+          file_name: fileName,
+          path: `${DOC_TEMPLATE_PATH}/${fileName}`,
+          updated_at: new Date().toISOString()
+        }
+      };
+      const { error } = await getDB().from('configuracion').upsert(payload, { onConflict: 'clave' });
+      if (error) return _toast("Error al guardar: " + error.message, "error");
+      docsDefaultTemplateFile = fileName;
+      _toast("Plantilla predeterminada guardada", "success");
+    };
+
+    window.saveDefaultLetterhead = async (event) => {
+      if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      if (!isAdminUser) return _toast("Acceso restringido: solo Administrador.", "error");
+      const sel = document.getElementById('doc-letterhead-default');
+      const fileName = String(sel?.value || '').trim();
+      if (!fileName) return _toast("Selecciona un membrete", "error");
+      const payload = {
+        clave: CFG_LETTERHEAD_KEY,
+        valor_json: {
+          file_name: fileName,
+          path: `${DOC_LETTERHEAD_PATH}/${fileName}`,
+          updated_at: new Date().toISOString()
+        }
+      };
+      const { error } = await getDB().from('configuracion').upsert(payload, { onConflict: 'clave' });
+      if (error) return _toast("Error al guardar: " + error.message, "error");
+      docsDefaultLetterheadFile = fileName;
+      await previewSelectedLetterhead();
+      _toast("Membrete predeterminado guardado", "success");
+    };
+
+    window.deleteContractTemplate = async (encodedPath) => {
+      if (!isAdminUser) return _toast("Acceso restringido: solo Administrador.", "error");
+      const path = decodeURIComponent(String(encodedPath || ''));
+      if (!path) return;
+      if (!confirm("¿Eliminar esta plantilla?")) return;
+      const { error } = await window.globalSupabase.storage.from(getTenantBucket()).remove([path]);
+      if (error) return _toast("Error al eliminar: " + error.message, "error");
+      _toast("Plantilla eliminada", "success");
+      await loadDocsConfig();
+    };
+
+    window.deleteLetterheadFile = async (encodedPath) => {
+      if (!isAdminUser) return _toast("Acceso restringido: solo Administrador.", "error");
+      const path = decodeURIComponent(String(encodedPath || ''));
+      if (!path) return;
+      if (!confirm("¿Eliminar este membrete?")) return;
+      const { error } = await window.globalSupabase.storage.from(getTenantBucket()).remove([path]);
+      if (error) return _toast("Error al eliminar: " + error.message, "error");
+      _toast("Membrete eliminado", "success");
+      await loadDocsConfig();
+    };
+
+    window.previewSelectedLetterhead = async () => {
+      const sel = document.getElementById('doc-letterhead-default');
+      const img = document.getElementById('doc-letterhead-preview');
+      if (!sel || !img) return;
+      const fileName = String(sel.value || '').trim();
+      if (!fileName) {
+        img.src = '';
+        img.classList.add('hidden');
+        return;
+      }
+      const signed = await getSignedStorageUrl(`${DOC_LETTERHEAD_PATH}/${fileName}`);
+      if (!signed) {
+        img.src = '';
+        img.classList.add('hidden');
+        return;
+      }
+      img.src = signed;
+      img.classList.remove('hidden');
+    };
 
     function togglePremontajeHint(show) {
       const el = document.getElementById('hint-premontaje-missing');
@@ -488,7 +901,7 @@
     };
 
     async function requireAdmin(){
-      const sb = window.supabaseClient || window.globalSupabase || window.finSupabase;
+      const sb = window.pbClient || window.globalSupabase || window.finSupabase;
       if (!sb) return false;
 
       const { data: { session } } = await sb.auth.getSession();
@@ -505,30 +918,51 @@
       return false;
     }
 
+    function paintViewMenu(){
+      const links = [
+        { id: 'menu-concepts', view: 'v_concepts' },
+        { id: 'menu-taxes', view: 'v_taxes' },
+        { id: 'menu-docs', view: 'v_docs' },
+        { id: 'menu-cp-settings', view: 'v_cp_settings' }
+      ];
+      links.forEach(item => {
+        const el = document.getElementById(item.id);
+        if (!el) return;
+        el.classList.toggle('is-active', currentView === item.view);
+      });
+    }
+
     function paintTenantUI(){
+      const body = document.body;
       const pmBtn = document.getElementById('btn-tenant-pm');
       const cpBtn = document.getElementById('btn-tenant-cp');
       const label = document.getElementById('tenant-label');
       const cpPrem = document.getElementById('cp-pricing-cfg');
       const cpHora = document.getElementById('cp-hora-extra-cfg');
-      const menuTaxes = document.getElementById('menu-taxes');
-      const taxesView = document.getElementById('v_taxes');
+      const cpMenu = document.getElementById('menu-cp-settings');
 
       if (currentTenant === 'pm') {
         label.innerText = 'Plaza Mayor';
-        pmBtn.className = "px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider bg-white text-brand-red shadow-sm";
-        cpBtn.className = "px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider text-white/90 hover:bg-white/20 transition rounded-full";
+        body.classList.remove('tenant-cp');
+        body.classList.add('tenant-pm');
+        pmBtn.classList.add('is-active');
+        cpBtn.classList.remove('is-active');
+        if (cpMenu) cpMenu.classList.add('hidden');
       } else {
         label.innerText = 'Casa de Piedra';
-        cpBtn.className = "px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider bg-white text-brand-red shadow-sm";
-        pmBtn.className = "px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider text-white/90 hover:bg-white/20 transition rounded-full";
+        body.classList.remove('tenant-pm');
+        body.classList.add('tenant-cp');
+        cpBtn.classList.add('is-active');
+        pmBtn.classList.remove('is-active');
+        if (cpMenu) cpMenu.classList.remove('hidden');
       }
 
       const isCP = currentTenant === 'cp';
-      if (cpPrem) cpPrem.classList.toggle('hidden', !isCP);
-      if (cpHora) cpHora.classList.toggle('hidden', !isCP);
-      if (menuTaxes) menuTaxes.classList.toggle('hidden', !isCP);
-      if (taxesView) taxesView.classList.toggle('hidden', !isCP && currentView === 'v_taxes');
+      const isCpConfigView = isCP && currentView === 'v_cp_settings';
+      if (cpPrem) cpPrem.classList.toggle('hidden', !isCpConfigView);
+      if (cpHora) cpHora.classList.toggle('hidden', !isCpConfigView);
+      updateDocsTenantLabels();
+      paintViewMenu();
 
       // hints
       document.getElementById('admin-hint-concepts').classList.toggle('hidden', isAdminUser);
@@ -541,12 +975,22 @@
       if (btnPrem) btnPrem.disabled = !isAdminUser;
       const btnHora = document.getElementById('btn-save-hora-extra');
       if (btnHora) btnHora.disabled = !isAdminUser;
+      const btnTplUpload = document.getElementById('btn-upload-template-doc');
+      if (btnTplUpload) btnTplUpload.disabled = !isAdminUser;
+      const btnTplDefault = document.getElementById('btn-save-template-default');
+      if (btnTplDefault) btnTplDefault.disabled = !isAdminUser;
+      const btnLtrUpload = document.getElementById('btn-upload-letterhead-doc');
+      if (btnLtrUpload) btnLtrUpload.disabled = !isAdminUser;
+      const btnLtrDefault = document.getElementById('btn-save-letterhead-default');
+      if (btnLtrDefault) btnLtrDefault.disabled = !isAdminUser;
     }
 
     window.setTenant = async (t) => {
       currentTenant = (t === 'cp') ? 'cp' : 'pm';
-      activeSupabase = (currentTenant === 'cp') ? cpSupabase : pmSupabase;
-      if (currentTenant === 'pm' && currentView === 'v_taxes') currentView = 'v_concepts';
+      activePocketBase = (currentTenant === 'cp') ? cpPocketBase : pmPocketBase;
+      if (currentTenant !== 'cp' && currentView === 'v_cp_settings') {
+        currentView = 'v_concepts';
+      }
 
       resetCptForm();
       resetTaxForm();
@@ -557,14 +1001,20 @@
     };
 
     window.switchView = async (viewId) => {
-      if (currentTenant === 'pm' && viewId === 'v_taxes') viewId = 'v_concepts';
       currentView = viewId;
+      paintViewMenu();
       document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
       const target = document.getElementById(viewId);
       if (target) target.classList.remove('hidden');
 
       if(viewId === 'v_concepts') await loadConcepts();
       if(viewId === 'v_taxes') await loadTaxesConfig();
+      if(viewId === 'v_docs') await loadDocsConfig();
+      if(viewId === 'v_cp_settings' && currentTenant === 'cp') {
+        await loadPremontajePct();
+        await loadHoraExtraCfg();
+      }
+      paintTenantUI();
     };
 
     window.refreshCurrent = async () => {
@@ -776,22 +1226,22 @@
       // 2) Tenants (mismo JWT, diferente schema)
       if (!window.globalSupabase) {
         // layout.js debe crear window.globalSupabase; si no, fallback:
-        if (window.supabase && window.HUB_CONFIG) {
-          window.globalSupabase = window.supabase.createClient(window.HUB_CONFIG.supabaseUrl, window.HUB_CONFIG.supabaseAnonKey);
+        if (window.PB_CLIENT && window.HUB_CONFIG) {
+          window.globalSupabase = window.PB_CLIENT.createClient(window.HUB_CONFIG.supabaseUrl, window.HUB_CONFIG.supabaseAnonKey);
         }
       }
 
-      const root = window.globalSupabase || window.supabaseClient;
+      const root = window.globalSupabase || window.pbClient;
       if (!root) {
-        _toast("No se pudo inicializar Supabase (globalSupabase). Revisa hub-config.js + layout.js.", "error");
+        _toast("No se pudo inicializar PocketBase (globalSupabase). Revisa hub-config.js + layout.js.", "error");
         return;
       }
 
-      pmSupabase = root.schema(PM_SCHEMA);
-      cpSupabase = root.schema(CP_SCHEMA);
+      pmPocketBase = root.schema(PM_SCHEMA);
+      cpPocketBase = root.schema(CP_SCHEMA);
 
       // default PM
-      activeSupabase = pmSupabase;
+      activePocketBase = pmPocketBase;
       currentTenant = 'pm';
       paintTenantUI();
       await loadPremontajePct();
@@ -804,4 +1254,7 @@
 
 </body>
 </html>
+
+
+
 

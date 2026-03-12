@@ -17,6 +17,32 @@
   }
   function isObject(v){ return !!v && typeof v === 'object' && !Array.isArray(v); }
   function safeJsonParse(v, fallback){ try { return JSON.parse(v); } catch(_) { return fallback; } }
+  function normalizeDateString(v) {
+    const s = String(v || '').trim();
+    if (!s) return s;
+    if (/^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?)$/.test(s)) return s.slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}T/.test(s)) return s.slice(0, 10);
+    return s;
+  }
+  function normalizeDeepDates(value) {
+    if (Array.isArray(value)) return value.map(normalizeDeepDates);
+    if (value && typeof value === 'object') {
+      const out = {};
+      Object.keys(value).forEach(function (k) { out[k] = normalizeDeepDates(value[k]); });
+      return out;
+    }
+    if (typeof value === 'string') return normalizeDateString(value);
+    return value;
+  }
+  function recordFileName(record, field) {
+    const v = record ? record[field] : null;
+    return Array.isArray(v) ? v[0] : v;
+  }
+  function recordFileUrl(baseUrl, collection, record, field) {
+    const filename = recordFileName(record, field);
+    if (!filename || !record || !record.id) return null;
+    return trimSlash(baseUrl) + '/api/files/' + encodeURIComponent(collection) + '/' + encodeURIComponent(record.id) + '/' + encodeURIComponent(filename);
+  }
   function normalizeSchemaToTenant(schema) {
     const s = String(schema || '').toLowerCase();
     if (s === 'finanzas') return 'plaza_mayor';
@@ -38,52 +64,35 @@
     const e = Object.assign({ message: message || 'Error' }, extra || {});
     return e;
   }
-  function normalizeAllowedTenants(raw) {
-    let values = [];
-    if (Array.isArray(raw)) values = raw;
-    else if (typeof raw === 'string') {
-      const text = raw.trim();
-      if (!text) values = [];
-      else if (text[0] === '[') values = safeJsonParse(text, []);
-      else values = text.split(',');
-    }
-    return (Array.isArray(values) ? values : [])
-      .map(v => String(v || '').toLowerCase().trim())
-      .filter(Boolean);
-  }
-  function deriveCompatRole(role, allowedTenants) {
-    const current = String(role || '').toLowerCase().trim();
-    if (current === 'admin') return 'admin';
-    if (current === 'plaza_mayor' || current === 'casa_de_piedra' || current === 'ambos') return current;
-    const allowed = normalizeAllowedTenants(allowedTenants);
-    const hasPm = allowed.indexOf('plaza_mayor') !== -1;
-    const hasCp = allowed.indexOf('casa_de_piedra') !== -1;
-    if (hasPm && hasCp) return 'ambos';
-    if (hasPm) return 'plaza_mayor';
-    if (hasCp) return 'casa_de_piedra';
-    return current || 'user';
-  }
   function mapProfileOut(record) {
     if (!record) return record;
-    const allowedTenants = normalizeAllowedTenants(record.allowed_tenants);
-    const role = deriveCompatRole(record.role, allowedTenants);
-    const defaultTenant = record.tenant_default || record.default_tenant || allowedTenants[0] || null;
+    record = normalizeDeepDates(record);
+    const role = String(record.role || 'user').toLowerCase().trim();
+    let allowed = Array.isArray(record.allowed_tenants) ? record.allowed_tenants.filter(Boolean).map(v => String(v).toLowerCase().trim()) : [];
+    if (!allowed.length) {
+      if (role === 'admin') allowed = ['plaza_mayor', 'casa_de_piedra'];
+      else if (role === 'plaza_mayor' || role === 'casa_de_piedra') allowed = [role];
+    }
     return {
       ...record,
       id: record.id,
       username: record.login_username || record.username || '',
-      role: role,
-      role_raw: record.role || 'user',
-      allowed_tenants: allowedTenants,
-      tenant_default: defaultTenant,
-      default_tenant: defaultTenant,
+      role: role || 'user',
+      allowed_tenants: allowed,
+      tenant_default: record.tenant_default || record.default_tenant || null,
+      default_tenant: record.tenant_default || record.default_tenant || null,
       created_at: record.created_at || record.created || null,
       updated_at: record.updated_at || record.updated || null,
     };
   }
   function mapBusinessOut(collection, record) {
     if (!record) return record;
-    const out = { ...record, _pb_id: record.id };
+    const normalized = normalizeDeepDates(record);
+    const out = { ...normalized, _pb_id: record.id };
+    if (collection === 'espacios') {
+      const imgUrl = recordFileUrl(window.HUB_CONFIG && (window.HUB_CONFIG.pocketbaseUrl || window.HUB_CONFIG.supabaseUrl), 'espacios', record, 'imagen');
+      if (imgUrl) out.imagen_url = imgUrl;
+    }
     if (record.legacy_id !== undefined && record.legacy_id !== null && record.legacy_id !== '') out.id = record.legacy_id;
     if (!out.id) out.id = record.id;
     out.created_at = out.created_at || record.created || null;
@@ -96,6 +105,7 @@
   }
   function mapDocumentOut(record, baseUrl) {
     if (!record) return record;
+    record = normalizeDeepDates(record);
     const filename = Array.isArray(record.archivo) ? record.archivo[0] : record.archivo;
     return {
       ...record,
@@ -161,7 +171,7 @@
     let text = await resp.text();
     let data = text ? safeJsonParse(text, null) : null;
     if (!resp.ok) {
-      const message = data && data.message ? data.message : ('HTTP ' + resp.status);
+      const message = (data && data.data && data.data.message) ? data.data.message : ((data && data.message) ? data.message : ('HTTP ' + resp.status));
       throw errObj(message, { status: resp.status, data: data });
     }
     return data;
@@ -265,6 +275,12 @@
       return mapBusinessOut(this.collection, record);
     }
     _normalizePayload(payload) {
+      if (typeof FormData !== 'undefined' && payload instanceof FormData) {
+        const fd = new FormData();
+        for (const pair of payload.entries()) fd.append(pair[0], pair[1]);
+        if (this.client.tenant && ['app_users','hub_notifications'].indexOf(this.collection) === -1 && !fd.get('tenant')) fd.append('tenant', this.client.tenant);
+        return fd;
+      }
       let p = clone(payload);
       if (Array.isArray(p)) p = p[0];
       if (!isObject(p)) return p;
@@ -414,6 +430,9 @@
       if (this.client.tenant) return this.client.tenant;
       return 'plaza_mayor';
     }
+    _tenantFilter() {
+      return 'tenant = ' + escapeFilterValue(this._tenant());
+    }
     _guessTipo(path) {
       const p = String(path || '').toLowerCase();
       if (p.indexOf('cotizacion') !== -1) return 'cotizacion_final';
@@ -423,12 +442,46 @@
       if (p.indexOf('factura') !== -1) return 'factura_pdf';
       return 'otro';
     }
+    _quoteLegacyIdFromPath(path) {
+      const raw = String(path || '').replace(/\\/g, '/').trim();
+      const first = raw.split('/').filter(Boolean)[0] || '';
+      return first || '';
+    }
+    _fieldForTipo(tipo) {
+      if (tipo === 'cotizacion_final') return 'url_cotizacion_final';
+      if (tipo === 'orden_compra') return 'url_orden_compra';
+      if (tipo === 'contrato') return 'contrato_url';
+      if (tipo === 'factura_pdf') return 'factura_pdf_url';
+      if (tipo === 'factura_xml') return 'factura_xml_url';
+      return '';
+    }
     async _findByPath(path) {
-      const qb = new QueryBuilder(this.client, 'documentos');
-      qb.eq('ruta_legacy', path);
-      qb.singleMode = 'maybeSingle';
-      const res = await qb.execute();
-      return res.data || null;
+      const filter = this._tenantFilter() + ' && ruta_legacy = ' + escapeFilterValue(path);
+      const list = await fetchRecords(this.client.baseUrl, 'documentos', { perPage: 1, filter: filter });
+      return (list.items || [])[0] || null;
+    }
+    async _findQuoteByLegacyId(legacyId) {
+      const filter = this._tenantFilter() + ' && legacy_id = ' + escapeFilterValue(legacyId);
+      const list = await fetchRecords(this.client.baseUrl, 'cotizaciones', { perPage: 1, filter: filter });
+      return (list.items || [])[0] || null;
+    }
+    async _syncKnownQuoteField(path, clearInstead) {
+      const tipo = this._guessTipo(path);
+      const field = this._fieldForTipo(tipo);
+      const quoteLegacyId = this._quoteLegacyIdFromPath(path);
+      if (!field || !quoteLegacyId) return;
+      try {
+        const quote = await this._findQuoteByLegacyId(quoteLegacyId);
+        if (!quote || !quote.id) return;
+        const current = quote[field] || '';
+        if (clearInstead) {
+          if (current && current !== path) return;
+          await updateRecord(this.client.baseUrl, 'cotizaciones', quote.id, { [field]: '' });
+          return;
+        }
+        if (current === path) return;
+        await updateRecord(this.client.baseUrl, 'cotizaciones', quote.id, { [field]: path });
+      } catch (_) {}
     }
     async upload(path, file) {
       try {
@@ -436,14 +489,21 @@
           return { data: { path: path, fullPath: path }, error: null };
         }
         const existing = await this._findByPath(path);
-        if (existing && existing._pb_id) await deleteRecord(this.client.baseUrl, 'documentos', existing._pb_id);
+        if (existing && existing.id) await deleteRecord(this.client.baseUrl, 'documentos', existing.id);
         const form = new FormData();
-        form.append('tenant', this._tenant());
-        form.append('tipo', this._guessTipo(path));
-        form.append('nombre_original', (file && file.name) ? file.name : String(path).split('/').pop());
+        const tenant = this._tenant();
+        const tipo = this._guessTipo(path);
+        const quoteLegacyId = this._quoteLegacyIdFromPath(path);
+        const pathName = String(path || '').split('/').pop() || 'archivo.bin';
+        const uploadName = (file && file.name) ? file.name : pathName;
+        form.append('tenant', tenant);
+        form.append('tipo', tipo);
+        form.append('nombre_original', uploadName);
         form.append('ruta_legacy', path);
-        form.append('archivo', file, (file && file.name) ? file.name : 'archivo.bin');
+        if (quoteLegacyId) form.append('cotizacion_legacy_id', quoteLegacyId);
+        form.append('archivo', file, uploadName);
         const created = await createRecord(this.client.baseUrl, 'documentos', form);
+        await this._syncKnownQuoteField(path, false);
         return { data: mapDocumentOut(created, this.client.baseUrl), error: null };
       } catch (e) {
         return { data: null, error: errObj(e.message || String(e)) };
@@ -451,8 +511,9 @@
     }
     async list(prefix) {
       try {
-        const list = await fetchRecords(this.client.baseUrl, 'documentos', { perPage: 500, filter: 'tenant = ' + escapeFilterValue(this._tenant()) });
         const pre = String(prefix || '');
+        const filter = this._tenantFilter();
+        const list = await fetchRecords(this.client.baseUrl, 'documentos', { perPage: 500, filter: filter });
         const items = (list.items || []).filter(r => String(r.ruta_legacy || '').startsWith(pre)).map(r => ({
           id: r.id,
           name: String(r.ruta_legacy || '').split('/').pop(),
@@ -469,7 +530,8 @@
         const list = Array.isArray(paths) ? paths : [paths];
         for (const p of list) {
           const rec = await this._findByPath(p);
-          if (rec && rec._pb_id) await deleteRecord(this.client.baseUrl, 'documentos', rec._pb_id);
+          if (rec && rec.id) await deleteRecord(this.client.baseUrl, 'documentos', rec.id);
+          await this._syncKnownQuoteField(p, true);
         }
         return { data: true, error: null };
       } catch (e) {
@@ -480,7 +542,7 @@
       try {
         const rec = await this._findByPath(path);
         if (!rec) return { data: null, error: errObj('Archivo no encontrado') };
-        const raw = await fetchOne(this.client.baseUrl, 'documentos', rec._pb_id);
+        const raw = await fetchOne(this.client.baseUrl, 'documentos', rec.id || rec._pb_id);
         const filename = Array.isArray(raw.archivo) ? raw.archivo[0] : raw.archivo;
         if (!filename) return { data: null, error: errObj('Archivo sin contenido') };
         const fileToken = await pbFetch(this.client.baseUrl, '/api/files/token', { method: 'POST', headers: Object.assign({}, authHeader()) });

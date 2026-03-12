@@ -39,10 +39,93 @@ async function loadClientProfilesForOrderModal() {
 const _p = (window.location.pathname || '') + ' ' + (window.location.href || '');
 const _isCP = /\/cotizadorcp(\/|$)/.test(window.location.pathname || '') || _p.includes('cotizadorcp');
 const COMPANY_LOGO_URL = _isCP ? ((window.HUB_CONFIG && (window.HUB_CONFIG.companyLogoUrlCP || window.HUB_CONFIG.cpLogoUrl)) || 'http://127.0.0.1:54321/storage/v1/object/public/Espacios/logocp.png') : ((window.HUB_CONFIG && window.HUB_CONFIG.companyLogoUrl) || 'http://127.0.0.1:54321/storage/v1/object/public/Espacios/logo.png');
+let __PM_LETTERHEAD_URL = (window.HUB_CONFIG && (window.HUB_CONFIG.pmPdfLetterheadUrl || window.HUB_CONFIG.pdfLetterheadPlazaMayorUrl)) || '../public/assets/img/pm-letterhead-default.png';
+const __PM_PDF_PAGE_WIDTH_PX = 816;
+const __PM_PDF_PAGE_HEIGHT_PX = 1056;
+const __PM_LETTERHEAD_DESIGN_WIDTH_PX = 1275;
+const __PM_LETTERHEAD_DESIGN_HEIGHT_PX = 1650;
+const __PM_LETTERHEAD_MARGINS_DESIGN_PX = { top: 202.2, right: 61.1, bottom: 113.38, left: 61.1 };
+const __PM_CFG_LETTERHEAD_KEY = 'pdf_letterhead_path';
+const __PM_LETTERHEAD_PATH = 'membretes_pdf';
+
+function __pmCssSafeUrl(url) {
+    return String(url || '')
+        .replace(/\\/g, '/')
+        .replace(/'/g, "\\'")
+        .replace(/\)/g, '\\)');
+}
+
+function __pmBasename(path) {
+    const normalized = String(path || '').replace(/\\/g, '/');
+    const parts = normalized.split('/').filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : '';
+}
+
+async function __pmLoadLetterheadConfig() {
+    __PM_LETTERHEAD_URL = (window.HUB_CONFIG && (window.HUB_CONFIG.pmPdfLetterheadUrl || window.HUB_CONFIG.pdfLetterheadPlazaMayorUrl)) || '../public/assets/img/pm-letterhead-default.png';
+    try {
+        const { data, error } = await window.finSupabase
+            .from('configuracion')
+            .select('*')
+            .eq('clave', __PM_CFG_LETTERHEAD_KEY)
+            .maybeSingle();
+        if (error || !data) return;
+        const cfg = data.valor_json || {};
+        const rawPath = cfg.path || cfg.file_path || cfg.value || '';
+        const safePath = rawPath || (cfg.file_name ? `${__PM_LETTERHEAD_PATH}/${cfg.file_name}` : '');
+        if (!safePath) return;
+        const { data: signed, error: signedError } = await window.globalSupabase.storage.from('documentos').createSignedUrl(safePath, 3600);
+        if (!signedError && signed?.signedUrl) {
+            __PM_LETTERHEAD_URL = signed.signedUrl;
+            return;
+        }
+        const fallbackName = __pmBasename(safePath);
+        if (fallbackName) {
+            const fallbackPath = `${__PM_LETTERHEAD_PATH}/${fallbackName}`;
+            const { data: fallbackSigned, error: fallbackErr } = await window.globalSupabase.storage.from('documentos').createSignedUrl(fallbackPath, 3600);
+            if (!fallbackErr && fallbackSigned?.signedUrl) __PM_LETTERHEAD_URL = fallbackSigned.signedUrl;
+        }
+    } catch (_) {}
+}
+
+function __pmLetterheadFrame() {
+    const sx = __PM_PDF_PAGE_WIDTH_PX / __PM_LETTERHEAD_DESIGN_WIDTH_PX;
+    const sy = __PM_PDF_PAGE_HEIGHT_PX / __PM_LETTERHEAD_DESIGN_HEIGHT_PX;
+    const top = __PM_LETTERHEAD_MARGINS_DESIGN_PX.top * sy;
+    const right = __PM_LETTERHEAD_MARGINS_DESIGN_PX.right * sx;
+    const bottom = __PM_LETTERHEAD_MARGINS_DESIGN_PX.bottom * sy;
+    const left = __PM_LETTERHEAD_MARGINS_DESIGN_PX.left * sx;
+    return {
+        top,
+        right,
+        bottom,
+        left,
+        width: __PM_PDF_PAGE_WIDTH_PX - left - right,
+        height: __PM_PDF_PAGE_HEIGHT_PX - top - bottom
+    };
+}
+
+function __pmWrapLetterheadPage(innerHtml, options = {}) {
+    const frame = __pmLetterheadFrame();
+    const baseWidth = Math.max(1, parseFloat(options.baseWidth) || __PM_PDF_PAGE_WIDTH_PX);
+    const baseHeight = Math.max(1, parseFloat(options.baseHeight) || __PM_PDF_PAGE_HEIGHT_PX);
+    const scale = Math.min(frame.width / baseWidth, frame.height / baseHeight);
+    const finalW = baseWidth * scale;
+    const finalH = baseHeight * scale;
+    const left = frame.left + ((frame.width - finalW) / 2);
+    const top = frame.top + ((frame.height - finalH) / 2);
+    const bgUrl = __pmCssSafeUrl(__PM_LETTERHEAD_URL);
+    const imageLayer = bgUrl
+        ? `<img src='${bgUrl}' crossorigin='anonymous' onerror='this.style.display=\"none\"' style='position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;'>`
+        : '';
+    return `<div style="position:relative;width:${__PM_PDF_PAGE_WIDTH_PX}px;height:${__PM_PDF_PAGE_HEIGHT_PX}px;box-sizing:border-box;overflow:hidden;background:#f5f5f5;">${imageLayer}<div style="position:absolute;left:${left.toFixed(2)}px;top:${top.toFixed(2)}px;width:${baseWidth}px;height:${baseHeight}px;transform:scale(${scale.toFixed(6)});transform-origin:top left;overflow:hidden;z-index:1;">${innerHtml}</div></div>`;
+}
 
 const SB_URL = window.HUB_CONFIG?.supabaseUrl || window.ENV?.SUPABASE_URL || '';
 const SB_KEY = window.HUB_CONFIG?.supabaseAnonKey || window.ENV?.SUPABASE_ANON_KEY || '';
-const FIN_SCHEMA = window.HUB_CONFIG?.finanzasSchema || window.ENV?.SCHEMA_CASA_PIEDRA || 'finanzas';
+const FIN_SCHEMA = (typeof TENANT_SCHEMA !== 'undefined' && TENANT_SCHEMA)
+    ? TENANT_SCHEMA
+    : (window.HUB_CONFIG?.finanzasSchema || window.ENV?.SCHEMA_PLAZA_MAYOR || 'finanzas');
 const STATUS_LEVEL = { 'pendiente': 0, 'rechazada': 0, 'aprobada': 1, 'finalizada': 2 };
 const PM_ORDERS_PAGE_MODE = window.__PM_ORDERS_MODE || 'list';
 const IS_PM_ORDER_DETAIL_PAGE = PM_ORDERS_PAGE_MODE === 'detail';
@@ -54,6 +137,55 @@ let myPermissions = { access: false, orders_edit: false };
 let currentUserProfile = null;
 let pmSpaceCardOrder = [];
 let __pmLastRefreshSignalTs = 0;
+
+function __pmNativeCotizaciones() {
+    return window.PB_SERVICES && window.PB_SERVICES.cotizaciones ? window.PB_SERVICES.cotizaciones : null;
+}
+
+async function __pmQuotesList(params) {
+    const svc = __pmNativeCotizaciones();
+    if (svc) {
+        try {
+            const out = await svc.list(params || {}, { schema: FIN_SCHEMA });
+            return { data: out.items || [], error: null };
+        } catch (error) {
+            return { data: null, error };
+        }
+    }
+    const query = window.finSupabase.from('cotizaciones').select('*');
+    if (params && params.filter && params.filter.indexOf('status = "aprobada"') !== -1) query.eq('status', 'aprobada');
+    if (params && params.sort) query.order(String(params.sort).replace('-', ''), { ascending: !String(params.sort).startsWith('-') });
+    const result = await query;
+    return { data: result.data || [], error: result.error || null };
+}
+
+async function __pmQuotesUpdate(id, payload) {
+    const svc = __pmNativeCotizaciones();
+    if (svc) {
+        try {
+            await svc.update(id, payload || {}, { schema: FIN_SCHEMA });
+            return { error: null };
+        } catch (error) {
+            return { error };
+        }
+    }
+    const result = await window.finSupabase.from('cotizaciones').update(payload || {}).eq('id', id);
+    return { error: result && result.error ? result.error : null };
+}
+
+async function __pmQuotesDelete(id) {
+    const svc = __pmNativeCotizaciones();
+    if (svc) {
+        try {
+            await svc.remove(id, { schema: FIN_SCHEMA });
+            return { error: null };
+        } catch (error) {
+            return { error };
+        }
+    }
+    const result = await window.finSupabase.from('cotizaciones').delete().eq('id', id);
+    return { error: result && result.error ? result.error : null };
+}
 
 window.safeFormatDate = function(dateStr) { if (!dateStr) return '--'; const parts = dateStr.split('-'); if (parts.length !== 3) return dateStr; return `${parts[2]}/${parts[1]}/${parts[0]}`; };
 window.parseIds = function(v){ if(!v) return []; if(Array.isArray(v)) return v; if(typeof v === 'string'){ try { const parsed = JSON.parse(v); return Array.isArray(parsed) ? parsed : []; } catch(e){ return v.split(',').map(x=>x.trim()).filter(Boolean); } } return []; };
@@ -288,7 +420,22 @@ window.askCloseEditModal = function() {
     );
 };
 
-window.askDeleteOrder = function(id, e) { if(e) e.stopPropagation(); window.openConfirm("¿Eliminar cotización y TODOS sus archivos? Esta acción es irreversible.", async () => { try { window.showToast("Eliminando archivos...", "info"); const { data: files } = await window.globalSupabase.storage.from('documentos').list(`${id}`, { limit: 100 }); if (files && files.length > 0) { await window.globalSupabase.storage.from('documentos').remove(files.map(x => `${id}/${x.name}`)); } await window.finSupabase.from('cotizaciones').delete().eq('id', id); window.showToast("Cotización eliminada", "success"); window.loadOrders(); } catch (err) { window.showToast("Error: " + err.message, "error"); } }, true); };
+window.askDeleteOrder = function(id, e) {
+    if (e) e.stopPropagation();
+    window.openConfirm("¿Eliminar cotización y TODOS sus archivos? Esta acción es irreversible.", async () => {
+        try {
+            window.showToast("Eliminando archivos...", "info");
+            const { data: files } = await window.globalSupabase.storage.from('documentos').list(`${id}`, { limit: 100 });
+            if (files && files.length > 0) await window.globalSupabase.storage.from('documentos').remove(files.map(x => `${id}/${x.name}`));
+            const { error } = await __pmQuotesDelete(id);
+            if (error) throw error;
+            window.showToast("Cotización eliminada", "success");
+            window.loadOrders();
+        } catch (err) {
+            window.showToast("Error: " + err.message, "error");
+        }
+    }, true);
+};
 
 window.addEventListener('click', function(e) {
     const editModal = document.getElementById('order-edit-modal');
@@ -307,11 +454,12 @@ window.addEventListener('click', function(e) {
 });
 
 document.addEventListener('DOMContentLoaded', async () => {
-    if (window.supabase) {
-        if(!window.finSupabase) window.finSupabase = window.supabase.createClient(SB_URL, SB_KEY, { db: { schema: FIN_SCHEMA } });
-        if(!window.globalSupabase) window.globalSupabase = window.supabase.createClient(SB_URL, SB_KEY);
+    if (window.PB_CLIENT) {
+        if(!window.finSupabase) window.finSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY, { db: { schema: FIN_SCHEMA } });
+        if(!window.globalSupabase) window.globalSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY);
     }
     const { data: { session } } = await window.globalSupabase.auth.getSession(); if (!session) return;
+    await __pmLoadLetterheadConfig();
     
     const { data: profile } = await window.globalSupabase.from('profiles').select('*').eq('id', session.user.id).single();
     window.currentUserProfile = profile;
@@ -363,7 +511,16 @@ async function loadTaxes() { const { data } = await window.finSupabase.from('imp
 async function loadSpaces() { const { data } = await window.finSupabase.from('espacios').select('*'); allSpaces = data || []; __pmEnsureSpaceCardOrder(); window.renderOrderSpaceCards(); }
 async function loadConcepts() { const { data } = await window.finSupabase.from('conceptos_catalogo').select('*').eq('activo', true); catalogConcepts = data || []; }
 
-window.loadOrders = async function() { const { data } = await window.finSupabase.from('cotizaciones').select('*').order('created_at', {ascending:false}); allOrders = data || []; renderOrdersTable(allOrders); };
+window.loadOrders = async function() {
+    const { data, error } = await __pmQuotesList({ sort: '-created_at' });
+    if (error) {
+        window.showToast(`No se pudieron cargar cotizaciones: ${error.message || error}`, 'error');
+        allOrders = [];
+    } else {
+        allOrders = data || [];
+    }
+    renderOrdersTable(allOrders);
+};
 
 function renderOrdersTable(data) {
     const t = document.getElementById('orders-table'); if(!t) return; t.innerHTML = ''; 
@@ -700,7 +857,7 @@ window.executeApprovalTransaction = async function(formData) {
 
         const payload = { ...formData, status: 'aprobada', url_cotizacion_final: path };
         
-        const { error: dbError } = await window.finSupabase.from('cotizaciones').update(payload).eq('id', currentPreviewOrder.id);
+        const { error: dbError } = await __pmQuotesUpdate(currentPreviewOrder.id, payload);
         if (dbError) throw dbError;
         window.__pmBroadcastOrdersRefresh('approved_snapshot');
 
@@ -766,7 +923,7 @@ window.processSaveOrder = async function() {
         formData.status = document.getElementById('oed-status').value;
         if(!formData.numero_orden) formData.numero_orden = currentPreviewOrder.id.split('-')[0].toUpperCase();
         
-        const { error } = await window.finSupabase.from('cotizaciones').update(formData).eq('id', document.getElementById('oed-id').value);
+        const { error } = await __pmQuotesUpdate(document.getElementById('oed-id').value, formData);
         if (error) throw error;
         window.__pmBroadcastOrdersRefresh(formData.status === 'aprobada' ? 'approved_saved' : 'saved');
 
@@ -811,7 +968,8 @@ window.confirmAndGeneratePurchaseOrder = async function() {
             const path = `${currentPreviewOrder.id}/orden_compra_${folioUnificado}.pdf`;
             
             await window.globalSupabase.storage.from('documentos').upload(path, pdfBlob);
-            await window.finSupabase.from('cotizaciones').update({ url_orden_compra: path, fecha_orden_compra: new Date().toISOString() }).eq('id', currentPreviewOrder.id);
+            const ocUpdate = await __pmQuotesUpdate(currentPreviewOrder.id, { url_orden_compra: path, fecha_orden_compra: new Date().toISOString() });
+            if (ocUpdate.error) throw ocUpdate.error;
             
             window.downloadBlobAsFile(pdfBlob, `OC_${folioUnificado}.pdf`);
     
@@ -842,7 +1000,20 @@ window.openDocsModal = function(id) {
     if (order.url_orden_compra) { createBtn('Ver Orden de Compra', 'fa-solid fa-file-contract', 'purple', `window.openStoredDocument('${order.url_orden_compra}')`); } else if(['aprobada', 'finalizada'].includes(order.status)) { createBtn('Generar Orden de Compra', 'fa-solid fa-plus', 'purple', `window.previewOrderForGeneration('${order.id}')`); } else { list.innerHTML += `<div class="w-full px-4 py-3 rounded-xl border border-gray-100 bg-gray-50 flex items-center gap-3 mb-2 opacity-60"><i class="fa-solid fa-lock text-gray-400"></i><span class="text-xs font-bold text-gray-400">Orden de Compra (Pendiente)</span></div>`; }
     if (order.contrato_url) { createBtn('Ver Contrato Firmado', 'fa-solid fa-file-signature', 'indigo', `window.openStoredDocument('${order.contrato_url}')`); } else { list.innerHTML += `<div class="w-full px-4 py-3 rounded-xl border border-gray-100 bg-gray-50 flex items-center gap-3 mb-2 opacity-60"><i class="fa-solid fa-signature text-gray-400"></i><span class="text-xs font-bold text-gray-400">Contrato (Pendiente Firma)</span></div>`; }
     if (order.factura_pdf_url) { createBtn('Ver Factura (PDF)', 'fa-solid fa-file-pdf', 'red', `window.openStoredDocument('${order.factura_pdf_url}')`); if(order.factura_xml_url) createBtn('Descargar XML', 'fa-solid fa-file-code', 'orange', `window.openStoredDocument('${order.factura_xml_url}')`); } else { list.innerHTML += `<div class="w-full px-4 py-3 rounded-xl border border-gray-100 bg-gray-50 flex items-center gap-3 mb-2 opacity-60"><i class="fa-solid fa-file-invoice-dollar text-gray-400"></i><span class="text-xs font-bold text-gray-400">Factura (Pendiente)</span></div>`; }
-    if (order.historial_pagos?.length > 0) { const divider = document.createElement('div'); divider.className = 'border-t border-gray-100 my-2 pt-2 text-[10px] font-bold text-gray-400 uppercase text-center'; divider.innerText = 'Historial de Recibos'; list.appendChild(divider); order.historial_pagos.forEach((p, i) => createBtn(`Recibo #${i+1}`, 'fa-solid fa-receipt', 'green', `window.openStoredDocument('${p.file_path}')`)); }
+    if (order.historial_pagos?.length > 0) {
+        const divider = document.createElement('div');
+        divider.className = 'border-t border-gray-100 my-2 pt-2 text-[10px] font-bold text-gray-400 uppercase text-center';
+        divider.innerText = 'Historial de Recibos';
+        list.appendChild(divider);
+        let recNo = 0;
+        order.historial_pagos.forEach((p) => {
+            const type = String(p?.type || p?.tipo || '').toLowerCase();
+            const isConstancia = type === 'constancia_liquidacion' || p?.closed === true || p?.is_closure === true;
+            const label = isConstancia ? 'Constancia de Liquidación' : `Recibo #${++recNo}`;
+            const icon = isConstancia ? 'fa-solid fa-circle-check' : 'fa-solid fa-receipt';
+            createBtn(label, icon, 'green', `window.openStoredDocument('${p.file_path}')`);
+        });
+    }
 
     window.openModal('docs-modal');
 };
@@ -872,9 +1043,17 @@ window.downloadPDFFromPreview = async function() {
     }
 };
 
+function __pmOrdersTransparentPdfHtml(html) {
+    return String(html || '')
+        .replace(/\bbg-(?:white|gray-\d{2,3}|red-\d{2,3}|green-\d{2,3}|blue-\d{2,3}|amber-\d{2,3}|purple-\d{2,3}|brand-red)\b/g, '')
+        .replace(/background:\s*#(?:[0-9a-f]{3,8});?/gi, 'background: transparent;')
+        .replace(/background:\s*rgba?\([^)]+\);?/gi, 'background: transparent;')
+        .replace(/\s{2,}/g, ' ');
+}
+
 window.getOrderHTML = function(o, type) { 
     const isOrder = type === 'order'; 
-    const logoImg = `<img src="${COMPANY_LOGO_URL}" class="h-16 object-contain max-w-[220px]" crossorigin="anonymous">`; 
+    const logoImg = ''; 
 
     const now = new Date(); const dateStr = now.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' }); const genDateTime = now.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'medium' }); let docTitle = isOrder ? "ORDEN DE COMPRA" : "COTIZACIÓN"; 
     
@@ -883,7 +1062,7 @@ window.getOrderHTML = function(o, type) {
     const space = allSpaces.find(s=>s.id==o.espacio_id); const basePrice = parseFloat(space ? space.precio_base : 0); 
     const descHTML = isOrder ? '' : `<p class="text-[9px] text-gray-500 italic mt-0.5 truncate max-w-xs">${space?.descripcion || ''}</p>`; 
     const footerHubHTML = `<div class="w-full text-center mt-10"><p class="text-[10px] text-gray-400 font-medium leading-tight">Generado el ${genDateTime}<br>a través de Marketing Hub - Plaza Mayor</p></div>`; 
-    const renderHeader = (title) => `<div class="flex justify-between items-start border-b-4 border-brand-red pb-3 mb-2">${logoImg}<div class="text-right"><h1 class="text-2xl font-black text-gray-800 tracking-tighter uppercase">${title}</h1><p class="text-sm font-mono text-brand-red font-bold mt-1">FOLIO: ${folio}</p><p class="text-[10px] text-gray-500 mt-1">${dateStr}</p></div></div>`; 
+    const renderHeader = (title) => `<div class="flex justify-end items-start border-b-4 border-brand-red pb-3 mb-2">${logoImg}<div class="text-right"><h1 class="text-2xl font-black text-gray-800 tracking-tighter uppercase">${title}</h1><p class="text-sm font-mono text-brand-red font-bold mt-1">FOLIO: ${folio}</p><p class="text-[10px] text-gray-500 mt-1">${dateStr}</p></div></div>`; 
     let clientName = o.cliente_nombre || 'CLIENTE';
     let clientRfc = o.cliente_rfc;
     let nameSizeClass = 'text-xl';
@@ -953,12 +1132,15 @@ window.getOrderHTML = function(o, type) {
         signBlock = `<div class="text-center w-56"><div class="border-b border-black mb-1"></div><p class="font-bold text-xs text-brand-dark">${staffName}</p><p class="text-[10px] text-gray-500 uppercase">Staff Plaza Mayor</p></div><div class="text-center w-56"><div class="border-b border-black mb-1"></div><p class="font-bold text-xs text-brand-dark uppercase">${o.cliente_nombre.substring(0,25)}</p><p class="text-[10px] text-gray-500 uppercase">Cliente / Representante</p></div>`; 
     } 
     
-    let page1Content = `<div style="width: 100%; min-height: 1054px; height: 1054px; overflow: hidden; padding: 48px 64px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between;"><div>${renderHeader(docTitle)}${clientComponent}${isOrder ? `<div class="mb-2 bg-gray-100 p-2 rounded text-base flex justify-between"><span>Folio de Servicio: <strong class="font-black text-lg">${folio}</strong></span><span>Contrato: <strong class="font-black text-lg">${o.numero_contrato||'---'}</strong></span></div>` : ''}<table class="w-full text-left mb-2 mt-3 table-fixed border-separate border-spacing-0"><colgroup><col style="width:64%;"><col style="width:16%;"><col style="width:20%;"></colgroup><thead class="bg-gray-100 text-xs font-black text-gray-500 uppercase"><tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">Fecha</th><th class="py-2 px-3 text-right rounded-r">Importe</th></tr></thead><tbody class="divide-y divide-gray-50 text-[11px]">${rowsHtml}</tbody></table> ${totalsBlock}</div><div class="pb-2">${!isOrder ? `<div class="grid grid-cols-2 gap-4 mb-20 pt-4 border-t border-gray-100"><div><h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">Condiciones:</h4><ul class="list-none text-xs text-gray-600 space-y-0.5 leading-tight"><li>a) Pago anticipado.</li><li>b) Doc. completa 3 semanas antes.</li><li>c) Sujeto a disponibilidad.</li></ul></div><div><h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">Vigencia:</h4><p class="text-xs text-gray-600">7 días naturales a partir de la emisión.</p></div></div>` : ''}<div class="flex justify-between items-start px-2">${signBlock}</div>${footerHubHTML}</div></div>`; 
+    const page1Raw = `<div style="width: 100%; min-height: 1054px; height: 1054px; overflow: hidden; padding: 48px 64px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between;"><div>${renderHeader(docTitle)}${clientComponent}${isOrder ? `<div class="mb-2 bg-gray-100 p-2 rounded text-base flex justify-between"><span>Folio de Servicio: <strong class="font-black text-lg">${folio}</strong></span><span>Contrato: <strong class="font-black text-lg">${o.numero_contrato||'---'}</strong></span></div>` : ''}<table class="w-full text-left mb-2 mt-3 table-fixed border-separate border-spacing-0"><colgroup><col style="width:64%;"><col style="width:16%;"><col style="width:20%;"></colgroup><thead class="bg-gray-100 text-xs font-black text-gray-500 uppercase"><tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">Fecha</th><th class="py-2 px-3 text-right rounded-r">Importe</th></tr></thead><tbody class="divide-y divide-gray-50 text-[11px]">${rowsHtml}</tbody></table> ${totalsBlock}</div><div class="pb-2">${!isOrder ? `<div class="grid grid-cols-2 gap-4 mb-20 pt-4 border-t border-gray-100"><div><h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">Condiciones:</h4><ul class="list-none text-xs text-gray-600 space-y-0.5 leading-tight"><li>a) Pago anticipado.</li><li>b) Doc. completa 3 semanas antes.</li><li>c) Sujeto a disponibilidad.</li></ul></div><div><h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">Vigencia:</h4><p class="text-xs text-gray-600">7 días naturales a partir de la emisión.</p></div></div>` : ''}<div class="flex justify-between items-start px-2">${signBlock}</div>${footerHubHTML}</div></div>`; 
+    let page1Content = __pmWrapLetterheadPage(page1Raw, { baseWidth: 816, baseHeight: 1054 });
     let page2Content = ''; 
     if (!isOrder) { 
-        page2Content = `<div class="html2pdf__page-break"></div><div style="width: 100%; min-height: 1054px; height: 1054px; overflow: hidden; padding: 48px 64px; box-sizing: border-box;">${renderHeader("CONDICIONES GENERALES")}<ol class="list-decimal list-outside ml-6 text-xs text-gray-800 space-y-4 text-justify leading-loose mt-8"><li><span class="font-bold">La instalación será responsabilidad exclusiva del cliente.</span> Esto incluye cualquier costo asociado con la instalación, como mano de obra, herramientas, y materiales necesarios. El cliente debe coordinar con el personal del centro comercial para asegurar que la instalación cumpla con las normativas y políticas de Plaza Mayor.</li><li><span class="font-bold">El diseño y contenido del material publicitario deben cumplir con las normativas establecidas por el centro comercial.</span> Antes de la instalación, el cliente deberá obtener la aprobación necesaria de Plaza Mayor para asegurar la conformidad con las políticas vigentes.</li><li><span class="font-bold">El cliente es completamente responsable del contenido del material publicitario.</span> Debe garantizar que el contenido no infrinja derechos de terceros, incluyendo derechos de autor, marcas registradas u otros derechos de propiedad intelectual. El centro comercial se reserva el derecho de rechazar la instalación de cualquier material que considere inapropiado o que viole las normativas establecidas.</li><li><span class="font-bold">Durante el proceso de instalación y desinstalación, el cliente será responsable de cualquier daño causado al espacio o propiedad del centro comercial.</span> Se recomienda que el cliente cuente con un seguro de responsabilidad civil para cubrir cualquier daño potencial.</li><li><span class="font-bold">Cualquier modificación en la duración, diseño o ubicación del material publicitario debe ser comunicada y aprobada por el centro comercial con anticipación.</span></li><li><span class="font-bold">No se permite volanteo fuera del espacio designado, ni equipo de audio (perifoneo, música, etc) salvo previa autorización por escrito de la Gerencia de Mercadotecnia.</span> Se prohíbe el uso de globos con helio.</li><li><span class="font-bold">Al finalizar la campaña publicitaria, el cliente deberá retirar el material publicitario a más tardar al día siguiente.</span> Cualquier demora en la retirada puede estar sujeta a cargos adicionales.</li><li><span class="font-bold">No se permite la venta ni promoción de artículos para adultos (como juguetes sexuales), bebidas alcohólicas, tabaco, CBD y/o cannabinoides.</span></li><li><span class="font-bold">El almacenamiento y/o recolección de basura correrá por cuenta del cliente.</span> En caso de no hacerlo, Plaza Mayor podrá generar un cargo adicional por este concepto.</li><li><span class="font-bold">El cliente deberá instalar la toma eléctrica necesaria.</span> Plaza Mayor podrá suministrar energía eléctrica de 110v para uso moderado de algunos equipos. Este tema deberá definirse previamente por escrito con la autorización de Gerencia de Operaciones.</li><li><span class="font-bold">Esta es una propuesta económica, las condiciones generales y específicas se presentarán en el contrato correspondiente, posterior a haberse autorizado este documento.</span></li></ol></div>`; 
+        const page2Raw = `<div style="width: 100%; min-height: 1054px; height: 1054px; overflow: hidden; padding: 48px 64px; box-sizing: border-box;">${renderHeader("CONDICIONES GENERALES")}<ol class="list-decimal list-outside ml-6 text-xs text-gray-800 space-y-4 text-justify leading-loose mt-8"><li><span class="font-bold">La instalación será responsabilidad exclusiva del cliente.</span> Esto incluye cualquier costo asociado con la instalación, como mano de obra, herramientas, y materiales necesarios. El cliente debe coordinar con el personal del centro comercial para asegurar que la instalación cumpla con las normativas y políticas de Plaza Mayor.</li><li><span class="font-bold">El diseño y contenido del material publicitario deben cumplir con las normativas establecidas por el centro comercial.</span> Antes de la instalación, el cliente deberá obtener la aprobación necesaria de Plaza Mayor para asegurar la conformidad con las políticas vigentes.</li><li><span class="font-bold">El cliente es completamente responsable del contenido del material publicitario.</span> Debe garantizar que el contenido no infrinja derechos de terceros, incluyendo derechos de autor, marcas registradas u otros derechos de propiedad intelectual. El centro comercial se reserva el derecho de rechazar la instalación de cualquier material que considere inapropiado o que viole las normativas establecidas.</li><li><span class="font-bold">Durante el proceso de instalación y desinstalación, el cliente será responsable de cualquier daño causado al espacio o propiedad del centro comercial.</span> Se recomienda que el cliente cuente con un seguro de responsabilidad civil para cubrir cualquier daño potencial.</li><li><span class="font-bold">Cualquier modificación en la duración, diseño o ubicación del material publicitario debe ser comunicada y aprobada por el centro comercial con anticipación.</span></li><li><span class="font-bold">No se permite volanteo fuera del espacio designado, ni equipo de audio (perifoneo, música, etc) salvo previa autorización por escrito de la Gerencia de Mercadotecnia.</span> Se prohíbe el uso de globos con helio.</li><li><span class="font-bold">Al finalizar la campaña publicitaria, el cliente deberá retirar el material publicitario a más tardar al día siguiente.</span> Cualquier demora en la retirada puede estar sujeta a cargos adicionales.</li><li><span class="font-bold">No se permite la venta ni promoción de artículos para adultos (como juguetes sexuales), bebidas alcohólicas, tabaco, CBD y/o cannabinoides.</span></li><li><span class="font-bold">El almacenamiento y/o recolección de basura correrá por cuenta del cliente.</span> En caso de no hacerlo, Plaza Mayor podrá generar un cargo adicional por este concepto.</li><li><span class="font-bold">El cliente deberá instalar la toma eléctrica necesaria.</span> Plaza Mayor podrá suministrar energía eléctrica de 110v para uso moderado de algunos equipos. Este tema deberá definirse previamente por escrito con la autorización de Gerencia de Operaciones.</li><li><span class="font-bold">Esta es una propuesta económica, las condiciones generales y específicas se presentarán en el contrato correspondiente, posterior a haberse autorizado este documento.</span></li></ol></div>`; 
+        page2Content = `<div class="html2pdf__page-break"></div>${__pmWrapLetterheadPage(page2Raw, { baseWidth: 816, baseHeight: 1054 })}`;
     } 
-    return `<div style="width:816px;margin:0;padding:0;box-sizing:border-box;background:#ffffff;word-break:break-word;overflow-wrap:anywhere;">${page1Content}${page2Content}</div>`; 
+    const raw = `<div style="width:816px;margin:0;padding:0;box-sizing:border-box;background:#ffffff;word-break:break-word;overflow-wrap:anywhere;">${page1Content}${page2Content}</div>`;
+    return __pmOrdersTransparentPdfHtml(raw); 
 };
 
 
@@ -1653,7 +1835,7 @@ window.getOrderHTML = function(o, type) {
   async function findConflict(orderId) {
     const selected = selectedCfg();
     if (!selected.length) return null;
-    const { data, error } = await window.finSupabase.from("cotizaciones").select("id,espacio_id,fecha_inicio,fecha_fin,espacios_detalle,status").eq("status", "aprobada");
+    const { data, error } = await __pmQuotesList({ filter: 'status = "aprobada"', perPage: 500 });
     if (error) throw error;
     for (const cfg of selected) {
       const s = iso(cfg.startDate); const e = iso(cfg.endDate); const sid = String(cfg.spaceId);
@@ -1718,7 +1900,7 @@ window.getOrderHTML = function(o, type) {
         const c = await findConflict(currentPreviewOrder?.id);
         if (c) throw new Error(`${c.space} ocupado (${window.safeFormatDate(c.fi)}${c.fi !== c.ff ? " a " + window.safeFormatDate(c.ff) : ""}).`);
       }
-      const { error } = await window.finSupabase.from("cotizaciones").update(formData).eq("id", document.getElementById("oed-id")?.value || currentPreviewOrder?.id);
+      const { error } = await __pmQuotesUpdate(document.getElementById("oed-id")?.value || currentPreviewOrder?.id, formData);
       if (error) throw error;
       currentPreviewOrder = { ...currentPreviewOrder, ...formData };
       signalOrdersRefresh(nextStatus === "aprobada" ? "approved_saved" : "saved");
@@ -1739,7 +1921,7 @@ window.getOrderHTML = function(o, type) {
         const path = `${currentPreviewOrder.id}/cotizacion_aprobada_${folio}.pdf`;
         const { error: uploadErr } = await window.globalSupabase.storage.from("documentos").upload(path, pdfBlob, { upsert: true });
         if (uploadErr) throw uploadErr;
-        const { error: dbErr } = await window.finSupabase.from("cotizaciones").update({ url_cotizacion_final: path, status: "aprobada" }).eq("id", currentPreviewOrder.id);
+        const { error: dbErr } = await __pmQuotesUpdate(currentPreviewOrder.id, { url_cotizacion_final: path, status: "aprobada" });
         if (dbErr) throw dbErr;
         currentPreviewOrder = { ...currentPreviewOrder, url_cotizacion_final: path, status: "aprobada" };
         signalOrdersRefresh("approved_snapshot");
@@ -1784,7 +1966,7 @@ window.getOrderHTML = function(o, type) {
       const { error: uploadErr } = await window.globalSupabase.storage.from("documentos").upload(path, pdfBlob, { upsert: true });
       if (uploadErr) throw uploadErr;
       const payload = { ...formData, status: "aprobada", url_cotizacion_final: path };
-      const { error: dbErr } = await window.finSupabase.from("cotizaciones").update(payload).eq("id", currentPreviewOrder.id);
+      const { error: dbErr } = await __pmQuotesUpdate(currentPreviewOrder.id, payload);
       if (dbErr) throw dbErr;
       if (typeof window.downloadBlobAsFile === "function") window.downloadBlobAsFile(pdfBlob, `Cotizacion_Aprobada_${folio}.pdf`);
       else {
@@ -1891,5 +2073,6 @@ window.getOrderHTML = function(o, type) {
     viewport.scrollBy({ left: (direction || 1) * delta, behavior: "smooth" });
   };
 })();
+
 
 

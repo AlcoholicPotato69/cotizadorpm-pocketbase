@@ -655,9 +655,9 @@ async function loadData() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-    if (window.supabase) {
-        if (!window.finSupabase) window.finSupabase = window.supabase.createClient(SB_URL, SB_KEY, { db: { schema: FIN_SCHEMA } });
-        if (!window.globalSupabase) window.globalSupabase = window.supabase.createClient(SB_URL, SB_KEY);
+    if (window.PB_CLIENT) {
+        if (!window.finSupabase) window.finSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY, { db: { schema: FIN_SCHEMA } });
+        if (!window.globalSupabase) window.globalSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY);
     }
 
     const { data: { session } } = await window.globalSupabase.auth.getSession();
@@ -675,4 +675,5 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (e.target === modal) window.closeMontajeModal();
     });
 });
+
 

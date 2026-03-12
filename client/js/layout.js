@@ -15,7 +15,7 @@
     console.log("⚡ Cargando Layout Local...");
 
     /* -------------------------------------------------------------------------
-     * CONEXIÓN A SUPABASE (LEÍDA DE HUB_CONFIG)
+     * CONEXIÓN A POCKETBASE (LEÍDA DE HUB_CONFIG)
      * ------------------------------------------------------------------------- */
     const LAYOUT_URL = (window.HUB_CONFIG && window.HUB_CONFIG.supabaseUrl) || 'http://127.0.0.1:54321';
     const LAYOUT_KEY = (window.HUB_CONFIG && window.HUB_CONFIG.supabaseAnonKey) || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0';
@@ -53,12 +53,12 @@
     })();
 
     // 1. INICIALIZACIÓN SINGLETON
-    if (window.supabase) {
+    if (window.PB_CLIENT) {
         if (!window.globalSupabase) {
-            window.globalSupabase = window.supabase.createClient(LAYOUT_URL, LAYOUT_KEY);
+            window.globalSupabase = window.PB_CLIENT.createClient(LAYOUT_URL, LAYOUT_KEY);
         }
         layoutClient = window.globalSupabase;
-        window.supabaseClient = window.globalSupabase;
+        window.pbClient = window.globalSupabase;
         
         if (!window.finSupabase) {
             // finSupabase debe reutilizar la sesión del cliente global (evita requests sin JWT y RLS devolviendo vacío)
@@ -66,7 +66,7 @@
             window.__FIN_SCHEMA = (typeof TENANT_SCHEMA !== 'undefined' ? TENANT_SCHEMA : FIN_SCHEMA);
         }
     } else {
-        console.error("❌ Librería Supabase no encontrada.");
+        console.error("❌ Runtime PocketBase no encontrado.");
     }
 
     // 2. HELPERS VISUALES
@@ -398,3 +398,4 @@
         if (drop && !drop.contains(e.target) && !e.target.closest('button[onclick*="toggleNotif"]')) { drop.classList.add('hidden'); }
     });
 })();
+

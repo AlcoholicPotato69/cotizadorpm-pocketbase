@@ -275,8 +275,8 @@ function syncKindNav() {
 // Carga inicial y permisos
 // ----------------------------------------------------------------------------
 async function initClients() {
-    if (!window.supabase) return false;
-    if (!window.globalSupabase) window.globalSupabase = window.supabase.createClient(SB_URL, SB_KEY);
+    if (!window.PB_CLIENT) return false;
+    if (!window.globalSupabase) window.globalSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY);
     if (!window.finSupabase) window.finSupabase = window.globalSupabase.schema(FIN_SCHEMA);
     return true;
 }
@@ -812,4 +812,5 @@ document.addEventListener('DOMContentLoaded', async () => {
     searchInput?.addEventListener('input', applyFilters);
     applyFilters();
 });
+
 

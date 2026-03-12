@@ -41,9 +41,9 @@ function formatMoney(v){ return new Intl.NumberFormat('es-MX', { style: 'currenc
 
 // --- INICIO ---
 document.addEventListener('DOMContentLoaded', async () => {
-    if (window.supabase) {
-        if(!window.finSupabase) window.finSupabase = window.supabase.createClient(SB_URL, SB_KEY, { db: { schema: FIN_SCHEMA } });
-        if(!window.globalSupabase) window.globalSupabase = window.supabase.createClient(SB_URL, SB_KEY);
+    if (window.PB_CLIENT) {
+        if(!window.finSupabase) window.finSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY, { db: { schema: FIN_SCHEMA } });
+        if(!window.globalSupabase) window.globalSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY);
     }
     const { data: { session } } = await window.globalSupabase.auth.getSession();
     if (!session) window.location.href = 'index.html';
@@ -299,7 +299,7 @@ async function loadPdfPreview(path) {
     const msg = document.getElementById('no-pdf-msg');
     
     const { data, error } = await window.globalSupabase.storage
-        .from('documentos')
+        .from('documentos-cp')
         .createSignedUrl(path, 3600); // URL válida 1 hora
     
     if (error || !data) {
@@ -357,3 +357,4 @@ window.deleteInvoice = function() {
         }
     });
 }
+

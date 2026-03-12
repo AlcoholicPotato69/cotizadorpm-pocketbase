@@ -11,7 +11,7 @@
     <script src="../../assets/libs/js/jspdf.js"></script>
     <script src="../../assets/libs/js/html2pdf.js"></script>
     <script src="../js/hub-config.js"></script>
-    <script src="../supabase.js"></script>
+    <script src="../services/pb-client.js"></script>
     <script src="../../assets/libs/js/chart.js"></script>
 
     <script>
@@ -199,7 +199,6 @@
                         <div class="bg-white p-3 rounded-xl border border-gray-200 shadow-sm">
                             <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">1. Plantilla</label>
                             <div class="flex gap-2">
-                                <button onclick="window.openTemplateManager()" class="bg-blue-50 text-blue-600 px-3 py-2 rounded-lg text-xs font-bold uppercase hover:bg-blue-100 transition border border-blue-100"><i class="fa-solid fa-gear"></i></button>
                                 <select id="template-selector" onchange="window.loadSelectedTemplate()" class="bg-gray-50 border border-gray-200 text-xs font-bold rounded-lg p-2 flex-grow outline-none focus:border-brand-red cursor-pointer"><option value="">-- Seleccionar --</option></select>
                             </div>
                         </div>
@@ -228,33 +227,6 @@
             </div>
         </div>
     </main>
-
-    <div id="templates-modal" class="fixed inset-0 bg-black/80 z-[90] hidden flex items-center justify-center p-4 backdrop-blur-sm animate-enter">
-        <div class="bg-white w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-            <div class="bg-brand-dark p-4 flex justify-between items-center text-white shrink-0">
-                <h3 class="font-bold uppercase text-xs tracking-wider flex items-center gap-2"><i class="fa-solid fa-folder-open"></i> Gestor de Plantillas</h3>
-                <button onclick="window.closeModal('templates-modal')" class="hover:text-gray-300"><i class="fa-solid fa-times"></i></button>
-            </div>
-            <div class="flex flex-col md:flex-row h-full overflow-hidden">
-                <div class="w-full md:w-1/3 bg-gray-50 border-r border-gray-200 p-5 overflow-y-auto custom-scroll">
-                    <h4 class="font-black text-gray-700 text-xs uppercase mb-3">Variables Disponibles</h4>
-                    <div class="flex flex-wrap gap-2" id="variables-list"></div>
-                    <div class="mt-8 pt-4 border-t border-gray-200">
-                        <h4 class="font-black text-gray-700 text-xs uppercase mb-3">Subir Nueva</h4>
-                        <div class="space-y-3 mb-6">
-                            <input type="text" id="new-template-name" placeholder="Nombre" class="w-full border p-2 rounded text-xs outline-none focus:border-brand-red">
-                            <input type="file" id="new-template-file" accept=".html,.txt" class="block w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-brand-red file:text-white hover:file:bg-red-700"/>
-                            <button onclick="window.uploadTemplate()" class="w-full bg-gray-800 text-white py-2 rounded-lg text-xs font-bold uppercase hover:bg-black transition">Guardar</button>
-                        </div>
-                    </div>
-                </div>
-                <div class="w-full md:w-2/3 p-5 overflow-y-auto custom-scroll">
-                    <h4 class="font-black text-gray-700 text-xs uppercase mb-4">Plantillas Guardadas</h4>
-                    <div id="templates-list-container" class="space-y-2"></div>
-                </div>
-            </div>
-        </div>
-    </div>
 
     <div id="upload-receipt-modal" class="fixed inset-0 bg-black/80 z-[100] hidden flex items-center justify-center p-4 backdrop-blur-sm animate-enter">
         <div class="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
@@ -327,5 +299,6 @@
     <script src="contracts.js"></script>
 </body>
 </html> 
+
 
 

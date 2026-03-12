@@ -1,0 +1,14 @@
+﻿{
+    "backup_name":  "backend_full_20260311_183236",
+    "created_at":  "2026-03-11T18:32:36",
+    "repository_root":  "C:\\Users\\johan\\OneDrive\\Desktop\\servidores git\\cotizadorpm-pocketbase",
+    "pocketbase_running_during_backup":  true,
+    "includes":  [
+                     "pocketbase.exe",
+                     "pb_data",
+                     "pb_hooks",
+                     "pb_migrations",
+                     "client\\services",
+                     "client\\js\\hub-config.js"
+                 ]
+}

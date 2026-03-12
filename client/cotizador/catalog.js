@@ -85,6 +85,24 @@ let pmQuoteTempStart = '';
 let pmQuoteTempEnd = '';
 let pmQuoteBlockedRanges = [];
 
+function pmNativeCotizacionesService() {
+    return window.PB_SERVICES && window.PB_SERVICES.cotizaciones ? window.PB_SERVICES.cotizaciones : null;
+}
+
+async function pmCreateQuoteRecord(payload) {
+    const svc = pmNativeCotizacionesService();
+    if (svc) {
+        try {
+            await svc.create(payload, { schema: FIN_SCHEMA });
+            return { error: null };
+        } catch (error) {
+            return { error };
+        }
+    }
+    const result = await window.finSupabase.from('cotizaciones').insert(payload);
+    return { error: result && result.error ? result.error : null };
+}
+
 // --- HELPERS ---
 function parseIds(v){ if(!v) return []; if(Array.isArray(v)) return v; if(typeof v === 'string'){ try { const parsed = JSON.parse(v); return Array.isArray(parsed) ? parsed : []; } catch(e){ return v.split(',').map(x=>x.trim()).filter(Boolean); } } return []; }
 function formatMoney(v){ return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(v || 0); }
@@ -123,7 +141,7 @@ function buildSpacePrice(space, opts = {}){
         if(String(space.ajuste_tipo || '') === 'aumento') subtotal += subtotal * ((parseFloat(space.ajuste_porcentaje || 0) || 0) / 100);
         if(String(space.ajuste_tipo || '') === 'descuento') subtotal -= subtotal * ((parseFloat(space.ajuste_porcentaje || 0) || 0) / 100);
     }
-    const taxIds = parseIds(space.impuestos_ids);
+    const taxIds = parseIds(space.impuestos_ids || space.impuestos);
     let taxes = 0;
     taxIds.forEach(tid => {
         const t = dbTaxes.find(x => String(x.id) === String(tid));
@@ -389,9 +407,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
     }
 
-    if (window.supabase) {
-        if(!window.finSupabase) window.finSupabase = window.supabase.createClient(SB_URL, SB_KEY, { db: { schema: FIN_SCHEMA } });
-        if(!window.globalSupabase) window.globalSupabase = window.supabase.createClient(SB_URL, SB_KEY);
+    if (window.PB_CLIENT) {
+        if(!window.finSupabase) window.finSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY, { db: { schema: FIN_SCHEMA } });
+        if(!window.globalSupabase) window.globalSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY);
     }
 
     const { data: { session } } = await window.globalSupabase.auth.getSession();
@@ -489,7 +507,7 @@ function renderSpaces(list) {
         }
 
         let totalTax = 0;
-        const sTaxes = parseIds(s.impuestos_ids);
+        const sTaxes = parseIds(s.impuestos_ids || s.impuestos);
         if(sTaxes.length > 0 && dbTaxes.length > 0) {
             sTaxes.forEach(taxId => {
                 const t = dbTaxes.find(x => String(x.id) === String(taxId));
@@ -670,7 +688,7 @@ window.openManagerModal = function(id){
     if(container) {
         container.innerHTML = '';
         let currentTaxes = [];
-        if(id) { const s = allSpaces.find(x => x.id === id); currentTaxes = parseIds(s.impuestos_ids); }
+        if(id) { const s = allSpaces.find(x => x.id === id); currentTaxes = parseIds((s && (s.impuestos_ids || s.impuestos)) || []); }
         dbTaxes.forEach(t => {
             const isChecked = currentTaxes.some(cid => String(cid) === String(t.id)) ? 'checked' : '';
             container.innerHTML += `<label class="flex items-center gap-2 p-2 border rounded bg-white hover:bg-gray-50 cursor-pointer"><input type="checkbox" value="${t.id}" class="tax-check accent-brand-red cursor-pointer" ${isChecked}><span class="text-[10px] font-bold uppercase text-gray-600 cursor-pointer select-none">${t.nombre} (${t.porcentaje}%)</span></label>`;
@@ -692,6 +710,11 @@ window.openManagerModal = function(id){
         document.getElementById('mgr-base').value = s.precio_base; 
         document.getElementById('mgr-adj-type').value = s.ajuste_tipo || 'ninguno'; document.getElementById('mgr-adj-pct').value = s.ajuste_porcentaje || 0; 
         document.getElementById('mgr-active').checked = s.activa !== false; 
+        const mgrPrev = document.getElementById('mgr-preview');
+        if (mgrPrev) {
+            if (s.imagen_url) { mgrPrev.src = s.imagen_url; mgrPrev.classList.remove('hidden'); }
+            else { mgrPrev.src = ''; mgrPrev.classList.add('hidden'); }
+        }
         document.getElementById('btn-delete-mgr').classList.remove('hidden');
     } else { 
         document.getElementById('mgr-title').innerText = "Nuevo Espacio"; 
@@ -699,6 +722,7 @@ window.openManagerModal = function(id){
         document.getElementById('mgr-name').value = ''; document.getElementById('mgr-base').value = ''; 
         document.getElementById('mgr-tags').value = ''; 
         document.getElementById('mgr-desc').value = ''; document.getElementById('mgr-active').checked = true; 
+        const mgrPrev = document.getElementById('mgr-preview'); if (mgrPrev) { mgrPrev.src = ''; mgrPrev.classList.add('hidden'); }
         document.getElementById('btn-delete-mgr').classList.add('hidden');
     } 
     window.openModal('manager-modal');
@@ -725,11 +749,22 @@ window.saveSpace = async function(){
         activa: document.getElementById('mgr-active').checked,
         impuestos_ids: selectedTaxes 
     }; 
+    const fileInput = document.getElementById('mgr-file');
+    const imageFile = fileInput && fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
+    const submitPayload = imageFile ? (() => {
+        const fd = new FormData();
+        Object.entries(payload).forEach(([k, v]) => {
+            if (Array.isArray(v) || (v && typeof v === 'object')) fd.append(k, JSON.stringify(v));
+            else if (v !== undefined && v !== null) fd.append(k, String(v));
+        });
+        fd.append('imagen', imageFile, imageFile.name || 'imagen');
+        return fd;
+    })() : payload;
     
     try {
-        if(id) { await window.finSupabase.from('espacios').update(payload).eq('id', id); } 
-        else { await window.finSupabase.from('espacios').insert(payload); } 
-        window.showToast("Guardado", "success"); window.closeModal('manager-modal'); loadCatalog(); 
+        if(id) { await window.finSupabase.from('espacios').update(submitPayload).eq('id', id); } 
+        else { await window.finSupabase.from('espacios').insert(submitPayload); } 
+        if (fileInput) fileInput.value = ''; window.showToast("Guardado", "success"); window.closeModal('manager-modal'); loadCatalog(); 
     } catch(e) {
         console.error(e);
         window.showToast("Error al guardar: " + e.message, "error");
@@ -888,7 +923,7 @@ window.generatePDF = async function() {
         status: 'pendiente',
         creado_por: (await window.globalSupabase.auth.getUser()).data.user.id
     };
-    const { error } = await window.finSupabase.from('cotizaciones').insert(payload);
+    const { error } = await pmCreateQuoteRecord(payload);
     if(error){
         console.error(error);
         if (String(error.message || '').toLowerCase().includes('espacios_detalle') || String(error.message || '').toLowerCase().includes('nombre_cotizacion')) {

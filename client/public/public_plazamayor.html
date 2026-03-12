@@ -10,7 +10,7 @@
     
     <script src="assets/libs/js/tailwindcss.js"></script>
     <script src="assets/libs/js/env.js"></script>
-    <script src="assets/libs/js/supabase.js"></script>
+    <script src="assets/libs/js/pb-client.js"></script>
     <link href="assets/libs/css/all.min.css" rel="stylesheet">
     
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -196,7 +196,7 @@
     <script>
         function formatMoney(amount) { return '$' + amount.toLocaleString('es-MX', {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
         const SUPABASE_URL = window.ENV ? window.ENV.SUPABASE_URL : ''; const SUPABASE_ANON_KEY = window.ENV ? window.ENV.SUPABASE_ANON_KEY : ''; const ESQUEMA_DB = (window.ENV && window.ENV.SCHEMA_PLAZA_MAYOR) ? window.ENV.SCHEMA_PLAZA_MAYOR : 'finanzas';
-        const clienteSupabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { db: { schema: ESQUEMA_DB } });
+        const clienteSupabase = window.PB_CLIENT.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { db: { schema: ESQUEMA_DB } });
 
         // TRADUCTOR DE IMÁGENES LOCALES A NUBE DE CLOUDFLARE
         function repararImagen(url) {
@@ -333,3 +333,5 @@
     </script>
 </body>
 </html>
+
+

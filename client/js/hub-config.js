@@ -4,6 +4,11 @@
  * Notas: Este archivo forma parte del cotizador. Ver documentacion completa en docs/10-funcionamiento-general-del-codigo.txt.
  */
 
+const __hubPath = String(window.location.pathname || '').toLowerCase();
+const __hubNested = /\/(cotizador|cotizadorcp|public|system)\//.test(__hubPath);
+const __hubAssetsBase = __hubNested ? '../../assets' : '../assets';
+const __hubPublicBase = __hubNested ? '../public' : './public';
+
 window.HUB_CONFIG = {
   // Supabase local (por defecto)
   supabaseUrl: 'http://127.0.0.1:8090'
@@ -19,10 +24,14 @@ window.HUB_CONFIG = {
   // Logo del sistema (opcional). Si usas Storage local, sube el archivo a:
   // Bucket: espacios  |  Ruta: logo.png  |  Público: true
   // Si prefieres un archivo local, pon una ruta relativa (ej: './assets/logo.png').
-  companyLogoUrl: '../public/assets/img/logo.png',
+  companyLogoUrl: `${__hubAssetsBase}/logo.png`,
 
   // Logo Casa de Piedra (Storage local)
-  companyLogoUrlCP: '../public/assets/img/logocp.png',
+  companyLogoUrlCP: `${__hubAssetsBase}/logocp.png`,
+
+  // Membretes PDF por tenant (carta)
+  pmPdfLetterheadUrl: `${__hubPublicBase}/assets/img/pm-letterhead-default.png`,
+  cpPdfLetterheadUrl: `${__hubPublicBase}/assets/img/cp-letterhead-default.png`,
 
   // Feed ICS opcional para sincronizar el calendario unificado de Casa de Piedra
   // Flujo simple recomendado en autohosteado:
@@ -40,4 +49,3 @@ window.HUB_CONFIG = {
     { name: 'Cotizador - Casa de Piedra', description: 'Acceso al cotizador de Casa de Piedra.', icon: 'fa-gem',   url_path: 'cotizadorcp/catalog.html', color: 'cp', tenant: 'casa_de_piedra' }
   ]
 };
-
