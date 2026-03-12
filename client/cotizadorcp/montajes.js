@@ -4,8 +4,8 @@
  * Notas: Este archivo forma parte del cotizador. Ver documentacion completa en docs/10-funcionamiento-general-del-codigo.txt.
  */
 
-const SB_URL = (window.HUB_CONFIG && window.HUB_CONFIG.supabaseUrl) || 'http://127.0.0.1:54321';
-const SB_KEY = (window.HUB_CONFIG && window.HUB_CONFIG.supabaseAnonKey) || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0';
+const PB_URL = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseUrl) || 'http://127.0.0.1:8090';
+const PB_KEY = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseAnonKey) || '';
 const FIN_SCHEMA = 'finanzas_casadepiedra';
 const ACTIVE_STATUSES = ['pendiente', 'aprobada', 'finalizada'];
 const WEEK_KEYS = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
@@ -348,7 +348,7 @@ window.closeMontajeModal = function () {
 async function loadPremontajePctConfig() {
     premontajePctGlobal = 25;
     try {
-        const { data, error } = await window.finSupabase
+        const { data, error } = await window.tenantPocketBase
             .from('configuracion')
             .select('clave,valor_json,valor_num')
             .eq('clave', 'premontaje_pct')
@@ -439,7 +439,7 @@ function calcPremontaje(space, guests, dates, courtesy, pct) {
 
 async function hasMontajeConflict(orderId, spaceId, dates) {
     if (!dates.length) return false;
-    const { data, error } = await window.finSupabase
+    const { data, error } = await window.tenantPocketBase
         .from('cotizaciones')
         .select('id,espacio_id,fecha_inicio,fecha_fin,espacios_detalle,conceptos_adicionales,status')
         .in('status', ACTIVE_STATUSES)
@@ -537,7 +537,7 @@ async function updateOrderMontajeRange(orderId, spaceId, start, end, notify = tr
         precio_final: nextPrice
     };
 
-    const { error } = await window.finSupabase.from('cotizaciones').update(payload).eq('id', orderId);
+    const { error } = await window.tenantPocketBase.from('cotizaciones').update(payload).eq('id', orderId);
     if (error) throw error;
 
     order.espacios_detalle = details;
@@ -643,9 +643,9 @@ function initCalendar() {
 
 async function loadData() {
     const [spacesRes, ordersRes, taxesRes] = await Promise.all([
-        window.finSupabase.from('espacios').select('*'),
-        window.finSupabase.from('cotizaciones').select('*').in('status', ACTIVE_STATUSES).order('created_at', { ascending: false }),
-        window.finSupabase.from('impuestos').select('*')
+        window.tenantPocketBase.from('espacios').select('*'),
+        window.tenantPocketBase.from('cotizaciones').select('*').in('status', ACTIVE_STATUSES).order('created_at', { ascending: false }),
+        window.tenantPocketBase.from('impuestos').select('*')
     ]);
     allSpaces = spacesRes.data || [];
     allOrders = ordersRes.data || [];
@@ -656,11 +656,11 @@ async function loadData() {
 
 document.addEventListener('DOMContentLoaded', async () => {
     if (window.PB_CLIENT) {
-        if (!window.finSupabase) window.finSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY, { db: { schema: FIN_SCHEMA } });
-        if (!window.globalSupabase) window.globalSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY);
+        if (!window.tenantPocketBase) window.tenantPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY, { db: { schema: FIN_SCHEMA } });
+        if (!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
     }
 
-    const { data: { session } } = await window.globalSupabase.auth.getSession();
+    const { data: { session } } = await window.globalPocketBase.auth.getSession();
     if (!session) return;
 
     await loadData();
@@ -675,5 +675,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (e.target === modal) window.closeMontajeModal();
     });
 });
+
+
+
 
 

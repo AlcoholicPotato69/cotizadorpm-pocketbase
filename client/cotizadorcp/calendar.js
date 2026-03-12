@@ -15,8 +15,8 @@
 // - Respeta no empalme por espacio contra cotizaciones aprobadas/finalizadas.
 // ============================================================================
 
-const SB_URL = (window.HUB_CONFIG && window.HUB_CONFIG.supabaseUrl) || 'http://127.0.0.1:54321';
-const SB_KEY = (window.HUB_CONFIG && window.HUB_CONFIG.supabaseAnonKey) || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0';
+const PB_URL = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseUrl) || 'http://127.0.0.1:8090';
+const PB_KEY = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseAnonKey) || '';
 const FIN_SCHEMA = 'finanzas_casadepiedra';
 
 const BLOCKING_STATUSES = ['aprobada', 'finalizada'];
@@ -276,8 +276,8 @@ function syncKindNav() {
 // ----------------------------------------------------------------------------
 async function initClients() {
     if (!window.PB_CLIENT) return false;
-    if (!window.globalSupabase) window.globalSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY);
-    if (!window.finSupabase) window.finSupabase = window.globalSupabase.schema(FIN_SCHEMA);
+    if (!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
+    if (!window.tenantPocketBase) window.tenantPocketBase = window.globalPocketBase.schema(FIN_SCHEMA);
     return true;
 }
 
@@ -293,10 +293,10 @@ function resolvePermissions(profile) {
 
 async function loadBaseData() {
     const [spacesRes, ordersRes, taxesRes, configRes] = await Promise.all([
-        window.finSupabase.from('espacios').select('*').order('nombre', { ascending: true }),
-        window.finSupabase.from('cotizaciones').select('*').in('status', VISIBLE_STATUSES).order('created_at', { ascending: false }),
-        window.finSupabase.from('impuestos').select('*'),
-        window.finSupabase.from('configuracion').select('clave,valor_json,valor_num').eq('clave', 'premontaje_pct').maybeSingle()
+        window.tenantPocketBase.from('espacios').select('*').order('nombre', { ascending: true }),
+        window.tenantPocketBase.from('cotizaciones').select('*').in('status', VISIBLE_STATUSES).order('created_at', { ascending: false }),
+        window.tenantPocketBase.from('impuestos').select('*'),
+        window.tenantPocketBase.from('configuracion').select('clave,valor_json,valor_num').eq('clave', 'premontaje_pct').maybeSingle()
     ]);
 
     allSpaces = spacesRes.data || [];
@@ -563,7 +563,7 @@ async function hasConflictForRange(kind, orderId, spaceId, start, end) {
     if (!s || !e || e < s) return { conflict: true, msg: 'Rango invalido.' };
     const targetDates = new Set(listDatesBetween(s, e));
 
-    const { data, error } = await window.finSupabase
+    const { data, error } = await window.tenantPocketBase
         .from('cotizaciones')
         .select('id,status,espacio_id,fecha_inicio,fecha_fin,espacios_detalle,conceptos_adicionales,cliente_nombre,nombre_cotizacion')
         .in('status', BLOCKING_STATUSES)
@@ -672,7 +672,7 @@ window.saveCalendarEdit = async function saveCalendarEdit() {
         }
 
         const payload = { espacios_detalle: details, conceptos_adicionales: orderConcepts, fecha_inicio: order.fecha_inicio, fecha_fin: order.fecha_fin };
-        const { error } = await window.finSupabase.from('cotizaciones').update(payload).eq('id', order.id);
+        const { error } = await window.tenantPocketBase.from('cotizaciones').update(payload).eq('id', order.id);
         if (error) throw error;
 
         order.espacios_detalle = details;
@@ -717,7 +717,7 @@ window.saveAllColors = async function saveAllColors() {
             const input = document.getElementById(`color-input-${s.id}`);
             const next = input?.value || s.color || '#374151';
             if (next !== s.color) {
-                updates.push(window.finSupabase.from('espacios').update({ color: next }).eq('id', s.id));
+                updates.push(window.tenantPocketBase.from('espacios').update({ color: next }).eq('id', s.id));
                 s.color = next;
             }
         });
@@ -737,13 +737,19 @@ window.saveAllColors = async function saveAllColors() {
 // ICS / Outlook
 // ----------------------------------------------------------------------------
 function resolveIcsFeedUrl() {
+    if (typeof window.getCpCalendarIcsUrl === 'function') {
+        return String(window.getCpCalendarIcsUrl() || '').trim();
+    }
+
     const direct = String(window.HUB_CONFIG?.cpCalendarIcsUrl || '').trim();
-    if (direct) return direct;
-    const base = String(window.HUB_CONFIG?.supabaseUrl || window.location.origin || '').trim().replace(/\/+$/, '');
+    const base = String(window.HUB_CONFIG?.pocketbaseUrl || window.location.origin || '').trim().replace(/\/+$/, '');
     const token = String(window.HUB_CONFIG?.cpCalendarIcsToken || '').trim();
-    if (!base) return '';
-    if (token) return `${base}/functions/v1/cp-calendar-ics?token=${encodeURIComponent(token)}`;
-    return `${base}/functions/v1/cp-calendar-ics`;
+    let url = direct || (base ? `${base}/api/cotizador/cp-calendar-ics` : '');
+    if (!url) return '';
+    if (token && !/[?&]token=/.test(url)) {
+        url += (url.includes('?') ? '&' : '?') + `token=${encodeURIComponent(token)}`;
+    }
+    return url;
 }
 
 function hydrateIcsInput() {
@@ -754,7 +760,7 @@ function hydrateIcsInput() {
 
 window.copyCalendarFeedLink = async function copyCalendarFeedLink() {
     const url = resolveIcsFeedUrl();
-    if (!url) return window.showToast?.('Configura HUB_CONFIG.cpCalendarIcsUrl para compartir el calendario.', 'error');
+    if (!url) return window.showToast?.('No se pudo resolver la URL ICS. Revisa HUB_CONFIG o setCpCalendarIcsConfig().', 'error');
     try {
         await navigator.clipboard.writeText(url);
         window.showToast?.('Enlace ICS copiado.', 'success');
@@ -765,14 +771,14 @@ window.copyCalendarFeedLink = async function copyCalendarFeedLink() {
 
 window.openOutlookSubscription = function openOutlookSubscription() {
     const url = resolveIcsFeedUrl();
-    if (!url) return window.showToast?.('Primero configura la URL ICS del calendario.', 'error');
+    if (!url) return window.showToast?.('No se pudo resolver la URL ICS del calendario.', 'error');
     const outlook = `https://outlook.live.com/calendar/0/addcalendar?url=${encodeURIComponent(url)}&name=${encodeURIComponent('Casa de Piedra - Calendario')}`;
     window.open(outlook, '_blank', 'noopener');
 };
 
 window.openGoogleSubscription = function openGoogleSubscription() {
     const url = resolveIcsFeedUrl();
-    if (!url) return window.showToast?.('Primero configura la URL ICS del calendario.', 'error');
+    if (!url) return window.showToast?.('No se pudo resolver la URL ICS del calendario.', 'error');
     const google = `https://calendar.google.com/calendar/u/0/r?cid=${encodeURIComponent(url)}`;
     window.open(google, '_blank', 'noopener');
 };
@@ -784,10 +790,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     const ok = await initClients();
     if (!ok) return;
 
-    const { data: { session } } = await window.globalSupabase.auth.getSession();
+    const { data: { session } } = await window.globalPocketBase.auth.getSession();
     if (!session) return;
 
-    const profileRes = await window.globalSupabase.from('profiles').select('*').eq('id', session.user.id).maybeSingle();
+    const profileRes = await window.globalPocketBase.from('profiles').select('*').eq('id', session.user.id).maybeSingle();
     myPermissions = resolvePermissions(profileRes.data || {});
     if (!myPermissions.access) {
         window.showToast?.('No tienes permisos para entrar al calendario.', 'error');
@@ -812,5 +818,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     searchInput?.addEventListener('input', applyFilters);
     applyFilters();
 });
+
+
+
 
 

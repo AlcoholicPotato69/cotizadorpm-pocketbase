@@ -90,7 +90,7 @@
     const normalized = normalizeDeepDates(record);
     const out = { ...normalized, _pb_id: record.id };
     if (collection === 'espacios') {
-      const imgUrl = recordFileUrl(window.HUB_CONFIG && (window.HUB_CONFIG.pocketbaseUrl || window.HUB_CONFIG.supabaseUrl), 'espacios', record, 'imagen');
+      const imgUrl = recordFileUrl(window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseUrl, 'espacios', record, 'imagen');
       if (imgUrl) out.imagen_url = imgUrl;
     }
     if (record.legacy_id !== undefined && record.legacy_id !== null && record.legacy_id !== '') out.id = record.legacy_id;
@@ -574,7 +574,7 @@
 
   class CompatClient {
     constructor(baseUrl, options) {
-      this.baseUrl = trimSlash(baseUrl || ((window.HUB_CONFIG && (window.HUB_CONFIG.pocketbaseUrl || window.HUB_CONFIG.supabaseUrl)) || 'http://127.0.0.1:8090'));
+      this.baseUrl = trimSlash(baseUrl || ((window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseUrl) || 'http://127.0.0.1:8090'));
       this.options = options || {};
       this.schemaName = this.options && this.options.db ? this.options.db.schema : null;
       this.tenant = normalizeSchemaToTenant(this.schemaName);
@@ -623,3 +623,4 @@
     }
   };
 })();
+

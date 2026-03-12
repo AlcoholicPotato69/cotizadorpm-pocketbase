@@ -11,8 +11,8 @@
 /* -------------------------------------------------------------------------
  * 0. CONEXIÓN A BASE DE DATOS (ÚNICO LUGAR A CAMBIAR)
  * ------------------------------------------------------------------------- */
-const SB_URL = (window.HUB_CONFIG && window.HUB_CONFIG.supabaseUrl) || 'http://127.0.0.1:54321';
-const SB_KEY = (window.HUB_CONFIG && window.HUB_CONFIG.supabaseAnonKey) || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0';
+const PB_URL = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseUrl) || 'http://127.0.0.1:8090';
+const PB_KEY = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseAnonKey) || '';
 
 // (Opcional) Esquema finanzas configurable
 const FIN_SCHEMA = (window.HUB_CONFIG && window.HUB_CONFIG.finanzasSchema) || 'finanzas';
@@ -48,12 +48,12 @@ function fillClientSpaceFilter() {
 
 document.addEventListener('DOMContentLoaded', async () => {
     if (window.PB_CLIENT) {
-        if(!window.finSupabase) window.finSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY, { db: { schema: FIN_SCHEMA } });
-        if(!window.globalSupabase) window.globalSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY);
+        if(!window.tenantPocketBase) window.tenantPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY, { db: { schema: FIN_SCHEMA } });
+        if(!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
     }
-    const { data: { session } } = await window.globalSupabase.auth.getSession();
+    const { data: { session } } = await window.globalPocketBase.auth.getSession();
     if (!session) return;
-    const { data: profile } = await window.globalSupabase.from('profiles').select('role, app_metadata').eq('id', session.user.id).single();
+    const { data: profile } = await window.globalPocketBase.from('profiles').select('role, app_metadata').eq('id', session.user.id).single();
     const __role = String(profile.role || '').toLowerCase().trim();
     const __roleHasAccess = (__role === 'admin') || (__role === 'plaza_mayor') || (__role === 'ambos');
 const perms = (__role === 'admin')
@@ -86,11 +86,11 @@ if (__role !== 'admin') {
 
 async function loadData() {
     // SELECCIONAMOS TODO (*) PARA OBTENER EL CAMPO 'CATEGORIA' U OTROS
-    const { data: spaces } = await window.finSupabase.from('espacios').select('*'); allSpaces = spaces || [];
-    const { data: orders } = await window.finSupabase.from('cotizaciones').select('*').order('fecha_inicio', { ascending: true }); allOrders = orders || [];
+    const { data: spaces } = await window.tenantPocketBase.from('espacios').select('*'); allSpaces = spaces || [];
+    const { data: orders } = await window.tenantPocketBase.from('cotizaciones').select('*').order('fecha_inicio', { ascending: true }); allOrders = orders || [];
     // Clientes (puede no existir la tabla si falta SQL)
     try {
-        const { data: clients, error: clErr } = await window.finSupabase.from('clientes').select('id,nombre_completo,correo,telefono,rfc');
+        const { data: clients, error: clErr } = await window.tenantPocketBase.from('clientes').select('id,nombre_completo,correo,telefono,rfc');
         if (!clErr) {
             allClients = clients || [];
             clientsById = {};
@@ -306,5 +306,8 @@ window.generateReports = function() {
     try { renderClientAnalytics(activeOrders); } catch(e) {}
 }
 }
+
+
+
 
 

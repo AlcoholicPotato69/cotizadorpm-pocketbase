@@ -4,7 +4,7 @@ Este paquete conserva el frontend actual y usa PocketBase como backend real en t
 
 ## Qué cambia
 - `client/services/pb-client.js` es el runtime global (`window.PB_CLIENT`) para módulos legacy.
-- Las páginas HTML del cliente ya no cargan `supabase.js`; cargan `pb-client.js`.
+- Las páginas HTML del cliente cargan únicamente `pb-client.js` para runtime de datos.
 - `profiles` se resuelve contra `app_users`.
 - Los esquemas `finanzas` y `finanzas_casadepiedra` se convierten a `tenant = plaza_mayor` y `tenant = casa_de_piedra`.
 - Los IDs que el frontend sigue viendo como `id` se resuelven a `legacy_id` en PocketBase para no romper la UI actual.
@@ -45,4 +45,4 @@ Usa este paquete para validar login, catálogos, clientes, cotizaciones y report
 - mover imágenes de espacios a una estrategia pública definitiva
 - sustituir el no-op de realtime por SSE nativo de PocketBase si lo necesitas
 - reemplazar `hub_notifications` por una colección real si la vas a conservar
-- retirar los archivos legacy `client/supabase.js` y `client/public/assets/libs/js/supabase.js`
+- mantener únicamente `client/services/pb-client.js` como runtime activo

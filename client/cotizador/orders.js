@@ -12,10 +12,10 @@ let orderClientProfiles = []; let orderClientProfilesById = {};
 async function loadClientProfilesForOrderModal() {
     const sel = document.getElementById('oed-client-profile');
     const hid = document.getElementById('oed-client-id');
-    if (!sel || !window.finSupabase) return;
+    if (!sel || !window.tenantPocketBase) return;
 
     try {
-        const { data, error } = await window.finSupabase.from('clientes').select('id,nombre_completo,telefono,correo,rfc').order('nombre_completo', { ascending: true });
+        const { data, error } = await window.tenantPocketBase.from('clientes').select('id,nombre_completo,telefono,correo,rfc').order('nombre_completo', { ascending: true });
         if (error) throw error;
         orderClientProfiles = data || []; orderClientProfilesById = {}; orderClientProfiles.forEach(c => orderClientProfilesById[c.id] = c);
         const current = sel.value;
@@ -38,7 +38,7 @@ async function loadClientProfilesForOrderModal() {
 
 const _p = (window.location.pathname || '') + ' ' + (window.location.href || '');
 const _isCP = /\/cotizadorcp(\/|$)/.test(window.location.pathname || '') || _p.includes('cotizadorcp');
-const COMPANY_LOGO_URL = _isCP ? ((window.HUB_CONFIG && (window.HUB_CONFIG.companyLogoUrlCP || window.HUB_CONFIG.cpLogoUrl)) || 'http://127.0.0.1:54321/storage/v1/object/public/Espacios/logocp.png') : ((window.HUB_CONFIG && window.HUB_CONFIG.companyLogoUrl) || 'http://127.0.0.1:54321/storage/v1/object/public/Espacios/logo.png');
+const COMPANY_LOGO_URL = _isCP ? ((window.HUB_CONFIG && (window.HUB_CONFIG.companyLogoUrlCP || window.HUB_CONFIG.cpLogoUrl)) || '../../assets/logocp.png') : ((window.HUB_CONFIG && window.HUB_CONFIG.companyLogoUrl) || '../../assets/logo.png');
 let __PM_LETTERHEAD_URL = (window.HUB_CONFIG && (window.HUB_CONFIG.pmPdfLetterheadUrl || window.HUB_CONFIG.pdfLetterheadPlazaMayorUrl)) || '../public/assets/img/pm-letterhead-default.png';
 const __PM_PDF_PAGE_WIDTH_PX = 816;
 const __PM_PDF_PAGE_HEIGHT_PX = 1056;
@@ -65,7 +65,7 @@ function __pmBasename(path) {
 async function __pmLoadLetterheadConfig() {
     __PM_LETTERHEAD_URL = (window.HUB_CONFIG && (window.HUB_CONFIG.pmPdfLetterheadUrl || window.HUB_CONFIG.pdfLetterheadPlazaMayorUrl)) || '../public/assets/img/pm-letterhead-default.png';
     try {
-        const { data, error } = await window.finSupabase
+        const { data, error } = await window.tenantPocketBase
             .from('configuracion')
             .select('*')
             .eq('clave', __PM_CFG_LETTERHEAD_KEY)
@@ -75,7 +75,7 @@ async function __pmLoadLetterheadConfig() {
         const rawPath = cfg.path || cfg.file_path || cfg.value || '';
         const safePath = rawPath || (cfg.file_name ? `${__PM_LETTERHEAD_PATH}/${cfg.file_name}` : '');
         if (!safePath) return;
-        const { data: signed, error: signedError } = await window.globalSupabase.storage.from('documentos').createSignedUrl(safePath, 3600);
+        const { data: signed, error: signedError } = await window.globalPocketBase.storage.from('documentos').createSignedUrl(safePath, 3600);
         if (!signedError && signed?.signedUrl) {
             __PM_LETTERHEAD_URL = signed.signedUrl;
             return;
@@ -83,7 +83,7 @@ async function __pmLoadLetterheadConfig() {
         const fallbackName = __pmBasename(safePath);
         if (fallbackName) {
             const fallbackPath = `${__PM_LETTERHEAD_PATH}/${fallbackName}`;
-            const { data: fallbackSigned, error: fallbackErr } = await window.globalSupabase.storage.from('documentos').createSignedUrl(fallbackPath, 3600);
+            const { data: fallbackSigned, error: fallbackErr } = await window.globalPocketBase.storage.from('documentos').createSignedUrl(fallbackPath, 3600);
             if (!fallbackErr && fallbackSigned?.signedUrl) __PM_LETTERHEAD_URL = fallbackSigned.signedUrl;
         }
     } catch (_) {}
@@ -128,8 +128,8 @@ function __pmWrapLetterheadPage(innerHtml, options = {}) {
     return `<div style="position:relative;width:${__PM_PDF_PAGE_WIDTH_PX}px;height:${__PM_PDF_PAGE_HEIGHT_PX}px;box-sizing:border-box;overflow:hidden;background:#f5f5f5;">${imageLayer}<div style="position:absolute;left:${left.toFixed(2)}px;top:${top.toFixed(2)}px;width:${baseWidth}px;height:${baseHeight}px;transform:scale(${scale.toFixed(6)});transform-origin:top left;overflow:hidden;z-index:1;">${innerHtml}</div></div>`;
 }
 
-const SB_URL = window.HUB_CONFIG?.supabaseUrl || window.ENV?.SUPABASE_URL || '';
-const SB_KEY = window.HUB_CONFIG?.supabaseAnonKey || window.ENV?.SUPABASE_ANON_KEY || '';
+const PB_URL = window.HUB_CONFIG?.pocketbaseUrl || window.ENV?.POCKETBASE_URL || '';
+const PB_KEY = window.HUB_CONFIG?.pocketbaseAnonKey || window.ENV?.POCKETBASE_ANON_KEY || '';
 const FIN_SCHEMA = (typeof TENANT_SCHEMA !== 'undefined' && TENANT_SCHEMA)
     ? TENANT_SCHEMA
     : (window.HUB_CONFIG?.finanzasSchema || window.ENV?.SCHEMA_PLAZA_MAYOR || 'finanzas');
@@ -159,7 +159,7 @@ async function __pmQuotesList(params) {
             return { data: null, error };
         }
     }
-    const query = window.finSupabase.from('cotizaciones').select('*');
+    const query = window.tenantPocketBase.from('cotizaciones').select('*');
     if (params && params.filter && params.filter.indexOf('status = "aprobada"') !== -1) query.eq('status', 'aprobada');
     if (params && params.sort) query.order(String(params.sort).replace('-', ''), { ascending: !String(params.sort).startsWith('-') });
     const result = await query;
@@ -176,7 +176,7 @@ async function __pmQuotesUpdate(id, payload) {
             return { error };
         }
     }
-    const result = await window.finSupabase.from('cotizaciones').update(payload || {}).eq('id', id);
+    const result = await window.tenantPocketBase.from('cotizaciones').update(payload || {}).eq('id', id);
     return { error: result && result.error ? result.error : null };
 }
 
@@ -190,7 +190,7 @@ async function __pmQuotesDelete(id) {
             return { error };
         }
     }
-    const result = await window.finSupabase.from('cotizaciones').delete().eq('id', id);
+    const result = await window.tenantPocketBase.from('cotizaciones').delete().eq('id', id);
     return { error: result && result.error ? result.error : null };
 }
 
@@ -390,7 +390,7 @@ function calculateSpaceTotal(space, startStr, endStr) {
 window.openModal = (id) => { document.getElementById(id).classList.remove('hidden'); document.getElementById(id).classList.add('flex'); };
 window.closeModal = (id) => { document.getElementById(id).classList.add('hidden'); document.getElementById(id).classList.remove('flex'); };
 window.showToast = (msg, type='success') => { const c = document.getElementById('toast-container'); const e = document.createElement('div'); e.className = `p-4 rounded-lg shadow-lg text-white text-xs font-bold uppercase tracking-wider mb-2 animate-bounce ${type==='error'?'bg-red-500':'bg-green-500'}`; e.innerText = msg; c.appendChild(e); setTimeout(() => e.remove(), 3000); };
-window.openStoredDocument = async function(path) { if(!path) return window.showToast("Documento no disponible", "error"); window.showToast("Abriendo documento...", "info"); const { data, error } = await window.globalSupabase.storage.from('documentos').createSignedUrl(path, 3600); if (error || !data) return window.showToast("Error de acceso al archivo", "error"); window.open(data.signedUrl, '_blank'); };
+window.openStoredDocument = async function(path) { if(!path) return window.showToast("Documento no disponible", "error"); window.showToast("Abriendo documento...", "info"); const { data, error } = await window.globalPocketBase.storage.from('documentos').createSignedUrl(path, 3600); if (error || !data) return window.showToast("Error de acceso al archivo", "error"); window.open(data.signedUrl, '_blank'); };
 
 // MODALES DE CONFIRMACIÓN Y CIERRE INTELIGENTE
 let confirmCallback = null;
@@ -432,8 +432,8 @@ window.askDeleteOrder = function(id, e) {
     window.openConfirm("¿Eliminar cotización y TODOS sus archivos? Esta acción es irreversible.", async () => {
         try {
             window.showToast("Eliminando archivos...", "info");
-            const { data: files } = await window.globalSupabase.storage.from('documentos').list(`${id}`, { limit: 100 });
-            if (files && files.length > 0) await window.globalSupabase.storage.from('documentos').remove(files.map(x => `${id}/${x.name}`));
+            const { data: files } = await window.globalPocketBase.storage.from('documentos').list(`${id}`, { limit: 100 });
+            if (files && files.length > 0) await window.globalPocketBase.storage.from('documentos').remove(files.map(x => `${id}/${x.name}`));
             const { error } = await __pmQuotesDelete(id);
             if (error) throw error;
             window.showToast("Cotización eliminada", "success");
@@ -462,14 +462,16 @@ window.addEventListener('click', function(e) {
 
 document.addEventListener('DOMContentLoaded', async () => {
     if (window.PB_CLIENT) {
-        if(!window.finSupabase) window.finSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY, { db: { schema: FIN_SCHEMA } });
-        if(!window.globalSupabase) window.globalSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY);
+        if(!window.tenantPocketBase) window.tenantPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY, { db: { schema: FIN_SCHEMA } });
+        if(!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
     }
-    const { data: { session } } = await window.globalSupabase.auth.getSession(); if (!session) return;
+    const { data: { session } } = await window.globalPocketBase.auth.getSession(); if (!session) return;
     await __pmLoadLetterheadConfig();
     
-    const { data: profile } = await window.globalSupabase.from('profiles').select('*').eq('id', session.user.id).single();
+    const { data: profile } = await window.globalPocketBase.from('profiles').select('*').eq('id', session.user.id).single();
     window.currentUserProfile = profile;
+    await __pmLoadSharedPdfStyleConfig();
+    __pmInitPdfStyleEditor();
 
     document.getElementById('btn-confirm-action')?.addEventListener('click', () => { if(confirmCallback) confirmCallback(); window.closeModal('generic-confirm-modal'); });
     document.getElementById('btn-cancel-action')?.addEventListener('click', () => { if(cancelCallback) cancelCallback(); window.closeModal('generic-confirm-modal'); });
@@ -514,9 +516,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 });
 
-async function loadTaxes() { const { data } = await window.finSupabase.from('impuestos').select('*'); dbTaxes = data || []; }
-async function loadSpaces() { const { data } = await window.finSupabase.from('espacios').select('*'); allSpaces = data || []; __pmEnsureSpaceCardOrder(); window.renderOrderSpaceCards(); }
-async function loadConcepts() { const { data } = await window.finSupabase.from('conceptos_catalogo').select('*').eq('activo', true); catalogConcepts = data || []; }
+async function loadTaxes() { const { data } = await window.tenantPocketBase.from('impuestos').select('*'); dbTaxes = data || []; }
+async function loadSpaces() { const { data } = await window.tenantPocketBase.from('espacios').select('*'); allSpaces = data || []; __pmEnsureSpaceCardOrder(); window.renderOrderSpaceCards(); }
+async function loadConcepts() { const { data } = await window.tenantPocketBase.from('conceptos_catalogo').select('*').eq('activo', true); catalogConcepts = data || []; }
 
 window.loadOrders = async function() {
     const { data, error } = await __pmQuotesList({ sort: '-created_at' });
@@ -835,6 +837,7 @@ window.initiateApprovalSnapshot = async function() {
     const btnAction = document.getElementById('btn-download-preview');
     
     pdfContainer.innerHTML = content;
+    __pmApplyPdfStyleToLivePreview();
     pdfContainer.classList.remove('hidden');
     embedViewer.classList.add('hidden');
     
@@ -859,7 +862,7 @@ window.executeApprovalTransaction = async function(formData) {
         const folioUnificado = formData.numero_orden || currentPreviewOrder.id.split('-')[0].toUpperCase();
         const path = `${currentPreviewOrder.id}/cotizacion_aprobada_${folioUnificado}.pdf`;
         
-        const { error: uploadError } = await window.globalSupabase.storage.from('documentos').upload(path, pdfBlob);
+        const { error: uploadError } = await window.globalPocketBase.storage.from('documentos').upload(path, pdfBlob);
         if (uploadError) throw uploadError;
 
         const payload = { ...formData, status: 'aprobada', url_cotizacion_final: path };
@@ -951,6 +954,7 @@ window.previewOrderForGeneration = async function(id) {
     const embed = document.getElementById('doc-preview');
     
     pdfContainer.innerHTML = content;
+    __pmApplyPdfStyleToLivePreview();
     pdfContainer.classList.remove('hidden');
     embed.classList.add('hidden');
     
@@ -974,7 +978,7 @@ window.confirmAndGeneratePurchaseOrder = async function() {
             const folioUnificado = currentPreviewOrder.numero_orden || currentPreviewOrder.id.split('-')[0].toUpperCase();
             const path = `${currentPreviewOrder.id}/orden_compra_${folioUnificado}.pdf`;
             
-            await window.globalSupabase.storage.from('documentos').upload(path, pdfBlob);
+            await window.globalPocketBase.storage.from('documentos').upload(path, pdfBlob);
             const ocUpdate = await __pmQuotesUpdate(currentPreviewOrder.id, { url_orden_compra: path, fecha_orden_compra: new Date().toISOString() });
             if (ocUpdate.error) throw ocUpdate.error;
             
@@ -1032,7 +1036,7 @@ window.openPDFPreview = async function(id, type) {
     const pdfContainer = document.getElementById('pdf-content'); 
     const embedViewer = document.getElementById('doc-preview'); 
     const btnDownload = document.getElementById('btn-download-preview'); 
-    pdfContainer.classList.remove('hidden'); embedViewer.classList.add('hidden'); pdfContainer.innerHTML = content; 
+    pdfContainer.classList.remove('hidden'); embedViewer.classList.add('hidden'); pdfContainer.innerHTML = content; __pmApplyPdfStyleToLivePreview();
     btnDownload.innerHTML = '<i class="fa-solid fa-download"></i> Descargar';
     btnDownload.className = "bg-brand-red hover:bg-red-600 text-white px-5 py-2 rounded-full text-xs font-bold uppercase shadow-lg transition flex items-center gap-2";
     btnDownload.onclick = window.downloadPDFFromPreview; 
@@ -1072,9 +1076,380 @@ function __pmOrdersBoostPdfTypography(html) {
         .replace(/__PM_TXT_SM__/g, 'text-base');
 }
 
+const __PM_PDF_STYLE_CONFIG_KEY = 'pdf_typography_style';
+const __PM_PDF_STYLE_TENANT = 'plaza_mayor';
+const __PM_PDF_STYLE_FONT_MAP = Object.freeze({
+    segoe: '"Segoe UI", Arial, sans-serif',
+    arial: 'Arial, Helvetica, sans-serif',
+    verdana: 'Verdana, Geneva, sans-serif',
+    georgia: 'Georgia, "Times New Roman", serif',
+    times: '"Times New Roman", Times, serif',
+    trebuchet: '"Trebuchet MS", Arial, sans-serif'
+});
+const __PM_PDF_STYLE_DEFAULTS = Object.freeze({
+    fontFamilyKey: 'segoe',
+    headerLinePx: 4,
+    titlePx: 30,
+    metaPx: 13,
+    tableHeadPx: 14,
+    tableBodyPx: 12,
+    lineHeightPct: 120,
+    quickPx: 12,
+    conditionsPx: 14,
+    signPx: 12,
+    footerPx: 10,
+    headerAlign: 'right',
+    metaAlign: 'right',
+    tableAlign: 'left',
+    quickAlign: 'left',
+    conditionsAlign: 'justify',
+    signAlign: 'center',
+    summaryAlign: 'left',
+    footerAlign: 'center'
+});
+const __PM_PDF_STYLE_UI_STATE_KEY = 'pm_pdf_style_editor_ui';
+let __pmPdfStyleState = null;
+let __pmPdfStyleConfigRecordId = '';
+let __pmPdfStyleSyncTimer = null;
+let __pmPdfStyleUiState = { collapsed: false, pinned: false };
+
+function __pmClampStyleNumber(value, min, max, fallback) {
+    const num = parseInt(value, 10);
+    if (!Number.isFinite(num)) return fallback;
+    return Math.min(max, Math.max(min, num));
+}
+
+function __pmNormalizeStyleAlign(value, fallback = 'left') {
+    const safe = String(value || '').toLowerCase();
+    return ['left', 'center', 'right', 'justify'].includes(safe) ? safe : fallback;
+}
+
+function __pmNormalizePdfStyle(raw = {}) {
+    const base = { ...__PM_PDF_STYLE_DEFAULTS, ...(raw || {}) };
+    const fontKey = String(base.fontFamilyKey || '').toLowerCase();
+    return {
+        fontFamilyKey: __PM_PDF_STYLE_FONT_MAP[fontKey] ? fontKey : __PM_PDF_STYLE_DEFAULTS.fontFamilyKey,
+        headerLinePx: __pmClampStyleNumber(base.headerLinePx, 1, 8, __PM_PDF_STYLE_DEFAULTS.headerLinePx),
+        titlePx: __pmClampStyleNumber(base.titlePx, 20, 42, __PM_PDF_STYLE_DEFAULTS.titlePx),
+        metaPx: __pmClampStyleNumber(base.metaPx, 8, 18, __PM_PDF_STYLE_DEFAULTS.metaPx),
+        tableHeadPx: __pmClampStyleNumber(base.tableHeadPx, 9, 18, __PM_PDF_STYLE_DEFAULTS.tableHeadPx),
+        tableBodyPx: __pmClampStyleNumber(base.tableBodyPx, 9, 16, __PM_PDF_STYLE_DEFAULTS.tableBodyPx),
+        lineHeightPct: __pmClampStyleNumber(base.lineHeightPct, 90, 180, __PM_PDF_STYLE_DEFAULTS.lineHeightPct),
+        quickPx: __pmClampStyleNumber(base.quickPx, 9, 16, __PM_PDF_STYLE_DEFAULTS.quickPx),
+        conditionsPx: __pmClampStyleNumber(base.conditionsPx, 9, 18, __PM_PDF_STYLE_DEFAULTS.conditionsPx),
+        signPx: __pmClampStyleNumber(base.signPx, 9, 16, __PM_PDF_STYLE_DEFAULTS.signPx),
+        footerPx: __pmClampStyleNumber(base.footerPx, 8, 14, __PM_PDF_STYLE_DEFAULTS.footerPx),
+        headerAlign: __pmNormalizeStyleAlign(base.headerAlign, __PM_PDF_STYLE_DEFAULTS.headerAlign),
+        metaAlign: __pmNormalizeStyleAlign(base.metaAlign, __PM_PDF_STYLE_DEFAULTS.metaAlign),
+        tableAlign: __pmNormalizeStyleAlign(base.tableAlign, __PM_PDF_STYLE_DEFAULTS.tableAlign),
+        quickAlign: __pmNormalizeStyleAlign(base.quickAlign, __PM_PDF_STYLE_DEFAULTS.quickAlign),
+        conditionsAlign: __pmNormalizeStyleAlign(base.conditionsAlign, __PM_PDF_STYLE_DEFAULTS.conditionsAlign),
+        signAlign: __pmNormalizeStyleAlign(base.signAlign, __PM_PDF_STYLE_DEFAULTS.signAlign),
+        summaryAlign: __pmNormalizeStyleAlign(base.summaryAlign, __PM_PDF_STYLE_DEFAULTS.summaryAlign),
+        footerAlign: __pmNormalizeStyleAlign(base.footerAlign, __PM_PDF_STYLE_DEFAULTS.footerAlign)
+    };
+}
+
+function __pmLoadPdfStyleState() {
+    return __pmNormalizePdfStyle();
+}
+
+function __pmLoadPdfStyleUiState() {
+    try {
+        const raw = localStorage.getItem(__PM_PDF_STYLE_UI_STATE_KEY);
+        if (!raw) return { collapsed: false, pinned: false };
+        const parsed = JSON.parse(raw);
+        return { collapsed: !!parsed?.collapsed, pinned: !!parsed?.pinned };
+    } catch (_) {
+        return { collapsed: false, pinned: false };
+    }
+}
+
+function __pmSavePdfStyleUiState() {
+    try {
+        localStorage.setItem(__PM_PDF_STYLE_UI_STATE_KEY, JSON.stringify(__pmPdfStyleUiState));
+    } catch (_) {}
+}
+
+function __pmGetPdfStyleConfig() {
+    if (!__pmPdfStyleState) __pmPdfStyleState = __pmLoadPdfStyleState();
+    return { ...__pmPdfStyleState };
+}
+
+function __pmPdfStyleVars(style) {
+    const safe = __pmNormalizePdfStyle(style);
+    const headerAlign = safe.headerAlign === 'justify' ? 'left' : safe.headerAlign;
+    return {
+        '--pm-font-family': __PM_PDF_STYLE_FONT_MAP[safe.fontFamilyKey],
+        '--pm-header-line': `${safe.headerLinePx}px`,
+        '--pm-title-size': `${safe.titlePx}px`,
+        '--pm-meta-size': `${safe.metaPx}px`,
+        '--pm-date-size': `${Math.max(8, safe.metaPx - 2)}px`,
+        '--pm-table-head-size': `${safe.tableHeadPx}px`,
+        '--pm-table-body-size': `${safe.tableBodyPx}px`,
+        '--pm-line-height': `${(safe.lineHeightPct / 100).toFixed(2)}`,
+        '--pm-quick-size': `${safe.quickPx}px`,
+        '--pm-conditions-size': `${safe.conditionsPx}px`,
+        '--pm-sign-size': `${safe.signPx}px`,
+        '--pm-footer-size': `${safe.footerPx}px`,
+        '--pm-header-align': headerAlign,
+        '--pm-header-justify': headerAlign === 'left' ? 'flex-start' : (headerAlign === 'center' ? 'center' : 'flex-end'),
+        '--pm-meta-align': safe.metaAlign,
+        '--pm-table-align': safe.tableAlign,
+        '--pm-quick-align': safe.quickAlign,
+        '--pm-conditions-align': safe.conditionsAlign,
+        '--pm-sign-align': safe.signAlign,
+        '--pm-summary-align': safe.summaryAlign,
+        '--pm-footer-align': safe.footerAlign
+    };
+}
+
+function __pmPdfStyleVarsInline(style) {
+    const vars = __pmPdfStyleVars(style);
+    return Object.entries(vars).map(([key, value]) => `${key}:${value};`).join('');
+}
+
+function __pmApplyPdfStyleToLivePreview() {
+    const rootNodes = document.querySelectorAll('#pdf-content .pm-pdf-root');
+    if (!rootNodes.length) return;
+    const vars = __pmPdfStyleVars(__pmGetPdfStyleConfig());
+    rootNodes.forEach((node) => {
+        Object.entries(vars).forEach(([k, v]) => node.style.setProperty(k, v));
+    });
+}
+
+function __pmSyncPdfStyleValueLabels(style) {
+    const cfg = __pmNormalizePdfStyle(style);
+    const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    setText('pdf-style-header-line-value', `${cfg.headerLinePx}px`);
+    setText('pdf-style-title-size-value', `${cfg.titlePx}px`);
+    setText('pdf-style-meta-size-value', `${cfg.metaPx}px`);
+    setText('pdf-style-table-size-value', `${cfg.tableBodyPx}px`);
+    setText('pdf-style-line-height-value', `${cfg.lineHeightPct}%`);
+    setText('pdf-style-quick-size-value', `${cfg.quickPx}px`);
+    setText('pdf-style-conditions-size-value', `${cfg.conditionsPx}px`);
+    setText('pdf-style-sign-size-value', `${cfg.signPx}px`);
+}
+
+function __pmWritePdfStyleControls(style) {
+    const cfg = __pmNormalizePdfStyle(style);
+    const setValue = (id, val) => { const el = document.getElementById(id); if (el) el.value = String(val); };
+    setValue('pdf-style-font-family', cfg.fontFamilyKey);
+    setValue('pdf-style-header-line', cfg.headerLinePx);
+    setValue('pdf-style-title-size', cfg.titlePx);
+    setValue('pdf-style-meta-size', cfg.metaPx);
+    setValue('pdf-style-table-size', cfg.tableBodyPx);
+    setValue('pdf-style-line-height', cfg.lineHeightPct);
+    setValue('pdf-style-quick-size', cfg.quickPx);
+    setValue('pdf-style-conditions-size', cfg.conditionsPx);
+    setValue('pdf-style-sign-size', cfg.signPx);
+    setValue('pdf-style-align-header', cfg.headerAlign);
+    setValue('pdf-style-align-meta', cfg.metaAlign);
+    setValue('pdf-style-align-table', cfg.tableAlign);
+    setValue('pdf-style-align-quick', cfg.quickAlign);
+    setValue('pdf-style-align-conditions', cfg.conditionsAlign);
+    setValue('pdf-style-align-sign', cfg.signAlign);
+    setValue('pdf-style-align-summary', cfg.summaryAlign);
+    setValue('pdf-style-align-footer', cfg.footerAlign);
+    __pmSyncPdfStyleValueLabels(cfg);
+}
+
+function __pmReadPdfStyleControls() {
+    return __pmNormalizePdfStyle({
+        fontFamilyKey: document.getElementById('pdf-style-font-family')?.value || __PM_PDF_STYLE_DEFAULTS.fontFamilyKey,
+        headerLinePx: document.getElementById('pdf-style-header-line')?.value,
+        titlePx: document.getElementById('pdf-style-title-size')?.value,
+        metaPx: document.getElementById('pdf-style-meta-size')?.value,
+        tableHeadPx: (parseInt(document.getElementById('pdf-style-table-size')?.value || __PM_PDF_STYLE_DEFAULTS.tableBodyPx, 10) + 2),
+        tableBodyPx: document.getElementById('pdf-style-table-size')?.value,
+        lineHeightPct: document.getElementById('pdf-style-line-height')?.value,
+        quickPx: document.getElementById('pdf-style-quick-size')?.value,
+        conditionsPx: document.getElementById('pdf-style-conditions-size')?.value,
+        signPx: document.getElementById('pdf-style-sign-size')?.value,
+        footerPx: Math.max(8, (parseInt(document.getElementById('pdf-style-meta-size')?.value || __PM_PDF_STYLE_DEFAULTS.metaPx, 10) - 3)),
+        headerAlign: document.getElementById('pdf-style-align-header')?.value,
+        metaAlign: document.getElementById('pdf-style-align-meta')?.value,
+        tableAlign: document.getElementById('pdf-style-align-table')?.value,
+        quickAlign: document.getElementById('pdf-style-align-quick')?.value,
+        conditionsAlign: document.getElementById('pdf-style-align-conditions')?.value,
+        signAlign: document.getElementById('pdf-style-align-sign')?.value,
+        summaryAlign: document.getElementById('pdf-style-align-summary')?.value,
+        footerAlign: document.getElementById('pdf-style-align-footer')?.value
+    });
+}
+
+function __pmSetPdfStyleConfig(style, options = {}) {
+    const opts = options && typeof options === 'object' ? options : {};
+    __pmPdfStyleState = __pmNormalizePdfStyle(style);
+    if (opts.applyToDom !== false) __pmApplyPdfStyleToLivePreview();
+}
+
+function __pmIsAdminProfile() {
+    return String(window.currentUserProfile?.role || '').toLowerCase() === 'admin';
+}
+
+async function __pmLoadSharedPdfStyleConfig() {
+    if (!window.tenantPocketBase) return;
+    try {
+        const { data, error } = await window.tenantPocketBase
+            .from('configuracion')
+            .select('id,valor_json')
+            .eq('clave', __PM_PDF_STYLE_CONFIG_KEY)
+            .maybeSingle();
+        if (error || !data) return;
+        __pmPdfStyleConfigRecordId = String(data.id || '');
+        __pmSetPdfStyleConfig(data.valor_json || __PM_PDF_STYLE_DEFAULTS, { applyToDom: false });
+    } catch (e) {
+        console.warn('No se pudo cargar la tipografía PDF compartida (PM):', e);
+    }
+}
+
+async function __pmPersistSharedPdfStyleConfig(style) {
+    if (!__pmIsAdminProfile() || !window.tenantPocketBase) return;
+    const normalized = __pmNormalizePdfStyle(style);
+    try {
+        if (!__pmPdfStyleConfigRecordId) {
+            const { data: existing, error: existingError } = await window.tenantPocketBase
+                .from('configuracion')
+                .select('id')
+                .eq('clave', __PM_PDF_STYLE_CONFIG_KEY)
+                .maybeSingle();
+            if (!existingError && existing?.id) __pmPdfStyleConfigRecordId = String(existing.id);
+        }
+        if (__pmPdfStyleConfigRecordId) {
+            const { error: updError } = await window.tenantPocketBase
+                .from('configuracion')
+                .update({ valor_json: normalized })
+                .eq('id', __pmPdfStyleConfigRecordId);
+            if (updError) throw updError;
+            return;
+        }
+        const { data: inserted, error: insError } = await window.tenantPocketBase
+            .from('configuracion')
+            .insert({ tenant: __PM_PDF_STYLE_TENANT, clave: __PM_PDF_STYLE_CONFIG_KEY, valor_json: normalized })
+            .select('id')
+            .single();
+        if (insError) throw insError;
+        __pmPdfStyleConfigRecordId = String(inserted?.id || '');
+    } catch (e) {
+        console.warn('No se pudo guardar la tipografía PDF compartida (PM):', e);
+    }
+}
+
+function __pmScheduleSharedPdfStyleSync(style) {
+    if (!__pmIsAdminProfile()) return;
+    if (__pmPdfStyleSyncTimer) clearTimeout(__pmPdfStyleSyncTimer);
+    __pmPdfStyleSyncTimer = setTimeout(() => {
+        __pmPersistSharedPdfStyleConfig(style || __pmPdfStyleState);
+    }, 450);
+}
+
+function __pmHandlePdfStyleControlChange() {
+    if (!__pmIsAdminProfile()) return;
+    const next = __pmReadPdfStyleControls();
+    __pmSetPdfStyleConfig(next, { applyToDom: true });
+    __pmSyncPdfStyleValueLabels(next);
+    __pmScheduleSharedPdfStyleSync(next);
+}
+
+function __pmApplyPdfStyleEditorUiState() {
+    const editorWrap = document.getElementById('pdf-style-editor');
+    const body = document.getElementById('pdf-style-editor-body');
+    const toggleBtn = document.getElementById('btn-pdf-style-toggle');
+    const pinBtn = document.getElementById('btn-pdf-style-pin');
+    if (!editorWrap) return;
+
+    if (body) body.classList.toggle('hidden', !!__pmPdfStyleUiState.collapsed);
+    if (toggleBtn) toggleBtn.textContent = __pmPdfStyleUiState.collapsed ? 'Mostrar' : 'Ocultar';
+    if (pinBtn) pinBtn.textContent = __pmPdfStyleUiState.pinned ? 'Desfijar' : 'Fijar';
+
+    if (__pmPdfStyleUiState.pinned) {
+        editorWrap.style.position = 'fixed';
+        editorWrap.style.left = '16px';
+        editorWrap.style.bottom = '16px';
+        editorWrap.style.top = '';
+        editorWrap.style.right = '';
+        editorWrap.style.zIndex = '140';
+        editorWrap.style.width = '320px';
+        editorWrap.style.maxHeight = '85vh';
+        editorWrap.style.overflow = 'auto';
+        editorWrap.style.border = '1px solid #374151';
+        editorWrap.style.borderRadius = '12px';
+        editorWrap.style.boxShadow = '0 18px 45px rgba(0, 0, 0, 0.45)';
+    } else {
+        editorWrap.style.position = 'fixed';
+        editorWrap.style.left = '16px';
+        editorWrap.style.top = '84px';
+        editorWrap.style.right = '';
+        editorWrap.style.bottom = '12px';
+        editorWrap.style.zIndex = '140';
+        editorWrap.style.width = '320px';
+        editorWrap.style.maxHeight = 'calc(100vh - 96px)';
+        editorWrap.style.overflow = 'auto';
+        editorWrap.style.border = '1px solid #374151';
+        editorWrap.style.borderRadius = '12px';
+        editorWrap.style.boxShadow = '0 10px 28px rgba(0, 0, 0, 0.35)';
+    }
+}
+
+function __pmTogglePdfStylePanel() {
+    __pmPdfStyleUiState = { ...__pmPdfStyleUiState, collapsed: !__pmPdfStyleUiState.collapsed };
+    __pmSavePdfStyleUiState();
+    __pmApplyPdfStyleEditorUiState();
+}
+
+function __pmTogglePdfStylePin() {
+    __pmPdfStyleUiState = { ...__pmPdfStyleUiState, pinned: !__pmPdfStyleUiState.pinned };
+    __pmSavePdfStyleUiState();
+    __pmApplyPdfStyleEditorUiState();
+}
+
+function __pmInitPdfStyleEditor() {
+    const editorWrap = document.getElementById('pdf-style-editor');
+    if (!editorWrap || !document.getElementById('pdf-style-font-family')) return;
+    if (!__pmPdfStyleState) __pmPdfStyleState = __pmLoadPdfStyleState();
+    if (!__pmIsAdminProfile()) {
+        editorWrap.classList.add('hidden');
+        return;
+    }
+    editorWrap.classList.remove('hidden');
+    __pmPdfStyleUiState = __pmLoadPdfStyleUiState();
+    __pmWritePdfStyleControls(__pmPdfStyleState);
+    __pmApplyPdfStyleEditorUiState();
+    if (document.body.dataset.pmPdfStyleBound === '1') return;
+    const controls = Array.from(document.querySelectorAll('.pdf-style-control'));
+    controls.forEach((el) => {
+        el.addEventListener('input', __pmHandlePdfStyleControlChange);
+        el.addEventListener('change', __pmHandlePdfStyleControlChange);
+    });
+    document.getElementById('btn-pdf-style-toggle')?.addEventListener('click', __pmTogglePdfStylePanel);
+    document.getElementById('btn-pdf-style-pin')?.addEventListener('click', __pmTogglePdfStylePin);
+    const resetBtn = document.getElementById('btn-reset-pdf-style');
+    if (resetBtn) {
+        resetBtn.addEventListener('click', () => {
+            const reset = __pmNormalizePdfStyle(__PM_PDF_STYLE_DEFAULTS);
+            __pmSetPdfStyleConfig(reset, { applyToDom: true });
+            __pmWritePdfStyleControls(reset);
+            __pmScheduleSharedPdfStyleSync(reset);
+        });
+    }
+    document.body.dataset.pmPdfStyleBound = '1';
+}
+
+window.resetPdfStyleEditor = function() {
+    if (!__pmIsAdminProfile()) return;
+    const reset = __pmNormalizePdfStyle(__PM_PDF_STYLE_DEFAULTS);
+    __pmSetPdfStyleConfig(reset, { applyToDom: true });
+    __pmWritePdfStyleControls(reset);
+    __pmScheduleSharedPdfStyleSync(reset);
+};
+
 window.getOrderHTML = function(o, type) { 
     const isOrder = type === 'order'; 
     const logoImg = ''; 
+    const pdfStyle = __pmGetPdfStyleConfig();
+    const pdfStyleInlineVars = __pmPdfStyleVarsInline(pdfStyle);
+    const pdfStyleTag = `<style>.pm-pdf-root{font-family:var(--pm-font-family)!important;}.pm-pdf-root .pm-pdf-header{border-bottom-width:var(--pm-header-line)!important;justify-content:var(--pm-header-justify)!important;}.pm-pdf-root .pm-pdf-header>div:last-child{ text-align:var(--pm-header-align)!important;}.pm-pdf-root .pm-pdf-title{font-size:var(--pm-title-size)!important;line-height:1.05!important;text-align:var(--pm-header-align)!important;}.pm-pdf-root .pm-pdf-folio{font-size:var(--pm-meta-size)!important;text-align:var(--pm-meta-align)!important;}.pm-pdf-root .pm-pdf-date{font-size:var(--pm-date-size)!important;text-align:var(--pm-meta-align)!important;}.pm-pdf-root .pm-pdf-table-head th{font-size:var(--pm-table-head-size)!important;}.pm-pdf-root .pm-pdf-table-body td,.pm-pdf-root .pm-pdf-table-body p,.pm-pdf-root .pm-pdf-table-body span{font-size:var(--pm-table-body-size)!important;line-height:var(--pm-line-height)!important;}.pm-pdf-root .pm-pdf-table-body td:first-child,.pm-pdf-root .pm-pdf-table-body td:first-child *{text-align:var(--pm-table-align)!important;}.pm-pdf-root .pm-pdf-summary,.pm-pdf-root .pm-pdf-summary *{text-align:var(--pm-summary-align)!important;}.pm-pdf-root .pm-pdf-quick,.pm-pdf-root .pm-pdf-quick *{font-size:var(--pm-quick-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-quick-align)!important;}.pm-pdf-root .pm-pdf-general-conditions,.pm-pdf-root .pm-pdf-general-conditions *{font-size:var(--pm-conditions-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-conditions-align)!important;}.pm-pdf-root .pm-pdf-sign,.pm-pdf-root .pm-pdf-sign *{font-size:var(--pm-sign-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-sign-align)!important;}.pm-pdf-root .pm-pdf-footer-text{font-size:var(--pm-footer-size)!important;text-align:var(--pm-footer-align)!important;}</style>`;
 
     const now = new Date(); const dateStr = now.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' }); const genDateTime = now.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'medium' }); let docTitle = isOrder ? "ORDEN DE COMPRA" : "COTIZACIÓN"; 
     
@@ -1082,8 +1457,8 @@ window.getOrderHTML = function(o, type) {
     
     const space = allSpaces.find(s=>s.id==o.espacio_id); const basePrice = parseFloat(space ? space.precio_base : 0); 
     const descHTML = isOrder ? '' : `<p class="text-[9px] text-gray-500 italic mt-0.5 truncate max-w-xs">${space?.descripcion || ''}</p>`; 
-    const footerHubHTML = `<div class="w-full text-center mt-10"><p class="text-[10px] text-gray-400 font-medium leading-tight">Generado el ${genDateTime}<br>a través de Marketing Hub - Plaza Mayor</p></div>`; 
-    const renderHeader = (title) => `<div class="flex justify-end items-start border-b-4 border-brand-red pb-3 mb-2">${logoImg}<div class="text-right"><h1 class="text-2xl font-black text-gray-800 tracking-tighter uppercase">${title}</h1><p class="text-sm font-mono text-brand-red font-bold mt-1">FOLIO: ${folio}</p><p class="text-[10px] text-gray-500 mt-1">${dateStr}</p></div></div>`; 
+    const footerHubHTML = `<div class="w-full text-center mt-10"><p class="pm-pdf-footer-text text-[10px] text-gray-400 font-medium leading-tight">Generado el ${genDateTime}<br>a través de Marketing Hub - Plaza Mayor</p></div>`; 
+    const renderHeader = (title) => `<div class="pm-pdf-header flex justify-end items-start border-b-4 border-brand-red pb-3 mb-2">${logoImg}<div class="text-right"><h1 class="pm-pdf-title text-2xl font-black text-gray-800 tracking-tighter uppercase">${title}</h1><p class="pm-pdf-folio text-sm font-mono text-brand-red font-bold mt-1">FOLIO: ${folio}</p><p class="pm-pdf-date text-[10px] text-gray-500 mt-1">${dateStr}</p></div></div>`; 
     let clientName = o.cliente_nombre || 'CLIENTE';
     let clientRfc = o.cliente_rfc;
     let nameSizeClass = 'text-xl';
@@ -1091,8 +1466,8 @@ window.getOrderHTML = function(o, type) {
     const quoteStatus = String(o?.status || '').toLowerCase();
     const isApprovedQuote = !isOrder && ['aprobada', 'finalizada'].includes(quoteStatus);
     const clientComponent = (isOrder || isApprovedQuote)
-        ? `<div class="flex flex-row justify-between items-center mb-2 p-2 bg-gray-50 rounded border border-gray-100"><div class="w-1/2 border-r border-gray-200 pr-2"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Cliente / Empresa</p><p class="font-black ${nameSizeClass} text-gray-800 leading-tight">${clientName}</p></div><div class="w-1/2 pl-2"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Contacto / Fiscal</p><p class="font-mono text-xs text-gray-700 truncate">${o.cliente_email || 'Sin correo'}</p>${clientRfc ? `<p class="font-mono text-xs text-gray-700 mt-0.5">RFC: <strong>${clientRfc}</strong></p>` : ''}</div></div>`
-        : `<div class="mb-2 p-2 bg-gray-50 rounded border border-gray-100"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Cliente / Empresa</p><p class="font-black ${nameSizeClass} text-gray-800 leading-tight">${clientName}</p></div>`;
+        ? `<div class="pm-pdf-summary flex flex-row justify-between items-center mb-2 p-2 bg-gray-50 rounded border border-gray-100"><div class="w-1/2 border-r border-gray-200 pr-2"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Cliente / Empresa</p><p class="font-black ${nameSizeClass} text-gray-800 leading-tight">${clientName}</p></div><div class="w-1/2 pl-2"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Contacto / Fiscal</p><p class="font-mono text-xs text-gray-700 truncate">${o.cliente_email || 'Sin correo'}</p>${clientRfc ? `<p class="font-mono text-xs text-gray-700 mt-0.5">RFC: <strong>${clientRfc}</strong></p>` : ''}</div></div>`
+        : `<div class="pm-pdf-summary mb-2 p-2 bg-gray-50 rounded border border-gray-100"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Cliente / Empresa</p><p class="font-black ${nameSizeClass} text-gray-800 leading-tight">${clientName}</p></div>`;
     
     let detailSpaces = [];
     if (Array.isArray(o.espacios_detalle)) detailSpaces = o.espacios_detalle;
@@ -1141,7 +1516,7 @@ window.getOrderHTML = function(o, type) {
     } else if (taxIds.length > 0 && dbTaxes.length > 0) {
         taxIds.forEach(tid => { const t = dbTaxes.find(x => x.id == tid); if(t) { const rate = t.porcentaje > 1 ? t.porcentaje/100 : t.porcentaje; const val = runningSubtotal * rate; taxRows += `<tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="2">${t.nombre} (${t.porcentaje}%)</td><td class="py-1 px-3 text-right text-xs text-red-500 font-bold">+ ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(val)}</td></tr>`; } });
     }
-    const totalsBlock = `<div class="flex justify-end mb-2 pr-4"><div class="w-64"><table class="w-full border-collapse">${taxRows}<tr><td class="pt-2 border-t-2 border-gray-800 align-middle text-right" colspan="2"><span class="text-[10px] font-bold uppercase text-gray-500 mr-2">Total Neto</span></td><td class="pt-2 border-t-2 border-gray-800 align-middle text-right"><span class="text-xl font-black text-gray-900">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(o.precio_final)}</span></td></tr></table></div></div>`; 
+    const totalsBlock = `<div class="pm-pdf-summary flex justify-end mb-2 pr-4"><div class="w-64"><table class="w-full border-collapse">${taxRows}<tr><td class="pt-2 border-t-2 border-gray-800 align-middle text-right" colspan="2"><span class="text-[10px] font-bold uppercase text-gray-500 mr-2">Total Neto</span></td><td class="pt-2 border-t-2 border-gray-800 align-middle text-right"><span class="text-xl font-black text-gray-900">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(o.precio_final)}</span></td></tr></table></div></div>`; 
     
     // FIRMA DINÁMICA
     let staffName = window.currentUserProfile?.Usernames || window.currentUserProfile?.username || window.currentUserProfile?.full_name || 'Staff';
@@ -1154,14 +1529,14 @@ window.getOrderHTML = function(o, type) {
     } 
     
     const pageBaseHeight = Number(__pmContentBaseHeightPx().toFixed(2));
-    const page1Raw = `<div style="width: 100%; min-height: ${pageBaseHeight}px; height: ${pageBaseHeight}px; overflow: hidden; padding: 16px 64px 48px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between;"><div>${renderHeader(docTitle)}${clientComponent}${isOrder ? `<div class="mb-2 bg-gray-100 p-2 rounded text-base flex justify-between"><span>Folio de Servicio: <strong class="font-black text-lg">${folio}</strong></span><span>Contrato: <strong class="font-black text-lg">${o.numero_contrato||'---'}</strong></span></div>` : ''}<table class="w-full text-left mb-2 mt-3 table-fixed border-separate border-spacing-0"><colgroup><col style="width:64%;"><col style="width:16%;"><col style="width:20%;"></colgroup><thead class="bg-gray-100 text-sm font-black text-gray-500 uppercase"><tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">Fecha</th><th class="py-2 px-3 text-right rounded-r">Importe</th></tr></thead><tbody class="divide-y divide-gray-50 text-[12px]">${rowsHtml}</tbody></table> ${totalsBlock}</div><div class="pb-2">${!isOrder ? `<div class="grid grid-cols-2 gap-4 mb-20 pt-4 border-t border-gray-100"><div><h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">Condiciones:</h4><ul class="list-none text-xs text-gray-600 space-y-0.5 leading-tight"><li>a) Pago anticipado.</li><li>b) Doc. completa 3 semanas antes.</li><li>c) Sujeto a disponibilidad.</li></ul></div><div><h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">Vigencia:</h4><p class="text-xs text-gray-600">7 días naturales a partir de la emisión.</p></div></div>` : ''}<div class="flex justify-between items-start px-2">${signBlock}</div>${footerHubHTML}</div></div>`; 
+    const page1Raw = `<div style="width: 100%; min-height: ${pageBaseHeight}px; height: ${pageBaseHeight}px; overflow: hidden; padding: 16px 64px 48px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between;"><div>${renderHeader(docTitle)}${clientComponent}${isOrder ? `<div class="mb-2 bg-gray-100 p-2 rounded text-base flex justify-between"><span>Folio de Servicio: <strong class="font-black text-lg">${folio}</strong></span><span>Contrato: <strong class="font-black text-lg">${o.numero_contrato||'---'}</strong></span></div>` : ''}<table class="w-full text-left mb-2 mt-3 table-fixed border-separate border-spacing-0"><colgroup><col style="width:64%;"><col style="width:16%;"><col style="width:20%;"></colgroup><thead class="pm-pdf-table-head bg-gray-100 text-sm font-black text-gray-500 uppercase"><tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">Fecha</th><th class="py-2 px-3 text-right rounded-r">Importe</th></tr></thead><tbody class="pm-pdf-table-body divide-y divide-gray-50 text-[12px]">${rowsHtml}</tbody></table> ${totalsBlock}</div><div class="pb-2">${!isOrder ? `<div class="pm-pdf-quick grid grid-cols-2 gap-4 mb-20 pt-4 border-t border-gray-100"><div><h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">Condiciones:</h4><ul class="list-none text-xs text-gray-600 space-y-0.5 leading-tight"><li>a) Pago anticipado.</li><li>b) Doc. completa 3 semanas antes.</li><li>c) Sujeto a disponibilidad.</li></ul></div><div><h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">Vigencia:</h4><p class="text-xs text-gray-600">7 días naturales a partir de la emisión.</p></div></div>` : ''}<div class="pm-pdf-sign flex justify-between items-start px-2">${signBlock}</div>${footerHubHTML}</div></div>`; 
     let page1Content = __pmWrapLetterheadPage(__pmOrdersBoostPdfTypography(page1Raw), { baseWidth: __PM_PDF_CONTENT_BASE_WIDTH_PX, baseHeight: pageBaseHeight });
     let page2Content = ''; 
     if (!isOrder) { 
-        const page2Raw = `<div style="width: 100%; min-height: ${pageBaseHeight}px; height: ${pageBaseHeight}px; overflow: hidden; padding: 16px 64px 48px; box-sizing: border-box;">${renderHeader("CONDICIONES GENERALES")}<ol class="list-decimal list-outside ml-6 text-xs text-gray-800 space-y-4 text-justify leading-loose mt-8"><li><span class="font-bold">La instalación será responsabilidad exclusiva del cliente.</span> Esto incluye cualquier costo asociado con la instalación, como mano de obra, herramientas, y materiales necesarios. El cliente debe coordinar con el personal del centro comercial para asegurar que la instalación cumpla con las normativas y políticas de Plaza Mayor.</li><li><span class="font-bold">El diseño y contenido del material publicitario deben cumplir con las normativas establecidas por el centro comercial.</span> Antes de la instalación, el cliente deberá obtener la aprobación necesaria de Plaza Mayor para asegurar la conformidad con las políticas vigentes.</li><li><span class="font-bold">El cliente es completamente responsable del contenido del material publicitario.</span> Debe garantizar que el contenido no infrinja derechos de terceros, incluyendo derechos de autor, marcas registradas u otros derechos de propiedad intelectual. El centro comercial se reserva el derecho de rechazar la instalación de cualquier material que considere inapropiado o que viole las normativas establecidas.</li><li><span class="font-bold">Durante el proceso de instalación y desinstalación, el cliente será responsable de cualquier daño causado al espacio o propiedad del centro comercial.</span> Se recomienda que el cliente cuente con un seguro de responsabilidad civil para cubrir cualquier daño potencial.</li><li><span class="font-bold">Cualquier modificación en la duración, diseño o ubicación del material publicitario debe ser comunicada y aprobada por el centro comercial con anticipación.</span></li><li><span class="font-bold">No se permite volanteo fuera del espacio designado, ni equipo de audio (perifoneo, música, etc) salvo previa autorización por escrito de la Gerencia de Mercadotecnia.</span> Se prohíbe el uso de globos con helio.</li><li><span class="font-bold">Al finalizar la campaña publicitaria, el cliente deberá retirar el material publicitario a más tardar al día siguiente.</span> Cualquier demora en la retirada puede estar sujeta a cargos adicionales.</li><li><span class="font-bold">No se permite la venta ni promoción de artículos para adultos (como juguetes sexuales), bebidas alcohólicas, tabaco, CBD y/o cannabinoides.</span></li><li><span class="font-bold">El almacenamiento y/o recolección de basura correrá por cuenta del cliente.</span> En caso de no hacerlo, Plaza Mayor podrá generar un cargo adicional por este concepto.</li><li><span class="font-bold">El cliente deberá instalar la toma eléctrica necesaria.</span> Plaza Mayor podrá suministrar energía eléctrica de 110v para uso moderado de algunos equipos. Este tema deberá definirse previamente por escrito con la autorización de Gerencia de Operaciones.</li><li><span class="font-bold">Esta es una propuesta económica, las condiciones generales y específicas se presentarán en el contrato correspondiente, posterior a haberse autorizado este documento.</span></li></ol></div>`; 
-        page2Content = __pmWrapLetterheadPage(__pmOrdersBoostPdfTypography(page2Raw), { baseWidth: __PM_PDF_CONTENT_BASE_WIDTH_PX, baseHeight: pageBaseHeight });
+        const page2Raw = `<div style="width: 100%; min-height: ${pageBaseHeight}px; height: ${pageBaseHeight}px; overflow: hidden; padding: 16px 64px 52px; box-sizing: border-box;">${renderHeader("CONDICIONES GENERALES")}<ol class="pm-pdf-general-conditions list-decimal list-outside ml-6 text-[14px] text-gray-800 space-y-2 text-justify leading-tight mt-5"><li><span class="font-bold">La instalación será responsabilidad exclusiva del cliente.</span> Esto incluye cualquier costo asociado con la instalación, como mano de obra, herramientas, y materiales necesarios. El cliente debe coordinar con el personal del centro comercial para asegurar que la instalación cumpla con las normativas y políticas de Plaza Mayor.</li><li><span class="font-bold">El diseño y contenido del material publicitario deben cumplir con las normativas establecidas por el centro comercial.</span> Antes de la instalación, el cliente deberá obtener la aprobación necesaria de Plaza Mayor para asegurar la conformidad con las políticas vigentes.</li><li><span class="font-bold">El cliente es completamente responsable del contenido del material publicitario.</span> Debe garantizar que el contenido no infrinja derechos de terceros, incluyendo derechos de autor, marcas registradas u otros derechos de propiedad intelectual. El centro comercial se reserva el derecho de rechazar la instalación de cualquier material que considere inapropiado o que viole las normativas establecidas.</li><li><span class="font-bold">Durante el proceso de instalación y desinstalación, el cliente será responsable de cualquier daño causado al espacio o propiedad del centro comercial.</span> Se recomienda que el cliente cuente con un seguro de responsabilidad civil para cubrir cualquier daño potencial.</li><li><span class="font-bold">Cualquier modificación en la duración, diseño o ubicación del material publicitario debe ser comunicada y aprobada por el centro comercial con anticipación.</span></li><li><span class="font-bold">No se permite volanteo fuera del espacio designado, ni equipo de audio (perifoneo, música, etc) salvo previa autorización por escrito de la Gerencia de Mercadotecnia.</span> Se prohíbe el uso de globos con helio.</li><li><span class="font-bold">Al finalizar la campaña publicitaria, el cliente deberá retirar el material publicitario a más tardar al día siguiente.</span> Cualquier demora en la retirada puede estar sujeta a cargos adicionales.</li><li><span class="font-bold">No se permite la venta ni promoción de artículos para adultos (como juguetes sexuales), bebidas alcohólicas, tabaco, CBD y/o cannabinoides.</span></li><li><span class="font-bold">El almacenamiento y/o recolección de basura correrá por cuenta del cliente.</span> En caso de no hacerlo, Plaza Mayor podrá generar un cargo adicional por este concepto.</li><li><span class="font-bold">El cliente deberá instalar la toma eléctrica necesaria.</span> Plaza Mayor podrá suministrar energía eléctrica de 110v para uso moderado de algunos equipos. Este tema deberá definirse previamente por escrito con la autorización de Gerencia de Operaciones.</li><li><span class="font-bold">Esta es una propuesta económica, las condiciones generales y específicas se presentarán en el contrato correspondiente, posterior a haberse autorizado este documento.</span></li></ol></div>`; 
+        page2Content = __pmWrapLetterheadPage(page2Raw, { baseWidth: __PM_PDF_CONTENT_BASE_WIDTH_PX, baseHeight: pageBaseHeight });
     } 
-    const raw = `<div style="width:816px;margin:0;padding:0;box-sizing:border-box;background:#ffffff;word-break:break-word;overflow-wrap:anywhere;">${page1Content}${page2Content}</div>`;
+    const raw = `<div class="pm-pdf-root" style="width:816px;margin:0;padding:0;box-sizing:border-box;background:#ffffff;word-break:break-word;overflow-wrap:anywhere;${pdfStyleInlineVars}">${pdfStyleTag}${page1Content}${page2Content}</div>`;
     return __pmOrdersTransparentPdfHtml(raw); 
 };
 
@@ -1932,6 +2307,7 @@ window.getOrderHTML = function(o, type) {
         const embedViewer = document.getElementById("doc-preview");
         const btnDownload = document.getElementById("btn-download-preview");
         pdfContainer.innerHTML = content;
+        __pmApplyPdfStyleToLivePreview();
         pdfContainer.classList.remove("hidden");
         embedViewer.classList.add("hidden");
         window.openModal("preview-modal");
@@ -1941,7 +2317,7 @@ window.getOrderHTML = function(o, type) {
           : await renderPdfBlobFallback(pdfContainer);
         const folio = formData.numero_orden || String(currentPreviewOrder.id || "").split("-")[0].toUpperCase();
         const path = `${currentPreviewOrder.id}/cotizacion_aprobada_${folio}.pdf`;
-        const { error: uploadErr } = await window.globalSupabase.storage.from("documentos").upload(path, pdfBlob, { upsert: true });
+        const { error: uploadErr } = await window.globalPocketBase.storage.from("documentos").upload(path, pdfBlob, { upsert: true });
         if (uploadErr) throw uploadErr;
         const { error: dbErr } = await __pmQuotesUpdate(currentPreviewOrder.id, { url_cotizacion_final: path, status: "aprobada" });
         if (dbErr) throw dbErr;
@@ -1985,7 +2361,7 @@ window.getOrderHTML = function(o, type) {
         : await renderPdfBlobFallback(element);
       const folio = formData.numero_orden || String(currentPreviewOrder.id || "").split("-")[0].toUpperCase();
       const path = `${currentPreviewOrder.id}/cotizacion_aprobada_${folio}.pdf`;
-      const { error: uploadErr } = await window.globalSupabase.storage.from("documentos").upload(path, pdfBlob, { upsert: true });
+      const { error: uploadErr } = await window.globalPocketBase.storage.from("documentos").upload(path, pdfBlob, { upsert: true });
       if (uploadErr) throw uploadErr;
       const payload = { ...formData, status: "aprobada", url_cotizacion_final: path };
       const { error: dbErr } = await __pmQuotesUpdate(currentPreviewOrder.id, payload);
@@ -2095,6 +2471,8 @@ window.getOrderHTML = function(o, type) {
     viewport.scrollBy({ left: (direction || 1) * delta, behavior: "smooth" });
   };
 })();
+
+
 
 
 

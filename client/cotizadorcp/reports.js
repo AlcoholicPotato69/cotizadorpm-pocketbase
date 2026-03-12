@@ -8,8 +8,8 @@
 // MÓDULO DE REPORTES (KPIs AMPLIADOS)
 // =========================================================================
 
-const SB_URL = (window.HUB_CONFIG && window.HUB_CONFIG.supabaseUrl) || 'http://127.0.0.1:54321';
-const SB_KEY = (window.HUB_CONFIG && window.HUB_CONFIG.supabaseAnonKey) || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0';
+const PB_URL = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseUrl) || 'http://127.0.0.1:8090';
+const PB_KEY = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseAnonKey) || '';
 
 const __p = window.location.pathname || '';
 const __isCP = /\/cotizadorcp(\/|$)/.test(__p) || (window.location.href || '').includes('cotizadorcp');
@@ -555,12 +555,12 @@ window.generateReports = function () {
 };
 
 async function loadData() {
-    const { data: spaces } = await window.finSupabase.from('espacios').select('*');
+    const { data: spaces } = await window.tenantPocketBase.from('espacios').select('*');
     allSpaces = spaces || [];
-    const { data: orders } = await window.finSupabase.from('cotizaciones').select('*').order('fecha_inicio', { ascending: true });
+    const { data: orders } = await window.tenantPocketBase.from('cotizaciones').select('*').order('fecha_inicio', { ascending: true });
     allOrders = orders || [];
     try {
-        const { data: clients, error: clErr } = await window.finSupabase.from('clientes').select('id,nombre_completo,correo,telefono,rfc');
+        const { data: clients, error: clErr } = await window.tenantPocketBase.from('clientes').select('id,nombre_completo,correo,telefono,rfc');
         if (!clErr) {
             allClients = clients || [];
             clientsById = {};
@@ -574,14 +574,14 @@ async function loadData() {
 
 document.addEventListener('DOMContentLoaded', async () => {
     if (window.PB_CLIENT) {
-        if (!window.finSupabase) window.finSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY, { db: { schema: FIN_SCHEMA } });
-        if (!window.globalSupabase) window.globalSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY);
+        if (!window.tenantPocketBase) window.tenantPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY, { db: { schema: FIN_SCHEMA } });
+        if (!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
     }
 
-    const { data: { session } } = await window.globalSupabase.auth.getSession();
+    const { data: { session } } = await window.globalPocketBase.auth.getSession();
     if (!session) return;
 
-    const { data: profile } = await window.globalSupabase
+    const { data: profile } = await window.globalPocketBase
         .from('profiles')
         .select('role, app_metadata')
         .eq('id', session.user.id)
@@ -619,5 +619,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     fillClientSpaceFilter();
     window.generateReports();
 });
+
+
+
 
 

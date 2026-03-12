@@ -11,8 +11,8 @@
 /* -------------------------------------------------------------------------
  * 0. CONEXIÓN A BASE DE DATOS (ÚNICO LUGAR A CAMBIAR)
  * ------------------------------------------------------------------------- */
-const SB_URL = (window.HUB_CONFIG && window.HUB_CONFIG.supabaseUrl) || 'http://127.0.0.1:54321';
-const SB_KEY = (window.HUB_CONFIG && window.HUB_CONFIG.supabaseAnonKey) || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0';
+const PB_URL = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseUrl) || 'http://127.0.0.1:8090';
+const PB_KEY = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseAnonKey) || '';
 
 // (Opcional) Esquema finanzas configurable
 const FIN_SCHEMA = (window.HUB_CONFIG && window.HUB_CONFIG.finanzasSchema) || 'finanzas';
@@ -31,12 +31,12 @@ window.getLocalYMD = function(date) {
 
 document.addEventListener('DOMContentLoaded', async () => {
     if (window.PB_CLIENT) {
-        if(!window.finSupabase) window.finSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY, { db: { schema: FIN_SCHEMA } });
-        if(!window.globalSupabase) window.globalSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY);
+        if(!window.tenantPocketBase) window.tenantPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY, { db: { schema: FIN_SCHEMA } });
+        if(!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
     }
-    const { data: { session } } = await window.globalSupabase.auth.getSession();
+    const { data: { session } } = await window.globalPocketBase.auth.getSession();
     if (!session) return;
-    const { data: profile } = await window.globalSupabase.from('profiles').select('*').eq('id', session.user.id).single();
+    const { data: profile } = await window.globalPocketBase.from('profiles').select('*').eq('id', session.user.id).single();
 const __role = String(profile.role || '').toLowerCase().trim();
 const __roleHasAccess = (__role === 'admin') || (__role === 'plaza_mayor') || (__role === 'ambos');
 
@@ -118,15 +118,15 @@ if (__role !== 'admin') {
     document.getElementById('new-concept-amount')?.addEventListener('keypress', function(e) { if(e.key==='Enter') window.addConceptRow(); });
 });
 
-async function loadTaxes() { const { data } = await window.finSupabase.from('impuestos').select('*'); dbTaxes = data || []; }
+async function loadTaxes() { const { data } = await window.tenantPocketBase.from('impuestos').select('*'); dbTaxes = data || []; }
 async function loadData() {
-    const { data: spaces } = await window.finSupabase.from('espacios').select('*'); allSpaces = spaces || [];
-    const { data: orders } = await window.finSupabase.from('cotizaciones').select('*'); allOrders = orders || [];
-    const { data: concepts } = await window.finSupabase.from('conceptos_catalogo').select('*').eq('activo', true); catalogConcepts = concepts || [];
+    const { data: spaces } = await window.tenantPocketBase.from('espacios').select('*'); allSpaces = spaces || [];
+    const { data: orders } = await window.tenantPocketBase.from('cotizaciones').select('*'); allOrders = orders || [];
+    const { data: concepts } = await window.tenantPocketBase.from('conceptos_catalogo').select('*').eq('activo', true); catalogConcepts = concepts || [];
 }
 
 async function checkDbConflict(orderId, spaceId, start, end) {
-    const { data } = await window.finSupabase.from('cotizaciones')
+    const { data } = await window.tenantPocketBase.from('cotizaciones')
         .select('id')
         .eq('espacio_id', spaceId)
         .in('status', ['aprobada', 'finalizada'])
@@ -165,7 +165,7 @@ async function handleEventDateChange(info) {
     }
 
     // Guardar en BD
-    const { error } = await window.finSupabase.from('cotizaciones')
+    const { error } = await window.tenantPocketBase.from('cotizaciones')
         .update({ fecha_inicio: startDateStr, fecha_fin: endDateStr })
         .eq('id', orderId); 
     
@@ -337,7 +337,7 @@ window.saveOrderEdit = async function(isFinalize = false) {
         if(isConflict) throw new Error("❌ El espacio está OCUPADO en estas fechas. Revisa el calendario.");
 
         const payload = { fecha_inicio: start, fecha_fin: end };
-        const { error } = await window.finSupabase.from('cotizaciones').update(payload).eq('id', id);
+        const { error } = await window.tenantPocketBase.from('cotizaciones').update(payload).eq('id', id);
         if (error) throw error;
         
         window.showToast("Agenda Actualizada Correctamente"); 
@@ -369,7 +369,7 @@ window.checkAvailabilityModal = async function() {
 
     if(!start || !end || !spaceId) return; 
 
-    const query = window.finSupabase.from('cotizaciones')
+    const query = window.tenantPocketBase.from('cotizaciones')
         .select('id')
         .eq('espacio_id', spaceId)
         .in('status',['aprobada','finalizada'])
@@ -411,7 +411,7 @@ window.saveAllColors = async function() {
         for (const s of allSpaces) {
             const input = document.getElementById(`color-input-${s.id}`);
             if (input && input.value !== s.color) {
-                updates.push(window.finSupabase.from('espacios').update({ color: input.value }).eq('id', s.id));
+                updates.push(window.tenantPocketBase.from('espacios').update({ color: input.value }).eq('id', s.id));
                 s.color = input.value;
             }
         }
@@ -429,5 +429,8 @@ window.removeConceptRow = function() {}
 function renderConceptsList() {}
 function autoGenerateOrderNum() {}
 function parseIds(v){ if(!v) return []; if(Array.isArray(v)) return v; if(typeof v === 'string'){ try { const parsed = JSON.parse(v); return Array.isArray(parsed) ? parsed : []; } catch(e){ return v.split(',').map(x=>x.trim()).filter(Boolean); } } return []; }
+
+
+
 
 

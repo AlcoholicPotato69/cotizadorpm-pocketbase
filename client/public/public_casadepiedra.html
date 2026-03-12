@@ -256,12 +256,12 @@
     </div>
 
     <script>
-        const SUPABASE_URL = window.ENV ? window.ENV.SUPABASE_URL : '';
-        const SUPABASE_ANON_KEY = window.ENV ? window.ENV.SUPABASE_ANON_KEY : '';
+        const POCKETBASE_URL = window.ENV ? window.ENV.POCKETBASE_URL : '';
+        const POCKETBASE_ANON_KEY = window.ENV ? window.ENV.POCKETBASE_ANON_KEY : '';
         const ESQUEMA_DB = (window.ENV && window.ENV.SCHEMA_CASA_PIEDRA) ? window.ENV.SCHEMA_CASA_PIEDRA : 'finanzas_casadepiedra';
 
-        const clienteSupabase = window.PB_CLIENT.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { db: { schema: ESQUEMA_DB } });
-        function repararImagen(url) { if(!url) return 'assets/img/placeholder_cp.png'; if(url.includes('127.0.0.1:55551')) return url.replace('http://127.0.0.1:55551', SUPABASE_URL); return url; }
+        const clientePocketBase = window.PB_CLIENT.createClient(POCKETBASE_URL, POCKETBASE_ANON_KEY, { db: { schema: ESQUEMA_DB } });
+        function repararImagen(url) { if(!url) return 'assets/img/placeholder_cp.png'; if(url.includes('127.0.0.1:55551')) return url.replace('http://127.0.0.1:55551', POCKETBASE_URL); return url; }
 
         const grid = document.getElementById('espacios-grid');
         let espaciosGlobal = []; let catalogConceptsPublic = []; let espacioActual = null; let capacidadMaximaActual = 0; let tarifasActuales = [];
@@ -272,34 +272,54 @@
         let premontajePercentPublic = 25;
         let horaExtraCfgPublic = { mode: 'percent', value: 100 };
         let avisoHorasMostrado = false;
+        const PUBLIC_DOC_BUCKET = 'documentos-cp';
+        const PUBLIC_LETTERHEAD_DEFAULT = 'assets/img/cp-letterhead-default.png';
+        let publicPdfLetterheadUrl = PUBLIC_LETTERHEAD_DEFAULT;
 
         function parseTags(raw) { if(!raw) return []; if(Array.isArray(raw)) return raw; if(typeof raw === 'string') { try { let parsed = JSON.parse(raw); return Array.isArray(parsed) ? parsed : [raw]; } catch(e) { return raw.split(',').map(s=>s.trim()).filter(Boolean); } } return []; }
         function procesarTarifasJSONB(jsonRaw) { let tarifas = []; try { if (typeof jsonRaw === 'string') tarifas = JSON.parse(jsonRaw); else if (Array.isArray(jsonRaw)) tarifas = jsonRaw; else if (typeof jsonRaw === 'object' && jsonRaw !== null) tarifas = [jsonRaw]; } catch (e) {} return tarifas; }
 
         async function cargarEspacios() {
             try {
-                const [espData, concData] = await Promise.all([ clienteSupabase.from('espacios').select('*').order('nombre', { ascending: true }), clienteSupabase.from('conceptos_catalogo').select('*').eq('activo', true) ]);
+                const [espData, concData] = await Promise.all([ clientePocketBase.from('espacios').select('*').order('nombre', { ascending: true }), clientePocketBase.from('conceptos_catalogo').select('*').eq('activo', true) ]);
                 espaciosGlobal = espData.data || []; catalogConceptsPublic = concData.data || [];
                 generarFiltrosEtiquetas(); renderizarEspacios(espaciosGlobal); renderizarConceptosPublicos();
             } catch (err) { console.error(err); }
         }
 
+        function normalizarStoragePath(pathRaw) {
+            const clean = String(pathRaw || '').trim().replace(/\\/g, '/').replace(/^\/+/, '');
+            if (!clean) return '';
+            return clean;
+        }
+
+        async function resolverUrlMembretePublico(pathRaw) {
+            const cleanPath = normalizarStoragePath(pathRaw);
+            if (!cleanPath) return '';
+            if (/^https?:\/\//i.test(cleanPath)) return cleanPath;
+            const signed = await clientePocketBase.storage.from(PUBLIC_DOC_BUCKET).createSignedUrl(cleanPath, 3600);
+            if (signed?.data?.signedUrl) return signed.data.signedUrl;
+            return '';
+        }
+
         async function cargarConfigPublica() {
             premontajePercentPublic = 25;
             horaExtraCfgPublic = { mode: 'percent', value: 100 };
+            publicPdfLetterheadUrl = PUBLIC_LETTERHEAD_DEFAULT;
             try {
-                const { data, error } = await clienteSupabase
+                const { data, error } = await clientePocketBase
                     .from('configuracion')
                     .select('clave,valor_json,valor_num')
-                    .in('clave', ['premontaje_pct', 'hora_extra_cfg']);
+                    .in('clave', ['premontaje_pct', 'hora_extra_cfg', 'pdf_letterhead_path']);
                 if (error) throw error;
-                (Array.isArray(data) ? data : []).forEach(row => {
+                const rows = Array.isArray(data) ? data : [];
+                for (const row of rows) {
                     const key = String(row?.clave || '').toLowerCase();
                     if (key === 'premontaje_pct') {
                         const raw = row?.valor_num ?? row?.valor_json?.value ?? row?.valor_json?.percent;
                         const pct = parseFloat(raw);
                         if (Number.isFinite(pct) && pct >= 0) premontajePercentPublic = pct;
-                        return;
+                        continue;
                     }
                     if (key === 'hora_extra_cfg') {
                         const modeRaw = String(row?.valor_json?.mode || '').toLowerCase();
@@ -307,11 +327,20 @@
                         const rawVal = row?.valor_num ?? row?.valor_json?.value ?? 100;
                         const val = parseFloat(rawVal);
                         horaExtraCfgPublic = { mode, value: Number.isFinite(val) && val >= 0 ? val : 100 };
+                        continue;
                     }
-                });
+                    if (key === 'pdf_letterhead_path') {
+                        const cfg = row?.valor_json || {};
+                        const direct = String(cfg.url || cfg.signed_url || '').trim();
+                        const storedPath = cfg.path || cfg.file_path || cfg.value || (cfg.file_name ? `membretes_pdf/${cfg.file_name}` : '');
+                        const resolved = direct || await resolverUrlMembretePublico(storedPath);
+                        if (resolved) publicPdfLetterheadUrl = resolved;
+                    }
+                }
             } catch (e) {
                 premontajePercentPublic = 25;
                 horaExtraCfgPublic = { mode: 'percent', value: 100 };
+                publicPdfLetterheadUrl = PUBLIC_LETTERHEAD_DEFAULT;
             }
         }
 
@@ -346,12 +375,12 @@
             fechasOcupadasArray = []; const loader = document.getElementById('cal-loader'); loader.classList.remove('hidden');
             try {
                 let rows = [];
-                const q = await clienteSupabase
+                const q = await clientePocketBase
                     .from('cotizaciones')
                     .select('espacio_id,fecha_inicio,fecha_fin,conceptos_adicionales,espacios_detalle')
                     .in('status', ['aprobada', 'finalizada']);
                 if (q.error) {
-                    const fb = await clienteSupabase
+                    const fb = await clientePocketBase
                         .from('cotizaciones')
                         .select('espacio_id,fecha_inicio,fecha_fin,conceptos_adicionales')
                         .in('status', ['aprobada', 'finalizada']);
@@ -795,13 +824,30 @@
 
         async function descargarPDFPublico(payload, folio) {
             const { jsPDF } = window.jspdf; const doc = new jsPDF();
-            doc.setFillColor(18, 18, 18); doc.rect(0, 0, 210, 40, 'F');
-            
+            let letterheadData = null;
             try {
-                const logoData = await getBase64ImageFromUrl('assets/img/logocp.png');
-                doc.addImage(logoData, 'PNG', 82.5, 12, 45, 16); 
-            } catch(e) {
-                doc.setTextColor(222, 172, 7); doc.setFontSize(22); doc.text("CASA DE PIEDRA", 105, 20, { align: "center" });
+                letterheadData = await getBase64ImageFromUrl(publicPdfLetterheadUrl || PUBLIC_LETTERHEAD_DEFAULT);
+            } catch (e) {
+                letterheadData = null;
+            }
+
+            const drawLetterhead = () => {
+                if (!letterheadData) return;
+                const pageW = doc.internal.pageSize.getWidth();
+                const pageH = doc.internal.pageSize.getHeight();
+                doc.addImage(letterheadData, 'PNG', 0, 0, pageW, pageH);
+            };
+
+            if (letterheadData) {
+                drawLetterhead();
+            } else {
+                doc.setFillColor(18, 18, 18); doc.rect(0, 0, 210, 40, 'F');
+                try {
+                    const logoData = await getBase64ImageFromUrl('assets/img/logocp.png');
+                    doc.addImage(logoData, 'PNG', 82.5, 12, 45, 16);
+                } catch(e) {
+                    doc.setTextColor(222, 172, 7); doc.setFontSize(22); doc.text("CASA DE PIEDRA", 105, 20, { align: "center" });
+                }
             }
 
             doc.setTextColor(50, 50, 50); doc.setFontSize(12);
@@ -824,7 +870,8 @@
 
             payload.conceptos_adicionales.forEach(c => tableBody.push([c.description, `$${parseFloat(c.amount).toLocaleString()}`]));
 
-            doc.autoTable({ startY: 100, head: [['Concepto / Servicio', 'Monto Estimado']], body: tableBody, foot: [['Total Inversión Estimada Base', `$${payload.precio_final.toLocaleString()}`]], theme: 'grid', headStyles: { fillColor: [18, 18, 18], textColor: [222, 172, 7] }, footStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold' } });
+            let tablePageCounter = 0;
+            doc.autoTable({ startY: 100, head: [['Concepto / Servicio', 'Monto Estimado']], body: tableBody, foot: [['Total Inversión Estimada Base', `$${payload.precio_final.toLocaleString()}`]], theme: 'grid', headStyles: { fillColor: [18, 18, 18], textColor: [222, 172, 7] }, footStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold' }, willDrawPage: () => { tablePageCounter += 1; if (tablePageCounter > 1) drawLetterhead(); } });
 
             let y = doc.lastAutoTable.finalY + 14;
             doc.setFontSize(9); doc.setTextColor(80, 80, 80);
@@ -953,7 +1000,7 @@
                 try {
                     guardarEspacioActualEnCarrito();
                     const payload = construirPayloadMultiEspacio(nombre, telefono, email);
-                    const { data, error } = await clienteSupabase.from('cotizaciones').insert(payload).select();
+                    const { data, error } = await clientePocketBase.from('cotizaciones').insert(payload).select();
                     if (error) throw error;
 
                     const folioBD = data && data.length > 0 ? data[0].id.split('-')[0].toUpperCase() : Math.floor(Math.random() * 10000);
@@ -996,6 +1043,7 @@
     </script>
 </body>
 </html>
+
 
 
 

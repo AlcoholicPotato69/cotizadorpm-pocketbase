@@ -195,13 +195,13 @@
 
     <script>
         function formatMoney(amount) { return '$' + amount.toLocaleString('es-MX', {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
-        const SUPABASE_URL = window.ENV ? window.ENV.SUPABASE_URL : ''; const SUPABASE_ANON_KEY = window.ENV ? window.ENV.SUPABASE_ANON_KEY : ''; const ESQUEMA_DB = (window.ENV && window.ENV.SCHEMA_PLAZA_MAYOR) ? window.ENV.SCHEMA_PLAZA_MAYOR : 'finanzas';
-        const clienteSupabase = window.PB_CLIENT.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { db: { schema: ESQUEMA_DB } });
+        const POCKETBASE_URL = window.ENV ? window.ENV.POCKETBASE_URL : ''; const POCKETBASE_ANON_KEY = window.ENV ? window.ENV.POCKETBASE_ANON_KEY : ''; const ESQUEMA_DB = (window.ENV && window.ENV.SCHEMA_PLAZA_MAYOR) ? window.ENV.SCHEMA_PLAZA_MAYOR : 'finanzas';
+        const clientePocketBase = window.PB_CLIENT.createClient(POCKETBASE_URL, POCKETBASE_ANON_KEY, { db: { schema: ESQUEMA_DB } });
 
         // TRADUCTOR DE IMÁGENES LOCALES A NUBE DE CLOUDFLARE
         function repararImagen(url) {
             if(!url) return 'assets/img/placeholder.png';
-            if(url.includes('127.0.0.1:55551')) return url.replace('http://127.0.0.1:55551', SUPABASE_URL);
+            if(url.includes('127.0.0.1:55551')) return url.replace('http://127.0.0.1:55551', POCKETBASE_URL);
             return url;
         }
 
@@ -213,7 +213,7 @@
 
         async function cargarEspacios() {
             try {
-                const { data, error } = await clienteSupabase.from('espacios').select('id, clave, nombre, tipo, descripcion, precio_base, etiquetas, imagen_url').order('nombre', { ascending: true });
+                const { data, error } = await clientePocketBase.from('espacios').select('id, clave, nombre, tipo, descripcion, precio_base, etiquetas, imagen_url').order('nombre', { ascending: true });
                 if (error) throw error;
                 espaciosGlobal = data || []; generarFiltrosEtiquetas(); renderizarEspacios(espaciosGlobal);
             } catch (err) { console.error(err); }
@@ -257,7 +257,7 @@
 
         async function descargarFechasBloqueadas(id) {
             fechasOcupadasArray = []; const loader = document.getElementById('cal-loader'); loader.classList.remove('hidden');
-            try { const { data, error } = await clienteSupabase.from('cotizaciones').select('fecha_inicio, fecha_fin').eq('espacio_id', id).in('status', ['aprobada', 'finalizada']); if (error) throw error; data.forEach(cot => { let dCurr = new Date(cot.fecha_inicio + 'T00:00:00'); let dEnd = new Date(cot.fecha_fin + 'T00:00:00'); while (dCurr <= dEnd) { fechasOcupadasArray.push(formateaFechaString(dCurr)); dCurr.setDate(dCurr.getDate() + 1); } }); } catch (e) { console.error("Error BD", e); } finally { loader.classList.add('hidden'); }
+            try { const { data, error } = await clientePocketBase.from('cotizaciones').select('fecha_inicio, fecha_fin').eq('espacio_id', id).in('status', ['aprobada', 'finalizada']); if (error) throw error; data.forEach(cot => { let dCurr = new Date(cot.fecha_inicio + 'T00:00:00'); let dEnd = new Date(cot.fecha_fin + 'T00:00:00'); while (dCurr <= dEnd) { fechasOcupadasArray.push(formateaFechaString(dCurr)); dCurr.setDate(dCurr.getDate() + 1); } }); } catch (e) { console.error("Error BD", e); } finally { loader.classList.add('hidden'); }
         }
 
         function cambiarMes(offset) { calCurrentDate.setMonth(calCurrentDate.getMonth() + offset); renderizarCalendario(); }
@@ -312,7 +312,7 @@
         document.getElementById('btn-check').addEventListener('click', async () => {
             const btn = document.getElementById('btn-check'); btn.disabled = true; btn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i>';
             const fInicio = formateaFechaString(selStart); const fFin = selEnd ? formateaFechaString(selEnd) : fInicio;
-            try { const { data } = await clienteSupabase.from('cotizaciones').select('id').eq('espacio_id', espacioActual.id).in('status', ['aprobada', 'finalizada']).lte('fecha_inicio', fFin).gte('fecha_fin', fInicio); if (data.length > 0) { await descargarFechasBloqueadas(espacioActual.id); renderizarCalendario(); selStart = null; selEnd = null; actualizarBotonCheck(); alert("Esta fecha acaba de ser reservada por alguien más."); return; } } catch(e){} 
+            try { const { data } = await clientePocketBase.from('cotizaciones').select('id').eq('espacio_id', espacioActual.id).in('status', ['aprobada', 'finalizada']).lte('fecha_inicio', fFin).gte('fecha_fin', fInicio); if (data.length > 0) { await descargarFechasBloqueadas(espacioActual.id); renderizarCalendario(); selStart = null; selEnd = null; actualizarBotonCheck(); alert("Esta fecha acaba de ser reservada por alguien más."); return; } } catch(e){} 
             
             document.getElementById('resumen-fechas').textContent = selEnd ? `Del ${selStart.toLocaleDateString()} al ${selEnd.toLocaleDateString()}` : `Día ${selStart.toLocaleDateString()}`;
             document.getElementById('resumen-precio').textContent = formatMoney(totalCalculado);
@@ -327,11 +327,12 @@
             if(!nombre || !telefono || !email) { alert("Por favor, completa todos tus datos de contacto."); return; }
             btn.disabled = true; btn.innerHTML = '<i class="fas fa-circle-notch fa-spin mr-2"></i> Procesando...';
             const payload = { espacio_id: espacioActual.id, espacio_nombre: espacioActual.nombre, espacio_clave: espacioActual.clave, cliente_nombre: nombre, cliente_rfc: '', cliente_contacto: telefono, cliente_email: email, fecha_inicio: formateaFechaString(selStart), fecha_fin: selEnd ? formateaFechaString(selEnd) : formateaFechaString(selStart), precio_final: totalConIva, desglose_precios: { subtotal_antes_impuestos: totalCalculado, impuestos_detalle: [], tax_total: (totalConIva - totalCalculado) }, conceptos_adicionales: [], status: 'pendiente' };
-            try { const { error } = await clienteSupabase.from('cotizaciones').insert(payload); if (error) throw error; document.getElementById('step-2-contact').innerHTML = `<div class="p-6 md:p-12 text-center h-full flex flex-col items-center justify-center min-h-[60vh] md:min-h-[50vh]"><div class="w-24 h-24 bg-[#fff5f5] text-brand-primary border-4 border-[#ffebeb] rounded-full flex items-center justify-center mx-auto mb-8 text-5xl shadow-lg"><i class="fas fa-check"></i></div><h2 class="text-3xl md:text-4xl font-bold text-brand-dark mb-4">¡Solicitud Exitosa!</h2><p class="text-gray-500 font-medium text-sm md:text-base leading-relaxed px-4">Tu solicitud de campaña por <strong class="text-brand-dark">${formatMoney(totalConIva)}</strong> ha sido registrada.<br>Nuestro equipo se comunicará contigo al ${telefono}.</p></div>`; setTimeout(() => cerrarModal(), 5000); } catch (err) { alert("Error al enviar la solicitud."); btn.disabled = false; btn.innerHTML = 'Enviar Solicitud'; }
+            try { const { error } = await clientePocketBase.from('cotizaciones').insert(payload); if (error) throw error; document.getElementById('step-2-contact').innerHTML = `<div class="p-6 md:p-12 text-center h-full flex flex-col items-center justify-center min-h-[60vh] md:min-h-[50vh]"><div class="w-24 h-24 bg-[#fff5f5] text-brand-primary border-4 border-[#ffebeb] rounded-full flex items-center justify-center mx-auto mb-8 text-5xl shadow-lg"><i class="fas fa-check"></i></div><h2 class="text-3xl md:text-4xl font-bold text-brand-dark mb-4">¡Solicitud Exitosa!</h2><p class="text-gray-500 font-medium text-sm md:text-base leading-relaxed px-4">Tu solicitud de campaña por <strong class="text-brand-dark">${formatMoney(totalConIva)}</strong> ha sido registrada.<br>Nuestro equipo se comunicará contigo al ${telefono}.</p></div>`; setTimeout(() => cerrarModal(), 5000); } catch (err) { alert("Error al enviar la solicitud."); btn.disabled = false; btn.innerHTML = 'Enviar Solicitud'; }
         });
         document.addEventListener('DOMContentLoaded', cargarEspacios);
     </script>
 </body>
 </html>
+
 
 

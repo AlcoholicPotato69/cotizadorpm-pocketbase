@@ -14,10 +14,10 @@ let clientProfilesById = {};
 async function loadClientProfilesForQuoteModal() {
     const sel = document.getElementById('cli-select');
     const hid = document.getElementById('cli-id');
-    if (!sel || !window.finSupabase) return;
+    if (!sel || !window.tenantPocketBase) return;
 
     try {
-        const { data, error } = await window.finSupabase
+        const { data, error } = await window.tenantPocketBase
             .from('clientes')
             .select('id,nombre_completo,telefono,correo,rfc')
             .order('nombre_completo', { ascending: true });
@@ -68,8 +68,8 @@ async function loadClientProfilesForQuoteModal() {
 // =========================================================================
 
 // LECTURA DE CREDENCIALES DESDE ARCHIVO CONFIG (SIN QUEMAR CÓDIGO)
-const SB_URL = window.HUB_CONFIG?.supabaseUrl || window.ENV?.SUPABASE_URL || '';
-const SB_KEY = window.HUB_CONFIG?.supabaseAnonKey || window.ENV?.SUPABASE_ANON_KEY || '';
+const PB_URL = window.HUB_CONFIG?.pocketbaseUrl || window.ENV?.POCKETBASE_URL || '';
+const PB_KEY = window.HUB_CONFIG?.pocketbaseAnonKey || window.ENV?.POCKETBASE_ANON_KEY || '';
 
 const FIN_SCHEMA = window.HUB_CONFIG?.finanzasSchema || window.ENV?.SCHEMA_PLAZA_MAYOR || 'finanzas';
 const PM_CATALOG_MODE = window.__PM_CATALOG_MODE || ((window.location.pathname || '').toLowerCase().includes('cotizacion.html') ? 'quote' : 'catalog_admin');
@@ -93,14 +93,17 @@ async function pmCreateQuoteRecord(payload) {
     const svc = pmNativeCotizacionesService();
     if (svc) {
         try {
-            await svc.create(payload, { schema: FIN_SCHEMA });
-            return { error: null };
+            const created = await svc.create(payload, { schema: FIN_SCHEMA });
+            const createdId = String(created?.id || created?._pb_id || '').trim();
+            return { error: null, data: created || null, id: createdId };
         } catch (error) {
-            return { error };
+            return { error, data: null, id: '' };
         }
     }
-    const result = await window.finSupabase.from('cotizaciones').insert(payload);
-    return { error: result && result.error ? result.error : null };
+    const result = await window.tenantPocketBase.from('cotizaciones').insert(payload);
+    const data = result && result.data ? result.data : null;
+    const createdId = String(data?.id || data?._pb_id || '').trim();
+    return { error: result && result.error ? result.error : null, data, id: createdId };
 }
 
 // --- HELPERS ---
@@ -213,7 +216,7 @@ function renderSelectedRangeEvent(){
 async function fetchBlockedRangesForSpace(spaceId){
     const sid = String(spaceId || '');
     if(!sid) return [];
-    const { data, error } = await window.finSupabase
+    const { data, error } = await window.tenantPocketBase
         .from('cotizaciones')
         .select('id,espacio_id,fecha_inicio,fecha_fin,espacios_detalle,status')
         .eq('status', 'aprobada');
@@ -306,12 +309,8 @@ function initQuoteDateCalendar(){
     });
 }
 
-function setActiveQuoteSpaceCard(spaceId){
+function setActiveQuoteSpaceCard(_spaceId){
     if (!IS_PM_QUOTE_PAGE) return;
-    document.querySelectorAll('[data-space-card="1"]').forEach(card => {
-        const active = String(card.dataset.spaceId || '') === String(spaceId || '');
-        card.classList.toggle('pm-space-active', active);
-    });
 }
 function syncQuoteCustomUi(cfg){
     const chk = document.getElementById('q-custom-permanence');
@@ -363,6 +362,16 @@ function renderSelectedSpaceTabs(){
         </div>`;
     });
 }
+
+function refreshQuoteSpaceCards(){
+    if (!IS_PM_QUOTE_PAGE) return;
+    if (typeof window.filterCatalogLogic === 'function') {
+        window.filterCatalogLogic();
+        return;
+    }
+    renderSpaces(allSpaces);
+}
+
 function loadActiveCfgToForm(){
     const cfg = getActiveCfg();
     if(!cfg) return;
@@ -402,20 +411,20 @@ window.toggleQuoteCustomPermanence = function(){
 };
 
 document.addEventListener('DOMContentLoaded', async () => {
-    if (!SB_URL || !SB_KEY) {
-        console.error("Credenciales de Supabase no encontradas en el config global.");
+    if (!PB_URL) {
+        console.error("URL de PocketBase no encontrada en la configuración global.");
         return;
     }
 
     if (window.PB_CLIENT) {
-        if(!window.finSupabase) window.finSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY, { db: { schema: FIN_SCHEMA } });
-        if(!window.globalSupabase) window.globalSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY);
+        if(!window.tenantPocketBase) window.tenantPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY, { db: { schema: FIN_SCHEMA } });
+        if(!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
     }
 
-    const { data: { session } } = await window.globalSupabase.auth.getSession();
+    const { data: { session } } = await window.globalPocketBase.auth.getSession();
     if (!session) return;
     
-    const { data: profilesList, error: profileErr } = await window.globalSupabase
+    const { data: profilesList, error: profileErr } = await window.globalPocketBase
         .from('profiles')
         .select('*')
         .eq('id', session.user.id);
@@ -481,9 +490,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 });
 
-async function loadTaxes() { const { data } = await window.finSupabase.from('impuestos').select('*'); dbTaxes = data || []; }
+async function loadTaxes() { const { data } = await window.tenantPocketBase.from('impuestos').select('*'); dbTaxes = data || []; }
 async function loadCatalog() {
-    const { data } = await window.finSupabase.from('espacios').select('*').order('id');
+    const { data } = await window.tenantPocketBase.from('espacios').select('*').order('id');
     allSpaces = data||[];
     renderSpaces(allSpaces);
     if (IS_PM_QUOTE_PAGE) renderSpaceAddSelect();
@@ -544,12 +553,34 @@ function renderSpaces(list) {
             ? `<button onclick="window.openManagerModal(${s.id})" class="absolute top-3 right-3 bg-white/90 text-gray-700 p-2 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-all z-10"><i class="fa-solid fa-pen"></i></button>`
             : '';
         const actionBtn = IS_PM_QUOTE_PAGE
-            ? `<button type="button" onclick="event.stopPropagation(); window.openQuoteModal(${s.id})" class="bg-gray-900 text-white w-full py-2 rounded-lg text-[10px] font-bold uppercase tracking-wide hover:bg-brand-red transition-colors duration-300 shadow"><i class="fa-solid fa-check mr-1"></i> Seleccionar</button>`
+            ? ''
             : (myPermissions.catalog_manage
                 ? `<button onclick="window.openManagerModal(${s.id})" class="bg-gray-900 text-white w-full py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide hover:bg-brand-red transition-colors duration-300 shadow-lg"><i class="fa-solid fa-sliders mr-2"></i> Administrar Espacio</button>`
                 : `<button disabled class="bg-gray-200 text-gray-500 w-full py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide cursor-not-allowed"><i class="fa-solid fa-lock mr-2"></i> Solo lectura</button>`);
         if (IS_PM_QUOTE_PAGE) {
-            g.innerHTML += `<div data-space-card="1" data-space-id="${s.id}" onclick="window.openQuoteModal(${s.id})" class="bg-white rounded-xl shadow-md border border-gray-100 hover:shadow-lg transition-all duration-200 cursor-pointer p-4"><div class="flex items-start justify-between gap-2 mb-2"><div><p class="text-[10px] font-bold uppercase tracking-wider text-brand-red">${s.tipo}</p><h3 class="font-black text-sm leading-tight text-gray-800">${s.nombre}</h3><p class="text-[10px] text-gray-400 font-mono mt-0.5">${s.clave}</p></div><div class="text-right">${priceDisplay}</div></div>${tagsHtml ? `<div class="mb-3">${tagsHtml}</div>` : ''}${actionBtn}</div>`;
+            const sid = String(s.id);
+            const inQuote = pmQuoteSpaces.some(x => String(x.spaceId) === sid);
+            const isActive = String(pmActiveSpaceId || '') === sid;
+            const cardState = isActive
+                ? 'border-emerald-400 ring-2 ring-emerald-300 bg-emerald-50'
+                : (inQuote ? 'border-red-200 ring-1 ring-red-100 bg-red-50/60' : 'border-gray-200 bg-white');
+            const stateLabel = isActive
+                ? '<span class="text-[9px] font-black uppercase text-emerald-700">Activo</span>'
+                : (inQuote ? '<span class="text-[9px] font-black uppercase text-brand-red">Seleccionado</span>' : '<span class="text-[9px] font-bold uppercase text-gray-400">Desactivado</span>');
+            const powerOffBtn = inQuote
+                ? `<button type="button" onclick="event.stopPropagation(); window.powerOffQuoteSpace('${sid}')" class="px-2 py-1 rounded border border-gray-200 bg-white text-[9px] font-black uppercase text-gray-600 hover:text-red-600">Desactivar</button>`
+                : '';
+            g.innerHTML += `<div data-space-card="1" data-space-id="${s.id}" onclick="window.toggleQuoteSpaceCard('${sid}')" class="rounded-xl border ${cardState} p-4 shadow-sm transition hover:shadow-md cursor-pointer">
+                <div class="mb-3">
+                    <p class="text-sm font-black text-gray-800 uppercase leading-tight">${s.nombre}</p>
+                    <p class="text-[10px] font-mono text-gray-400 mt-1">${s.clave || '--'}</p>
+                </div>
+                <div class="space-y-1.5 mb-4 text-[11px]">
+                    <div class="flex justify-between gap-2"><span class="text-gray-400 font-bold uppercase">Tipo</span><span class="text-gray-700 font-bold text-right">${s.tipo || '--'}</span></div>
+                    <div class="flex justify-between gap-2"><span class="text-gray-400 font-bold uppercase">Precio</span><span class="text-gray-800 font-black text-right">${formatMoney(finalPrice)}</span></div>
+                </div>
+                <div class="flex items-center justify-between gap-2">${stateLabel}${powerOffBtn}</div>
+            </div>`;
         } else {
             g.innerHTML += `<div class="bg-white rounded-xl shadow-md relative group hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 overflow-hidden border border-gray-100"><div class="h-48 bg-gray-200 relative overflow-hidden">${editBtn}${badgeHTML}<img src="${displayImg}" class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"><div class="absolute bottom-3 left-4 text-white z-10"><p class="text-[10px] font-bold uppercase tracking-wider bg-brand-red px-2 py-0.5 rounded inline-block mb-1">${s.tipo}</p><h3 class="font-bold text-lg leading-tight shadow-black drop-shadow-md">${s.nombre}</h3></div></div><div class="p-5">${tagsHtml}<div class="flex justify-between items-center mb-4"><p class="text-xs text-gray-400 font-mono"><i class="fa-solid fa-tag mr-1"></i>${s.clave}</p>${priceDisplay}</div><p class="text-xs text-gray-500 line-clamp-2 mb-4 h-8">${s.descripcion || 'Sin descripción disponible.'}</p><div class="border-t pt-3">${actionBtn}</div></div></div>`;
         }
@@ -562,6 +593,7 @@ window.selectQuoteSpace = function(spaceId){
     saveActiveCfgFromForm();
     pmActiveSpaceId = String(spaceId);
     renderSelectedSpaceTabs();
+    refreshQuoteSpaceCards();
     loadActiveCfgToForm();
     window.updateQuoteCalculation();
     window.checkAvailability();
@@ -624,6 +656,7 @@ window.addSpaceToQuote = function(){
     renderSpaceAddSelect();
     if (sel) sel.value = '';
     renderSelectedSpaceTabs();
+    refreshQuoteSpaceCards();
     loadActiveCfgToForm();
     window.updateQuoteCalculation();
     window.checkAvailability();
@@ -636,6 +669,7 @@ window.removeSpaceFromQuote = function(spaceId){
     if(String(pmActiveSpaceId) === String(spaceId) && pmQuoteSpaces.length) pmActiveSpaceId = String(pmQuoteSpaces[0].spaceId);
     renderSpaceAddSelect();
     renderSelectedSpaceTabs();
+    refreshQuoteSpaceCards();
     loadActiveCfgToForm();
     window.updateQuoteCalculation();
     window.checkAvailability();
@@ -762,8 +796,8 @@ window.saveSpace = async function(){
     })() : payload;
     
     try {
-        if(id) { await window.finSupabase.from('espacios').update(submitPayload).eq('id', id); } 
-        else { await window.finSupabase.from('espacios').insert(submitPayload); } 
+        if(id) { await window.tenantPocketBase.from('espacios').update(submitPayload).eq('id', id); } 
+        else { await window.tenantPocketBase.from('espacios').insert(submitPayload); } 
         if (fileInput) fileInput.value = ''; window.showToast("Guardado", "success"); window.closeModal('manager-modal'); loadCatalog(); 
     } catch(e) {
         console.error(e);
@@ -771,41 +805,84 @@ window.saveSpace = async function(){
     }
 }
 
+window.toggleQuoteSpaceCard = function(spaceId){
+    if (!IS_PM_QUOTE_PAGE) {
+        window.location.href = `cotizacion.html?space=${encodeURIComponent(spaceId)}`;
+        return;
+    }
+    const sid = String(spaceId);
+    const space = getSpaceById(sid);
+    if (!space) return;
+
+    saveActiveCfgFromForm();
+    const firstSelection = !pmQuoteSpaces.length;
+    const exists = pmQuoteSpaces.some(x => String(x.spaceId) === sid);
+    if (!exists) {
+        const active = getActiveCfg();
+        const seed = active ? {
+            startDate: active.startDate,
+            endDate: active.endDate,
+            customPermanence: !!active.customPermanence,
+            customBasePrice: active.customBasePrice
+        } : {};
+        pmQuoteSpaces.push(createSpaceCfg(sid, seed));
+    }
+    pmActiveSpaceId = sid;
+    renderSpaceAddSelect();
+    renderSelectedSpaceTabs();
+    refreshQuoteSpaceCards();
+    loadActiveCfgToForm();
+    document.getElementById('quote-empty-state')?.classList.add('hidden');
+    document.getElementById('quote-workspace')?.classList.remove('hidden');
+    if (firstSelection) {
+        document.getElementById('cli-name').value = '';
+        document.getElementById('cli-rfc').value = '';
+        document.getElementById('cli-phone').value = '';
+        document.getElementById('cli-email').value = '';
+        const cliSel = document.getElementById('cli-select'); if(cliSel) cliSel.value = '';
+        const cliId = document.getElementById('cli-id'); if(cliId) cliId.value = '';
+        const quoteName = document.getElementById('q-quote-name'); if (quoteName) quoteName.value = '';
+        loadClientProfilesForQuoteModal();
+    }
+    window.updateQuoteCalculation();
+    window.checkAvailability();
+};
+
+window.powerOffQuoteSpace = function(spaceId){
+    if (!IS_PM_QUOTE_PAGE) return;
+    const sid = String(spaceId);
+    const exists = pmQuoteSpaces.some(x => String(x.spaceId) === sid);
+    if(!exists) return;
+    saveActiveCfgFromForm();
+    pmQuoteSpaces = pmQuoteSpaces.filter(x => String(x.spaceId) !== sid);
+    if(!pmQuoteSpaces.length){
+        pmActiveSpaceId = null;
+        currentSpace = null;
+        renderSpaceAddSelect();
+        renderSelectedSpaceTabs();
+        refreshQuoteSpaceCards();
+        document.getElementById('quote-workspace')?.classList.add('hidden');
+        document.getElementById('quote-empty-state')?.classList.remove('hidden');
+        const avail = document.getElementById('avail-msg'); if (avail) avail.classList.add('hidden');
+        const btnGenerate = document.getElementById('btn-generate'); if (btnGenerate) btnGenerate.disabled = true;
+        const qPrice = document.getElementById('q-price'); if (qPrice) qPrice.innerText = '$0.00';
+        return;
+    }
+    if(String(pmActiveSpaceId) === sid) pmActiveSpaceId = String(pmQuoteSpaces[0].spaceId);
+    renderSpaceAddSelect();
+    renderSelectedSpaceTabs();
+    refreshQuoteSpaceCards();
+    loadActiveCfgToForm();
+    window.updateQuoteCalculation();
+    window.checkAvailability();
+};
+
 window.openQuoteModal = function(id) {
     const space = allSpaces.find(s => String(s.id) === String(id));
     if (!space) return;
 
     if (isQuoteWorkspacePage()) {
-        const firstSelection = !pmQuoteSpaces.length;
-        if (!pmQuoteSpaces.length) {
-            pmQuoteSpaces = [createSpaceCfg(space.id)];
-        } else {
-            saveActiveCfgFromForm();
-            const exists = pmQuoteSpaces.find(x => String(x.spaceId) === String(space.id));
-            if (!exists) {
-                const active = getActiveCfg();
-                const seed = active ? { startDate: active.startDate, endDate: active.endDate } : {};
-                pmQuoteSpaces.push(createSpaceCfg(space.id, seed));
-            }
-        }
-        pmActiveSpaceId = String(space.id);
-        renderSpaceAddSelect();
-        renderSelectedSpaceTabs();
-        loadActiveCfgToForm();
-        document.getElementById('quote-empty-state')?.classList.add('hidden');
-        document.getElementById('quote-workspace')?.classList.remove('hidden');
-        if (firstSelection) {
-            document.getElementById('cli-name').value = '';
-            document.getElementById('cli-rfc').value = '';
-            document.getElementById('cli-phone').value = '';
-            document.getElementById('cli-email').value = '';
-            const cliSel = document.getElementById('cli-select'); if(cliSel) cliSel.value = '';
-            const cliId = document.getElementById('cli-id'); if(cliId) cliId.value = '';
-            const quoteName = document.getElementById('q-quote-name'); if (quoteName) quoteName.value = '';
-            loadClientProfilesForQuoteModal();
-        }
-        window.updateQuoteCalculation();
-        window.checkAvailability();
+        window.toggleQuoteSpaceCard(space.id);
         return;
     }
 
@@ -921,9 +998,9 @@ window.generatePDF = async function() {
         espacios_detalle: espaciosDetalle,
         conceptos_adicionales: [],
         status: 'pendiente',
-        creado_por: (await window.globalSupabase.auth.getUser()).data.user.id
+        creado_por: (await window.globalPocketBase.auth.getUser()).data.user.id
     };
-    const { error } = await pmCreateQuoteRecord(payload);
+    const { error, id: createdQuoteId } = await pmCreateQuoteRecord(payload);
     if(error){
         console.error(error);
         if (String(error.message || '').toLowerCase().includes('espacios_detalle') || String(error.message || '').toLowerCase().includes('nombre_cotizacion')) {
@@ -932,7 +1009,8 @@ window.generatePDF = async function() {
         return window.showToast(`Error al guardar: ${error.message}`, "error");
     }
     window.showToast("Cotización Creada");
-    setTimeout(()=>window.location.href='orders.html', 1000);
+    const targetUrl = createdQuoteId ? `order_detail.html?quote=${encodeURIComponent(createdQuoteId)}` : 'orders.html';
+    setTimeout(() => { window.location.href = targetUrl; }, 900);
 }
 
 window.filterCatalogLogic = function() { const term = document.getElementById('cat-search').value.toLowerCase(); const type = document.getElementById('cat-filter-type').value; const sort = document.getElementById('cat-sort').value; let filtered = allSpaces.filter(s => (s.nombre.toLowerCase().includes(term) || s.clave.toLowerCase().includes(term)) && (type === 'all' || s.tipo === type)); if (sort === 'price_asc') filtered.sort((a,b) => a.precio_base - b.precio_base); if (sort === 'price_desc') filtered.sort((a,b) => b.precio_base - a.precio_base); renderSpaces(filtered); }
@@ -965,7 +1043,7 @@ window.checkAvailability = async function() {
         return false;
     }
 
-    const { data, error } = await window.finSupabase
+    const { data, error } = await window.tenantPocketBase
         .from('cotizaciones')
         .select('id,espacio_id,fecha_inicio,fecha_fin,espacios_detalle,status')
         .eq('status', 'aprobada');
@@ -1036,5 +1114,7 @@ window.checkAvailability = async function() {
     if (btn) btn.disabled = false;
     return true;
 }
-window.askDeleteSpace = async function(){ window.openConfirm("¿Eliminar espacio?", async () => { await window.finSupabase.from('espacios').delete().eq('id', document.getElementById('mgr-id').value); window.showToast("Eliminado"); window.closeModal('manager-modal'); loadCatalog(); }); }
+window.askDeleteSpace = async function(){ window.openConfirm("¿Eliminar espacio?", async () => { await window.tenantPocketBase.from('espacios').delete().eq('id', document.getElementById('mgr-id').value); window.showToast("Eliminado"); window.closeModal('manager-modal'); loadCatalog(); }); }
+
+
 

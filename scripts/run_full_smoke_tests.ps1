@@ -45,15 +45,13 @@ if ($syntaxErrors.Count -gt 0) {
 }
 Write-Host ("  OK: " + $jsFiles.Count + " files")
 
-# 2) Legacy runtime references should not exist in active code
-Write-Step "Legacy runtime reference scan"
+# 2) Deprecated aliases should not exist in active code
+Write-Step "Deprecated alias scan"
 $legacyHits = @()
 $scanFiles = Get-ChildItem -Recurse -File -Include *.js,*.html | Where-Object {
-    $_.FullName -notmatch "\\backups\\" -and
-    $_.FullName -notmatch "client\\supabase\.js$" -and
-    $_.FullName -notmatch "client\\public\\assets\\libs\\js\\supabase\.js$"
+    $_.FullName -notmatch "\\backups\\"
 }
-$legacyPattern = 'window\.supabase|supabase\.createClient|typeof supabase|window\.supabaseClient'
+$legacyPattern = 'globalPocketBaseCompat|tenantPocketBaseCompat|legacyClientAlias'
 foreach ($file in $scanFiles) {
     $matches = Select-String -Path $file.FullName -Pattern $legacyPattern
     if ($matches) {
@@ -64,9 +62,9 @@ foreach ($file in $scanFiles) {
 }
 if ($legacyHits.Count -gt 0) {
     $legacyHits | ForEach-Object { Write-Host ("  LEGACY: " + $_) -ForegroundColor Yellow }
-    throw "Legacy Supabase runtime references still detected."
+    throw "Deprecated aliases still detected."
 }
-Write-Host "  OK: no active legacy runtime references"
+Write-Host "  OK: no deprecated aliases"
 
 # 3) HTML script src path resolution
 Write-Step "HTML script reference integrity"

@@ -20,7 +20,7 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
--- Data for Name: audit_log_entries; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+-- Data for Name: audit_log_entries; Type: TABLE DATA; Schema: auth; Owner: pocketbase_auth_admin
 --
 
 SET SESSION AUTHORIZATION DEFAULT;
@@ -167,7 +167,7 @@ INSERT INTO auth.audit_log_entries (instance_id, id, payload, created_at, ip_add
 ALTER TABLE auth.audit_log_entries ENABLE TRIGGER ALL;
 
 --
--- Data for Name: flow_state; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+-- Data for Name: flow_state; Type: TABLE DATA; Schema: auth; Owner: pocketbase_auth_admin
 --
 
 ALTER TABLE auth.flow_state DISABLE TRIGGER ALL;
@@ -177,7 +177,7 @@ ALTER TABLE auth.flow_state DISABLE TRIGGER ALL;
 ALTER TABLE auth.flow_state ENABLE TRIGGER ALL;
 
 --
--- Data for Name: users; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+-- Data for Name: users; Type: TABLE DATA; Schema: auth; Owner: pocketbase_auth_admin
 --
 
 ALTER TABLE auth.users DISABLE TRIGGER ALL;
@@ -190,7 +190,7 @@ INSERT INTO auth.users (instance_id, id, aud, role, email, encrypted_password, e
 ALTER TABLE auth.users ENABLE TRIGGER ALL;
 
 --
--- Data for Name: identities; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+-- Data for Name: identities; Type: TABLE DATA; Schema: auth; Owner: pocketbase_auth_admin
 --
 
 ALTER TABLE auth.identities DISABLE TRIGGER ALL;
@@ -203,7 +203,7 @@ INSERT INTO auth.identities (provider_id, user_id, identity_data, provider, last
 ALTER TABLE auth.identities ENABLE TRIGGER ALL;
 
 --
--- Data for Name: instances; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+-- Data for Name: instances; Type: TABLE DATA; Schema: auth; Owner: pocketbase_auth_admin
 --
 
 ALTER TABLE auth.instances DISABLE TRIGGER ALL;
@@ -213,7 +213,7 @@ ALTER TABLE auth.instances DISABLE TRIGGER ALL;
 ALTER TABLE auth.instances ENABLE TRIGGER ALL;
 
 --
--- Data for Name: oauth_clients; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+-- Data for Name: oauth_clients; Type: TABLE DATA; Schema: auth; Owner: pocketbase_auth_admin
 --
 
 ALTER TABLE auth.oauth_clients DISABLE TRIGGER ALL;
@@ -223,7 +223,7 @@ ALTER TABLE auth.oauth_clients DISABLE TRIGGER ALL;
 ALTER TABLE auth.oauth_clients ENABLE TRIGGER ALL;
 
 --
--- Data for Name: sessions; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+-- Data for Name: sessions; Type: TABLE DATA; Schema: auth; Owner: pocketbase_auth_admin
 --
 
 ALTER TABLE auth.sessions DISABLE TRIGGER ALL;
@@ -234,7 +234,7 @@ INSERT INTO auth.sessions (id, user_id, created_at, updated_at, factor_id, aal, 
 ALTER TABLE auth.sessions ENABLE TRIGGER ALL;
 
 --
--- Data for Name: mfa_amr_claims; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+-- Data for Name: mfa_amr_claims; Type: TABLE DATA; Schema: auth; Owner: pocketbase_auth_admin
 --
 
 ALTER TABLE auth.mfa_amr_claims DISABLE TRIGGER ALL;
@@ -245,7 +245,7 @@ INSERT INTO auth.mfa_amr_claims (session_id, created_at, updated_at, authenticat
 ALTER TABLE auth.mfa_amr_claims ENABLE TRIGGER ALL;
 
 --
--- Data for Name: mfa_factors; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+-- Data for Name: mfa_factors; Type: TABLE DATA; Schema: auth; Owner: pocketbase_auth_admin
 --
 
 ALTER TABLE auth.mfa_factors DISABLE TRIGGER ALL;
@@ -255,7 +255,7 @@ ALTER TABLE auth.mfa_factors DISABLE TRIGGER ALL;
 ALTER TABLE auth.mfa_factors ENABLE TRIGGER ALL;
 
 --
--- Data for Name: mfa_challenges; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+-- Data for Name: mfa_challenges; Type: TABLE DATA; Schema: auth; Owner: pocketbase_auth_admin
 --
 
 ALTER TABLE auth.mfa_challenges DISABLE TRIGGER ALL;
@@ -265,7 +265,7 @@ ALTER TABLE auth.mfa_challenges DISABLE TRIGGER ALL;
 ALTER TABLE auth.mfa_challenges ENABLE TRIGGER ALL;
 
 --
--- Data for Name: oauth_authorizations; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+-- Data for Name: oauth_authorizations; Type: TABLE DATA; Schema: auth; Owner: pocketbase_auth_admin
 --
 
 ALTER TABLE auth.oauth_authorizations DISABLE TRIGGER ALL;
@@ -275,7 +275,7 @@ ALTER TABLE auth.oauth_authorizations DISABLE TRIGGER ALL;
 ALTER TABLE auth.oauth_authorizations ENABLE TRIGGER ALL;
 
 --
--- Data for Name: oauth_client_states; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+-- Data for Name: oauth_client_states; Type: TABLE DATA; Schema: auth; Owner: pocketbase_auth_admin
 --
 
 ALTER TABLE auth.oauth_client_states DISABLE TRIGGER ALL;
@@ -285,7 +285,7 @@ ALTER TABLE auth.oauth_client_states DISABLE TRIGGER ALL;
 ALTER TABLE auth.oauth_client_states ENABLE TRIGGER ALL;
 
 --
--- Data for Name: oauth_consents; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+-- Data for Name: oauth_consents; Type: TABLE DATA; Schema: auth; Owner: pocketbase_auth_admin
 --
 
 ALTER TABLE auth.oauth_consents DISABLE TRIGGER ALL;
@@ -295,7 +295,7 @@ ALTER TABLE auth.oauth_consents DISABLE TRIGGER ALL;
 ALTER TABLE auth.oauth_consents ENABLE TRIGGER ALL;
 
 --
--- Data for Name: one_time_tokens; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+-- Data for Name: one_time_tokens; Type: TABLE DATA; Schema: auth; Owner: pocketbase_auth_admin
 --
 
 ALTER TABLE auth.one_time_tokens DISABLE TRIGGER ALL;
@@ -305,7 +305,7 @@ ALTER TABLE auth.one_time_tokens DISABLE TRIGGER ALL;
 ALTER TABLE auth.one_time_tokens ENABLE TRIGGER ALL;
 
 --
--- Data for Name: refresh_tokens; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+-- Data for Name: refresh_tokens; Type: TABLE DATA; Schema: auth; Owner: pocketbase_auth_admin
 --
 
 ALTER TABLE auth.refresh_tokens DISABLE TRIGGER ALL;
@@ -321,7 +321,7 @@ INSERT INTO auth.refresh_tokens (instance_id, id, token, user_id, revoked, creat
 ALTER TABLE auth.refresh_tokens ENABLE TRIGGER ALL;
 
 --
--- Data for Name: sso_providers; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+-- Data for Name: sso_providers; Type: TABLE DATA; Schema: auth; Owner: pocketbase_auth_admin
 --
 
 ALTER TABLE auth.sso_providers DISABLE TRIGGER ALL;
@@ -331,7 +331,7 @@ ALTER TABLE auth.sso_providers DISABLE TRIGGER ALL;
 ALTER TABLE auth.sso_providers ENABLE TRIGGER ALL;
 
 --
--- Data for Name: saml_providers; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+-- Data for Name: saml_providers; Type: TABLE DATA; Schema: auth; Owner: pocketbase_auth_admin
 --
 
 ALTER TABLE auth.saml_providers DISABLE TRIGGER ALL;
@@ -341,7 +341,7 @@ ALTER TABLE auth.saml_providers DISABLE TRIGGER ALL;
 ALTER TABLE auth.saml_providers ENABLE TRIGGER ALL;
 
 --
--- Data for Name: saml_relay_states; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+-- Data for Name: saml_relay_states; Type: TABLE DATA; Schema: auth; Owner: pocketbase_auth_admin
 --
 
 ALTER TABLE auth.saml_relay_states DISABLE TRIGGER ALL;
@@ -351,7 +351,7 @@ ALTER TABLE auth.saml_relay_states DISABLE TRIGGER ALL;
 ALTER TABLE auth.saml_relay_states ENABLE TRIGGER ALL;
 
 --
--- Data for Name: schema_migrations; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+-- Data for Name: schema_migrations; Type: TABLE DATA; Schema: auth; Owner: pocketbase_auth_admin
 --
 
 ALTER TABLE auth.schema_migrations DISABLE TRIGGER ALL;
@@ -435,7 +435,7 @@ INSERT INTO auth.schema_migrations (version) VALUES ('20260121000000');
 ALTER TABLE auth.schema_migrations ENABLE TRIGGER ALL;
 
 --
--- Data for Name: sso_domains; Type: TABLE DATA; Schema: auth; Owner: supabase_auth_admin
+-- Data for Name: sso_domains; Type: TABLE DATA; Schema: auth; Owner: pocketbase_auth_admin
 --
 
 ALTER TABLE auth.sso_domains DISABLE TRIGGER ALL;
@@ -470,7 +470,7 @@ INSERT INTO finanzas.conceptos_catalogo (id, nombre, precio_sugerido, activo, cr
 ALTER TABLE finanzas.conceptos_catalogo ENABLE TRIGGER ALL;
 
 --
--- Data for Name: configuracion; Type: TABLE DATA; Schema: finanzas; Owner: supabase_admin
+-- Data for Name: configuracion; Type: TABLE DATA; Schema: finanzas; Owner: pocketbase_admin
 --
 
 ALTER TABLE finanzas.configuracion DISABLE TRIGGER ALL;
@@ -609,7 +609,7 @@ INSERT INTO finanzas_casadepiedra.conceptos_catalogo (id, nombre, precio_sugerid
 ALTER TABLE finanzas_casadepiedra.conceptos_catalogo ENABLE TRIGGER ALL;
 
 --
--- Data for Name: configuracion; Type: TABLE DATA; Schema: finanzas_casadepiedra; Owner: supabase_admin
+-- Data for Name: configuracion; Type: TABLE DATA; Schema: finanzas_casadepiedra; Owner: pocketbase_admin
 --
 
 ALTER TABLE finanzas_casadepiedra.configuracion DISABLE TRIGGER ALL;
@@ -683,7 +683,7 @@ INSERT INTO public.profiles (id, email, username, role, tenant, app_metadata, cr
 ALTER TABLE public.profiles ENABLE TRIGGER ALL;
 
 --
--- Name: refresh_tokens_id_seq; Type: SEQUENCE SET; Schema: auth; Owner: supabase_auth_admin
+-- Name: refresh_tokens_id_seq; Type: SEQUENCE SET; Schema: auth; Owner: pocketbase_auth_admin
 --
 
 SELECT pg_catalog.setval('auth.refresh_tokens_id_seq', 165, true);
@@ -697,7 +697,7 @@ SELECT pg_catalog.setval('finanzas.conceptos_catalogo_id_seq', 6, true);
 
 
 --
--- Name: configuracion_id_seq; Type: SEQUENCE SET; Schema: finanzas; Owner: supabase_admin
+-- Name: configuracion_id_seq; Type: SEQUENCE SET; Schema: finanzas; Owner: pocketbase_admin
 --
 
 SELECT pg_catalog.setval('finanzas.configuracion_id_seq', 35, true);
@@ -725,7 +725,7 @@ SELECT pg_catalog.setval('finanzas_casadepiedra.conceptos_catalogo_id_seq', 5, t
 
 
 --
--- Name: configuracion_id_seq; Type: SEQUENCE SET; Schema: finanzas_casadepiedra; Owner: supabase_admin
+-- Name: configuracion_id_seq; Type: SEQUENCE SET; Schema: finanzas_casadepiedra; Owner: pocketbase_admin
 --
 
 SELECT pg_catalog.setval('finanzas_casadepiedra.configuracion_id_seq', 3, true);
@@ -750,4 +750,5 @@ SELECT pg_catalog.setval('finanzas_casadepiedra.impuestos_id_seq', 1, true);
 --
 
 \unrestrict 6LZhiGz8nyygT2UtCG8GU35UrU9ebh2VyKWQMPPfgNX3dNJInlKxg43JPdrEf7j
+
 

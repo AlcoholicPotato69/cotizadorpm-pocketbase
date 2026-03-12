@@ -216,9 +216,9 @@
 
     <script>
         // --- CONFIGURACIÓN ---
-        const HUB_URL = (window.HUB_CONFIG && window.HUB_CONFIG.supabaseUrl) || 'http://127.0.0.1:54321';
-        const HUB_KEY = (window.HUB_CONFIG && window.HUB_CONFIG.supabaseAnonKey) || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0';
-        let hubSupabase;
+        const HUB_URL = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseUrl) || 'http://127.0.0.1:8090';
+        const HUB_KEY = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseAnonKey) || '';
+        let hubPocketBase;
         let hubAuthNative = null;
         let useNativeAuth = false;
         let currentUser = null;
@@ -239,7 +239,7 @@
                     alert("Error de sistema: cliente no inicializado.");
                     return;
                 }
-                hubSupabase = window.globalSupabase || window.pbClient || window.PB_CLIENT.createClient(HUB_URL, HUB_KEY);
+                hubPocketBase = window.globalPocketBase || window.pbClient || window.PB_CLIENT.createClient(HUB_URL, HUB_KEY);
             }
             
             // 3. LISTENERS DE EVENTOS (Ahora es seguro asignarlos)
@@ -266,7 +266,7 @@
                             loginError = err;
                         }
                     } else {
-                        const { error } = await hubSupabase.auth.signInWithPassword({ email, password });
+                        const { error } = await hubPocketBase.auth.signInWithPassword({ email, password });
                         loginError = error || null;
                     }
 
@@ -306,7 +306,7 @@
                 const nativeSession = await hubAuthNative.getSession();
                 session = nativeSession ? nativeSession.session : null;
             } else {
-                const out = await hubSupabase.auth.getSession();
+                const out = await hubPocketBase.auth.getSession();
                 session = out && out.data ? out.data.session : null;
             }
             if (session) {
@@ -342,7 +342,7 @@
                     profileError = err;
                 }
             } else {
-                const resp = await hubSupabase
+                const resp = await hubPocketBase
                     .from('profiles')
                     .select('role, username, allowed_tenants, tenant_default')
                     .eq('id', user.id)
@@ -501,10 +501,10 @@
             const profile = preloadedProfile; 
             const userRole = (profile?.role || 'usuario').toLowerCase().trim();
 
-            const { data: roleData } = await hubSupabase.from('roles').select('allowed_modules').eq('name', userRole).single();
+            const { data: roleData } = await hubPocketBase.from('roles').select('allowed_modules').eq('name', userRole).single();
             let allowedModulesIds = userRole === 'admin' ? ['*'] : (roleData?.allowed_modules?.map(id => Number(id)) || []); 
 
-            const { data: allModules } = await hubSupabase.from('modules').select('*').eq('active', true).order('orden', { ascending: true });
+            const { data: allModules } = await hubPocketBase.from('modules').select('*').eq('active', true).order('orden', { ascending: true });
 
             const filteredModules = allModules ? allModules.filter(module => allowedModulesIds.includes('*') || allowedModulesIds.includes(module.id)) : [];
 
@@ -561,7 +561,7 @@
         }
 
         async function loadNotifications(userId) {
-            hubSupabase.channel('dash-notif-v1')
+            hubPocketBase.channel('dash-notif-v1')
                 .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'hub_notifications', filter: `user_id=eq.${userId}` }, 
                 () => { fetchNotifs(userId); playSound(); })
                 .subscribe();
@@ -570,7 +570,7 @@
         }
 
         async function fetchNotifs(userId) {
-            const { data } = await hubSupabase.from('hub_notifications')
+            const { data } = await hubPocketBase.from('hub_notifications')
                 .select('*')
                 .eq('user_id', userId)
                 .order('created_at', { ascending: false })
@@ -633,14 +633,14 @@
 
         window.deleteNotif = async function(id) {
             if(currentUser && !useNativeAuth) {
-                await hubSupabase.from('hub_notifications').delete().eq('id', id);
+                await hubPocketBase.from('hub_notifications').delete().eq('id', id);
                 fetchNotifs(currentUser.id);
             }
         }
 
         async function clearAllNotifs() {
             if(currentUser && !useNativeAuth && confirm('¿Estás seguro de borrar todas las notificaciones?')) {
-                await hubSupabase.from('hub_notifications').delete().eq('user_id', currentUser.id);
+                await hubPocketBase.from('hub_notifications').delete().eq('user_id', currentUser.id);
                 fetchNotifs(currentUser.id);
             }
         }
@@ -650,7 +650,7 @@
             localStorage.removeItem('hub_user_cache_email');
             localStorage.removeItem('hub_user_cache_role');
             if (useNativeAuth && hubAuthNative) await hubAuthNative.logout();
-            else if (hubSupabase && hubSupabase.auth) await hubSupabase.auth.signOut();
+            else if (hubPocketBase && hubPocketBase.auth) await hubPocketBase.auth.signOut();
             window.location.reload();
         }
 
@@ -662,3 +662,5 @@
     </script>
 </body>
 </html>
+
+

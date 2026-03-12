@@ -11,8 +11,8 @@
 /* -------------------------------------------------------------------------
  * 0. CONEXIÓN A BASE DE DATOS (ÚNICO LUGAR A CAMBIAR)
  * ------------------------------------------------------------------------- */
-const SB_URL = (window.HUB_CONFIG && window.HUB_CONFIG.supabaseUrl) || 'http://127.0.0.1:54321';
-const SB_KEY = (window.HUB_CONFIG && window.HUB_CONFIG.supabaseAnonKey) || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0';
+const PB_URL = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseUrl) || 'http://127.0.0.1:8090';
+const PB_KEY = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseAnonKey) || '';
 
 // (Opcional) Esquema finanzas configurable
 const FIN_SCHEMA = (window.HUB_CONFIG && window.HUB_CONFIG.finanzasSchema) || 'finanzas';
@@ -40,10 +40,10 @@ function formatMoney(v){ return new Intl.NumberFormat('es-MX', { style: 'currenc
 // --- INICIO ---
 document.addEventListener('DOMContentLoaded', async () => {
     if (window.PB_CLIENT) {
-        if(!window.finSupabase) window.finSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY, { db: { schema: FIN_SCHEMA } });
-        if(!window.globalSupabase) window.globalSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY);
+        if(!window.tenantPocketBase) window.tenantPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY, { db: { schema: FIN_SCHEMA } });
+        if(!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
     }
-    const { data: { session } } = await window.globalSupabase.auth.getSession();
+    const { data: { session } } = await window.globalPocketBase.auth.getSession();
     if (!session) window.location.href = 'index.html';
 
     loadOrders();
@@ -61,7 +61,7 @@ async function loadOrders() {
     listContainer.innerHTML = '<div class="p-8 text-center text-gray-400 text-xs italic">Cargando...</div>';
 
     // Traemos también columnas nuevas de factura
-    const { data, error } = await window.finSupabase
+    const { data, error } = await window.tenantPocketBase
         .from('cotizaciones')
         .select('*')
         .in('status', ['aprobada', 'finalizada'])
@@ -237,9 +237,9 @@ window.validateAndSaveInvoice = async function() {
         const pdfPath = `${selectedOrder.id}/facturas/${timestamp}_factura.pdf`;
 
         // 1. Subir Archivos
-        const { error: err1 } = await window.globalSupabase.storage.from('documentos').upload(xmlPath, files.xml);
+        const { error: err1 } = await window.globalPocketBase.storage.from('documentos').upload(xmlPath, files.xml);
         if (err1) throw err1;
-        const { error: err2 } = await window.globalSupabase.storage.from('documentos').upload(pdfPath, files.pdf);
+        const { error: err2 } = await window.globalPocketBase.storage.from('documentos').upload(pdfPath, files.pdf);
         if (err2) throw err2;
 
         // 2. Preparar Datos para BD
@@ -265,7 +265,7 @@ window.validateAndSaveInvoice = async function() {
             status: nextStatus // Actualizamos el estado aquí
         };
 
-        const { error: dbErr } = await window.finSupabase
+        const { error: dbErr } = await window.tenantPocketBase
             .from('cotizaciones')
             .update(updatePayload)
             .eq('id', selectedOrder.id);
@@ -296,7 +296,7 @@ async function loadPdfPreview(path) {
     const frame = document.getElementById('pdf-viewer');
     const msg = document.getElementById('no-pdf-msg');
     
-    const { data, error } = await window.globalSupabase.storage
+    const { data, error } = await window.globalPocketBase.storage
         .from('documentos')
         .createSignedUrl(path, 3600); // URL válida 1 hora
     
@@ -314,7 +314,7 @@ window.downloadFile = async function(type) {
     const path = type === 'xml' ? selectedOrder.factura_xml_url : selectedOrder.factura_pdf_url;
     if (!path) return window.showToast("Archivo no encontrado", "error");
 
-    const { data } = await window.globalSupabase.storage.from('documentos').createSignedUrl(path, 60);
+    const { data } = await window.globalPocketBase.storage.from('documentos').createSignedUrl(path, 60);
     if (data) window.open(data.signedUrl, '_blank');
     else window.showToast("Error al descargar", "error");
 }
@@ -324,14 +324,14 @@ window.deleteInvoice = function() {
         document.getElementById('loading-overlay').classList.remove('hidden');
         try {
             // Borrar archivos del bucket
-            await window.globalSupabase.storage.from('documentos')
+            await window.globalPocketBase.storage.from('documentos')
                 .remove([selectedOrder.factura_xml_url, selectedOrder.factura_pdf_url]);
 
             // Limpiar BD
             // Al borrar factura, si estaba finalizada, regresa a aprobada? 
             // Usualmente si falta documento, ya no está finalizada. Regresamos a status original si es necesario, 
             // pero por seguridad mantenemos 'aprobada' para que vuelva a validarse.
-            const { error } = await window.finSupabase.from('cotizaciones').update({
+            const { error } = await window.tenantPocketBase.from('cotizaciones').update({
                 factura_xml_url: null,
                 factura_pdf_url: null,
                 datos_factura: null,
@@ -355,4 +355,7 @@ window.deleteInvoice = function() {
         }
     });
 }
+
+
+
 

@@ -1,0 +1,12 @@
+{
+  "BACKEND_URL": "http://127.0.0.1:8090",
+  "FINANZAS_SCHEMA": "finanzas",
+  "LOCAL_MODE": true,
+  "COMPANY_LOGO_URL": "",
+  "COMPANY_LOGO_URL_CP": "",
+  "PM_PDF_LETTERHEAD_URL": "",
+  "CP_PDF_LETTERHEAD_URL": "",
+  "CP_CALENDAR_ICS_URL": "/api/cotizador/cp-calendar-ics",
+  "CP_CALENDAR_ICS_TOKEN": "CAMBIAR_TOKEN_EN_PRODUCCION"
+}
+

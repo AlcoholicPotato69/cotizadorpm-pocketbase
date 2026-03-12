@@ -57,6 +57,7 @@ window.openCustomConfirm = function(msg, callback) {
 
 // --- LOGICA DE TABS SINCRONIZADA ---
 window.switchTab = function(tab) { 
+    const styleEditor = document.getElementById('pdf-style-editor');
     if(tab === 'receipt') { 
         document.getElementById('tab-btn-receipt').classList.add('active-tab','border-brand-red','text-brand-red'); 
         document.getElementById('tab-btn-receipt').classList.remove('border-transparent','text-gray-500'); 
@@ -70,6 +71,7 @@ window.switchTab = function(tab) {
         document.getElementById('sidebar-receipt').classList.add('flex');
         document.getElementById('sidebar-contract').classList.add('hidden');
         document.getElementById('sidebar-contract').classList.remove('flex');
+        if (styleEditor && __pmContractsIsAdminProfile()) styleEditor.classList.remove('hidden');
         
         setTimeout(window.adjustPreviewScale, 50);
         
@@ -86,6 +88,7 @@ window.switchTab = function(tab) {
         document.getElementById('sidebar-contract').classList.add('flex');
         document.getElementById('sidebar-receipt').classList.add('hidden');
         document.getElementById('sidebar-receipt').classList.remove('flex');
+        if (styleEditor) styleEditor.classList.add('hidden');
         
         setTimeout(window.adjustPreviewScale, 50);
     } 
@@ -152,7 +155,7 @@ window.addEventListener('resize', () => {
 
 window.openStoredReceipt = async function(filePath) { 
     window.showToast("Abriendo...", "info"); 
-    const { data, error } = await window.globalSupabase.storage.from('documentos').createSignedUrl(filePath, 3600); 
+    const { data, error } = await window.globalPocketBase.storage.from('documentos').createSignedUrl(filePath, 3600); 
     if (error || !data) { window.showToast("Error archivo", "error"); return; } 
     window.open(data.signedUrl, '_blank'); 
 };
@@ -171,14 +174,14 @@ window.handleSignedFile = function(input) {
 /* -------------------------------------------------------------------------
  * 0. CONEXIÓN A BASE DE DATOS (ÚNICO LUGAR A CAMBIAR)
  * ------------------------------------------------------------------------- */
-const SB_URL = (window.HUB_CONFIG && window.HUB_CONFIG.supabaseUrl) || 'http://127.0.0.1:54321';
-const SB_KEY = (window.HUB_CONFIG && window.HUB_CONFIG.supabaseAnonKey) || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0';
+const PB_URL = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseUrl) || 'http://127.0.0.1:8090';
+const PB_KEY = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseAnonKey) || '';
 
 // (Opcional) Esquema finanzas configurable
 const FIN_SCHEMA = (window.HUB_CONFIG && window.HUB_CONFIG.finanzasSchema) || 'finanzas';
 const LOGO_URL = (window.HUB_CONFIG && window.HUB_CONFIG.companyLogoUrl)
-  || ((window.HUB_CONFIG && window.HUB_CONFIG.supabaseUrl)
-      ? (window.HUB_CONFIG.supabaseUrl + '/storage/v1/object/public/espacios/logo.png')
+  || ((window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseUrl)
+      ? (window.HUB_CONFIG.pocketbaseUrl + '/storage/v1/object/public/espacios/logo.png')
       : '');
 let PM_PDF_LETTERHEAD_URL = (window.HUB_CONFIG && (window.HUB_CONFIG.pmPdfLetterheadUrl || window.HUB_CONFIG.pdfLetterheadPlazaMayorUrl)) || '../public/assets/img/pm-letterhead-default.png';
 const RECEIPT_PAGE_WIDTH_PX = 816;
@@ -264,6 +267,22 @@ function __pmContractsPayments(order) {
     return Array.isArray(order?.historial_pagos) ? order.historial_pagos : [];
 }
 
+function __pmContractsPaymentAmount(item) {
+    const amount = parseFloat(item?.amount ?? item?.monto ?? 0);
+    return Number.isFinite(amount) ? amount : 0;
+}
+
+function __pmContractsTotalPaid(order) {
+    return __pmContractsPayments(order).reduce((sum, item) => sum + __pmContractsPaymentAmount(item), 0);
+}
+
+function __pmContractsRemaining(order) {
+    const total = parseFloat(order?.precio_final || 0) || 0;
+    const paid = __pmContractsTotalPaid(order);
+    const remaining = Math.round((total - paid) * 100) / 100;
+    return remaining < 0 ? 0 : remaining;
+}
+
 function __pmContractsConstanciaEntry(order) {
     return __pmContractsPayments(order).find((item) => {
         const t = String(item?.type || item?.tipo || '').toLowerCase();
@@ -273,6 +292,10 @@ function __pmContractsConstanciaEntry(order) {
 
 function __pmContractsIsClosed(order) {
     return !!__pmContractsConstanciaEntry(order);
+}
+
+function __pmContractsIsPaidComplete(order) {
+    return __pmContractsIsClosed(order) || __pmContractsRemaining(order) <= 0.1;
 }
 
 function __pmContractsTransparentPdfHtml(html) {
@@ -297,6 +320,369 @@ function __pmContractsBoostPdfTypography(html) {
         .replace(/__PMC_TXT_SM__/g, 'text-base');
 }
 
+const __PM_CONTRACTS_PDF_STYLE_CONFIG_KEY = 'pdf_typography_style';
+const __PM_CONTRACTS_PDF_STYLE_TENANT = 'plaza_mayor';
+const __PM_CONTRACTS_PDF_STYLE_FONT_MAP = Object.freeze({
+    segoe: '"Segoe UI", Arial, sans-serif',
+    arial: 'Arial, Helvetica, sans-serif',
+    verdana: 'Verdana, Geneva, sans-serif',
+    georgia: 'Georgia, "Times New Roman", serif',
+    times: '"Times New Roman", Times, serif',
+    trebuchet: '"Trebuchet MS", Arial, sans-serif'
+});
+const __PM_CONTRACTS_PDF_STYLE_DEFAULTS = Object.freeze({
+    fontFamilyKey: 'segoe',
+    headerLinePx: 4,
+    titlePx: 30,
+    metaPx: 13,
+    tableHeadPx: 14,
+    tableBodyPx: 12,
+    lineHeightPct: 120,
+    quickPx: 12,
+    conditionsPx: 14,
+    signPx: 12,
+    footerPx: 10,
+    headerAlign: 'right',
+    metaAlign: 'right',
+    tableAlign: 'left',
+    quickAlign: 'left',
+    conditionsAlign: 'justify',
+    signAlign: 'center',
+    summaryAlign: 'left',
+    footerAlign: 'center'
+});
+const __PM_CONTRACTS_PDF_STYLE_UI_STATE_KEY = 'pm_contracts_pdf_style_ui';
+let __pmContractsPdfStyleState = null;
+let __pmContractsPdfStyleConfigRecordId = '';
+let __pmContractsPdfStyleSyncTimer = null;
+let __pmContractsPdfStyleUiState = { collapsed: false, pinned: false };
+
+function __pmContractsClampStyleNumber(value, min, max, fallback) {
+    const num = parseInt(value, 10);
+    if (!Number.isFinite(num)) return fallback;
+    return Math.min(max, Math.max(min, num));
+}
+
+function __pmContractsNormalizeAlign(value, fallback = 'left') {
+    const safe = String(value || '').toLowerCase();
+    return ['left', 'center', 'right', 'justify'].includes(safe) ? safe : fallback;
+}
+
+function __pmContractsNormalizePdfStyle(raw = {}) {
+    const base = { ...__PM_CONTRACTS_PDF_STYLE_DEFAULTS, ...(raw || {}) };
+    const fontKey = String(base.fontFamilyKey || '').toLowerCase();
+    return {
+        fontFamilyKey: __PM_CONTRACTS_PDF_STYLE_FONT_MAP[fontKey] ? fontKey : __PM_CONTRACTS_PDF_STYLE_DEFAULTS.fontFamilyKey,
+        headerLinePx: __pmContractsClampStyleNumber(base.headerLinePx, 1, 8, __PM_CONTRACTS_PDF_STYLE_DEFAULTS.headerLinePx),
+        titlePx: __pmContractsClampStyleNumber(base.titlePx, 20, 42, __PM_CONTRACTS_PDF_STYLE_DEFAULTS.titlePx),
+        metaPx: __pmContractsClampStyleNumber(base.metaPx, 8, 18, __PM_CONTRACTS_PDF_STYLE_DEFAULTS.metaPx),
+        tableHeadPx: __pmContractsClampStyleNumber(base.tableHeadPx, 9, 18, __PM_CONTRACTS_PDF_STYLE_DEFAULTS.tableHeadPx),
+        tableBodyPx: __pmContractsClampStyleNumber(base.tableBodyPx, 9, 16, __PM_CONTRACTS_PDF_STYLE_DEFAULTS.tableBodyPx),
+        lineHeightPct: __pmContractsClampStyleNumber(base.lineHeightPct, 90, 180, __PM_CONTRACTS_PDF_STYLE_DEFAULTS.lineHeightPct),
+        quickPx: __pmContractsClampStyleNumber(base.quickPx, 9, 16, __PM_CONTRACTS_PDF_STYLE_DEFAULTS.quickPx),
+        conditionsPx: __pmContractsClampStyleNumber(base.conditionsPx, 9, 18, __PM_CONTRACTS_PDF_STYLE_DEFAULTS.conditionsPx),
+        signPx: __pmContractsClampStyleNumber(base.signPx, 9, 16, __PM_CONTRACTS_PDF_STYLE_DEFAULTS.signPx),
+        footerPx: __pmContractsClampStyleNumber(base.footerPx, 8, 14, __PM_CONTRACTS_PDF_STYLE_DEFAULTS.footerPx),
+        headerAlign: __pmContractsNormalizeAlign(base.headerAlign, __PM_CONTRACTS_PDF_STYLE_DEFAULTS.headerAlign),
+        metaAlign: __pmContractsNormalizeAlign(base.metaAlign, __PM_CONTRACTS_PDF_STYLE_DEFAULTS.metaAlign),
+        tableAlign: __pmContractsNormalizeAlign(base.tableAlign, __PM_CONTRACTS_PDF_STYLE_DEFAULTS.tableAlign),
+        quickAlign: __pmContractsNormalizeAlign(base.quickAlign, __PM_CONTRACTS_PDF_STYLE_DEFAULTS.quickAlign),
+        conditionsAlign: __pmContractsNormalizeAlign(base.conditionsAlign, __PM_CONTRACTS_PDF_STYLE_DEFAULTS.conditionsAlign),
+        signAlign: __pmContractsNormalizeAlign(base.signAlign, __PM_CONTRACTS_PDF_STYLE_DEFAULTS.signAlign),
+        summaryAlign: __pmContractsNormalizeAlign(base.summaryAlign, __PM_CONTRACTS_PDF_STYLE_DEFAULTS.summaryAlign),
+        footerAlign: __pmContractsNormalizeAlign(base.footerAlign, __PM_CONTRACTS_PDF_STYLE_DEFAULTS.footerAlign)
+    };
+}
+
+function __pmContractsLoadPdfStyleState() {
+    return __pmContractsNormalizePdfStyle();
+}
+
+function __pmContractsLoadPdfStyleUiState() {
+    try {
+        const raw = localStorage.getItem(__PM_CONTRACTS_PDF_STYLE_UI_STATE_KEY);
+        if (!raw) return { collapsed: false, pinned: false };
+        const parsed = JSON.parse(raw);
+        return { collapsed: !!parsed?.collapsed, pinned: !!parsed?.pinned };
+    } catch (_) {
+        return { collapsed: false, pinned: false };
+    }
+}
+
+function __pmContractsSavePdfStyleUiState() {
+    try {
+        localStorage.setItem(__PM_CONTRACTS_PDF_STYLE_UI_STATE_KEY, JSON.stringify(__pmContractsPdfStyleUiState));
+    } catch (_) {}
+}
+
+function __pmContractsGetPdfStyleConfig() {
+    if (!__pmContractsPdfStyleState) __pmContractsPdfStyleState = __pmContractsLoadPdfStyleState();
+    return { ...__pmContractsPdfStyleState };
+}
+
+function __pmContractsPdfStyleVars(style) {
+    const safe = __pmContractsNormalizePdfStyle(style);
+    const headerAlign = safe.headerAlign === 'justify' ? 'left' : safe.headerAlign;
+    return {
+        '--pm-font-family': __PM_CONTRACTS_PDF_STYLE_FONT_MAP[safe.fontFamilyKey],
+        '--pm-header-line': `${safe.headerLinePx}px`,
+        '--pm-title-size': `${safe.titlePx}px`,
+        '--pm-meta-size': `${safe.metaPx}px`,
+        '--pm-date-size': `${Math.max(8, safe.metaPx - 2)}px`,
+        '--pm-table-head-size': `${safe.tableHeadPx}px`,
+        '--pm-table-body-size': `${safe.tableBodyPx}px`,
+        '--pm-line-height': `${(safe.lineHeightPct / 100).toFixed(2)}`,
+        '--pm-quick-size': `${safe.quickPx}px`,
+        '--pm-conditions-size': `${safe.conditionsPx}px`,
+        '--pm-sign-size': `${safe.signPx}px`,
+        '--pm-footer-size': `${safe.footerPx}px`,
+        '--pm-header-align': headerAlign,
+        '--pm-header-justify': headerAlign === 'left' ? 'flex-start' : (headerAlign === 'center' ? 'center' : 'flex-end'),
+        '--pm-meta-align': safe.metaAlign,
+        '--pm-table-align': safe.tableAlign,
+        '--pm-quick-align': safe.quickAlign,
+        '--pm-conditions-align': safe.conditionsAlign,
+        '--pm-sign-align': safe.signAlign,
+        '--pm-summary-align': safe.summaryAlign,
+        '--pm-footer-align': safe.footerAlign
+    };
+}
+
+function __pmContractsPdfStyleVarsInline(style) {
+    const vars = __pmContractsPdfStyleVars(style);
+    return Object.entries(vars).map(([key, value]) => `${key}:${value};`).join('');
+}
+
+function __pmContractsApplyPdfStyleToLivePreview() {
+    const rootNodes = document.querySelectorAll('#receipt-preview-box .pmc-pdf-root');
+    if (!rootNodes.length) return;
+    const vars = __pmContractsPdfStyleVars(__pmContractsGetPdfStyleConfig());
+    rootNodes.forEach((node) => {
+        Object.entries(vars).forEach(([k, v]) => node.style.setProperty(k, v));
+    });
+}
+
+function __pmContractsSyncPdfStyleValueLabels(style) {
+    const cfg = __pmContractsNormalizePdfStyle(style);
+    const setText = (id, val) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = val;
+    };
+    setText('pdf-style-header-line-value', `${cfg.headerLinePx}px`);
+    setText('pdf-style-title-size-value', `${cfg.titlePx}px`);
+    setText('pdf-style-meta-size-value', `${cfg.metaPx}px`);
+    setText('pdf-style-table-size-value', `${cfg.tableBodyPx}px`);
+    setText('pdf-style-line-height-value', `${cfg.lineHeightPct}%`);
+    setText('pdf-style-quick-size-value', `${cfg.quickPx}px`);
+    setText('pdf-style-conditions-size-value', `${cfg.conditionsPx}px`);
+    setText('pdf-style-sign-size-value', `${cfg.signPx}px`);
+}
+
+function __pmContractsWritePdfStyleControls(style) {
+    const cfg = __pmContractsNormalizePdfStyle(style);
+    const setValue = (id, val) => {
+        const el = document.getElementById(id);
+        if (el) el.value = String(val);
+    };
+    setValue('pdf-style-font-family', cfg.fontFamilyKey);
+    setValue('pdf-style-header-line', cfg.headerLinePx);
+    setValue('pdf-style-title-size', cfg.titlePx);
+    setValue('pdf-style-meta-size', cfg.metaPx);
+    setValue('pdf-style-table-size', cfg.tableBodyPx);
+    setValue('pdf-style-line-height', cfg.lineHeightPct);
+    setValue('pdf-style-quick-size', cfg.quickPx);
+    setValue('pdf-style-conditions-size', cfg.conditionsPx);
+    setValue('pdf-style-sign-size', cfg.signPx);
+    setValue('pdf-style-align-header', cfg.headerAlign);
+    setValue('pdf-style-align-meta', cfg.metaAlign);
+    setValue('pdf-style-align-table', cfg.tableAlign);
+    setValue('pdf-style-align-quick', cfg.quickAlign);
+    setValue('pdf-style-align-conditions', cfg.conditionsAlign);
+    setValue('pdf-style-align-sign', cfg.signAlign);
+    setValue('pdf-style-align-summary', cfg.summaryAlign);
+    setValue('pdf-style-align-footer', cfg.footerAlign);
+    __pmContractsSyncPdfStyleValueLabels(cfg);
+}
+
+function __pmContractsReadPdfStyleControls() {
+    return __pmContractsNormalizePdfStyle({
+        fontFamilyKey: document.getElementById('pdf-style-font-family')?.value || __PM_CONTRACTS_PDF_STYLE_DEFAULTS.fontFamilyKey,
+        headerLinePx: document.getElementById('pdf-style-header-line')?.value,
+        titlePx: document.getElementById('pdf-style-title-size')?.value,
+        metaPx: document.getElementById('pdf-style-meta-size')?.value,
+        tableHeadPx: (parseInt(document.getElementById('pdf-style-table-size')?.value || __PM_CONTRACTS_PDF_STYLE_DEFAULTS.tableBodyPx, 10) + 2),
+        tableBodyPx: document.getElementById('pdf-style-table-size')?.value,
+        lineHeightPct: document.getElementById('pdf-style-line-height')?.value,
+        quickPx: document.getElementById('pdf-style-quick-size')?.value,
+        conditionsPx: document.getElementById('pdf-style-conditions-size')?.value,
+        signPx: document.getElementById('pdf-style-sign-size')?.value,
+        footerPx: Math.max(8, (parseInt(document.getElementById('pdf-style-meta-size')?.value || __PM_CONTRACTS_PDF_STYLE_DEFAULTS.metaPx, 10) - 3)),
+        headerAlign: document.getElementById('pdf-style-align-header')?.value,
+        metaAlign: document.getElementById('pdf-style-align-meta')?.value,
+        tableAlign: document.getElementById('pdf-style-align-table')?.value,
+        quickAlign: document.getElementById('pdf-style-align-quick')?.value,
+        conditionsAlign: document.getElementById('pdf-style-align-conditions')?.value,
+        signAlign: document.getElementById('pdf-style-align-sign')?.value,
+        summaryAlign: document.getElementById('pdf-style-align-summary')?.value,
+        footerAlign: document.getElementById('pdf-style-align-footer')?.value
+    });
+}
+
+function __pmContractsSetPdfStyleConfig(style, options = {}) {
+    const opts = options && typeof options === 'object' ? options : {};
+    __pmContractsPdfStyleState = __pmContractsNormalizePdfStyle(style);
+    if (opts.applyToDom !== false) __pmContractsApplyPdfStyleToLivePreview();
+}
+
+function __pmContractsIsAdminProfile() {
+    return String(window.currentUserProfile?.role || '').toLowerCase() === 'admin';
+}
+
+async function __pmContractsLoadSharedPdfStyleConfig() {
+    if (!window.tenantPocketBase) return;
+    try {
+        const { data, error } = await window.tenantPocketBase
+            .from('configuracion')
+            .select('id,valor_json')
+            .eq('clave', __PM_CONTRACTS_PDF_STYLE_CONFIG_KEY)
+            .maybeSingle();
+        if (error || !data) return;
+        __pmContractsPdfStyleConfigRecordId = String(data.id || '');
+        __pmContractsSetPdfStyleConfig(data.valor_json || __PM_CONTRACTS_PDF_STYLE_DEFAULTS, { applyToDom: false });
+    } catch (e) {
+        console.warn('No se pudo cargar estilo PDF compartido (PM contracts):', e);
+    }
+}
+
+async function __pmContractsPersistSharedPdfStyleConfig(style) {
+    if (!__pmContractsIsAdminProfile() || !window.tenantPocketBase) return;
+    const normalized = __pmContractsNormalizePdfStyle(style);
+    try {
+        if (!__pmContractsPdfStyleConfigRecordId) {
+            const { data: existing, error: existingError } = await window.tenantPocketBase
+                .from('configuracion')
+                .select('id')
+                .eq('clave', __PM_CONTRACTS_PDF_STYLE_CONFIG_KEY)
+                .maybeSingle();
+            if (!existingError && existing?.id) __pmContractsPdfStyleConfigRecordId = String(existing.id);
+        }
+        if (__pmContractsPdfStyleConfigRecordId) {
+            const { error: updError } = await window.tenantPocketBase
+                .from('configuracion')
+                .update({ valor_json: normalized })
+                .eq('id', __pmContractsPdfStyleConfigRecordId);
+            if (updError) throw updError;
+            return;
+        }
+        const { data: inserted, error: insError } = await window.tenantPocketBase
+            .from('configuracion')
+            .insert({ tenant: __PM_CONTRACTS_PDF_STYLE_TENANT, clave: __PM_CONTRACTS_PDF_STYLE_CONFIG_KEY, valor_json: normalized })
+            .select('id')
+            .single();
+        if (insError) throw insError;
+        __pmContractsPdfStyleConfigRecordId = String(inserted?.id || '');
+    } catch (e) {
+        console.warn('No se pudo guardar estilo PDF compartido (PM contracts):', e);
+    }
+}
+
+function __pmContractsScheduleSharedPdfStyleSync(style) {
+    if (!__pmContractsIsAdminProfile()) return;
+    if (__pmContractsPdfStyleSyncTimer) clearTimeout(__pmContractsPdfStyleSyncTimer);
+    __pmContractsPdfStyleSyncTimer = setTimeout(() => {
+        __pmContractsPersistSharedPdfStyleConfig(style || __pmContractsPdfStyleState);
+    }, 450);
+}
+
+function __pmContractsHandlePdfStyleControlChange() {
+    if (!__pmContractsIsAdminProfile()) return;
+    const next = __pmContractsReadPdfStyleControls();
+    __pmContractsSetPdfStyleConfig(next, { applyToDom: true });
+    __pmContractsSyncPdfStyleValueLabels(next);
+    __pmContractsScheduleSharedPdfStyleSync(next);
+}
+
+function __pmContractsApplyPdfStyleEditorUiState() {
+    const editorWrap = document.getElementById('pdf-style-editor');
+    const body = document.getElementById('pdf-style-editor-body');
+    const toggleBtn = document.getElementById('btn-pdf-style-toggle');
+    const pinBtn = document.getElementById('btn-pdf-style-pin');
+    if (!editorWrap) return;
+
+    if (body) body.classList.toggle('hidden', !!__pmContractsPdfStyleUiState.collapsed);
+    if (toggleBtn) toggleBtn.textContent = __pmContractsPdfStyleUiState.collapsed ? 'Mostrar' : 'Ocultar';
+    if (pinBtn) pinBtn.textContent = __pmContractsPdfStyleUiState.pinned ? 'Desfijar' : 'Fijar';
+
+    if (__pmContractsPdfStyleUiState.pinned) {
+        editorWrap.style.position = 'fixed';
+        editorWrap.style.left = '16px';
+        editorWrap.style.bottom = '16px';
+        editorWrap.style.top = '';
+        editorWrap.style.right = '';
+        editorWrap.style.zIndex = '140';
+        editorWrap.style.width = '320px';
+        editorWrap.style.maxHeight = '85vh';
+        editorWrap.style.overflow = 'auto';
+        editorWrap.style.border = '1px solid #374151';
+        editorWrap.style.borderRadius = '12px';
+        editorWrap.style.boxShadow = '0 18px 45px rgba(0, 0, 0, 0.45)';
+    } else {
+        editorWrap.style.position = 'fixed';
+        editorWrap.style.left = '16px';
+        editorWrap.style.top = '84px';
+        editorWrap.style.right = '';
+        editorWrap.style.bottom = '12px';
+        editorWrap.style.zIndex = '140';
+        editorWrap.style.width = '320px';
+        editorWrap.style.maxHeight = 'calc(100vh - 96px)';
+        editorWrap.style.overflow = 'auto';
+        editorWrap.style.border = '1px solid #374151';
+        editorWrap.style.borderRadius = '12px';
+        editorWrap.style.boxShadow = '0 10px 28px rgba(0, 0, 0, 0.35)';
+    }
+}
+
+function __pmContractsTogglePdfStylePanel() {
+    __pmContractsPdfStyleUiState = { ...__pmContractsPdfStyleUiState, collapsed: !__pmContractsPdfStyleUiState.collapsed };
+    __pmContractsSavePdfStyleUiState();
+    __pmContractsApplyPdfStyleEditorUiState();
+}
+
+function __pmContractsTogglePdfStylePin() {
+    __pmContractsPdfStyleUiState = { ...__pmContractsPdfStyleUiState, pinned: !__pmContractsPdfStyleUiState.pinned };
+    __pmContractsSavePdfStyleUiState();
+    __pmContractsApplyPdfStyleEditorUiState();
+}
+
+function __pmContractsInitPdfStyleEditor() {
+    const editorWrap = document.getElementById('pdf-style-editor');
+    if (!editorWrap || !document.getElementById('pdf-style-font-family')) return;
+    if (!__pmContractsPdfStyleState) __pmContractsPdfStyleState = __pmContractsLoadPdfStyleState();
+    if (!__pmContractsIsAdminProfile()) {
+        editorWrap.classList.add('hidden');
+        return;
+    }
+    editorWrap.classList.remove('hidden');
+    __pmContractsPdfStyleUiState = __pmContractsLoadPdfStyleUiState();
+    __pmContractsWritePdfStyleControls(__pmContractsPdfStyleState);
+    __pmContractsApplyPdfStyleEditorUiState();
+    if (document.body.dataset.pmContractsPdfStyleBound === '1') return;
+    const controls = Array.from(document.querySelectorAll('.pdf-style-control'));
+    controls.forEach((el) => {
+        el.addEventListener('input', __pmContractsHandlePdfStyleControlChange);
+        el.addEventListener('change', __pmContractsHandlePdfStyleControlChange);
+    });
+    document.getElementById('btn-pdf-style-toggle')?.addEventListener('click', __pmContractsTogglePdfStylePanel);
+    document.getElementById('btn-pdf-style-pin')?.addEventListener('click', __pmContractsTogglePdfStylePin);
+    document.getElementById('btn-reset-pdf-style')?.addEventListener('click', () => {
+        const reset = __pmContractsNormalizePdfStyle(__PM_CONTRACTS_PDF_STYLE_DEFAULTS);
+        __pmContractsSetPdfStyleConfig(reset, { applyToDom: true });
+        __pmContractsWritePdfStyleControls(reset);
+        __pmContractsScheduleSharedPdfStyleSync(reset);
+    });
+    document.body.dataset.pmContractsPdfStyleBound = '1';
+}
+
 function __pmContractsBasename(path) {
     const normalized = String(path || '').replace(/\\/g, '/');
     const parts = normalized.split('/').filter(Boolean);
@@ -306,7 +692,7 @@ function __pmContractsBasename(path) {
 async function __pmContractsSignedUrl(path) {
     const cleanPath = String(path || '').trim();
     if (!cleanPath) return null;
-    const { data, error } = await window.globalSupabase.storage.from(TEMPLATE_BUCKET).createSignedUrl(cleanPath, 3600);
+    const { data, error } = await window.globalPocketBase.storage.from(TEMPLATE_BUCKET).createSignedUrl(cleanPath, 3600);
     if (error || !data?.signedUrl) return null;
     return data.signedUrl;
 }
@@ -315,7 +701,7 @@ async function __pmContractsLoadPreferences() {
     defaultTemplateFile = '';
     PM_PDF_LETTERHEAD_URL = (window.HUB_CONFIG && (window.HUB_CONFIG.pmPdfLetterheadUrl || window.HUB_CONFIG.pdfLetterheadPlazaMayorUrl)) || '../public/assets/img/pm-letterhead-default.png';
     try {
-        const { data, error } = await window.finSupabase
+        const { data, error } = await window.tenantPocketBase
             .from('configuracion')
             .select('*')
             .in('clave', [CFG_TEMPLATE_DEFAULT_KEY, CFG_LETTERHEAD_KEY]);
@@ -359,12 +745,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // 2. Inicializar Clientes
-    if(!window.finSupabase) window.finSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY, { db: { schema: FIN_SCHEMA } });
-    if(!window.globalSupabase) window.globalSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY);
+    if(!window.tenantPocketBase) window.tenantPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY, { db: { schema: FIN_SCHEMA } });
+    if(!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
 
     // 3. Verificar Sesión
-    const { data: { session } } = await window.globalSupabase.auth.getSession();
+    const { data: { session } } = await window.globalPocketBase.auth.getSession();
     if (!session) window.location.href = 'index.html';
+    try {
+        const { data: profile } = await window.globalPocketBase.from('profiles').select('*').eq('id', session.user.id).single();
+        window.currentUserProfile = profile || null;
+    } catch (_) {
+        window.currentUserProfile = null;
+    }
+    await __pmContractsLoadSharedPdfStyleConfig();
+    __pmContractsInitPdfStyleEditor();
 
     console.log("Sistema iniciado correctamente. Cargando módulos...");
 
@@ -399,7 +793,7 @@ async function loadApprovedOrders() {
     
     try {
         console.log("Solicitando órdenes aprobadas...");
-        const { data, error } = await window.finSupabase
+        const { data, error } = await window.tenantPocketBase
             .from('cotizaciones')
             .select('*')
             .eq('status', 'aprobada')
@@ -427,12 +821,23 @@ function renderOrderList(list) {
     }
     
     list.forEach(o => {
+        const paidComplete = __pmContractsIsPaidComplete(o);
+        const paidBadge = paidComplete
+            ? '<span class="text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-300">Pagado</span>'
+            : '';
         const item = document.createElement('div');
-        item.className = 'bg-white border border-gray-100 p-3 rounded-lg hover:bg-gray-50 cursor-pointer transition group shadow-sm mb-2';
+        item.className = `bg-white border p-3 rounded-lg hover:bg-gray-50 cursor-pointer transition group shadow-sm mb-2 ${paidComplete ? 'border-emerald-200 bg-emerald-50/40' : 'border-gray-100'}`;
         item.onclick = () => selectOrder(o);
-        item.innerHTML = `<div class="flex justify-between mb-1"><span class="font-bold text-xs text-gray-800 group-hover:text-brand-red transition truncate w-32">${o.cliente_nombre}</span><span class="text-[9px] font-mono text-gray-400 bg-gray-50 border border-gray-200 px-1 rounded">${o.numero_orden || '---'}</span></div><div class="flex justify-between items-center"><span class="text-[10px] text-gray-500 truncate w-24"><i class="fa-solid fa-map-pin mr-1"></i>${o.espacio_nombre}</span><span class="text-xs font-black text-gray-800">${formatMoney(o.precio_final)}</span></div>`;
+        item.innerHTML = `<div class="flex justify-between mb-1"><span class="font-bold text-xs text-gray-800 group-hover:text-brand-red transition truncate w-32">${o.cliente_nombre}</span><div class="flex items-center gap-1">${paidBadge}<span class="text-[9px] font-mono text-gray-400 bg-gray-50 border border-gray-200 px-1 rounded">${o.numero_orden || '---'}</span></div></div><div class="flex justify-between items-center"><span class="text-[10px] text-gray-500 truncate w-24"><i class="fa-solid fa-map-pin mr-1"></i>${o.espacio_nombre}</span><span class="text-xs font-black text-gray-800">${formatMoney(o.precio_final)}</span></div>`;
         container.appendChild(item);
     });
+}
+
+function __pmContractsSyncPaidIndicator(order) {
+    const badge = document.getElementById('wk-paid-indicator');
+    if (!badge) return;
+    const paidComplete = __pmContractsIsPaidComplete(order);
+    badge.classList.toggle('hidden', !paidComplete);
 }
 
 function selectOrder(order) {
@@ -451,6 +856,7 @@ function selectOrder(order) {
     document.getElementById('wk-order-id').innerText = order.numero_orden || 'PENDIENTE';
     document.getElementById('wk-total').innerText = formatMoney(order.precio_final);
     document.getElementById('rcp-ref').value = order.numero_orden || `ORD-${order.id.slice(0,6).toUpperCase()}`;
+    __pmContractsSyncPaidIndicator(order);
     
     // GESTIÓN DE BOTONES Y ESTADOS DE CONTRATO
     const cNumInput = document.getElementById('contract-num-assign');
@@ -476,10 +882,8 @@ function selectOrder(order) {
     }
 
     // Calculations Recibos
-    const history = order.historial_pagos || [];
-    const totalPaid = history.reduce((sum, item) => sum + parseFloat(item.amount), 0);
-    currentRemainingBalance = Math.round((parseFloat(order.precio_final) - totalPaid) * 100) / 100;
-    if (currentRemainingBalance < 0) currentRemainingBalance = 0;
+    const history = __pmContractsPayments(order);
+    currentRemainingBalance = __pmContractsRemaining(order);
 
     const nextPaymentNum = history.length + 1;
     document.getElementById('rcp-concept').value = `Pago ${nextPaymentNum} / ${order.espacio_nombre}`;
@@ -546,7 +950,7 @@ window.saveContractNumber = function() {
     window.openCustomConfirm("¿Confirmar Número de Contrato? Una vez guardado, NO se podrá modificar y se actualizarán los documentos.", async () => {
         try {
             // Actualizar BD
-            const { error } = await window.finSupabase
+            const { error } = await window.tenantPocketBase
                 .from('cotizaciones')
                 .update({ numero_contrato: val })
                 .eq('id', selectedOrder.id);
@@ -620,7 +1024,7 @@ window.saveMissingData = async function() {
     if(!valid) return window.showToast("Completa todos los campos", "error");
     if(updates.cliente_rfc) { updates.datos_fiscales = { ...selectedOrder.datos_fiscales, rfc_receptor: updates.cliente_rfc }; }
     try {
-        const { error } = await window.finSupabase.from('cotizaciones').update(updates).eq('id', selectedOrder.id);
+        const { error } = await window.tenantPocketBase.from('cotizaciones').update(updates).eq('id', selectedOrder.id);
         if(error) throw error;
         window.showToast("Datos guardados", "success");
         window.closeModal('missing-data-modal');
@@ -674,7 +1078,7 @@ window.generateAndSaveLiquidationCertificate = async function() {
         const pdfBlob = await html2pdf().set({ margin: 0, filename: fileName, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2, useCORS: true }, jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' } }).from(element).output('blob');
         hiddenContainer.innerHTML = '';
         const filePath = `${selectedOrder.id}/constancias/${fileName}`;
-        const { error: upErr } = await window.globalSupabase.storage.from('documentos').upload(filePath, pdfBlob);
+        const { error: upErr } = await window.globalPocketBase.storage.from('documentos').upload(filePath, pdfBlob);
         if (upErr) throw upErr;
 
         const history = __pmContractsPayments(selectedOrder).filter((p) => String(p?.type || p?.tipo || '').toLowerCase() !== 'constancia_liquidacion');
@@ -690,7 +1094,7 @@ window.generateAndSaveLiquidationCertificate = async function() {
             closed: true
         };
         const updatedHistory = [...history, closureEntry];
-        const { error: dbErr } = await window.finSupabase.from('cotizaciones').update({ historial_pagos: updatedHistory }).eq('id', selectedOrder.id);
+        const { error: dbErr } = await window.tenantPocketBase.from('cotizaciones').update({ historial_pagos: updatedHistory }).eq('id', selectedOrder.id);
         if (dbErr) throw dbErr;
 
         const link = document.createElement('a'); link.href = URL.createObjectURL(pdfBlob); link.download = fileName; link.click();
@@ -726,11 +1130,11 @@ window.generateAndSaveReceipt = async function() {
         const pdfBlob = await html2pdf().set({ margin: 0, filename: fileName, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2, useCORS: true }, jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' } }).from(element).output('blob');
         hiddenContainer.innerHTML = '';
         const filePath = `${selectedOrder.id}/recibos/${fileName}`;
-        const { error: upErr } = await window.globalSupabase.storage.from('documentos').upload(filePath, pdfBlob);
+        const { error: upErr } = await window.globalPocketBase.storage.from('documentos').upload(filePath, pdfBlob);
         if(upErr) throw upErr;
         const newPayment = { date: new Date().toISOString(), amount: amount, concept: document.getElementById('rcp-concept').value, reference: document.getElementById('rcp-ref').value, bank: document.getElementById('rcp-bank').value, account: document.getElementById('rcp-account').value, file_path: filePath };
         const updatedHistory = [...(selectedOrder.historial_pagos || []), newPayment];
-        const { error: dbErr } = await window.finSupabase.from('cotizaciones').update({ historial_pagos: updatedHistory }).eq('id', selectedOrder.id);
+        const { error: dbErr } = await window.tenantPocketBase.from('cotizaciones').update({ historial_pagos: updatedHistory }).eq('id', selectedOrder.id);
         if(dbErr) throw dbErr;
         window.showToast("Recibo generado", "success");
         const link = document.createElement('a'); link.href = URL.createObjectURL(pdfBlob); link.download = fileName; link.click();
@@ -747,9 +1151,9 @@ window.deleteReceipt = function(index) {
             const item = history[index];
             const itemType = String(item?.type || item?.tipo || '').toLowerCase();
             if (itemType === 'constancia_liquidacion') return window.showToast("La constancia de liquidación no se puede eliminar.", "error");
-            if(item.file_path) await window.globalSupabase.storage.from('documentos').remove([item.file_path]);
+            if(item.file_path) await window.globalPocketBase.storage.from('documentos').remove([item.file_path]);
             history.splice(index, 1);
-            await window.finSupabase.from('cotizaciones').update({ historial_pagos: history }).eq('id', selectedOrder.id);
+            await window.tenantPocketBase.from('cotizaciones').update({ historial_pagos: history }).eq('id', selectedOrder.id);
             window.showToast("Recibo eliminado");
             loadApprovedOrders();
             selectedOrder.historial_pagos = history;
@@ -761,7 +1165,7 @@ window.deleteReceipt = function(index) {
 window.loadTemplatesList = async function() {
     const selector = document.getElementById('template-selector');
     if (!selector) return;
-    const { data, error } = await window.globalSupabase.storage.from(TEMPLATE_BUCKET).list(TEMPLATE_PATH);
+    const { data, error } = await window.globalPocketBase.storage.from(TEMPLATE_BUCKET).list(TEMPLATE_PATH);
     if (error) {
         selector.innerHTML = '<option value="">-- Seleccionar Plantilla --</option>';
         templates = [];
@@ -791,7 +1195,7 @@ window.loadSelectedTemplate = async function() {
     if(!selectedOrder) return;
 
     try {
-        const { data, error } = await window.globalSupabase
+        const { data, error } = await window.globalPocketBase
             .storage.from(TEMPLATE_BUCKET)
             .download(`${TEMPLATE_PATH}/${fileName}`);
 
@@ -821,8 +1225,40 @@ window.loadSelectedTemplate = async function() {
         setContractPreviewSrcdoc(null);
     }
 };
-// --- MODIFICADO: IMPRESIÓN (SIN RESTRICCIÓN) ---
-// --- IMPRESIÓN (CON PLANTILLA AISLADA EN IFRAME) ---
+function __pmContractsBuildPrintableContractHtml(previewDoc) {
+    const headHtml = previewDoc?.head ? previewDoc.head.innerHTML : '';
+    const bodyHtml = previewDoc?.body ? previewDoc.body.innerHTML : '';
+    const contractBaseHeight = __pmContractsContentBaseHeightPx();
+    const wrappedPage = __pmContractsWrapLetterheadPage(bodyHtml, {
+        baseWidth: PM_CONTRACTS_CONTENT_BASE_WIDTH_PX,
+        baseHeight: contractBaseHeight,
+        id: 'contract-print-area'
+    });
+
+    return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+${headHtml}
+<style>
+  @page { size: letter portrait; margin: 0; }
+  html, body { margin: 0; padding: 0; width: 100%; background: #ffffff; }
+  body {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+  }
+  .var-highlight { font-weight: bold; background: transparent !important; padding: 0 !important; border-radius: 0 !important; }
+</style>
+</head>
+<body>
+${wrappedPage}
+</body>
+</html>`;
+}
+
 window.printContract = function() {
     if(!selectedOrder) return;
 
@@ -833,16 +1269,19 @@ window.printContract = function() {
         return;
     }
 
-    // Clonamos el HTML del iframe y desactivamos el resaltado para impresión
-    let html = doc.documentElement.outerHTML;
-    html = html.replace(/<\/head>/i, `<style>.var-highlight{font-weight:bold;background:transparent;padding:0;border-radius:0;}</style></head>`);
-
-    const win = window.open('', '', 'height=800,width=1000');
+    const printableHtml = __pmContractsBuildPrintableContractHtml(doc);
+    const win = window.open('', '', 'height=900,width=1100');
+    if (!win) {
+        window.showToast("No se pudo abrir la ventana de impresión.", "error");
+        return;
+    }
     win.document.open();
-    win.document.write(html);
+    win.document.write(printableHtml);
     win.document.close();
     win.focus();
-    win.print();
+    setTimeout(() => {
+        try { win.print(); } catch (_) {}
+    }, 250);
 
     // Activamos el botón para que puedan finalizar después de imprimir si lo desean
     const btnFinalize = document.getElementById('btn-open-finalize');
@@ -861,12 +1300,12 @@ window.confirmFinalize = async function() {
     btn.disabled = true; 
     try { 
         const path = `${selectedOrder.id}/${Date.now()}_contrato_firmado.pdf`; 
-        const { error: upErr } = await window.globalSupabase.storage.from('documentos').upload(path, signedFileToUpload); 
+        const { error: upErr } = await window.globalPocketBase.storage.from('documentos').upload(path, signedFileToUpload); 
         if(upErr) throw upErr; 
         
         // MODIFICADO: Se elimina 'status: finalizada'. 
         // La orden permanece en el estado actual (aprobada) hasta que se suba la factura.
-        const { error: dbErr } = await window.finSupabase.from('cotizaciones').update({ contrato_url: path, numero_contrato: contractNum }).eq('id', selectedOrder.id); 
+        const { error: dbErr } = await window.tenantPocketBase.from('cotizaciones').update({ contrato_url: path, numero_contrato: contractNum }).eq('id', selectedOrder.id); 
         
         if(dbErr) throw dbErr; 
         window.showToast("Contrato Guardado Correctamente", "success"); 
@@ -969,7 +1408,7 @@ window.saveExternalReceipt = async function() {
         const fileName = `Comprobante_Externo_${Date.now()}.${fileExt}`;
         const filePath = `${selectedOrder.id}/recibos/${fileName}`;
         
-        const { error: upErr } = await window.globalSupabase.storage.from('documentos').upload(filePath, externalReceiptFile);
+        const { error: upErr } = await window.globalPocketBase.storage.from('documentos').upload(filePath, externalReceiptFile);
         if(upErr) throw upErr;
         
         const newPayment = { 
@@ -983,7 +1422,7 @@ window.saveExternalReceipt = async function() {
         };
         
         const updatedHistory = [...(selectedOrder.historial_pagos || []), newPayment];
-        const { error: dbErr } = await window.finSupabase.from('cotizaciones').update({ historial_pagos: updatedHistory }).eq('id', selectedOrder.id);
+        const { error: dbErr } = await window.tenantPocketBase.from('cotizaciones').update({ historial_pagos: updatedHistory }).eq('id', selectedOrder.id);
         if(dbErr) throw dbErr;
         
         window.showToast("Comprobante Guardado", "success");
@@ -1024,6 +1463,13 @@ function getReceiptHTML(isVisual = false) {
     const timeStr = now.toLocaleTimeString('es-MX', { timeZone: 'America/Mexico_City', hour: '2-digit', minute: '2-digit', second: '2-digit' });
     const isLiquidated = currentRemainingBalance <= 0.01;
     const receiptBaseHeight = Number(__pmContractsContentBaseHeightPx().toFixed(2));
+    const pdfStyle = __pmContractsGetPdfStyleConfig();
+    const pdfStyleInlineVars = __pmContractsPdfStyleVarsInline(pdfStyle);
+    const pdfStyleTag = `<style>.pmc-pdf-root{font-family:var(--pm-font-family)!important;}.pmc-pdf-root .pmc-pdf-header{border-bottom-width:var(--pm-header-line)!important;justify-content:var(--pm-header-justify)!important;}.pmc-pdf-root .pmc-pdf-title{font-size:var(--pm-title-size)!important;line-height:1.05!important;text-align:var(--pm-header-align)!important;}.pmc-pdf-root .pmc-pdf-meta,.pmc-pdf-root .pmc-pdf-meta *{font-size:var(--pm-meta-size)!important;text-align:var(--pm-meta-align)!important;}.pmc-pdf-root .pmc-pdf-table-head th{font-size:var(--pm-table-head-size)!important;}.pmc-pdf-root .pmc-pdf-table-body td,.pmc-pdf-root .pmc-pdf-table-body p,.pmc-pdf-root .pmc-pdf-table-body span{font-size:var(--pm-table-body-size)!important;line-height:var(--pm-line-height)!important;}.pmc-pdf-root .pmc-pdf-table-body td:first-child,.pmc-pdf-root .pmc-pdf-table-body td:first-child *{text-align:var(--pm-table-align)!important;}.pmc-pdf-root .pmc-pdf-summary,.pmc-pdf-root .pmc-pdf-summary *{text-align:var(--pm-summary-align)!important;}.pmc-pdf-root .pmc-pdf-quick,.pmc-pdf-root .pmc-pdf-quick *{font-size:var(--pm-quick-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-quick-align)!important;}.pmc-pdf-root .pmc-pdf-general-conditions,.pmc-pdf-root .pmc-pdf-general-conditions *{font-size:var(--pm-conditions-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-conditions-align)!important;}.pmc-pdf-root .pmc-pdf-sign,.pmc-pdf-root .pmc-pdf-sign *{font-size:var(--pm-sign-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-sign-align)!important;}.pmc-pdf-root .pmc-pdf-footer-text{font-size:var(--pm-footer-size)!important;text-align:var(--pm-footer-align)!important;}</style>`;
+    const wrapStyledReceipt = (rawHtml) => {
+        const page = __pmContractsWrapLetterheadPage(__pmContractsTransparentPdfHtml(__pmContractsBoostPdfTypography(rawHtml)), { baseWidth: PM_CONTRACTS_CONTENT_BASE_WIDTH_PX, baseHeight: receiptBaseHeight, id: 'receipt-print-area' });
+        return `<div class="pmc-pdf-root" style="width:816px;margin:0;padding:0;box-sizing:border-box;background:#ffffff;${pdfStyleInlineVars}">${pdfStyleTag}${page}</div>`;
+    };
     
     if (isLiquidated) {
         const payments = selectedOrder.historial_pagos || [];
@@ -1040,26 +1486,26 @@ function getReceiptHTML(isVisual = false) {
         });
         let watermark = `<div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-45deg); font-size: 118px; color: rgba(34, 197, 94, 0.16); font-weight: 900; z-index: 0; pointer-events: none; white-space: nowrap;">LIQUIDADO</div>`;
         const receiptRaw = `
-            <div class="font-sans text-gray-800 w-full h-full relative leading-relaxed" style="width: ${PM_CONTRACTS_CONTENT_BASE_WIDTH_PX}px; min-height: ${receiptBaseHeight}px; height: ${receiptBaseHeight}px; padding: 20px 80px 56px; box-sizing: border-box; overflow: hidden; display: flex; flex-direction: column;">
+            <div class="pmc-pdf-main font-sans text-gray-800 w-full h-full relative leading-relaxed" style="width: ${PM_CONTRACTS_CONTENT_BASE_WIDTH_PX}px; min-height: ${receiptBaseHeight}px; height: ${receiptBaseHeight}px; padding: 20px 80px 56px; box-sizing: border-box; overflow: hidden; display: flex; flex-direction: column;">
                 ${watermark}
                 <div style="position: relative; z-index: 10; flex-grow: 1;">
-                    <div class="flex justify-end items-start mb-10 border-b-4 border-green-600 pb-4">
-                        <div class="text-right"><h1 class="text-2xl font-black uppercase text-gray-900 tracking-tighter">Constancia de Liquidación</h1><p class="text-sm text-gray-500 font-mono mt-1">EMISIÓN: ${dateStr} ${timeStr}</p></div>
+                    <div class="pmc-pdf-header flex justify-end items-start mb-10 border-b-4 border-green-600 pb-4">
+                        <div class="pmc-pdf-meta text-right"><h1 class="pmc-pdf-title text-2xl font-black uppercase text-gray-900 tracking-tighter">Constancia de Liquidación</h1><p class="text-sm text-gray-500 font-mono mt-1">EMISIÓN: ${dateStr} ${timeStr}</p></div>
                     </div>
-                    <div class="mb-8 p-8 bg-gray-50 rounded-xl border border-gray-200 shadow-sm">
+                    <div class="pmc-pdf-summary mb-8 p-8 bg-gray-50 rounded-xl border border-gray-200 shadow-sm">
                         <div class="flex justify-between mb-4 border-b border-gray-200 pb-3"><span class="text-xs font-bold text-gray-500 uppercase tracking-wider">Cliente:</span><span class="text-lg font-bold text-gray-900">${selectedOrder.cliente_nombre}</span></div>
                         <div class="flex justify-between mb-4 border-b border-gray-200 pb-3"><span class="text-xs font-bold text-gray-500 uppercase tracking-wider">Espacio:</span><span class="text-base font-bold text-gray-900">${selectedOrder.espacio_nombre}</span></div>
                         <div class="flex justify-between"><span class="text-xs font-bold text-gray-500 uppercase tracking-wider">Total Contrato:</span><span class="text-xl font-black text-brand-red">${window.formatMoney(selectedOrder.precio_final)}</span></div>
                     </div>
-                    <div class="mb-10"><h3 class="font-bold text-xs uppercase text-gray-400 mb-4 tracking-widest pl-2">Resumen de Pagos Realizados</h3><div class="bg-white rounded-lg border border-gray-200 p-4 shadow-sm"><table class="w-full text-xs text-left"><thead><tr class="text-gray-400 uppercase text-[10px] font-black tracking-wider border-b border-gray-100"><th class="pb-3">Fecha</th><th class="pb-3">Banco / Cuenta</th><th class="pb-3">Referencia</th><th class="text-right pb-3">Monto</th></tr></thead><tbody>${rowsHtml}</tbody></table></div></div>
-                    <div class="mb-12 flex justify-end"><div class="bg-green-50 px-8 py-5 rounded-xl border border-green-100 text-right shadow-sm"><p class="text-xs font-bold text-green-600 uppercase tracking-widest mb-1">Saldo Pendiente</p><p class="text-3xl font-black text-green-700">$0.00</p></div></div>
+                    <div class="mb-10"><h3 class="pmc-pdf-quick font-bold text-xs uppercase text-gray-400 mb-4 tracking-widest pl-2">Resumen de Pagos Realizados</h3><div class="bg-white rounded-lg border border-gray-200 p-4 shadow-sm"><table class="pmc-pdf-table w-full text-xs text-left"><thead class="pmc-pdf-table-head"><tr class="text-gray-400 uppercase text-[10px] font-black tracking-wider border-b border-gray-100"><th class="pb-3">Fecha</th><th class="pb-3">Banco / Cuenta</th><th class="pb-3">Referencia</th><th class="text-right pb-3">Monto</th></tr></thead><tbody class="pmc-pdf-table-body">${rowsHtml}</tbody></table></div></div>
+                    <div class="pmc-pdf-summary mb-12 flex justify-end"><div class="bg-green-50 px-8 py-5 rounded-xl border border-green-100 text-right shadow-sm"><p class="text-xs font-bold text-green-600 uppercase tracking-widest mb-1">Saldo Pendiente</p><p class="text-3xl font-black text-green-700">$0.00</p></div></div>
                 </div>
                 <div style="margin-top: auto; position: relative; z-index: 10;">
-                    <div class="flex justify-between gap-16 mb-8"><div class="w-1/2 text-center"><div class="border-b-2 border-gray-800 mb-2"></div><p class="text-xs font-bold text-gray-900 uppercase">Cobranza</p></div><div class="w-1/2 text-center"><div class="border-b-2 border-gray-800 mb-2"></div><p class="text-xs font-bold text-gray-900 uppercase">Administración</p></div></div>
-                    <div class="text-[10px] text-center text-gray-400 mt-4"><p class="mb-1">Este documento certifica que la orden de referencia ha sido liquidada en su totalidad.</p><p>Generado digitalmente a través de Marketing Hub.</p></div>
+                    <div class="pmc-pdf-sign flex justify-between gap-16 mb-8"><div class="w-1/2 text-center"><div class="border-b-2 border-gray-800 mb-2"></div><p class="text-xs font-bold text-gray-900 uppercase">Cobranza</p></div><div class="w-1/2 text-center"><div class="border-b-2 border-gray-800 mb-2"></div><p class="text-xs font-bold text-gray-900 uppercase">Administración</p></div></div>
+                    <div class="pmc-pdf-footer-text pmc-pdf-general-conditions text-[10px] text-center text-gray-400 mt-4"><p class="mb-1">Este documento certifica que la orden de referencia ha sido liquidada en su totalidad.</p><p>Generado digitalmente a través de Marketing Hub.</p></div>
                 </div>
             </div>`;
-        return __pmContractsWrapLetterheadPage(__pmContractsTransparentPdfHtml(__pmContractsBoostPdfTypography(receiptRaw)), { baseWidth: PM_CONTRACTS_CONTENT_BASE_WIDTH_PX, baseHeight: receiptBaseHeight, id: 'receipt-print-area' });
+        return wrapStyledReceipt(receiptRaw);
     }
     
     const amount = parseFloat(document.getElementById('rcp-amount').value) || 0;
@@ -1070,28 +1516,31 @@ function getReceiptHTML(isVisual = false) {
     let projectedRemaining = currentRemainingBalance - amount; if (projectedRemaining < 0) projectedRemaining = 0;
 
     const receiptRaw = `
-        <div class="font-sans text-gray-800 w-full h-full relative leading-relaxed" style="width: ${PM_CONTRACTS_CONTENT_BASE_WIDTH_PX}px; min-height: ${receiptBaseHeight}px; height: ${receiptBaseHeight}px; padding: 20px 80px 56px; box-sizing: border-box; display: flex; flex-direction: column;">
+        <div class="pmc-pdf-main font-sans text-gray-800 w-full h-full relative leading-relaxed" style="width: ${PM_CONTRACTS_CONTENT_BASE_WIDTH_PX}px; min-height: ${receiptBaseHeight}px; height: ${receiptBaseHeight}px; padding: 20px 80px 56px; box-sizing: border-box; display: flex; flex-direction: column;">
             <div style="flex-grow: 1;">
-                <div class="flex justify-end items-start mb-10 border-b-4 border-brand-red pb-4">
-                    <div class="text-right"><h1 class="text-3xl font-black uppercase text-gray-900 tracking-tighter">Recibo de Pago</h1><p class="text-sm text-gray-500 font-mono mt-1">FECHA: ${dateStr}</p><p class="text-xs text-gray-400 font-mono">HORA: ${timeStr}</p></div>
+                <div class="pmc-pdf-header flex justify-end items-start mb-10 border-b-4 border-brand-red pb-4">
+                    <div class="pmc-pdf-meta text-right"><h1 class="pmc-pdf-title text-3xl font-black uppercase text-gray-900 tracking-tighter">Recibo de Pago</h1><p class="text-sm text-gray-500 font-mono mt-1">FECHA: ${dateStr}</p><p class="text-xs text-gray-400 font-mono">HORA: ${timeStr}</p></div>
                 </div>
-                <div class="mb-8 p-8 bg-gray-50 rounded-xl border border-gray-200 shadow-sm">
+                <div class="pmc-pdf-summary mb-8 p-8 bg-gray-50 rounded-xl border border-gray-200 shadow-sm">
                     <div class="flex justify-between mb-4 border-b border-gray-200 pb-3"><span class="text-xs font-bold text-gray-500 uppercase tracking-wider">Recibimos de:</span><span class="text-lg font-bold text-gray-900">${selectedOrder.cliente_nombre}</span></div>
                     <div class="flex justify-between mb-4 border-b border-gray-200 pb-3"><span class="text-xs font-bold text-gray-500 uppercase tracking-wider">La cantidad de:</span><span class="text-2xl font-black text-brand-red">${window.formatMoney(amount)}</span></div>
                     <div class="flex justify-between mb-3"><span class="text-xs font-bold text-gray-500 uppercase tracking-wider">Concepto:</span><span class="text-sm font-medium text-gray-700 text-right max-w-[60%]">${concept}</span></div>
                     <div class="flex justify-between items-center bg-white border border-gray-200 p-3 rounded-lg mt-4"><span class="text-xs font-bold text-gray-500 uppercase tracking-wider">Referencia Interna:</span><div class="text-right"><span class="block text-sm font-bold text-gray-800 font-mono">${selectedOrder.numero_orden || '---'}</span><span class="block text-[10px] text-gray-400 font-mono tracking-widest">${selectedOrder.id.slice(0,8).toUpperCase()}</span></div></div>
                 </div>
-                <div class="grid grid-cols-2 gap-12 text-xs text-gray-600 mb-8">
+                <div class="pmc-pdf-quick grid grid-cols-2 gap-12 text-xs text-gray-600 mb-8">
                     <div><p class="font-black uppercase mb-2 text-gray-800 border-b pb-1 text-sm">Datos Bancarios</p><p class="mb-1">Banco: <strong class="text-gray-900 uppercase">${bank}</strong></p><p>Cuenta/CLABE: <strong class="text-gray-900 uppercase">${account}</strong></p></div>
                     <div class="text-right"><p class="font-black uppercase mb-2 text-gray-800 border-b pb-1 text-sm">Referencia</p><p class="font-mono text-base text-gray-900">${ref}</p></div>
                 </div>
-                <div class="mb-12 flex justify-end"><div class="bg-red-50 px-8 py-4 rounded-xl border border-red-100 text-right shadow-sm"><p class="text-xs font-bold text-red-400 uppercase tracking-widest mb-1">Saldo Pendiente por Liquidar</p><p class="text-2xl font-black text-red-600">${window.formatMoney(projectedRemaining)}</p></div></div>
+                <div class="pmc-pdf-summary mb-12 flex justify-end"><div class="bg-red-50 px-8 py-4 rounded-xl border border-red-100 text-right shadow-sm"><p class="text-xs font-bold text-red-400 uppercase tracking-widest mb-1">Saldo Pendiente por Liquidar</p><p class="text-2xl font-black text-red-600">${window.formatMoney(projectedRemaining)}</p></div></div>
             </div>
             <div style="margin-top: auto;">
-                <div class="flex justify-between gap-16 mb-8"><div class="w-1/2 text-center"><div class="border-b-2 border-gray-800 mb-1"></div><p class="text-xs font-bold text-gray-900 uppercase">Cobranza / Finanzas</p><p class="text-[10px] text-gray-400 uppercase">Plaza Mayor</p></div><div class="w-1/2 text-center"><div class="border-b-2 border-gray-800 mb-1"></div><p class="text-xs font-bold text-gray-900 uppercase">Mercadotecnia</p><p class="text-[10px] text-gray-400 uppercase">Plaza Mayor</p></div></div>
-                <div class="text-[10px] text-center text-gray-400 mt-4"><p class="mb-1">Este documento es un comprobante de pago interno. No válido como factura fiscal.</p><p>Generado digitalmente a través de Marketing Hub.</p></div>
+                <div class="pmc-pdf-sign flex justify-between gap-16 mb-8"><div class="w-1/2 text-center"><div class="border-b-2 border-gray-800 mb-1"></div><p class="text-xs font-bold text-gray-900 uppercase">Cobranza / Finanzas</p><p class="text-[10px] text-gray-400 uppercase">Plaza Mayor</p></div><div class="w-1/2 text-center"><div class="border-b-2 border-gray-800 mb-1"></div><p class="text-xs font-bold text-gray-900 uppercase">Mercadotecnia</p><p class="text-[10px] text-gray-400 uppercase">Plaza Mayor</p></div></div>
+                <div class="pmc-pdf-footer-text pmc-pdf-general-conditions text-[10px] text-center text-gray-400 mt-4"><p class="mb-1">Este documento es un comprobante de pago interno. No válido como factura fiscal.</p><p>Generado digitalmente a través de Marketing Hub.</p></div>
             </div>
         </div>`;
-    return __pmContractsWrapLetterheadPage(__pmContractsTransparentPdfHtml(__pmContractsBoostPdfTypography(receiptRaw)), { baseWidth: PM_CONTRACTS_CONTENT_BASE_WIDTH_PX, baseHeight: receiptBaseHeight, id: 'receipt-print-area' });
+    return wrapStyledReceipt(receiptRaw);
 }
+
+
+
 

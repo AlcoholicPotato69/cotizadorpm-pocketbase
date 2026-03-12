@@ -221,7 +221,7 @@
       const opts = options || {};
       this.baseUrl = trimSlash(
         opts.baseUrl ||
-          (window.HUB_CONFIG && (window.HUB_CONFIG.pocketbaseUrl || window.HUB_CONFIG.supabaseUrl)) ||
+          (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseUrl) ||
           "http://127.0.0.1:8090"
       );
       this.schema = opts.schema || null;
@@ -333,3 +333,4 @@
     writeAuthState: writeAuthState
   };
 })();
+

@@ -25,7 +25,7 @@ Objetivo: mover el frontend a servicios nativos de PocketBase sin cambiar diseno
 4. extraccion de compat layer:
 - Nueva capa nativa `client/services/*` creada y activa en paginas criticas.
 - Runtime global unificado en `client/services/pb-client.js` (PocketBase nativo).
-- Todas las paginas HTML del cliente ya cargan `pb-client.js` y no cargan `supabase.js`.
+- Todas las paginas HTML del cliente ya cargan unicamente `pb-client.js`.
 
 ## Arquitectura aplicada
 
@@ -47,7 +47,7 @@ Objetivo: mover el frontend a servicios nativos de PocketBase sin cambiar diseno
 - `services/pb-client.js`
   - Runtime PocketBase para modulos legacy con API de consulta usada por el frontend actual.
   - Expuesto como `window.PB_CLIENT`.
-  - Sin dependencia operativa a `window.supabase`.
+  - Sin dependencia operativa a runtimes externos legacy.
 
 ## Paginas ya cableadas con servicios nativos
 
@@ -61,7 +61,7 @@ Objetivo: mover el frontend a servicios nativos de PocketBase sin cambiar diseno
 - `cotizadorcp/orders.html`
 - `cotizadorcp/order_detail.html`
 
-Nota: el cliente web ya no depende de `supabase.js` en HTML.
+Nota: el cliente web depende solo de `pb-client.js` en HTML.
 
 ## Validacion recomendada (lote minimo)
 
@@ -81,4 +81,4 @@ Nota: el cliente web ya no depende de `supabase.js` en HTML.
 1. Migrar `clientes.js` (PM/CP) a `PB_SERVICES.clientes` + `PB_SERVICES.cotizaciones`.
 2. Migrar `invoices.js` y `contracts.js` a `PB_SERVICES.documentos` para eliminar dependencias de `storage.from(...)`.
 3. Migrar `calendar.js` y `reports.js`.
-4. Retirar archivos legacy `client/supabase.js` y `client/public/assets/libs/js/supabase.js` cuando se confirme estabilidad en produccion.
+4. Consolidar toda llamada legacy en `client/services/pb-client.js`.

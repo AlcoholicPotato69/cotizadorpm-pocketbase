@@ -76,7 +76,7 @@
 
   function getBaseUrl() {
     const hub = window.HUB_CONFIG || {};
-    return trimSlash(hub.pocketbaseUrl || hub.supabaseUrl || "http://127.0.0.1:8090");
+    return trimSlash(hub.pocketbaseUrl || "http://127.0.0.1:8090");
   }
 
   function mapLegacyRecordOut(collectionName, record) {
@@ -280,3 +280,4 @@
     parseJsonSafe: parseJsonSafe
   };
 })();
+

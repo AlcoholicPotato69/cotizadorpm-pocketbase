@@ -16,7 +16,7 @@ Este proyecto ya opera con runtime PocketBase nativo:
 - `index.html` ya usa auth nativa (`PB_SERVICES.auth`).
 - `catalog.js` PM/CP ya crea cotizaciones por servicio nativo.
 - `orders.js` PM/CP ya usa servicio nativo para list/update/delete de cotizaciones.
-- Todas las paginas HTML del cliente ya cargan `pb-client.js` en lugar de `supabase.js`.
+- Todas las paginas HTML del cliente ya cargan unicamente `pb-client.js`.
 
 ## Carga recomendada de scripts
 
@@ -36,6 +36,6 @@ Primero `hub-config`, luego runtime/servicios PocketBase:
 
 ## Notas operativas
 
-- Los archivos historicos de Supabase no se migran automaticamente.
+- Los archivos historicos del runtime anterior no se migran automaticamente.
 - Los logos siguen en `js/hub-config.js`.
-- Los archivos `client/supabase.js` y `client/public/assets/libs/js/supabase.js` quedan solo como legado hasta cierre final.
+- El runtime legacy fue consolidado en `client/services/pb-client.js`.

@@ -111,6 +111,42 @@
     return normalizeDate(ds).replace(/-/g, "");
   }
 
+  function toIcsTimestamp(value) {
+    if (!value) return "";
+    const d = value instanceof Date ? value : new Date(String(value));
+    if (isNaN(d.getTime())) return "";
+    return (
+      d.getUTCFullYear()
+      + pad(d.getUTCMonth() + 1)
+      + pad(d.getUTCDate())
+      + "T"
+      + pad(d.getUTCHours())
+      + pad(d.getUTCMinutes())
+      + pad(d.getUTCSeconds())
+      + "Z"
+    );
+  }
+
+  function foldIcsLine(line) {
+    const text = String(line || "");
+    if (text.length <= 74) return [text];
+    const out = [];
+    let rest = text;
+    while (rest.length > 74) {
+      out.push(rest.slice(0, 74));
+      rest = " " + rest.slice(74);
+    }
+    out.push(rest);
+    return out;
+  }
+
+  function pushIcsLine(lines, line) {
+    const folded = foldIcsLine(line);
+    for (let i = 0; i < folded.length; i++) {
+      lines.push(folded[i]);
+    }
+  }
+
   function splitRanges(dates) {
     const sorted = uniqueSorted(dates);
     if (!sorted.length) return [];
@@ -178,7 +214,7 @@
         const start = normalizeDate(d.fecha_inicio || data.fecha_inicio);
         const end = normalizeDate(d.fecha_fin || d.fecha_inicio || data.fecha_fin || data.fecha_inicio);
         if (sid && start && end) {
-          out.push({ spaceId: sid, start: start, end: end, detail: d });
+          out.push({ spaceId: sid, start: start, end: end, detail: d, detailIndex: i });
         }
       }
       return out;
@@ -186,7 +222,7 @@
     const sid = Number(data.espacio_id || 0);
     const start = normalizeDate(data.fecha_inicio);
     const end = normalizeDate(data.fecha_fin || data.fecha_inicio);
-    return sid && start && end ? [{ spaceId: sid, start: start, end: end, detail: null }] : [];
+    return sid && start && end ? [{ spaceId: sid, start: start, end: end, detail: null, detailIndex: -1 }] : [];
   }
 
   function getCpReserveDates(data) {
@@ -252,7 +288,10 @@
       cliente_nombre: record.getString("cliente_nombre"),
       nombre_cotizacion: record.getString("nombre_cotizacion"),
       detalles_evento: record.get("detalles_evento"),
-      espacio_nombre: record.getString("espacio_nombre")
+      espacio_nombre: record.getString("espacio_nombre"),
+      numero_orden: record.getString("numero_orden"),
+      created: String(record.created || ""),
+      updated: String(record.updated || "")
     };
   }
 
@@ -268,6 +307,9 @@
     uniqueSorted: uniqueSorted,
     escapeIcsText: escapeIcsText,
     toIcsDate: toIcsDate,
+    toIcsTimestamp: toIcsTimestamp,
+    foldIcsLine: foldIcsLine,
+    pushIcsLine: pushIcsLine,
     splitRanges: splitRanges,
     normalizePmRecord: normalizePmRecord,
     getOrderEntries: getOrderEntries,

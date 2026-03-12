@@ -16,10 +16,10 @@ window.currentMontajePrefix = 'oed';
 async function loadClientProfilesForOrderModal() {
     const sel = document.getElementById('oed-client-profile');
     const hid = document.getElementById('oed-client-id');
-    if (!sel || !window.finSupabase) return;
+    if (!sel || !window.tenantPocketBase) return;
 
     try {
-        const { data, error } = await window.finSupabase.from('clientes').select('id,nombre_completo,telefono,correo,rfc').order('nombre_completo', { ascending: true });
+        const { data, error } = await window.tenantPocketBase.from('clientes').select('id,nombre_completo,telefono,correo,rfc').order('nombre_completo', { ascending: true });
         if (error) throw error;
         orderClientProfiles = data || []; orderClientProfilesById = {}; orderClientProfiles.forEach(c => orderClientProfilesById[c.id] = c);
         const current = sel.value;
@@ -42,7 +42,7 @@ async function loadClientProfilesForOrderModal() {
 
 const _p = (window.location.pathname || '') + ' ' + (window.location.href || '');
 const _isCP = /\/cotizadorcp(\/|$)/.test(window.location.pathname || '') || _p.includes('cotizadorcp');
-const COMPANY_LOGO_URL = _isCP ? ((window.HUB_CONFIG && (window.HUB_CONFIG.companyLogoUrlCP || window.HUB_CONFIG.cpLogoUrl)) || 'http://127.0.0.1:54321/storage/v1/object/public/Espacios/logocp.png') : ((window.HUB_CONFIG && window.HUB_CONFIG.companyLogoUrl) || 'http://127.0.0.1:54321/storage/v1/object/public/Espacios/logo.png');
+const COMPANY_LOGO_URL = _isCP ? ((window.HUB_CONFIG && (window.HUB_CONFIG.companyLogoUrlCP || window.HUB_CONFIG.cpLogoUrl)) || '../../assets/logocp.png') : ((window.HUB_CONFIG && window.HUB_CONFIG.companyLogoUrl) || '../../assets/logo.png');
 let __CP_LETTERHEAD_URL = (window.HUB_CONFIG && (window.HUB_CONFIG.cpPdfLetterheadUrl || window.HUB_CONFIG.pdfLetterheadCasaPiedraUrl)) || '../public/assets/img/cp-letterhead-default.png';
 const __PDF_PAGE_WIDTH_PX = 816;
 const __PDF_PAGE_HEIGHT_PX = 1056;
@@ -105,8 +105,8 @@ function __orderWrapLetterheadPage(innerHtml, options = {}) {
     return `<div style="position:relative;width:${__PDF_PAGE_WIDTH_PX}px;height:${__PDF_PAGE_HEIGHT_PX}px;box-sizing:border-box;overflow:hidden;background:#f5f5f5;">${imageLayer}<div style="position:absolute;left:${left.toFixed(2)}px;top:${top.toFixed(2)}px;width:${baseWidth}px;height:${baseHeight}px;transform:scale(${scale.toFixed(6)});transform-origin:top left;overflow:hidden;z-index:1;">${innerHtml}</div></div>`;
 }
 
-const SB_URL = window.HUB_CONFIG?.supabaseUrl || window.ENV?.SUPABASE_URL || '';
-const SB_KEY = window.HUB_CONFIG?.supabaseAnonKey || window.ENV?.SUPABASE_ANON_KEY || '';
+const PB_URL = window.HUB_CONFIG?.pocketbaseUrl || window.ENV?.POCKETBASE_URL || '';
+const PB_KEY = window.HUB_CONFIG?.pocketbaseAnonKey || window.ENV?.POCKETBASE_ANON_KEY || '';
 const FIN_SCHEMA = _isCP ? 'finanzas_casadepiedra' : (window.HUB_CONFIG?.finanzasSchema || window.ENV?.SCHEMA_CASA_PIEDRA || 'finanzas');
 const STATUS_LEVEL = { 'pendiente': 0, 'rechazada': 0, 'aprobada': 1, 'finalizada': 2 };
 const ORDERS_PAGE_MODE = window.__CP_ORDERS_MODE || 'list';
@@ -143,7 +143,7 @@ async function __cpQuotesList(params) {
             return { data: null, error };
         }
     }
-    const query = window.finSupabase.from('cotizaciones').select('*');
+    const query = window.tenantPocketBase.from('cotizaciones').select('*');
     if (params && params.filter && params.filter.indexOf('status = "aprobada"') !== -1) query.eq('status', 'aprobada');
     if (params && params.sort) query.order(String(params.sort).replace('-', ''), { ascending: !String(params.sort).startsWith('-') });
     const result = await query;
@@ -160,7 +160,7 @@ async function __cpQuoteGetById(id) {
             return { data: null, error };
         }
     }
-    const result = await window.finSupabase.from('cotizaciones').select('*').eq('id', id).maybeSingle();
+    const result = await window.tenantPocketBase.from('cotizaciones').select('*').eq('id', id).maybeSingle();
     return { data: result && result.data ? result.data : null, error: result && result.error ? result.error : null };
 }
 
@@ -174,7 +174,7 @@ async function __cpQuotesUpdate(id, payload) {
             return { error };
         }
     }
-    const result = await window.finSupabase.from('cotizaciones').update(payload || {}).eq('id', id);
+    const result = await window.tenantPocketBase.from('cotizaciones').update(payload || {}).eq('id', id);
     return { error: result && result.error ? result.error : null };
 }
 
@@ -188,7 +188,7 @@ async function __cpQuotesDelete(id) {
             return { error };
         }
     }
-    const result = await window.finSupabase.from('cotizaciones').delete().eq('id', id);
+    const result = await window.tenantPocketBase.from('cotizaciones').delete().eq('id', id);
     return { error: result && result.error ? result.error : null };
 }
 
@@ -352,7 +352,7 @@ window.closeModal = (id, opts = {}) => {
     }
 };
 window.showToast = (msg, type='success') => { const c = document.getElementById('toast-container'); const e = document.createElement('div'); e.className = `p-4 rounded-lg shadow-lg text-white text-xs font-bold uppercase tracking-wider mb-2 animate-bounce ${type==='error'?'bg-red-500':'bg-green-500'}`; e.innerText = msg; c.appendChild(e); setTimeout(() => e.remove(), 3000); };
-window.openStoredDocument = async function(path) { if(!path) return window.showToast("Documento no disponible", "error"); window.showToast("Abriendo documento...", "info"); const { data, error } = await window.globalSupabase.storage.from('documentos-cp').createSignedUrl(path, 3600); if (error || !data) return window.showToast("Error de acceso al archivo", "error"); window.open(data.signedUrl, '_blank'); };
+window.openStoredDocument = async function(path) { if(!path) return window.showToast("Documento no disponible", "error"); window.showToast("Abriendo documento...", "info"); const { data, error } = await window.globalPocketBase.storage.from('documentos-cp').createSignedUrl(path, 3600); if (error || !data) return window.showToast("Error de acceso al archivo", "error"); window.open(data.signedUrl, '_blank'); };
 
 let confirmCallback = null;
 let cancelCallback = null;
@@ -384,13 +384,13 @@ window.askDeleteOrder = function(id, e) {
         try {
             window.showToast("Eliminando archivos...", "info");
             const prefix = String(id || "");
-            const { data: files } = await window.globalSupabase.storage.from('documentos-cp').list(prefix, { limit: 200 });
+            const { data: files } = await window.globalPocketBase.storage.from('documentos-cp').list(prefix, { limit: 200 });
             if (files && files.length > 0) {
-                await window.globalSupabase.storage.from('documentos-cp').remove(files.map(x => `${prefix}/${x.name}`));
+                await window.globalPocketBase.storage.from('documentos-cp').remove(files.map(x => `${prefix}/${x.name}`));
             }
-            const { data: receiptFiles } = await window.globalSupabase.storage.from('documentos-cp').list(`${prefix}/recibos`, { limit: 200 });
+            const { data: receiptFiles } = await window.globalPocketBase.storage.from('documentos-cp').list(`${prefix}/recibos`, { limit: 200 });
             if (receiptFiles && receiptFiles.length > 0) {
-                await window.globalSupabase.storage.from('documentos-cp').remove(receiptFiles.map(x => `${prefix}/recibos/${x.name}`));
+                await window.globalPocketBase.storage.from('documentos-cp').remove(receiptFiles.map(x => `${prefix}/recibos/${x.name}`));
             }
             const { error } = await __cpQuotesDelete(id);
             if (error) throw error;
@@ -424,13 +424,15 @@ window.addEventListener('click', function(e) {
 
 document.addEventListener('DOMContentLoaded', async () => {
     if (window.PB_CLIENT) {
-        if(!window.finSupabase) window.finSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY, { db: { schema: FIN_SCHEMA } });
-        if(!window.globalSupabase) window.globalSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY);
+        if(!window.tenantPocketBase) window.tenantPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY, { db: { schema: FIN_SCHEMA } });
+        if(!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
     }
-    const { data: { session } } = await window.globalSupabase.auth.getSession(); if (!session) return;
+    const { data: { session } } = await window.globalPocketBase.auth.getSession(); if (!session) return;
     
-    const { data: profile } = await window.globalSupabase.from('profiles').select('*').eq('id', session.user.id).single();
+    const { data: profile } = await window.globalPocketBase.from('profiles').select('*').eq('id', session.user.id).single();
     window.currentUserProfile = profile;
+    await __cpLoadSharedPdfStyleConfig();
+    __cpInitPdfStyleEditor();
 
     document.getElementById('btn-confirm-action')?.addEventListener('click', () => { if(confirmCallback) confirmCallback(); window.closeModal('generic-confirm-modal'); });
     document.getElementById('btn-cancel-action')?.addEventListener('click', () => { if(cancelCallback) cancelCallback(); window.closeModal('generic-confirm-modal'); });
@@ -480,9 +482,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 });
 
-async function loadTaxes() { const { data } = await window.finSupabase.from('impuestos').select('*'); dbTaxes = data || []; }
-async function loadSpaces() { const { data } = await window.finSupabase.from('espacios').select('*'); allSpaces = data || []; }
-async function loadConcepts() { const { data } = await window.finSupabase.from('conceptos_catalogo').select('*').eq('activo', true); catalogConcepts = data || []; }
+async function loadTaxes() { const { data } = await window.tenantPocketBase.from('impuestos').select('*'); dbTaxes = data || []; }
+async function loadSpaces() { const { data } = await window.tenantPocketBase.from('espacios').select('*'); allSpaces = data || []; }
+async function loadConcepts() { const { data } = await window.tenantPocketBase.from('conceptos_catalogo').select('*').eq('activo', true); catalogConcepts = data || []; }
 
 window.loadOrders = async function() {
     const { data, error } = await __cpQuotesList({ sort: '-created_at' });
@@ -878,6 +880,7 @@ function __orderPrepareApprovalPreview(formData = {}, options = {}) {
     const embedViewer = document.getElementById('doc-preview');
     if (pdfContainer) {
         pdfContainer.innerHTML = content;
+        __cpApplyPdfStyleToLivePreview();
         pdfContainer.classList.remove('hidden');
     }
     if (embedViewer) embedViewer.classList.add('hidden');
@@ -1024,7 +1027,7 @@ async function __orderUploadApprovalSnapshotBlob(orderId, blob, formData = {}) {
         || currentPreviewOrder?.numero_orden
         || id.split('-')[0].toUpperCase();
     const path = `${id}/cotizacion_aprobada_${folioUnificado}.pdf`;
-    const { error: upErr } = await window.globalSupabase.storage.from('documentos-cp').upload(path, blob, { upsert: true });
+    const { error: upErr } = await window.globalPocketBase.storage.from('documentos-cp').upload(path, blob, { upsert: true });
     if (upErr) throw upErr;
     const { error: updErr } = await __cpQuotesUpdate(id, { status: 'aprobada', url_cotizacion_final: path });
     if (updErr) throw updErr;
@@ -1369,7 +1372,25 @@ window.closeOrderEditorPage = async function() {
 };
 
 window.previewOrderForGeneration = function(id) {
-    const order = allOrders.find(o => o.id === id); if(!order) return; currentPreviewOrder = { ...order, docType: 'order' }; const content = window.getOrderHTML(order, 'order'); const pdfContainer = document.getElementById('pdf-content'); const embed = document.getElementById('doc-preview'); pdfContainer.innerHTML = content; pdfContainer.classList.remove('hidden'); embed.classList.add('hidden'); const btn = document.getElementById('btn-download-preview'); btn.innerHTML = '<i class="fa-solid fa-file-contract"></i> Confirmar y Generar OC'; btn.className = "bg-purple-600 hover:bg-purple-700 text-white px-5 py-2 rounded-full text-xs font-bold uppercase shadow-lg transition flex items-center gap-2"; btn.onclick = window.confirmAndGeneratePurchaseOrder; window.openModal('preview-modal');
+    const order = allOrders.find(o => o.id === id);
+    if (!order) return;
+    currentPreviewOrder = { ...order, docType: 'order' };
+    const content = window.getOrderHTML(order, 'order');
+    const pdfContainer = document.getElementById('pdf-content');
+    const embed = document.getElementById('doc-preview');
+    if (pdfContainer) {
+        pdfContainer.innerHTML = content;
+        __cpApplyPdfStyleToLivePreview();
+        pdfContainer.classList.remove('hidden');
+    }
+    if (embed) embed.classList.add('hidden');
+    const btn = document.getElementById('btn-download-preview');
+    if (btn) {
+        btn.innerHTML = '<i class="fa-solid fa-file-contract"></i> Confirmar y Generar OC';
+        btn.className = "bg-purple-600 hover:bg-purple-700 text-white px-5 py-2 rounded-full text-xs font-bold uppercase shadow-lg transition flex items-center gap-2";
+        btn.onclick = window.confirmAndGeneratePurchaseOrder;
+    }
+    window.openModal('preview-modal');
 };
 
 window.confirmAndGeneratePurchaseOrder = async function() {
@@ -1381,7 +1402,7 @@ window.confirmAndGeneratePurchaseOrder = async function() {
             const pdfBlob = await __orderRenderPdfBlob(element);
             const folioUnificado = currentPreviewOrder.numero_orden || currentPreviewOrder.id.split('-')[0].toUpperCase();
             const path = `${currentPreviewOrder.id}/orden_compra_${folioUnificado}.pdf`;
-            await window.globalSupabase.storage.from('documentos-cp').upload(path, pdfBlob, { upsert: true });
+            await window.globalPocketBase.storage.from('documentos-cp').upload(path, pdfBlob, { upsert: true });
             const ocUpdate = await __cpQuotesUpdate(currentPreviewOrder.id, { url_orden_compra: path, fecha_orden_compra: new Date().toISOString() });
             if (ocUpdate.error) throw ocUpdate.error;
             __orderBroadcastRefresh('purchase_order');
@@ -1433,7 +1454,27 @@ window.openDocsModal = function(id) {
     } window.openModal('docs-modal');
 };
 
-window.openPDFPreview = function(id, type) { const o = allOrders.find(x => x.id === id); if(!o) return; currentPreviewOrder = { ...o, docType: type }; const content = window.getOrderHTML(o, type); const pdfContainer = document.getElementById('pdf-content'); const embedViewer = document.getElementById('doc-preview'); const btnDownload = document.getElementById('btn-download-preview'); pdfContainer.classList.remove('hidden'); embedViewer.classList.add('hidden'); pdfContainer.innerHTML = content; btnDownload.innerHTML = '<i class="fa-solid fa-download"></i> Descargar'; btnDownload.className = "bg-brand-red hover:bg-red-600 text-white px-5 py-2 rounded-full text-xs font-bold uppercase shadow-lg transition flex items-center gap-2"; btnDownload.onclick = window.downloadPDFFromPreview; window.openModal('preview-modal'); };
+window.openPDFPreview = function(id, type) {
+    const o = allOrders.find(x => x.id === id);
+    if (!o) return;
+    currentPreviewOrder = { ...o, docType: type };
+    const content = window.getOrderHTML(o, type);
+    const pdfContainer = document.getElementById('pdf-content');
+    const embedViewer = document.getElementById('doc-preview');
+    const btnDownload = document.getElementById('btn-download-preview');
+    if (pdfContainer) {
+        pdfContainer.classList.remove('hidden');
+        pdfContainer.innerHTML = content;
+        __cpApplyPdfStyleToLivePreview();
+    }
+    if (embedViewer) embedViewer.classList.add('hidden');
+    if (btnDownload) {
+        btnDownload.innerHTML = '<i class="fa-solid fa-download"></i> Descargar';
+        btnDownload.className = "bg-brand-red hover:bg-red-600 text-white px-5 py-2 rounded-full text-xs font-bold uppercase shadow-lg transition flex items-center gap-2";
+        btnDownload.onclick = window.downloadPDFFromPreview;
+    }
+    window.openModal('preview-modal');
+};
 window.downloadPDFFromPreview = async function() {
     const element = document.getElementById('pdf-content');
     const orderId = String(currentPreviewOrder?.id || '').trim();
@@ -1483,23 +1524,394 @@ function __cpOrdersBoostPdfTypography(html) {
         .replace(/__CP_TXT_SM__/g, 'text-base');
 }
 
+const __CP_PDF_STYLE_CONFIG_KEY = 'pdf_typography_style';
+const __CP_PDF_STYLE_TENANT = 'casa_de_piedra';
+const __CP_PDF_STYLE_FONT_MAP = Object.freeze({
+    segoe: '"Segoe UI", Arial, sans-serif',
+    arial: 'Arial, Helvetica, sans-serif',
+    verdana: 'Verdana, Geneva, sans-serif',
+    georgia: 'Georgia, "Times New Roman", serif',
+    times: '"Times New Roman", Times, serif',
+    trebuchet: '"Trebuchet MS", Arial, sans-serif'
+});
+const __CP_PDF_STYLE_DEFAULTS = Object.freeze({
+    fontFamilyKey: 'segoe',
+    headerLinePx: 4,
+    titlePx: 30,
+    metaPx: 13,
+    tableHeadPx: 14,
+    tableBodyPx: 12,
+    lineHeightPct: 120,
+    quickPx: 12,
+    conditionsPx: 14,
+    signPx: 12,
+    footerPx: 10,
+    headerAlign: 'right',
+    metaAlign: 'right',
+    tableAlign: 'left',
+    quickAlign: 'left',
+    conditionsAlign: 'justify',
+    signAlign: 'center',
+    summaryAlign: 'left',
+    footerAlign: 'center'
+});
+const __CP_PDF_STYLE_UI_STATE_KEY = 'cp_pdf_style_editor_ui';
+let __cpPdfStyleState = null;
+let __cpPdfStyleConfigRecordId = '';
+let __cpPdfStyleSyncTimer = null;
+let __cpPdfStyleUiState = { collapsed: false, pinned: false };
+
+function __cpClampStyleNumber(value, min, max, fallback) {
+    const num = parseInt(value, 10);
+    if (!Number.isFinite(num)) return fallback;
+    return Math.min(max, Math.max(min, num));
+}
+
+function __cpNormalizeStyleAlign(value, fallback = 'left') {
+    const safe = String(value || '').toLowerCase();
+    return ['left', 'center', 'right', 'justify'].includes(safe) ? safe : fallback;
+}
+
+function __cpNormalizePdfStyle(raw = {}) {
+    const base = { ...__CP_PDF_STYLE_DEFAULTS, ...(raw || {}) };
+    const fontKey = String(base.fontFamilyKey || '').toLowerCase();
+    return {
+        fontFamilyKey: __CP_PDF_STYLE_FONT_MAP[fontKey] ? fontKey : __CP_PDF_STYLE_DEFAULTS.fontFamilyKey,
+        headerLinePx: __cpClampStyleNumber(base.headerLinePx, 1, 8, __CP_PDF_STYLE_DEFAULTS.headerLinePx),
+        titlePx: __cpClampStyleNumber(base.titlePx, 20, 42, __CP_PDF_STYLE_DEFAULTS.titlePx),
+        metaPx: __cpClampStyleNumber(base.metaPx, 8, 18, __CP_PDF_STYLE_DEFAULTS.metaPx),
+        tableHeadPx: __cpClampStyleNumber(base.tableHeadPx, 9, 18, __CP_PDF_STYLE_DEFAULTS.tableHeadPx),
+        tableBodyPx: __cpClampStyleNumber(base.tableBodyPx, 9, 16, __CP_PDF_STYLE_DEFAULTS.tableBodyPx),
+        lineHeightPct: __cpClampStyleNumber(base.lineHeightPct, 90, 180, __CP_PDF_STYLE_DEFAULTS.lineHeightPct),
+        quickPx: __cpClampStyleNumber(base.quickPx, 9, 16, __CP_PDF_STYLE_DEFAULTS.quickPx),
+        conditionsPx: __cpClampStyleNumber(base.conditionsPx, 9, 18, __CP_PDF_STYLE_DEFAULTS.conditionsPx),
+        signPx: __cpClampStyleNumber(base.signPx, 9, 16, __CP_PDF_STYLE_DEFAULTS.signPx),
+        footerPx: __cpClampStyleNumber(base.footerPx, 8, 14, __CP_PDF_STYLE_DEFAULTS.footerPx),
+        headerAlign: __cpNormalizeStyleAlign(base.headerAlign, __CP_PDF_STYLE_DEFAULTS.headerAlign),
+        metaAlign: __cpNormalizeStyleAlign(base.metaAlign, __CP_PDF_STYLE_DEFAULTS.metaAlign),
+        tableAlign: __cpNormalizeStyleAlign(base.tableAlign, __CP_PDF_STYLE_DEFAULTS.tableAlign),
+        quickAlign: __cpNormalizeStyleAlign(base.quickAlign, __CP_PDF_STYLE_DEFAULTS.quickAlign),
+        conditionsAlign: __cpNormalizeStyleAlign(base.conditionsAlign, __CP_PDF_STYLE_DEFAULTS.conditionsAlign),
+        signAlign: __cpNormalizeStyleAlign(base.signAlign, __CP_PDF_STYLE_DEFAULTS.signAlign),
+        summaryAlign: __cpNormalizeStyleAlign(base.summaryAlign, __CP_PDF_STYLE_DEFAULTS.summaryAlign),
+        footerAlign: __cpNormalizeStyleAlign(base.footerAlign, __CP_PDF_STYLE_DEFAULTS.footerAlign)
+    };
+}
+
+function __cpLoadPdfStyleState() {
+    return __cpNormalizePdfStyle();
+}
+
+function __cpLoadPdfStyleUiState() {
+    try {
+        const raw = localStorage.getItem(__CP_PDF_STYLE_UI_STATE_KEY);
+        if (!raw) return { collapsed: false, pinned: false };
+        const parsed = JSON.parse(raw);
+        return { collapsed: !!parsed?.collapsed, pinned: !!parsed?.pinned };
+    } catch (_) {
+        return { collapsed: false, pinned: false };
+    }
+}
+
+function __cpSavePdfStyleUiState() {
+    try {
+        localStorage.setItem(__CP_PDF_STYLE_UI_STATE_KEY, JSON.stringify(__cpPdfStyleUiState));
+    } catch (_) {}
+}
+
+function __cpGetPdfStyleConfig() {
+    if (!__cpPdfStyleState) __cpPdfStyleState = __cpLoadPdfStyleState();
+    return { ...__cpPdfStyleState };
+}
+
+function __cpPdfStyleVars(style) {
+    const safe = __cpNormalizePdfStyle(style);
+    const headerAlign = safe.headerAlign === 'justify' ? 'left' : safe.headerAlign;
+    return {
+        '--cp-font-family': __CP_PDF_STYLE_FONT_MAP[safe.fontFamilyKey],
+        '--cp-header-line': `${safe.headerLinePx}px`,
+        '--cp-title-size': `${safe.titlePx}px`,
+        '--cp-meta-size': `${safe.metaPx}px`,
+        '--cp-date-size': `${Math.max(8, safe.metaPx - 2)}px`,
+        '--cp-table-head-size': `${safe.tableHeadPx}px`,
+        '--cp-table-body-size': `${safe.tableBodyPx}px`,
+        '--cp-line-height': `${(safe.lineHeightPct / 100).toFixed(2)}`,
+        '--cp-quick-size': `${safe.quickPx}px`,
+        '--cp-conditions-size': `${safe.conditionsPx}px`,
+        '--cp-sign-size': `${safe.signPx}px`,
+        '--cp-footer-size': `${safe.footerPx}px`,
+        '--cp-header-align': headerAlign,
+        '--cp-header-justify': headerAlign === 'left' ? 'flex-start' : (headerAlign === 'center' ? 'center' : 'flex-end'),
+        '--cp-meta-align': safe.metaAlign,
+        '--cp-table-align': safe.tableAlign,
+        '--cp-quick-align': safe.quickAlign,
+        '--cp-conditions-align': safe.conditionsAlign,
+        '--cp-sign-align': safe.signAlign,
+        '--cp-summary-align': safe.summaryAlign,
+        '--cp-footer-align': safe.footerAlign
+    };
+}
+
+function __cpPdfStyleVarsInline(style) {
+    const vars = __cpPdfStyleVars(style);
+    return Object.entries(vars).map(([key, value]) => `${key}:${value};`).join('');
+}
+
+function __cpApplyPdfStyleToLivePreview() {
+    const rootNodes = document.querySelectorAll('#pdf-content .cp-pdf-root');
+    if (!rootNodes.length) return;
+    const vars = __cpPdfStyleVars(__cpGetPdfStyleConfig());
+    rootNodes.forEach((node) => {
+        Object.entries(vars).forEach(([k, v]) => node.style.setProperty(k, v));
+    });
+}
+
+function __cpSyncPdfStyleValueLabels(style) {
+    const cfg = __cpNormalizePdfStyle(style);
+    const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    setText('pdf-style-header-line-value', `${cfg.headerLinePx}px`);
+    setText('pdf-style-title-size-value', `${cfg.titlePx}px`);
+    setText('pdf-style-meta-size-value', `${cfg.metaPx}px`);
+    setText('pdf-style-table-size-value', `${cfg.tableBodyPx}px`);
+    setText('pdf-style-line-height-value', `${cfg.lineHeightPct}%`);
+    setText('pdf-style-quick-size-value', `${cfg.quickPx}px`);
+    setText('pdf-style-conditions-size-value', `${cfg.conditionsPx}px`);
+    setText('pdf-style-sign-size-value', `${cfg.signPx}px`);
+}
+
+function __cpWritePdfStyleControls(style) {
+    const cfg = __cpNormalizePdfStyle(style);
+    const setValue = (id, val) => { const el = document.getElementById(id); if (el) el.value = String(val); };
+    setValue('pdf-style-font-family', cfg.fontFamilyKey);
+    setValue('pdf-style-header-line', cfg.headerLinePx);
+    setValue('pdf-style-title-size', cfg.titlePx);
+    setValue('pdf-style-meta-size', cfg.metaPx);
+    setValue('pdf-style-table-size', cfg.tableBodyPx);
+    setValue('pdf-style-line-height', cfg.lineHeightPct);
+    setValue('pdf-style-quick-size', cfg.quickPx);
+    setValue('pdf-style-conditions-size', cfg.conditionsPx);
+    setValue('pdf-style-sign-size', cfg.signPx);
+    setValue('pdf-style-align-header', cfg.headerAlign);
+    setValue('pdf-style-align-meta', cfg.metaAlign);
+    setValue('pdf-style-align-table', cfg.tableAlign);
+    setValue('pdf-style-align-quick', cfg.quickAlign);
+    setValue('pdf-style-align-conditions', cfg.conditionsAlign);
+    setValue('pdf-style-align-sign', cfg.signAlign);
+    setValue('pdf-style-align-summary', cfg.summaryAlign);
+    setValue('pdf-style-align-footer', cfg.footerAlign);
+    __cpSyncPdfStyleValueLabels(cfg);
+}
+
+function __cpReadPdfStyleControls() {
+    return __cpNormalizePdfStyle({
+        fontFamilyKey: document.getElementById('pdf-style-font-family')?.value || __CP_PDF_STYLE_DEFAULTS.fontFamilyKey,
+        headerLinePx: document.getElementById('pdf-style-header-line')?.value,
+        titlePx: document.getElementById('pdf-style-title-size')?.value,
+        metaPx: document.getElementById('pdf-style-meta-size')?.value,
+        tableHeadPx: (parseInt(document.getElementById('pdf-style-table-size')?.value || __CP_PDF_STYLE_DEFAULTS.tableBodyPx, 10) + 2),
+        tableBodyPx: document.getElementById('pdf-style-table-size')?.value,
+        lineHeightPct: document.getElementById('pdf-style-line-height')?.value,
+        quickPx: document.getElementById('pdf-style-quick-size')?.value,
+        conditionsPx: document.getElementById('pdf-style-conditions-size')?.value,
+        signPx: document.getElementById('pdf-style-sign-size')?.value,
+        footerPx: Math.max(8, (parseInt(document.getElementById('pdf-style-meta-size')?.value || __CP_PDF_STYLE_DEFAULTS.metaPx, 10) - 3)),
+        headerAlign: document.getElementById('pdf-style-align-header')?.value,
+        metaAlign: document.getElementById('pdf-style-align-meta')?.value,
+        tableAlign: document.getElementById('pdf-style-align-table')?.value,
+        quickAlign: document.getElementById('pdf-style-align-quick')?.value,
+        conditionsAlign: document.getElementById('pdf-style-align-conditions')?.value,
+        signAlign: document.getElementById('pdf-style-align-sign')?.value,
+        summaryAlign: document.getElementById('pdf-style-align-summary')?.value,
+        footerAlign: document.getElementById('pdf-style-align-footer')?.value
+    });
+}
+
+function __cpSetPdfStyleConfig(style, options = {}) {
+    const opts = options && typeof options === 'object' ? options : {};
+    __cpPdfStyleState = __cpNormalizePdfStyle(style);
+    if (opts.applyToDom !== false) __cpApplyPdfStyleToLivePreview();
+}
+
+function __cpIsAdminProfile() {
+    return String(window.currentUserProfile?.role || '').toLowerCase() === 'admin';
+}
+
+async function __cpLoadSharedPdfStyleConfig() {
+    if (!window.tenantPocketBase) return;
+    try {
+        const { data, error } = await window.tenantPocketBase
+            .from('configuracion')
+            .select('id,valor_json')
+            .eq('clave', __CP_PDF_STYLE_CONFIG_KEY)
+            .maybeSingle();
+        if (error || !data) return;
+        __cpPdfStyleConfigRecordId = String(data.id || '');
+        __cpSetPdfStyleConfig(data.valor_json || __CP_PDF_STYLE_DEFAULTS, { applyToDom: false });
+    } catch (e) {
+        console.warn('No se pudo cargar la tipografía PDF compartida (CP):', e);
+    }
+}
+
+async function __cpPersistSharedPdfStyleConfig(style) {
+    if (!__cpIsAdminProfile() || !window.tenantPocketBase) return;
+    const normalized = __cpNormalizePdfStyle(style);
+    try {
+        if (!__cpPdfStyleConfigRecordId) {
+            const { data: existing, error: existingError } = await window.tenantPocketBase
+                .from('configuracion')
+                .select('id')
+                .eq('clave', __CP_PDF_STYLE_CONFIG_KEY)
+                .maybeSingle();
+            if (!existingError && existing?.id) __cpPdfStyleConfigRecordId = String(existing.id);
+        }
+        if (__cpPdfStyleConfigRecordId) {
+            const { error: updError } = await window.tenantPocketBase
+                .from('configuracion')
+                .update({ valor_json: normalized })
+                .eq('id', __cpPdfStyleConfigRecordId);
+            if (updError) throw updError;
+            return;
+        }
+        const { data: inserted, error: insError } = await window.tenantPocketBase
+            .from('configuracion')
+            .insert({ tenant: __CP_PDF_STYLE_TENANT, clave: __CP_PDF_STYLE_CONFIG_KEY, valor_json: normalized })
+            .select('id')
+            .single();
+        if (insError) throw insError;
+        __cpPdfStyleConfigRecordId = String(inserted?.id || '');
+    } catch (e) {
+        console.warn('No se pudo guardar la tipografía PDF compartida (CP):', e);
+    }
+}
+
+function __cpScheduleSharedPdfStyleSync(style) {
+    if (!__cpIsAdminProfile()) return;
+    if (__cpPdfStyleSyncTimer) clearTimeout(__cpPdfStyleSyncTimer);
+    __cpPdfStyleSyncTimer = setTimeout(() => {
+        __cpPersistSharedPdfStyleConfig(style || __cpPdfStyleState);
+    }, 450);
+}
+
+function __cpHandlePdfStyleControlChange() {
+    if (!__cpIsAdminProfile()) return;
+    const next = __cpReadPdfStyleControls();
+    __cpSetPdfStyleConfig(next, { applyToDom: true });
+    __cpSyncPdfStyleValueLabels(next);
+    __cpScheduleSharedPdfStyleSync(next);
+}
+
+function __cpApplyPdfStyleEditorUiState() {
+    const editorWrap = document.getElementById('pdf-style-editor');
+    const body = document.getElementById('pdf-style-editor-body');
+    const toggleBtn = document.getElementById('btn-pdf-style-toggle');
+    const pinBtn = document.getElementById('btn-pdf-style-pin');
+    if (!editorWrap) return;
+
+    if (body) body.classList.toggle('hidden', !!__cpPdfStyleUiState.collapsed);
+    if (toggleBtn) toggleBtn.textContent = __cpPdfStyleUiState.collapsed ? 'Mostrar' : 'Ocultar';
+    if (pinBtn) pinBtn.textContent = __cpPdfStyleUiState.pinned ? 'Desfijar' : 'Fijar';
+
+    if (__cpPdfStyleUiState.pinned) {
+        editorWrap.style.position = 'fixed';
+        editorWrap.style.left = '16px';
+        editorWrap.style.bottom = '16px';
+        editorWrap.style.top = '';
+        editorWrap.style.right = '';
+        editorWrap.style.zIndex = '140';
+        editorWrap.style.width = '320px';
+        editorWrap.style.maxHeight = '85vh';
+        editorWrap.style.overflow = 'auto';
+        editorWrap.style.border = '1px solid #374151';
+        editorWrap.style.borderRadius = '12px';
+        editorWrap.style.boxShadow = '0 18px 45px rgba(0, 0, 0, 0.45)';
+    } else {
+        editorWrap.style.position = 'fixed';
+        editorWrap.style.left = '16px';
+        editorWrap.style.top = '84px';
+        editorWrap.style.right = '';
+        editorWrap.style.bottom = '12px';
+        editorWrap.style.zIndex = '140';
+        editorWrap.style.width = '320px';
+        editorWrap.style.maxHeight = 'calc(100vh - 96px)';
+        editorWrap.style.overflow = 'auto';
+        editorWrap.style.border = '1px solid #374151';
+        editorWrap.style.borderRadius = '12px';
+        editorWrap.style.boxShadow = '0 10px 28px rgba(0, 0, 0, 0.35)';
+    }
+}
+
+function __cpTogglePdfStylePanel() {
+    __cpPdfStyleUiState = { ...__cpPdfStyleUiState, collapsed: !__cpPdfStyleUiState.collapsed };
+    __cpSavePdfStyleUiState();
+    __cpApplyPdfStyleEditorUiState();
+}
+
+function __cpTogglePdfStylePin() {
+    __cpPdfStyleUiState = { ...__cpPdfStyleUiState, pinned: !__cpPdfStyleUiState.pinned };
+    __cpSavePdfStyleUiState();
+    __cpApplyPdfStyleEditorUiState();
+}
+
+function __cpInitPdfStyleEditor() {
+    const editorWrap = document.getElementById('pdf-style-editor');
+    if (!editorWrap || !document.getElementById('pdf-style-font-family')) return;
+    if (!__cpPdfStyleState) __cpPdfStyleState = __cpLoadPdfStyleState();
+    if (!__cpIsAdminProfile()) {
+        editorWrap.classList.add('hidden');
+        return;
+    }
+    editorWrap.classList.remove('hidden');
+    __cpPdfStyleUiState = __cpLoadPdfStyleUiState();
+    __cpWritePdfStyleControls(__cpPdfStyleState);
+    __cpApplyPdfStyleEditorUiState();
+    if (document.body.dataset.cpPdfStyleBound === '1') return;
+    const controls = Array.from(document.querySelectorAll('.pdf-style-control'));
+    controls.forEach((el) => {
+        el.addEventListener('input', __cpHandlePdfStyleControlChange);
+        el.addEventListener('change', __cpHandlePdfStyleControlChange);
+    });
+    document.getElementById('btn-pdf-style-toggle')?.addEventListener('click', __cpTogglePdfStylePanel);
+    document.getElementById('btn-pdf-style-pin')?.addEventListener('click', __cpTogglePdfStylePin);
+    const resetBtn = document.getElementById('btn-reset-pdf-style');
+    if (resetBtn) {
+        resetBtn.addEventListener('click', () => {
+            const reset = __cpNormalizePdfStyle(__CP_PDF_STYLE_DEFAULTS);
+            __cpSetPdfStyleConfig(reset, { applyToDom: true });
+            __cpWritePdfStyleControls(reset);
+            __cpScheduleSharedPdfStyleSync(reset);
+        });
+    }
+    document.body.dataset.cpPdfStyleBound = '1';
+}
+
+window.resetPdfStyleEditor = function() {
+    if (!__cpIsAdminProfile()) return;
+    const reset = __cpNormalizePdfStyle(__CP_PDF_STYLE_DEFAULTS);
+    __cpSetPdfStyleConfig(reset, { applyToDom: true });
+    __cpWritePdfStyleControls(reset);
+    __cpScheduleSharedPdfStyleSync(reset);
+};
+
 window.getOrderHTML = function(o, type) { 
     const isOrder = type === 'order'; 
     const logoImg = ''; 
+    const pdfStyle = __cpGetPdfStyleConfig();
+    const pdfStyleInlineVars = __cpPdfStyleVarsInline(pdfStyle);
+    const pdfStyleTag = `<style>.cp-pdf-root{font-family:var(--cp-font-family)!important;}.cp-pdf-root .cp-pdf-header{border-bottom-width:var(--cp-header-line)!important;justify-content:var(--cp-header-justify)!important;}.cp-pdf-root .cp-pdf-header>div:last-child{text-align:var(--cp-header-align)!important;}.cp-pdf-root .cp-pdf-title{font-size:var(--cp-title-size)!important;line-height:1.05!important;text-align:var(--cp-header-align)!important;}.cp-pdf-root .cp-pdf-folio{font-size:var(--cp-meta-size)!important;text-align:var(--cp-meta-align)!important;}.cp-pdf-root .cp-pdf-date{font-size:var(--cp-date-size)!important;text-align:var(--cp-meta-align)!important;}.cp-pdf-root .cp-pdf-table-head th{font-size:var(--cp-table-head-size)!important;}.cp-pdf-root .cp-pdf-table-body td,.cp-pdf-root .cp-pdf-table-body p,.cp-pdf-root .cp-pdf-table-body span{font-size:var(--cp-table-body-size)!important;line-height:var(--cp-line-height)!important;}.cp-pdf-root .cp-pdf-table-body td:first-child,.cp-pdf-root .cp-pdf-table-body td:first-child *{text-align:var(--cp-table-align)!important;}.cp-pdf-root .cp-pdf-summary,.cp-pdf-root .cp-pdf-summary *{text-align:var(--cp-summary-align)!important;}.cp-pdf-root .cp-pdf-quick,.cp-pdf-root .cp-pdf-quick *{font-size:var(--cp-quick-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-quick-align)!important;}.cp-pdf-root .cp-pdf-general-conditions,.cp-pdf-root .cp-pdf-general-conditions *{font-size:var(--cp-conditions-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-conditions-align)!important;}.cp-pdf-root .cp-pdf-sign,.cp-pdf-root .cp-pdf-sign *{font-size:var(--cp-sign-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-sign-align)!important;}.cp-pdf-root .cp-pdf-footer-text{font-size:var(--cp-footer-size)!important;text-align:var(--cp-footer-align)!important;}</style>`;
     const now = new Date(); const dateStr = now.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' }); const genDateTime = now.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'medium' }); let docTitle = isOrder ? "ORDEN DE COMPRA" : "COTIZACIÓN"; 
     
     const folioUnificado = o.numero_orden || o.id.split('-')[0].toUpperCase();
     const space = allSpaces.find(s=>s.id==o.espacio_id);
     const descHTML = isOrder ? '' : `<p class="text-[9px] text-gray-500 italic mt-0.5 truncate max-w-xs">${space?.descripcion || ''}</p>`;
-    const footerHubHTML = `<div class="w-full text-center mt-10"><p class="text-[10px] text-gray-400 font-medium leading-tight">Generado el ${genDateTime}<br>a través de Marketing Hub</p></div>`; 
+    const footerHubHTML = `<div class="w-full text-center mt-10"><p class="cp-pdf-footer-text text-[10px] text-gray-400 font-medium leading-tight">Generado el ${genDateTime}<br>a través de Marketing Hub</p></div>`; 
     
-    const renderHeader = (title) => `<div class="flex justify-end items-start border-b-4 border-brand-red pb-3 mb-2">${logoImg}<div class="text-right"><h1 class="text-2xl font-black text-gray-800 tracking-tighter uppercase">${title}</h1><p class="text-sm font-mono text-brand-red font-bold mt-1">FOLIO: ${folioUnificado}</p><p class="text-[10px] text-gray-500 mt-1">${dateStr}</p></div></div>`; 
+    const renderHeader = (title) => `<div class="cp-pdf-header flex justify-end items-start border-b-4 border-brand-red pb-3 mb-2">${logoImg}<div class="text-right"><h1 class="cp-pdf-title text-2xl font-black text-gray-800 tracking-tighter uppercase">${title}</h1><p class="cp-pdf-folio text-sm font-mono text-brand-red font-bold mt-1">FOLIO: ${folioUnificado}</p><p class="cp-pdf-date text-[10px] text-gray-500 mt-1">${dateStr}</p></div></div>`; 
     
     let clientName = o.cliente_nombre || 'Cliente'; let clientRfc = o.cliente_rfc; let nameSizeClass = 'text-xl'; if (clientName.length > 35) nameSizeClass = 'text-xs'; else if (clientName.length > 25) nameSizeClass = 'text-sm'; 
     const guests = o.personas || 1;
     const isApprovedQuote = !isOrder && ['aprobada', 'finalizada'].includes(String(o.status || '').toLowerCase());
     const showSensitiveClientData = isOrder || isApprovedQuote || o.show_sensitive_client_data === true;
-    const clientComponent = `<div class="flex flex-row justify-between items-center mb-2 p-2 bg-gray-50 rounded border border-gray-100"><div class="w-1/2 border-r border-gray-200 pr-2"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Cliente / Empresa</p><p class="font-black ${nameSizeClass} text-gray-800 leading-tight">${clientName}</p></div><div class="w-1/2 pl-2"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Contacto / Fiscal</p>${showSensitiveClientData ? `<p class="font-mono text-xs text-gray-700 truncate">${o.cliente_email || 'Sin correo'}</p>${clientRfc ? `<p class="font-mono text-xs text-gray-700 mt-0.5">RFC: <strong>${clientRfc}</strong></p>` : ''}` : `<div class="h-4"></div><div class="h-4 mt-0.5"></div>`}<p class="font-mono text-xs text-brand-red font-bold mt-1">Personas: ${guests}</p></div></div>`; 
+    const clientComponent = `<div class="cp-pdf-summary flex flex-row justify-between items-center mb-2 p-2 bg-gray-50 rounded border border-gray-100"><div class="w-1/2 border-r border-gray-200 pr-2"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Cliente / Empresa</p><p class="font-black ${nameSizeClass} text-gray-800 leading-tight">${clientName}</p></div><div class="w-1/2 pl-2"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Contacto / Fiscal</p>${showSensitiveClientData ? `<p class="font-mono text-xs text-gray-700 truncate">${o.cliente_email || 'Sin correo'}</p>${clientRfc ? `<p class="font-mono text-xs text-gray-700 mt-0.5">RFC: <strong>${clientRfc}</strong></p>` : ''}` : `<div class="h-4"></div><div class="h-4 mt-0.5"></div>`}<p class="font-mono text-xs text-brand-red font-bold mt-1">Personas: ${guests}</p></div></div>`; 
     
     const __orderEscapeHtml = (v) => String(v || '')
         .replace(/&/g, '&amp;')
@@ -1572,7 +1984,7 @@ window.getOrderHTML = function(o, type) {
     }); 
     
     if(o.tipo_ajuste && o.tipo_ajuste !== 'ninguno') { let val = parseFloat(o.valor_ajuste); let displayAmount = val; if (o.ajuste_es_porcentaje) { displayAmount = runningSubtotal * (val / 100); } const sign = o.tipo_ajuste === 'descuento' ? '-' : '+'; if(o.tipo_ajuste==='descuento') runningSubtotal -= displayAmount; else runningSubtotal += displayAmount; rowsHtml += `<tr class="bg-gray-50"><td class="py-2 px-3 italic text-[12px] text-gray-500">Ajuste Global</td><td></td><td class="py-2 px-3 text-right font-bold text-[12px] text-gray-600">${sign} ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(displayAmount)}</td></tr>`; } 
-    let taxRows = ''; let taxIds = []; if (o.desglose_precios && o.desglose_precios.impuestos_detalle) taxIds = o.desglose_precios.impuestos_detalle; else { const s = allSpaces.find(sp => sp.id === o.espacio_id); taxIds = s ? parseIds(s.impuestos_ids || s.impuestos) : []; } taxRows += `<tr><td class="py-1 px-3 text-[10px] font-bold text-gray-500 text-right" colspan="2">Subtotal</td><td class="py-1 px-3 text-right text-xs font-bold text-gray-800">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(runningSubtotal)}</td></tr>`; if (taxIds.length > 0 && dbTaxes.length > 0) { taxIds.forEach(tid => { const t = dbTaxes.find(x => x.id == tid); if(t) { const rate = t.porcentaje > 1 ? t.porcentaje/100 : t.porcentaje; const val = runningSubtotal * rate; taxRows += `<tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="2">${t.nombre} (${t.porcentaje}%)</td><td class="py-1 px-3 text-right text-xs text-red-500 font-bold">+ ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(val)}</td></tr>`; } }); } const totalsBlock = `<div class="flex justify-end mb-2 pr-4"><div class="w-64"><table class="w-full border-collapse">${taxRows}<tr><td class="pt-2 border-t-2 border-gray-800 align-middle text-right" colspan="2"><span class="text-[10px] font-bold uppercase text-gray-500 mr-2">Total Neto</span></td><td class="pt-2 border-t-2 border-gray-800 align-middle text-right"><span class="text-xl font-black text-gray-900">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(o.precio_final)}</span></td></tr></table></div></div>`; 
+    let taxRows = ''; let taxIds = []; if (o.desglose_precios && o.desglose_precios.impuestos_detalle) taxIds = o.desglose_precios.impuestos_detalle; else { const s = allSpaces.find(sp => sp.id === o.espacio_id); taxIds = s ? parseIds(s.impuestos_ids || s.impuestos) : []; } taxRows += `<tr><td class="py-1 px-3 text-[10px] font-bold text-gray-500 text-right" colspan="2">Subtotal</td><td class="py-1 px-3 text-right text-xs font-bold text-gray-800">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(runningSubtotal)}</td></tr>`; if (taxIds.length > 0 && dbTaxes.length > 0) { taxIds.forEach(tid => { const t = dbTaxes.find(x => x.id == tid); if(t) { const rate = t.porcentaje > 1 ? t.porcentaje/100 : t.porcentaje; const val = runningSubtotal * rate; taxRows += `<tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="2">${t.nombre} (${t.porcentaje}%)</td><td class="py-1 px-3 text-right text-xs text-red-500 font-bold">+ ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(val)}</td></tr>`; } }); } const totalsBlock = `<div class="cp-pdf-summary flex justify-end mb-2 pr-4"><div class="w-64"><table class="w-full border-collapse">${taxRows}<tr><td class="pt-2 border-t-2 border-gray-800 align-middle text-right" colspan="2"><span class="text-[10px] font-bold uppercase text-gray-500 mr-2">Total Neto</span></td><td class="pt-2 border-t-2 border-gray-800 align-middle text-right"><span class="text-xl font-black text-gray-900">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(o.precio_final)}</span></td></tr></table></div></div>`; 
     
     let staffName = window.currentUserProfile?.Usernames || window.currentUserProfile?.username || window.currentUserProfile?.full_name || 'Staff';
 
@@ -1584,7 +1996,7 @@ window.getOrderHTML = function(o, type) {
     } 
     
     const quickConditions = !isOrder ? `
-        <div class="grid grid-cols-2 gap-4 mb-20 pt-4 border-t border-gray-100">
+        <div class="cp-pdf-quick grid grid-cols-2 gap-4 mb-20 pt-4 border-t border-gray-100">
             <div>
                 <h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">Notas:</h4>
                 <ul class="list-none text-xs text-gray-600 space-y-0.5 leading-tight">
@@ -1612,16 +2024,16 @@ window.getOrderHTML = function(o, type) {
                         <col style="width: 16%;">
                         <col style="width: 20%;">
                     </colgroup>
-                    <thead class="bg-gray-100 text-sm font-black text-gray-500 uppercase">
+                    <thead class="cp-pdf-table-head bg-gray-100 text-sm font-black text-gray-500 uppercase">
                         <tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">Fecha</th><th class="py-2 px-3 text-right rounded-r">Importe</th></tr>
                     </thead>
-                    <tbody class="divide-y divide-gray-50 text-[12px]">${rowsHtml}</tbody>
+                    <tbody class="cp-pdf-table-body divide-y divide-gray-50 text-[12px]">${rowsHtml}</tbody>
                 </table>
                 ${totalsBlock}
             </div>
             <div class="pb-2">
                 ${quickConditions}
-                <div class="flex justify-between items-start px-2">${signBlock}</div>
+                <div class="cp-pdf-sign flex justify-between items-start px-2">${signBlock}</div>
                 ${footerHubHTML}
             </div>
         </div>`;
@@ -1632,7 +2044,7 @@ window.getOrderHTML = function(o, type) {
         const page2Raw = `
             <div style="height: ${pageBaseHeight}px; min-height: ${pageBaseHeight}px; overflow: hidden; padding: 16px 64px 48px; box-sizing: border-box;">
                 ${renderHeader("CONDICIONES GENERALES")}
-                <div class="text-xs text-gray-800 space-y-3 text-justify leading-relaxed mt-6">
+                <div class="cp-pdf-general-conditions text-xs text-gray-800 space-y-3 text-justify leading-relaxed mt-6">
                     <p><strong>Proveedores autorizados:</strong> Todo proveedor deberá ser aprobado previamente por Casa de Piedra. Se comparte lista autorizada para selección del cliente.</p>
                     <p><strong>Carpas:</strong> Proveedor exclusivo Carpas San Marino (472 595 05 34 / 477 787 85 19).</p>
                     <p><strong>Energía:</strong> Es indispensable contratar generador de energía externo para evitar contratiempos.</p>
@@ -1644,7 +2056,7 @@ window.getOrderHTML = function(o, type) {
             </div>`;
         page2Content = __orderWrapLetterheadPage(__cpOrdersBoostPdfTypography(page2Raw), { baseWidth: __ORDER_PDF_CONTENT_BASE_WIDTH_PX, baseHeight: pageBaseHeight });
     }
-    const raw = `<div style="width:816px;margin:0;padding:0;box-sizing:border-box;background:#ffffff;">${page1Content}${page2Content}</div>`;
+    const raw = `<div class="cp-pdf-root" style="width:816px;margin:0;padding:0;box-sizing:border-box;background:#ffffff;${pdfStyleInlineVars}">${pdfStyleTag}${page1Content}${page2Content}</div>`;
     return __cpOrdersTransparentPdfHtml(raw); 
 };
 
@@ -1798,7 +2210,7 @@ async function __orderLoadPremontajePctConfig() {
     __orderHoraExtraCfg = { mode: 'percent', value: 100, allowCustom: true };
     __CP_LETTERHEAD_URL = (window.HUB_CONFIG && (window.HUB_CONFIG.cpPdfLetterheadUrl || window.HUB_CONFIG.pdfLetterheadCasaPiedraUrl)) || '../public/assets/img/cp-letterhead-default.png';
     try {
-        const { data, error } = await window.finSupabase
+        const { data, error } = await window.tenantPocketBase
             .from('configuracion')
             .select('clave,valor_json,valor_num')
             .in('clave', ['premontaje_pct', 'hora_extra_cfg', __CP_CFG_LETTERHEAD_KEY]);
@@ -1828,7 +2240,7 @@ async function __orderLoadPremontajePctConfig() {
                 const safePath = rawPath || (cfg.file_name ? `${__CP_LETTERHEAD_PATH}/${cfg.file_name}` : '');
                 if (!safePath) continue;
                 const normalizedPath = String(safePath || '');
-                const { data: signed, error: signedError } = await window.globalSupabase.storage.from('documentos-cp').createSignedUrl(normalizedPath, 3600);
+                const { data: signed, error: signedError } = await window.globalPocketBase.storage.from('documentos-cp').createSignedUrl(normalizedPath, 3600);
                 if (!signedError && signed?.signedUrl) {
                     __CP_LETTERHEAD_URL = signed.signedUrl;
                     continue;
@@ -1836,7 +2248,7 @@ async function __orderLoadPremontajePctConfig() {
                 const fallbackName = __orderBasename(normalizedPath);
                 if (!fallbackName) continue;
                 const fallbackPath = `${__CP_LETTERHEAD_PATH}/${fallbackName}`;
-                const { data: fallbackSigned, error: fallbackErr } = await window.globalSupabase.storage.from('documentos-cp').createSignedUrl(fallbackPath, 3600);
+                const { data: fallbackSigned, error: fallbackErr } = await window.globalPocketBase.storage.from('documentos-cp').createSignedUrl(fallbackPath, 3600);
                 if (!fallbackErr && fallbackSigned?.signedUrl) __CP_LETTERHEAD_URL = fallbackSigned.signedUrl;
             }
         }
@@ -3403,5 +3815,7 @@ window.attemptSaveOrder = function() {
 document.addEventListener('DOMContentLoaded', async () => {
     await __orderLoadPremontajePctConfig();
 });
+
+
 
 

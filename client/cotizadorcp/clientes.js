@@ -11,8 +11,8 @@
 /* -------------------------------------------------------------------------
  * 0. CONEXIÓN A BASE DE DATOS (ÚNICO LUGAR A CAMBIAR)
  * ------------------------------------------------------------------------- */
-const SB_URL = (window.HUB_CONFIG && window.HUB_CONFIG.supabaseUrl) || 'http://127.0.0.1:54321';
-const SB_KEY = (window.HUB_CONFIG && window.HUB_CONFIG.supabaseAnonKey) || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0';
+const PB_URL = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseUrl) || 'http://127.0.0.1:8090';
+const PB_KEY = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseAnonKey) || '';
 
 // (Opcional) Esquema finanzas configurable
 const __p = window.location.pathname || '';
@@ -132,7 +132,7 @@ function renderClients(list) {
 
 async function loadClients() {
   try {
-    const { data, error } = await window.finSupabase.from('clientes')
+    const { data, error } = await window.tenantPocketBase.from('clientes')
       .select('id,nombre_completo,telefono,correo,rfc,created_at,updated_at')
       .order('nombre_completo', { ascending: true });
 
@@ -216,7 +216,7 @@ async function confirmDeleteClient(client) {
   if (!ok) return;
 
   try {
-    const { error } = await window.finSupabase.from('clientes').delete().eq('id', client.id);
+    const { error } = await window.tenantPocketBase.from('clientes').delete().eq('id', client.id);
     if (error) throw error;
     window.showToast?.("Cliente eliminado", "success");
     await loadClients();
@@ -229,7 +229,7 @@ async function confirmDeleteClient(client) {
 async function openClientStoredDocument(path) {
   if (!path) return window.showToast?.("Documento no disponible.", "error");
   try {
-    const { data, error } = await window.globalSupabase.storage.from('documentos-cp').createSignedUrl(path, 3600);
+    const { data, error } = await window.globalPocketBase.storage.from('documentos-cp').createSignedUrl(path, 3600);
     if (error || !data?.signedUrl) throw (error || new Error('No se pudo firmar URL'));
     window.open(data.signedUrl, '_blank');
   } catch (e) {
@@ -288,7 +288,7 @@ function createQuoteDocButton(container, label, icon, action, muted=false) {
 async function fetchLatestClientQuoteRow(quoteId) {
   const cols = 'id,numero_orden,nombre_cotizacion,detalles_evento,cliente_id,cliente_nombre,cliente_email,espacio_nombre,fecha_inicio,fecha_fin,precio_final,status,created_at,url_cotizacion_final,url_orden_compra,contrato_url,factura_pdf_url,factura_xml_url,historial_pagos';
   try {
-    const { data, error } = await window.finSupabase.from('cotizaciones').select(cols).eq('id', quoteId).maybeSingle();
+    const { data, error } = await window.tenantPocketBase.from('cotizaciones').select(cols).eq('id', quoteId).maybeSingle();
     if (!error && data) return data;
   } catch (_) {}
   return clientHistoryRows.find(x => x.id === quoteId) || null;
@@ -357,14 +357,14 @@ async function openClientHistory(client) {
   const merged = new Map();
   const mergeRows = (arr=[]) => arr.forEach(r => { if (r?.id) merged.set(r.id, r); });
   try {
-    const qById = await window.finSupabase.from('cotizaciones').select(cols).eq('cliente_id', client.id).order('created_at', { ascending: false }).limit(20);
+    const qById = await window.tenantPocketBase.from('cotizaciones').select(cols).eq('cliente_id', client.id).order('created_at', { ascending: false }).limit(20);
     if (!qById.error) mergeRows(qById.data || []);
     if (client?.correo) {
-      const qByMail = await window.finSupabase.from('cotizaciones').select(cols).eq('cliente_email', client.correo).order('created_at', { ascending: false }).limit(20);
+      const qByMail = await window.tenantPocketBase.from('cotizaciones').select(cols).eq('cliente_email', client.correo).order('created_at', { ascending: false }).limit(20);
       if (!qByMail.error) mergeRows(qByMail.data || []);
     }
     if (client?.nombre_completo) {
-      const qByName = await window.finSupabase.from('cotizaciones').select(cols).eq('cliente_nombre', client.nombre_completo).order('created_at', { ascending: false }).limit(20);
+      const qByName = await window.tenantPocketBase.from('cotizaciones').select(cols).eq('cliente_nombre', client.nombre_completo).order('created_at', { ascending: false }).limit(20);
       if (!qByName.error) mergeRows(qByName.data || []);
     }
     clientHistoryRows = Array.from(merged.values()).sort((a,b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
@@ -409,11 +409,11 @@ async function saveClient() {
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Guardando...'; }
 
     if (id) {
-      const { error } = await window.finSupabase.from('clientes').update(payload).eq('id', id);
+      const { error } = await window.tenantPocketBase.from('clientes').update(payload).eq('id', id);
       if (error) throw error;
       window.showToast?.("Cliente actualizado", "success");
     } else {
-      const { error } = await window.finSupabase.from('clientes').insert(payload);
+      const { error } = await window.tenantPocketBase.from('clientes').insert(payload);
       if (error) throw error;
       window.showToast?.("Cliente creado", "success");
     }
@@ -432,14 +432,14 @@ async function saveClient() {
 document.addEventListener('DOMContentLoaded', async () => {
   if (!window.PB_CLIENT) return;
 
-  if (!window.finSupabase) window.finSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY, { db: { schema: FIN_SCHEMA } });
-  if (!window.globalSupabase) window.globalSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY);
+  if (!window.tenantPocketBase) window.tenantPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY, { db: { schema: FIN_SCHEMA } });
+  if (!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
 
-  const { data: { session } } = await window.globalSupabase.auth.getSession();
+  const { data: { session } } = await window.globalPocketBase.auth.getSession();
   if (!session) return;
 
   // Perfil + permisos (roles tenant o legacy app_metadata)
-const { data: profile } = await window.globalSupabase
+const { data: profile } = await window.globalPocketBase
   .from('profiles')
   .select('role, app_metadata')
   .eq('id', session.user.id)
@@ -498,5 +498,8 @@ if (!canView) { setTimeout(() => window.location.href = 'catalog.html', 800); re
 
   await loadClients();
 });
+
+
+
 
 

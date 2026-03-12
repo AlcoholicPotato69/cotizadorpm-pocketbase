@@ -239,6 +239,161 @@
                     <button id="btn-download-preview" class="bg-brand-red hover:bg-red-600 text-white px-5 py-2 rounded-full text-xs font-bold uppercase shadow-lg transition flex items-center gap-2"><i class="fa-solid fa-download"></i> <span class="hidden sm:inline">Descargar</span></button>
                 </div>
             </div>
+            <div id="pdf-style-editor" class="hidden bg-gray-800 border-t border-gray-700 text-[10px] text-gray-200 shrink-0">
+                <div class="px-3 py-2 flex flex-wrap items-center gap-2 border-b border-gray-700">
+                    <p class="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Editor PDF por Secciones (solo admin, texto bloqueado)</p>
+                    <div class="ml-auto flex items-center gap-2">
+                        <button id="btn-pdf-style-pin" type="button" class="bg-gray-700 hover:bg-gray-600 text-white px-2.5 py-1 rounded text-[10px] font-bold uppercase transition">Fijar</button>
+                        <button id="btn-pdf-style-toggle" type="button" class="bg-gray-700 hover:bg-gray-600 text-white px-2.5 py-1 rounded text-[10px] font-bold uppercase transition">Ocultar</button>
+                        <button id="btn-reset-pdf-style" type="button" class="bg-brand-red/90 hover:bg-brand-red text-white px-2.5 py-1 rounded text-[10px] font-bold uppercase transition">Restablecer</button>
+                    </div>
+                </div>
+                <div id="pdf-style-editor-body" class="px-3 py-3 flex flex-col gap-2">
+                    <div class="bg-gray-900/70 border border-gray-700 rounded-lg p-2 space-y-2">
+                        <p class="text-[10px] font-black uppercase tracking-wider text-gray-300">Global</p>
+                        <div class="flex flex-col gap-1">
+                            <label class="uppercase font-bold text-gray-400">Fuente</label>
+                            <select id="pdf-style-font-family" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[11px] font-bold text-white">
+                                <option value="segoe">Segoe UI</option>
+                                <option value="arial">Arial</option>
+                                <option value="verdana">Verdana</option>
+                                <option value="georgia">Georgia</option>
+                                <option value="times">Times New Roman</option>
+                                <option value="trebuchet">Trebuchet MS</option>
+                            </select>
+                        </div>
+                        <div class="flex flex-col gap-1">
+                            <label class="uppercase font-bold text-gray-400">Altura Texto</label>
+                            <input id="pdf-style-line-height" type="range" min="90" max="180" step="5" class="pdf-style-control accent-brand-red">
+                            <span id="pdf-style-line-height-value" class="font-mono text-[10px] text-gray-300">120%</span>
+                        </div>
+                    </div>
+                    <div class="bg-gray-900/70 border border-gray-700 rounded-lg p-2 space-y-2">
+                        <p class="text-[10px] font-black uppercase tracking-wider text-gray-300">Encabezado</p>
+                        <div class="flex flex-col gap-1">
+                            <label class="uppercase font-bold text-gray-400">Línea Enc.</label>
+                            <input id="pdf-style-header-line" type="range" min="1" max="8" step="1" class="pdf-style-control accent-brand-red">
+                            <span id="pdf-style-header-line-value" class="font-mono text-[10px] text-gray-300">4px</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div class="flex flex-col gap-1">
+                                <label class="uppercase font-bold text-gray-400">Título</label>
+                                <input id="pdf-style-title-size" type="range" min="20" max="42" step="1" class="pdf-style-control accent-brand-red">
+                                <span id="pdf-style-title-size-value" class="font-mono text-[10px] text-gray-300">30px</span>
+                            </div>
+                            <div class="flex flex-col gap-1">
+                                <label class="uppercase font-bold text-gray-400">Meta Enc.</label>
+                                <input id="pdf-style-meta-size" type="range" min="8" max="18" step="1" class="pdf-style-control accent-brand-red">
+                                <span id="pdf-style-meta-size-value" class="font-mono text-[10px] text-gray-300">13px</span>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div class="flex flex-col gap-1">
+                                <label class="uppercase font-bold text-gray-400">Alineación Título</label>
+                                <select id="pdf-style-align-header" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white">
+                                    <option value="left">Izquierda</option>
+                                    <option value="center">Centro</option>
+                                    <option value="right">Derecha</option>
+                                </select>
+                            </div>
+                            <div class="flex flex-col gap-1">
+                                <label class="uppercase font-bold text-gray-400">Alineación Meta</label>
+                                <select id="pdf-style-align-meta" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white">
+                                    <option value="left">Izquierda</option>
+                                    <option value="center">Centro</option>
+                                    <option value="right">Derecha</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-gray-900/70 border border-gray-700 rounded-lg p-2 space-y-2">
+                        <p class="text-[10px] font-black uppercase tracking-wider text-gray-300">Tabla y Resumen</p>
+                        <div class="flex flex-col gap-1">
+                            <label class="uppercase font-bold text-gray-400">Tabla</label>
+                            <input id="pdf-style-table-size" type="range" min="9" max="16" step="1" class="pdf-style-control accent-brand-red">
+                            <span id="pdf-style-table-size-value" class="font-mono text-[10px] text-gray-300">12px</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div class="flex flex-col gap-1">
+                                <label class="uppercase font-bold text-gray-400">Alineación Tabla</label>
+                                <select id="pdf-style-align-table" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white">
+                                    <option value="left">Izquierda</option>
+                                    <option value="center">Centro</option>
+                                    <option value="right">Derecha</option>
+                                </select>
+                            </div>
+                            <div class="flex flex-col gap-1">
+                                <label class="uppercase font-bold text-gray-400">Alineación Resumen</label>
+                                <select id="pdf-style-align-summary" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white">
+                                    <option value="left">Izquierda</option>
+                                    <option value="center">Centro</option>
+                                    <option value="right">Derecha</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-gray-900/70 border border-gray-700 rounded-lg p-2 space-y-2">
+                        <p class="text-[10px] font-black uppercase tracking-wider text-gray-300">Notas y Condiciones</p>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div class="flex flex-col gap-1">
+                                <label class="uppercase font-bold text-gray-400">Notas</label>
+                                <input id="pdf-style-quick-size" type="range" min="9" max="16" step="1" class="pdf-style-control accent-brand-red">
+                                <span id="pdf-style-quick-size-value" class="font-mono text-[10px] text-gray-300">12px</span>
+                            </div>
+                            <div class="flex flex-col gap-1">
+                                <label class="uppercase font-bold text-gray-400">Condiciones</label>
+                                <input id="pdf-style-conditions-size" type="range" min="9" max="18" step="1" class="pdf-style-control accent-brand-red">
+                                <span id="pdf-style-conditions-size-value" class="font-mono text-[10px] text-gray-300">14px</span>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div class="flex flex-col gap-1">
+                                <label class="uppercase font-bold text-gray-400">Alineación Notas</label>
+                                <select id="pdf-style-align-quick" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white">
+                                    <option value="left">Izquierda</option>
+                                    <option value="center">Centro</option>
+                                    <option value="right">Derecha</option>
+                                </select>
+                            </div>
+                            <div class="flex flex-col gap-1">
+                                <label class="uppercase font-bold text-gray-400">Alineación Condiciones</label>
+                                <select id="pdf-style-align-conditions" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white">
+                                    <option value="left">Izquierda</option>
+                                    <option value="center">Centro</option>
+                                    <option value="right">Derecha</option>
+                                    <option value="justify">Justificado</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-gray-900/70 border border-gray-700 rounded-lg p-2 space-y-2">
+                        <p class="text-[10px] font-black uppercase tracking-wider text-gray-300">Firmas y Pie</p>
+                        <div class="flex flex-col gap-1">
+                            <label class="uppercase font-bold text-gray-400">Firmas</label>
+                            <input id="pdf-style-sign-size" type="range" min="9" max="16" step="1" class="pdf-style-control accent-brand-red">
+                            <span id="pdf-style-sign-size-value" class="font-mono text-[10px] text-gray-300">12px</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div class="flex flex-col gap-1">
+                                <label class="uppercase font-bold text-gray-400">Alineación Firmas</label>
+                                <select id="pdf-style-align-sign" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white">
+                                    <option value="left">Izquierda</option>
+                                    <option value="center">Centro</option>
+                                    <option value="right">Derecha</option>
+                                </select>
+                            </div>
+                            <div class="flex flex-col gap-1">
+                                <label class="uppercase font-bold text-gray-400">Alineación Pie</label>
+                                <select id="pdf-style-align-footer" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white">
+                                    <option value="left">Izquierda</option>
+                                    <option value="center">Centro</option>
+                                    <option value="right">Derecha</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
             <div id="preview-container" class="flex-grow bg-gray-200 overflow-y-auto custom-scroll flex justify-center items-start p-8">
                 <div id="pdf-content" class="bg-white shadow-2xl relative text-gray-800 hidden"></div>
                 <embed id="doc-preview" type="application/pdf" class="w-full h-full hidden rounded shadow-lg">

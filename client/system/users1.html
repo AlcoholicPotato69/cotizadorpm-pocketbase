@@ -499,7 +499,7 @@
     }
 
     function getDB(){
-      return activePocketBase || pmPocketBase || window.finSupabase || window.pbClient;
+      return activePocketBase || pmPocketBase || window.tenantPocketBase || window.pbClient;
     }
 
     function getTenantBucket(){
@@ -530,7 +530,7 @@
     async function getSignedStorageUrl(path){
       const cleanPath = String(path || '').trim();
       if (!cleanPath) return null;
-      const { data, error } = await window.globalSupabase.storage.from(getTenantBucket()).createSignedUrl(cleanPath, 3600);
+      const { data, error } = await window.globalPocketBase.storage.from(getTenantBucket()).createSignedUrl(cleanPath, 3600);
       if (error || !data?.signedUrl) return null;
       return data.signedUrl;
     }
@@ -580,7 +580,7 @@
       tplList.innerHTML = '';
       tplSel.innerHTML = '<option value="">-- Seleccionar --</option>';
       const bucket = getTenantBucket();
-      const { data, error } = await window.globalSupabase.storage.from(bucket).list(DOC_TEMPLATE_PATH);
+      const { data, error } = await window.globalPocketBase.storage.from(bucket).list(DOC_TEMPLATE_PATH);
       if (error) {
         tplList.innerHTML = `<div class="text-xs text-red-500 p-2">Error: ${error.message || error}</div>`;
         return;
@@ -612,7 +612,7 @@
       ltrList.innerHTML = '';
       ltrSel.innerHTML = '<option value="">-- Seleccionar --</option>';
       const bucket = getTenantBucket();
-      const { data, error } = await window.globalSupabase.storage.from(bucket).list(DOC_LETTERHEAD_PATH);
+      const { data, error } = await window.globalPocketBase.storage.from(bucket).list(DOC_LETTERHEAD_PATH);
       if (error) {
         ltrList.innerHTML = `<div class="text-xs text-red-500 p-2">Error: ${error.message || error}</div>`;
         return;
@@ -652,7 +652,7 @@
       if (btn) { btn.disabled = true; btn.innerText = "..."; }
       try {
         const bucket = getTenantBucket();
-        const { error } = await window.globalSupabase.storage.from(bucket).upload(path, file);
+        const { error } = await window.globalPocketBase.storage.from(bucket).upload(path, file);
         if (error) throw error;
         _toast("Plantilla subida", "success");
         if (nameInput) nameInput.value = '';
@@ -680,7 +680,7 @@
       if (btn) { btn.disabled = true; btn.innerText = "..."; }
       try {
         const bucket = getTenantBucket();
-        const { error } = await window.globalSupabase.storage.from(bucket).upload(path, file);
+        const { error } = await window.globalPocketBase.storage.from(bucket).upload(path, file);
         if (error) throw error;
         _toast("Membrete subido", "success");
         if (nameInput) nameInput.value = '';
@@ -739,7 +739,7 @@
       const path = decodeURIComponent(String(encodedPath || ''));
       if (!path) return;
       if (!confirm("¿Eliminar esta plantilla?")) return;
-      const { error } = await window.globalSupabase.storage.from(getTenantBucket()).remove([path]);
+      const { error } = await window.globalPocketBase.storage.from(getTenantBucket()).remove([path]);
       if (error) return _toast("Error al eliminar: " + error.message, "error");
       _toast("Plantilla eliminada", "success");
       await loadDocsConfig();
@@ -750,7 +750,7 @@
       const path = decodeURIComponent(String(encodedPath || ''));
       if (!path) return;
       if (!confirm("¿Eliminar este membrete?")) return;
-      const { error } = await window.globalSupabase.storage.from(getTenantBucket()).remove([path]);
+      const { error } = await window.globalPocketBase.storage.from(getTenantBucket()).remove([path]);
       if (error) return _toast("Error al eliminar: " + error.message, "error");
       _toast("Membrete eliminado", "success");
       await loadDocsConfig();
@@ -901,7 +901,7 @@
     };
 
     async function requireAdmin(){
-      const sb = window.pbClient || window.globalSupabase || window.finSupabase;
+      const sb = window.pbClient || window.globalPocketBase || window.tenantPocketBase;
       if (!sb) return false;
 
       const { data: { session } } = await sb.auth.getSession();
@@ -1224,16 +1224,16 @@
       }
 
       // 2) Tenants (mismo JWT, diferente schema)
-      if (!window.globalSupabase) {
-        // layout.js debe crear window.globalSupabase; si no, fallback:
+      if (!window.globalPocketBase) {
+        // layout.js debe crear window.globalPocketBase; si no, fallback:
         if (window.PB_CLIENT && window.HUB_CONFIG) {
-          window.globalSupabase = window.PB_CLIENT.createClient(window.HUB_CONFIG.supabaseUrl, window.HUB_CONFIG.supabaseAnonKey);
+          window.globalPocketBase = window.PB_CLIENT.createClient(window.HUB_CONFIG.pocketbaseUrl, window.HUB_CONFIG.pocketbaseAnonKey);
         }
       }
 
-      const root = window.globalSupabase || window.pbClient;
+      const root = window.globalPocketBase || window.pbClient;
       if (!root) {
-        _toast("No se pudo inicializar PocketBase (globalSupabase). Revisa hub-config.js + layout.js.", "error");
+        _toast("No se pudo inicializar PocketBase (globalPocketBase). Revisa hub-config.js + layout.js.", "error");
         return;
       }
 
@@ -1254,6 +1254,7 @@
 
 </body>
 </html>
+
 
 
 

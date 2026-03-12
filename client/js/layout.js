@@ -17,8 +17,8 @@
     /* -------------------------------------------------------------------------
      * CONEXIÓN A POCKETBASE (LEÍDA DE HUB_CONFIG)
      * ------------------------------------------------------------------------- */
-    const LAYOUT_URL = (window.HUB_CONFIG && window.HUB_CONFIG.supabaseUrl) || 'http://127.0.0.1:54321';
-    const LAYOUT_KEY = (window.HUB_CONFIG && window.HUB_CONFIG.supabaseAnonKey) || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0';
+    const LAYOUT_URL = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseUrl) || 'http://127.0.0.1:8090';
+    const LAYOUT_KEY = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseAnonKey) || '';
     const FIN_SCHEMA = (window.HUB_CONFIG && window.HUB_CONFIG.finanzasSchema) || 'finanzas';
     const IS_LOCAL = !!(window.HUB_CONFIG && window.HUB_CONFIG.localMode);
     
@@ -54,15 +54,15 @@
 
     // 1. INICIALIZACIÓN SINGLETON
     if (window.PB_CLIENT) {
-        if (!window.globalSupabase) {
-            window.globalSupabase = window.PB_CLIENT.createClient(LAYOUT_URL, LAYOUT_KEY);
+        if (!window.globalPocketBase) {
+            window.globalPocketBase = window.PB_CLIENT.createClient(LAYOUT_URL, LAYOUT_KEY);
         }
-        layoutClient = window.globalSupabase;
-        window.pbClient = window.globalSupabase;
+        layoutClient = window.globalPocketBase;
+        window.pbClient = window.globalPocketBase;
         
-        if (!window.finSupabase) {
-            // finSupabase debe reutilizar la sesión del cliente global (evita requests sin JWT y RLS devolviendo vacío)
-            window.finSupabase = window.globalSupabase.schema((typeof TENANT_SCHEMA !== 'undefined' ? TENANT_SCHEMA : FIN_SCHEMA));
+        if (!window.tenantPocketBase) {
+            // tenantPocketBase debe reutilizar la sesión del cliente global (evita requests sin JWT y RLS devolviendo vacío)
+            window.tenantPocketBase = window.globalPocketBase.schema((typeof TENANT_SCHEMA !== 'undefined' ? TENANT_SCHEMA : FIN_SCHEMA));
             window.__FIN_SCHEMA = (typeof TENANT_SCHEMA !== 'undefined' ? TENANT_SCHEMA : FIN_SCHEMA);
         }
     } else {
@@ -398,4 +398,6 @@
         if (drop && !drop.contains(e.target) && !e.target.closest('button[onclick*="toggleNotif"]')) { drop.classList.add('hidden'); }
     });
 })();
+
+
 

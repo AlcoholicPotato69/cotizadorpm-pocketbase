@@ -12,9 +12,9 @@ window.tempMontajeDates = [];
 window.currentMontajePrefix = 'q';
 
 async function loadClientProfilesForQuoteModal() {
-    const sel = document.getElementById('cli-select'); const hid = document.getElementById('cli-id'); if (!sel || !window.finSupabase) return;
+    const sel = document.getElementById('cli-select'); const hid = document.getElementById('cli-id'); if (!sel || !window.tenantPocketBase) return;
     try {
-        const { data, error } = await window.finSupabase.from('clientes').select('id,nombre_completo,telefono,correo,rfc').order('nombre_completo', { ascending: true });
+        const { data, error } = await window.tenantPocketBase.from('clientes').select('id,nombre_completo,telefono,correo,rfc').order('nombre_completo', { ascending: true });
         if (error) throw error; clientProfiles = data || []; clientProfilesById = {}; clientProfiles.forEach(c => clientProfilesById[c.id] = c);
         sel.innerHTML = '<option value="">— Capturar manualmente —</option>' + clientProfiles.map(c => `<option value="${c.id}">${(c.nombre_completo || '').toUpperCase()}</option>`).join('');
         sel.onchange = () => { const id = sel.value; if (!id) { if (hid) hid.value = ''; return; } const c = clientProfilesById[id]; if (!c) return; if (hid) hid.value = id; const n = document.getElementById('cli-name'); const p = document.getElementById('cli-phone'); const e = document.getElementById('cli-email'); const r = document.getElementById('cli-rfc'); if (n) n.value = c.nombre_completo || ''; if (p) p.value = (c.telefono || ''); if (e) e.value = (c.correo || ''); if (r) r.value = (c.rfc || ''); };
@@ -22,8 +22,8 @@ async function loadClientProfilesForQuoteModal() {
     } catch (e) { console.warn("No se pudo cargar clientes", e); }
 }
 
-const SB_URL = window.HUB_CONFIG?.supabaseUrl || window.ENV?.SUPABASE_URL || '';
-const SB_KEY = window.HUB_CONFIG?.supabaseAnonKey || window.ENV?.SUPABASE_ANON_KEY || '';
+const PB_URL = window.HUB_CONFIG?.pocketbaseUrl || window.ENV?.POCKETBASE_URL || '';
+const PB_KEY = window.HUB_CONFIG?.pocketbaseAnonKey || window.ENV?.POCKETBASE_ANON_KEY || '';
 const __cpPath = window.location.pathname || '';
 const __cpIsCP = /\/cotizadorcp(\/|$)/.test(__cpPath) || (window.location.href || '').includes('cotizadorcp');
 const FIN_SCHEMA = __cpIsCP ? 'finanzas_casadepiedra' : (window.HUB_CONFIG?.finanzasSchema || window.ENV?.SCHEMA_CASA_PIEDRA || 'finanzas');
@@ -74,7 +74,7 @@ async function loadPremontajePctConfig() {
     __cpPremontajePct = 25;
     __cpHoraExtraCfg = { mode: 'percent', value: 100, allowCustom: true };
     try {
-        const { data, error } = await window.finSupabase
+        const { data, error } = await window.tenantPocketBase
             .from('configuracion')
             .select('clave,valor_json,valor_num')
             .in('clave', ['premontaje_pct', 'hora_extra_cfg']);
@@ -140,9 +140,9 @@ window.addEventListener('click', function(e) {
 });
 
 document.addEventListener('DOMContentLoaded', async () => {
-    if (window.PB_CLIENT) { if(!window.finSupabase) window.finSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY, { db: { schema: FIN_SCHEMA } }); if(!window.globalSupabase) window.globalSupabase = window.PB_CLIENT.createClient(SB_URL, SB_KEY); }
-    const { data: { session } } = await window.globalSupabase.auth.getSession(); if (!session) return;
-    const { data: profile } = await window.globalSupabase.from('profiles').select('*').eq('id', session.user.id).single();
+    if (window.PB_CLIENT) { if(!window.tenantPocketBase) window.tenantPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY, { db: { schema: FIN_SCHEMA } }); if(!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY); }
+    const { data: { session } } = await window.globalPocketBase.auth.getSession(); if (!session) return;
+    const { data: profile } = await window.globalPocketBase.from('profiles').select('*').eq('id', session.user.id).single();
     const userRole = String(profile?.role || '').toLowerCase().trim(); const roleHasAccess = (userRole === 'admin') || (userRole === 'casa_de_piedra') || (userRole === 'ambos');
     if (userRole === 'admin') myPermissions = { access: true, catalog_manage: true }; else if (roleHasAccess) myPermissions = { access: true, catalog_manage: false }; else myPermissions = profile.app_metadata?.finanzas?.permissions || { access: false };
     if (!myPermissions.access) return window.showToast?.('No tienes permisos.', 'error');
@@ -160,15 +160,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     loadCatalog();
     if (IS_QUOTE_PAGE) {
-        const { data } = await window.finSupabase.from('conceptos_catalogo').select('*').eq('activo', true);
+        const { data } = await window.tenantPocketBase.from('conceptos_catalogo').select('*').eq('activo', true);
         catalogConcepts = data || [];
         const preselect = new URLSearchParams(window.location.search || '').get('space');
         if (preselect) setTimeout(() => window.openQuoteModal(isNaN(Number(preselect)) ? preselect : Number(preselect)), 150);
     }
 });
 
-async function loadTaxes() { const { data } = await window.finSupabase.from('impuestos').select('*'); dbTaxes = data || []; }
-async function loadCatalog() { const { data } = await window.finSupabase.from('espacios').select('*').order('id'); allSpaces = data||[]; renderSpaces(allSpaces); }
+async function loadTaxes() { const { data } = await window.tenantPocketBase.from('impuestos').select('*'); dbTaxes = data || []; }
+async function loadCatalog() { const { data } = await window.tenantPocketBase.from('espacios').select('*').order('id'); allSpaces = data||[]; renderSpaces(allSpaces); }
 
 function renderSpaces(list) {
     const g = document.getElementById('spaces-grid');
@@ -292,7 +292,7 @@ window.saveSpace = async function(){
 
         const fileInput = document.getElementById('mgr-file'); let imgUrl = null;
         if(id) { const existing = allSpaces.find(s => s.id == id); imgUrl = existing ? existing.imagen_url : null; }
-        if(fileInput.files && fileInput.files.length > 0) { const file = fileInput.files[0]; const fileExt = file.name.split('.').pop(); const filePath = `espacios/${Date.now()}.${fileExt}`; const { error } = await window.globalSupabase.storage.from('Espacios').upload(filePath, file); if(error) throw error; imgUrl = window.globalSupabase.storage.from('Espacios').getPublicUrl(filePath).data.publicUrl; }
+        if(fileInput.files && fileInput.files.length > 0) { const file = fileInput.files[0]; const fileExt = file.name.split('.').pop(); const filePath = `espacios/${Date.now()}.${fileExt}`; const { error } = await window.globalPocketBase.storage.from('Espacios').upload(filePath, file); if(error) throw error; imgUrl = window.globalPocketBase.storage.from('Espacios').getPublicUrl(filePath).data.publicUrl; }
 
         const payload = { 
             clave: document.getElementById('mgr-key').value.toUpperCase().trim(), nombre: document.getElementById('mgr-name').value, tipo: document.getElementById('mgr-type').value, descripcion: document.getElementById('mgr-desc').value, precio_base: maxPriceFound, 
@@ -300,7 +300,7 @@ window.saveSpace = async function(){
             ajuste_tipo: document.getElementById('mgr-adj-type').value, ajuste_porcentaje: parseFloat(document.getElementById('mgr-adj-pct').value) || 0, activa: document.getElementById('mgr-active').checked, impuestos_ids: selectedTaxes, imagen_url: imgUrl 
         }; 
 
-        if(id) { const { error: updErr } = await window.finSupabase.from('espacios').update(payload).eq('id', id); if(updErr) throw updErr; } else { const { error: insErr } = await window.finSupabase.from('espacios').insert(payload); if(insErr) throw insErr; } 
+        if(id) { const { error: updErr } = await window.tenantPocketBase.from('espacios').update(payload).eq('id', id); if(updErr) throw updErr; } else { const { error: insErr } = await window.tenantPocketBase.from('espacios').insert(payload); if(insErr) throw insErr; } 
         window.showToast("Guardado", "success"); window.closeModal('manager-modal'); loadCatalog(); fileInput.value = '';
 
     } catch(e) { console.error("Error al guardar:", e); window.showToast("Error: Verifica la consola", "error"); } finally { btn.disabled = false; btn.innerText = "Guardar"; }
@@ -463,16 +463,16 @@ window.generatePDF = async function() {
     if(hrsE > 0) conceptosB2B.push({ description: `Horas Extras (${hrsE} hrs)`, amount: (hrsE * pHora), value: (hrsE * pHora), unit: 'fixed', type: 'b2b_horas', meta: { hours: hrsE, unit_price: pHora } });
     adminSelectedConcepts.forEach(c => conceptosB2B.push(c));
 
-    const payload = { cliente_id: (document.getElementById('cli-id') ? (document.getElementById('cli-id').value || null) : null), espacio_id: currentSpace.id, espacio_nombre: currentSpace.nombre, espacio_clave: currentSpace.clave, cliente_nombre: cli.name, cliente_rfc: cli.rfc, cliente_contacto: cli.phone, cliente_email: cli.email, fecha_inicio: document.getElementById('date-start').value, fecha_fin: document.getElementById('date-end').value, precio_final: currentPricing.final, desglose_precios: { subtotal_antes_impuestos: currentPricing.subtotal, impuestos_detalle: parseIds(currentSpace.impuestos_ids || currentSpace.impuestos), tax_total: currentPricing.taxes }, conceptos_adicionales: conceptosB2B, status: 'pendiente', creado_por: (await window.globalSupabase.auth.getUser()).data.user.id, personas: guests };
+    const payload = { cliente_id: (document.getElementById('cli-id') ? (document.getElementById('cli-id').value || null) : null), espacio_id: currentSpace.id, espacio_nombre: currentSpace.nombre, espacio_clave: currentSpace.clave, cliente_nombre: cli.name, cliente_rfc: cli.rfc, cliente_contacto: cli.phone, cliente_email: cli.email, fecha_inicio: document.getElementById('date-start').value, fecha_fin: document.getElementById('date-end').value, precio_final: currentPricing.final, desglose_precios: { subtotal_antes_impuestos: currentPricing.subtotal, impuestos_detalle: parseIds(currentSpace.impuestos_ids || currentSpace.impuestos), tax_total: currentPricing.taxes }, conceptos_adicionales: conceptosB2B, status: 'pendiente', creado_por: (await window.globalPocketBase.auth.getUser()).data.user.id, personas: guests };
     
-    await window.finSupabase.from('cotizaciones').insert(payload);
+    await window.tenantPocketBase.from('cotizaciones').insert(payload);
     window.showToast("Cotización Creada"); setTimeout(()=>window.location.href='orders.html', 1000); 
 }
 
 window.filterCatalogLogic = function() { const term = document.getElementById('cat-search').value.toLowerCase(); const type = document.getElementById('cat-filter-type').value; const sort = document.getElementById('cat-sort').value; let filtered = allSpaces.filter(s => (s.nombre.toLowerCase().includes(term) || s.clave.toLowerCase().includes(term)) && (type === 'all' || s.tipo === type)); if (sort === 'price_asc') filtered.sort((a,b) => a.precio_base - b.precio_base); if (sort === 'price_desc') filtered.sort((a,b) => b.precio_base - a.precio_base); renderSpaces(filtered); }
 window.previewImage = function(i){ const p = document.getElementById('mgr-preview'); if(i.files[0]){ const r=new FileReader(); r.onload=e=>{ p.src=e.target.result; p.classList.remove('hidden'); }; r.readAsDataURL(i.files[0]); } }
-window.checkAvailability = async function() { const s=document.getElementById('date-start').value, e=document.getElementById('date-end').value; if(!s||!e)return; const {data} = await window.finSupabase.from('cotizaciones').select('id').eq('espacio_id',currentSpace.id).in('status',['aprobada','finalizada']).or(`and(fecha_inicio.lte.${e},fecha_fin.gte.${s})`); const msg=document.getElementById('avail-msg'); msg.classList.remove('hidden'); if(data.length){ msg.innerText='OCUPADO'; msg.className='text-red-500 font-bold text-center'; document.getElementById('btn-generate').disabled=true; }else{ msg.innerText='DISPONIBLE'; msg.className='text-green-600 font-bold text-center'; document.getElementById('btn-generate').disabled=false; } }
-window.askDeleteSpace = async function(){ window.openConfirm("¿Eliminar espacio?", async () => { await window.finSupabase.from('espacios').delete().eq('id', document.getElementById('mgr-id').value); window.showToast("Eliminado"); window.closeModal('manager-modal'); loadCatalog(); }); }
+window.checkAvailability = async function() { const s=document.getElementById('date-start').value, e=document.getElementById('date-end').value; if(!s||!e)return; const {data} = await window.tenantPocketBase.from('cotizaciones').select('id').eq('espacio_id',currentSpace.id).in('status',['aprobada','finalizada']).or(`and(fecha_inicio.lte.${e},fecha_fin.gte.${s})`); const msg=document.getElementById('avail-msg'); msg.classList.remove('hidden'); if(data.length){ msg.innerText='OCUPADO'; msg.className='text-red-500 font-bold text-center'; document.getElementById('btn-generate').disabled=true; }else{ msg.innerText='DISPONIBLE'; msg.className='text-green-600 font-bold text-center'; document.getElementById('btn-generate').disabled=false; } }
+window.askDeleteSpace = async function(){ window.openConfirm("¿Eliminar espacio?", async () => { await window.tenantPocketBase.from('espacios').delete().eq('id', document.getElementById('mgr-id').value); window.showToast("Eliminado"); window.closeModal('manager-modal'); loadCatalog(); }); }
 
 // =========================================================================
 // EXTENSIÓN 2026: MULTI-ESPACIO + PREMONTAJE 25% DÍA BASE + BLOQUEO CRUZADO
@@ -983,9 +983,9 @@ async function __cpGetReservations(force = false){
     const now = Date.now();
     if(!force && __cpReservationsCache && (now - __cpReservationsAt <= __CP_RESERVATION_CACHE_MS)) return __cpReservationsCache;
     let rows = [];
-    let query = await window.finSupabase.from('cotizaciones').select('id,status,espacio_id,fecha_inicio,fecha_fin,conceptos_adicionales,espacios_detalle').in('status', __CP_RESERVATION_STATUSES);
+    let query = await window.tenantPocketBase.from('cotizaciones').select('id,status,espacio_id,fecha_inicio,fecha_fin,conceptos_adicionales,espacios_detalle').in('status', __CP_RESERVATION_STATUSES);
     if(query.error){
-        const fallback = await window.finSupabase.from('cotizaciones').select('id,status,espacio_id,fecha_inicio,fecha_fin,conceptos_adicionales').in('status', __CP_RESERVATION_STATUSES);
+        const fallback = await window.tenantPocketBase.from('cotizaciones').select('id,status,espacio_id,fecha_inicio,fecha_fin,conceptos_adicionales').in('status', __CP_RESERVATION_STATUSES);
         if(!fallback.error) rows = fallback.data || [];
     } else {
         rows = query.data || [];
@@ -1588,8 +1588,8 @@ window.generatePDF = async function(){
     const maxEnd = endDates[endDates.length - 1] || '';
     const maxGuests = Math.max(...spaces.map(s => parseInt(s.guests, 10) || 0), 0);
     const taxIdsUnion = Array.from(new Set(spaces.flatMap(s => s.taxIds || []).map(x => String(x))));
-    const payload = { cliente_id: (document.getElementById('cli-id') ? (document.getElementById('cli-id').value || null) : null), nombre_cotizacion: quoteName, espacio_id: first.spaceId, espacio_nombre: spaces.length === 1 ? first.spaceName : `${first.spaceName} + ${spaces.length - 1} espacio(s)`, espacio_clave: spaces.length === 1 ? first.spaceKey : 'MULTI', cliente_nombre: cli.name, cliente_rfc: cli.rfc, cliente_contacto: cli.phone, cliente_email: cli.email, fecha_inicio: minStart, fecha_fin: maxEnd, precio_final: currentPricing.final, desglose_precios: { subtotal_antes_impuestos: currentPricing.subtotal, impuestos_detalle: taxIdsUnion, tax_total: currentPricing.taxes, espacios: espaciosDetalle }, detalles_evento: { multi_espacio: spaces.length > 1, total_espacios: spaces.length, nombre_cotizacion: quoteName }, espacios_detalle: espaciosDetalle, conceptos_adicionales: conceptosB2B, status: 'pendiente', creado_por: (await window.globalSupabase.auth.getUser()).data.user.id, personas: maxGuests || 1 };
-    const { error } = await window.finSupabase.from('cotizaciones').insert(payload);
+    const payload = { cliente_id: (document.getElementById('cli-id') ? (document.getElementById('cli-id').value || null) : null), nombre_cotizacion: quoteName, espacio_id: first.spaceId, espacio_nombre: spaces.length === 1 ? first.spaceName : `${first.spaceName} + ${spaces.length - 1} espacio(s)`, espacio_clave: spaces.length === 1 ? first.spaceKey : 'MULTI', cliente_nombre: cli.name, cliente_rfc: cli.rfc, cliente_contacto: cli.phone, cliente_email: cli.email, fecha_inicio: minStart, fecha_fin: maxEnd, precio_final: currentPricing.final, desglose_precios: { subtotal_antes_impuestos: currentPricing.subtotal, impuestos_detalle: taxIdsUnion, tax_total: currentPricing.taxes, espacios: espaciosDetalle }, detalles_evento: { multi_espacio: spaces.length > 1, total_espacios: spaces.length, nombre_cotizacion: quoteName }, espacios_detalle: espaciosDetalle, conceptos_adicionales: conceptosB2B, status: 'pendiente', creado_por: (await window.globalPocketBase.auth.getUser()).data.user.id, personas: maxGuests || 1 };
+    const { error } = await window.tenantPocketBase.from('cotizaciones').insert(payload);
     if(error){
         console.error(error);
         if (String(error.message || '').toLowerCase().includes('espacios_detalle')) {
@@ -1601,5 +1601,7 @@ window.generatePDF = async function(){
     window.showToast("Cotización Creada");
     setTimeout(()=>window.location.href='orders.html', 1000);
 }
+
+
 
 

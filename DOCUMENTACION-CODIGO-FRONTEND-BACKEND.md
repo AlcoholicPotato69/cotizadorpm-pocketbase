@@ -275,33 +275,137 @@ Para permitir backup en caliente:
 ## 13. Cambio rapido de IP/backend (produccion)
 
 Se unifico la URL base del backend en `client/js/hub-config.js` con prioridad:
-1. Query param `?backend=http://IP:8090`
+1. Query param `?backend=https://TU_DOMINIO`
 2. `localStorage.HUB_BACKEND_URL`
-3. `window.__HUB_BACKEND_URL`
-4. Fallback local `http://127.0.0.1:8090`
+3. `window.__HUB_BACKEND_URL` / `window.__BACKEND_URL`
+4. Archivo central `client/config/hub-runtime.json` (`BACKEND_URL` o `POCKETBASE_URL`)
+5. `window.ENV.POCKETBASE_URL` / `window.ENV.BACKEND_URL`
+6. Fallback automatico:
+   - local: `http://127.0.0.1:8090`
+   - produccion: `window.location.origin`
 
 Helpers disponibles en consola del navegador:
 
 ```js
-window.setHubBackendUrl('http://TU_IP_O_DOMINIO:8090'); // guarda y recarga
+window.setHubBackendUrl('https://TU_DOMINIO'); // guarda y recarga
 window.clearHubBackendUrl(); // limpia override y recarga
 window.getHubBackendUrl(); // inspecciona URL activa
 ```
 
+Archivo recomendado `client/config/hub-runtime.json`:
+
+```json
+{
+  "BACKEND_URL": "https://TU_DOMINIO",
+  "POCKETBASE_ANON_KEY": "TU_ANON_KEY",
+  "FINANZAS_SCHEMA": "finanzas",
+  "LOCAL_MODE": false,
+  "COMPANY_LOGO_URL": "",
+  "COMPANY_LOGO_URL_CP": "",
+  "PM_PDF_LETTERHEAD_URL": "",
+  "CP_PDF_LETTERHEAD_URL": "",
+  "CP_CALENDAR_ICS_URL": "/api/cotizador/cp-calendar-ics",
+  "CP_CALENDAR_ICS_TOKEN": "TOKEN_SEGURO"
+}
+```
+
+Notas:
+- `BACKEND_URL`: URL base de PocketBase.
+- `POCKETBASE_ANON_KEY`: key usada por el runtime frontend para autenticar llamadas.
+- `FINANZAS_SCHEMA`: schema base para Plaza Mayor (`finanzas`).
+- `LOCAL_MODE`: `false` en produccion para no forzar modo local.
+- Logos y membretes: si lo dejas vacio, usa defaults del proyecto o configuracion en BD.
+
 Impacto:
-- `HUB_CONFIG.supabaseUrl`
+- `HUB_CONFIG.pocketbaseUrl`
 - `HUB_CONFIG.pocketbaseUrl`
 - `HUB_CONFIG.cpCalendarIcsUrl`
 
 ---
 
-## 14. Ajuste de PDFs con membrete (2026-03-12)
+## 14. ICS calendario CP (configuracion y datos) (2026-03-12)
+
+El feed ICS oficial del sistema es:
+- `GET /api/cotizador/cp-calendar-ics`
+
+Configuracion del feed en `hub-config.js`:
+- URL con prioridad:
+  1. `?ics=...`
+  2. `localStorage.HUB_CP_CALENDAR_ICS_URL`
+  3. `window.__CP_CALENDAR_ICS_URL`
+  4. `client/config/hub-runtime.json` -> `CP_CALENDAR_ICS_URL`
+  5. fallback automatico: `{backend}/api/cotizador/cp-calendar-ics`
+- Token con prioridad:
+  1. `?icsToken=...`
+  2. `localStorage.HUB_CP_CALENDAR_ICS_TOKEN`
+  3. `window.__CP_CALENDAR_ICS_TOKEN`
+  4. `client/config/hub-runtime.json` -> `CP_CALENDAR_ICS_TOKEN`
+  5. `window.ENV.CP_CALENDAR_ICS_TOKEN`
+
+Archivo recomendado para produccion:
+
+```json
+{
+  "BACKEND_URL": "https://TU_DOMINIO",
+  "CP_CALENDAR_ICS_URL": "/api/cotizador/cp-calendar-ics",
+  "CP_CALENDAR_ICS_TOKEN": "TOKEN_SEGURO"
+}
+```
+
+Helpers de consola:
+
+```js
+window.getCpCalendarIcsUrl();
+window.setCpCalendarIcsConfig({ url: 'https://TU_DOMINIO/api/cotizador/cp-calendar-ics', token: 'TOKEN' });
+window.clearCpCalendarIcsConfig();
+```
+
+Checklist de produccion (lo que debes cambiar):
+1. Backend publico correcto:
+   - Asegura que `https://TU_DOMINIO/api/cotizador/cp-calendar-ics` responda desde PocketBase.
+2. Token en backend:
+   - Define variable de entorno `CP_CALENDAR_ICS_TOKEN` en el servidor.
+   - Reinicia PocketBase despues de cambiarla.
+3. Limpia overrides locales (si hiciste pruebas antes):
+   - `window.clearHubBackendUrl({ reload: false })`
+   - `window.clearCpCalendarIcsConfig({ reload: false })`
+4. Front apuntando al backend real:
+   - En navegador: `window.setHubBackendUrl('https://TU_DOMINIO')`
+5. Token del front igual al backend:
+   - En navegador: `window.setCpCalendarIcsConfig({ token: 'MISMO_TOKEN_DEL_BACKEND' })`
+6. Verificacion final:
+   - `window.getCpCalendarIcsUrl()` debe devolver la URL final con `token=...`
+   - Abrir esa URL en navegador debe mostrar texto ICS con `BEGIN:VCALENDAR`.
+
+Campos que alimentan los eventos ICS:
+- Solo toma cotizaciones CP con `status` en `aprobada` o `finalizada`.
+- Fechas de evento:
+  - `fecha_inicio` / `fecha_fin` o `espacios_detalle[].fecha_inicio/fecha_fin` (multi-espacio).
+- Premontajes:
+  - `espacios_detalle[].premontaje_fechas`
+  - `conceptos_adicionales[].meta.dates` cuando `type = b2b_montaje`.
+- Texto visible en calendario externo:
+  - `numero_orden`, `cliente_nombre`, `nombre_cotizacion`, `espacio_nombre`, `status`.
+
+Mejoras del payload ICS:
+- UIDs estables por cotizacion/espacio para mejor sincronizacion en Google/Outlook.
+- `LAST-MODIFIED` por evento para refresco consistente.
+- `DESCRIPTION` enriquecido (tipo, estatus, folio, cliente, cotizacion, espacio).
+- Fold de lineas RFC5545 para compatibilidad.
+
+---
+
+## 15. Ajuste de PDFs con membrete (2026-03-12)
 
 - Generadores afectados:
   - `client/cotizador/orders.js`
   - `client/cotizadorcp/orders.js`
   - `client/cotizador/contracts.js`
   - `client/cotizadorcp/contracts.js`
+  - `client/public/public_casadepiedra.html`
 - Se normalizo la altura base de contenido contra el area util real del membrete (margenes top/laterales/inferior).
 - Se elimino el salto manual `html2pdf__page-break` en cotizaciones para evitar pagina intermedia en blanco.
+- `printContract()` (PM y CP) ahora imprime el borrador con el membrete configurado por tenant.
+- El PDF publico de Casa de Piedra ahora intenta usar `configuracion.pdf_letterhead_path` y fallback a `assets/img/cp-letterhead-default.png`.
 - Se mantiene el flujo funcional: mismos datos, mismos endpoints y mismo guardado de documentos.
+
