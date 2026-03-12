@@ -269,3 +269,39 @@ Para permitir backup en caliente:
 - `contracts.html` (PM/CP) ya no administra subidas de plantillas; solo muestra el selector de plantillas vigentes.
 - Correccion fiscal CP:
   - calculo de impuestos en cotizacion/catalogo CP ahora toma `impuestos_ids` y fallback `impuestos`, evitando espacios sin impuesto por discrepancia de campo legacy.
+
+---
+
+## 13. Cambio rapido de IP/backend (produccion)
+
+Se unifico la URL base del backend en `client/js/hub-config.js` con prioridad:
+1. Query param `?backend=http://IP:8090`
+2. `localStorage.HUB_BACKEND_URL`
+3. `window.__HUB_BACKEND_URL`
+4. Fallback local `http://127.0.0.1:8090`
+
+Helpers disponibles en consola del navegador:
+
+```js
+window.setHubBackendUrl('http://TU_IP_O_DOMINIO:8090'); // guarda y recarga
+window.clearHubBackendUrl(); // limpia override y recarga
+window.getHubBackendUrl(); // inspecciona URL activa
+```
+
+Impacto:
+- `HUB_CONFIG.supabaseUrl`
+- `HUB_CONFIG.pocketbaseUrl`
+- `HUB_CONFIG.cpCalendarIcsUrl`
+
+---
+
+## 14. Ajuste de PDFs con membrete (2026-03-12)
+
+- Generadores afectados:
+  - `client/cotizador/orders.js`
+  - `client/cotizadorcp/orders.js`
+  - `client/cotizador/contracts.js`
+  - `client/cotizadorcp/contracts.js`
+- Se normalizo la altura base de contenido contra el area util real del membrete (margenes top/laterales/inferior).
+- Se elimino el salto manual `html2pdf__page-break` en cotizaciones para evitar pagina intermedia en blanco.
+- Se mantiene el flujo funcional: mismos datos, mismos endpoints y mismo guardado de documentos.

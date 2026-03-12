@@ -189,6 +189,7 @@ const RECEIPT_PAGE_HEIGHT_PX = 1056;
 const LETTERHEAD_DESIGN_WIDTH_PX = 1275;
 const LETTERHEAD_DESIGN_HEIGHT_PX = 1650;
 const LETTERHEAD_MARGINS_DESIGN_PX = { top: 202.2, right: 61.1, bottom: 113.38, left: 61.1 };
+const CP_CONTRACTS_CONTENT_BASE_WIDTH_PX = 816;
 
 function __contractsCssSafeUrl(url) {
     return String(url || '')
@@ -212,6 +213,12 @@ function __contractsLetterheadFrame() {
         width: RECEIPT_PAGE_WIDTH_PX - left - right,
         height: RECEIPT_PAGE_HEIGHT_PX - top - bottom
     };
+}
+
+function __contractsContentBaseHeightPx() {
+    const frame = __contractsLetterheadFrame();
+    if (!frame.width || !frame.height) return 945;
+    return (CP_CONTRACTS_CONTENT_BASE_WIDTH_PX * frame.height) / frame.width;
 }
 
 function __contractsWrapLetterheadPage(innerHtml, options = {}) {
@@ -278,6 +285,20 @@ function __contractsTransparentPdfHtml(html) {
         .replace(/background:\s*#(?:[0-9a-f]{3,8});?/gi, 'background: transparent;')
         .replace(/background:\s*rgba?\([^)]+\);?/gi, 'background: transparent;')
         .replace(/\s{2,}/g, ' ');
+}
+
+function __contractsBoostPdfTypography(html) {
+    return String(html || '')
+        .replace(/\btext-\[9px\]\b/g, '__CPC_TXT_9__')
+        .replace(/\btext-\[10px\]\b/g, '__CPC_TXT_10__')
+        .replace(/\btext-\[11px\]\b/g, '__CPC_TXT_11__')
+        .replace(/\btext-xs\b/g, '__CPC_TXT_XS__')
+        .replace(/\btext-sm\b/g, '__CPC_TXT_SM__')
+        .replace(/__CPC_TXT_9__/g, 'text-[10px]')
+        .replace(/__CPC_TXT_10__/g, 'text-[11px]')
+        .replace(/__CPC_TXT_11__/g, 'text-[12px]')
+        .replace(/__CPC_TXT_XS__/g, 'text-sm')
+        .replace(/__CPC_TXT_SM__/g, 'text-base');
 }
 
 function __contractsBasename(path) {
@@ -1006,6 +1027,7 @@ function getReceiptHTML(isVisual = false) {
     const dateStr = now.toLocaleDateString('es-MX', { timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit' });
     const timeStr = now.toLocaleTimeString('es-MX', { timeZone: 'America/Mexico_City', hour: '2-digit', minute: '2-digit', second: '2-digit' });
     const isLiquidated = currentRemainingBalance <= 0.01;
+    const receiptBaseHeight = Number(__contractsContentBaseHeightPx().toFixed(2));
     
     if (isLiquidated) {
         const payments = selectedOrder.historial_pagos || [];
@@ -1022,7 +1044,7 @@ function getReceiptHTML(isVisual = false) {
         });
         let watermark = `<div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-45deg); font-size: 118px; color: rgba(34, 197, 94, 0.16); font-weight: 900; z-index: 0; pointer-events: none; white-space: nowrap;">LIQUIDADO</div>`;
         const receiptRaw = `
-            <div class="font-sans text-gray-800 w-full h-full relative leading-relaxed" style="width: 816px; min-height: 1056px; padding: 70px 90px; box-sizing: border-box; overflow: hidden; display: flex; flex-direction: column;">
+            <div class="font-sans text-gray-800 w-full h-full relative leading-relaxed" style="width: ${CP_CONTRACTS_CONTENT_BASE_WIDTH_PX}px; min-height: ${receiptBaseHeight}px; height: ${receiptBaseHeight}px; padding: 20px 80px 56px; box-sizing: border-box; overflow: hidden; display: flex; flex-direction: column;">
                 ${watermark}
                 <div style="position: relative; z-index: 10; flex-grow: 1;">
                     <div class="flex justify-end items-start mb-10 border-b-4 border-green-600 pb-4">
@@ -1041,7 +1063,7 @@ function getReceiptHTML(isVisual = false) {
                     <div class="text-[10px] text-center text-gray-400 mt-4"><p class="mb-1">Este documento certifica que la orden de referencia ha sido liquidada en su totalidad.</p><p>Generado digitalmente a través de Marketing Hub.</p></div>
                 </div>
             </div>`;
-        return __contractsWrapLetterheadPage(__contractsTransparentPdfHtml(receiptRaw), { baseWidth: 816, baseHeight: 1056, id: 'receipt-print-area' });
+        return __contractsWrapLetterheadPage(__contractsTransparentPdfHtml(__contractsBoostPdfTypography(receiptRaw)), { baseWidth: CP_CONTRACTS_CONTENT_BASE_WIDTH_PX, baseHeight: receiptBaseHeight, id: 'receipt-print-area' });
     }
     
     const amount = parseFloat(document.getElementById('rcp-amount').value) || 0;
@@ -1052,7 +1074,7 @@ function getReceiptHTML(isVisual = false) {
     let projectedRemaining = currentRemainingBalance - amount; if (projectedRemaining < 0) projectedRemaining = 0;
 
     const receiptRaw = `
-        <div class="font-sans text-gray-800 w-full h-full relative leading-relaxed" style="width: 816px; min-height: 1056px; padding: 70px 90px; box-sizing: border-box; display: flex; flex-direction: column;">
+        <div class="font-sans text-gray-800 w-full h-full relative leading-relaxed" style="width: ${CP_CONTRACTS_CONTENT_BASE_WIDTH_PX}px; min-height: ${receiptBaseHeight}px; height: ${receiptBaseHeight}px; padding: 20px 80px 56px; box-sizing: border-box; display: flex; flex-direction: column;">
             <div style="flex-grow: 1;">
                 <div class="flex justify-end items-start mb-10 border-b-4 border-brand-red pb-4">
                     <div class="text-right"><h1 class="text-3xl font-black uppercase text-gray-900 tracking-tighter">Recibo de Pago</h1><p class="text-sm text-gray-500 font-mono mt-1">FECHA: ${dateStr}</p><p class="text-xs text-gray-400 font-mono">HORA: ${timeStr}</p></div>
@@ -1074,6 +1096,6 @@ function getReceiptHTML(isVisual = false) {
                 <div class="text-[10px] text-center text-gray-400 mt-4"><p class="mb-1">Este documento es un comprobante de pago interno. No válido como factura fiscal.</p><p>Generado digitalmente a través de Marketing Hub.</p></div>
             </div>
         </div>`;
-    return __contractsWrapLetterheadPage(__contractsTransparentPdfHtml(receiptRaw), { baseWidth: 816, baseHeight: 1056, id: 'receipt-print-area' });
+    return __contractsWrapLetterheadPage(__contractsTransparentPdfHtml(__contractsBoostPdfTypography(receiptRaw)), { baseWidth: CP_CONTRACTS_CONTENT_BASE_WIDTH_PX, baseHeight: receiptBaseHeight, id: 'receipt-print-area' });
 }
 

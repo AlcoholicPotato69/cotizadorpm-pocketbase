@@ -9,10 +9,52 @@ const __hubNested = /\/(cotizador|cotizadorcp|public|system)\//.test(__hubPath);
 const __hubAssetsBase = __hubNested ? '../../assets' : '../assets';
 const __hubPublicBase = __hubNested ? '../public' : './public';
 
+function __hubNormalizeBackendUrl(raw) {
+  let text = String(raw || '').trim();
+  if (!text) return '';
+  if (!/^[a-zA-Z][a-zA-Z\d+\-.]*:\/\//.test(text)) text = `http://${text}`;
+  return text.replace(/\/+$/, '');
+}
+
+const __hubDefaultBackendUrl = 'http://127.0.0.1:8090';
+const __hubBackendFromGlobal = window.__HUB_BACKEND_URL || window.__BACKEND_URL || '';
+let __hubBackendFromStorage = '';
+let __hubBackendFromQuery = '';
+try { __hubBackendFromStorage = localStorage.getItem('HUB_BACKEND_URL') || ''; } catch (_) {}
+try {
+  const params = new URLSearchParams(window.location.search || '');
+  __hubBackendFromQuery = params.get('backend') || params.get('api') || '';
+} catch (_) {}
+
+const __hubBackendBase = __hubNormalizeBackendUrl(
+  __hubBackendFromQuery || __hubBackendFromStorage || __hubBackendFromGlobal || __hubDefaultBackendUrl
+) || __hubDefaultBackendUrl;
+
+// Helpers de despliegue:
+// - window.setHubBackendUrl('http://IP_O_DOMINIO:8090')
+// - window.clearHubBackendUrl()
+window.getHubBackendUrl = function () { return __hubBackendBase; };
+window.setHubBackendUrl = function (nextUrl, options = {}) {
+  const finalUrl = __hubNormalizeBackendUrl(nextUrl);
+  if (!finalUrl) throw new Error('URL de backend invalida.');
+  const persist = options.persist !== false;
+  const reload = options.reload !== false;
+  if (persist) {
+    try { localStorage.setItem('HUB_BACKEND_URL', finalUrl); } catch (_) {}
+  }
+  if (reload) window.location.reload();
+  return finalUrl;
+};
+window.clearHubBackendUrl = function (options = {}) {
+  const reload = options.reload !== false;
+  try { localStorage.removeItem('HUB_BACKEND_URL'); } catch (_) {}
+  if (reload) window.location.reload();
+};
+
 window.HUB_CONFIG = {
-  // Supabase local (por defecto)
-  supabaseUrl: 'http://127.0.0.1:8090'
-  , pocketbaseUrl: 'http://127.0.0.1:8090',
+  // Backend API (usa override por query/localStorage/global y fallback local)
+  supabaseUrl: __hubBackendBase
+  , pocketbaseUrl: __hubBackendBase,
   supabaseAnonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0',
 
   // Esquema SQL del cotizador
@@ -40,7 +82,7 @@ window.HUB_CONFIG = {
   // 3) El front usa automaticamente: {supabaseUrl}/functions/v1/cp-calendar-ics
   // Si quieres proteger el feed, agrega token con cpCalendarIcsToken.
   // cpCalendarIcsUrl: 'https://IP-O-DOMINIO/functions/v1/cp-calendar-ics',
-  cpCalendarIcsUrl: 'http://127.0.0.1:8090/api/cotizador/cp-calendar-ics',
+  cpCalendarIcsUrl: `${__hubBackendBase}/api/cotizador/cp-calendar-ics`,
   cpCalendarIcsToken: 'b1a38ff792a127d89980285a05cc8525bdcc2195227ca8a4b7b51a56ae312aa5',
 
   // Módulos visibles en el menú (index.html) cuando localMode=true

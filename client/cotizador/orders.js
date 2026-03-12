@@ -45,6 +45,7 @@ const __PM_PDF_PAGE_HEIGHT_PX = 1056;
 const __PM_LETTERHEAD_DESIGN_WIDTH_PX = 1275;
 const __PM_LETTERHEAD_DESIGN_HEIGHT_PX = 1650;
 const __PM_LETTERHEAD_MARGINS_DESIGN_PX = { top: 202.2, right: 61.1, bottom: 113.38, left: 61.1 };
+const __PM_PDF_CONTENT_BASE_WIDTH_PX = 816;
 const __PM_CFG_LETTERHEAD_KEY = 'pdf_letterhead_path';
 const __PM_LETTERHEAD_PATH = 'membretes_pdf';
 
@@ -103,6 +104,12 @@ function __pmLetterheadFrame() {
         width: __PM_PDF_PAGE_WIDTH_PX - left - right,
         height: __PM_PDF_PAGE_HEIGHT_PX - top - bottom
     };
+}
+
+function __pmContentBaseHeightPx() {
+    const frame = __pmLetterheadFrame();
+    if (!frame.width || !frame.height) return 945;
+    return (__PM_PDF_CONTENT_BASE_WIDTH_PX * frame.height) / frame.width;
 }
 
 function __pmWrapLetterheadPage(innerHtml, options = {}) {
@@ -1051,6 +1058,20 @@ function __pmOrdersTransparentPdfHtml(html) {
         .replace(/\s{2,}/g, ' ');
 }
 
+function __pmOrdersBoostPdfTypography(html) {
+    return String(html || '')
+        .replace(/\btext-\[9px\]\b/g, '__PM_TXT_9__')
+        .replace(/\btext-\[10px\]\b/g, '__PM_TXT_10__')
+        .replace(/\btext-\[11px\]\b/g, '__PM_TXT_11__')
+        .replace(/\btext-xs\b/g, '__PM_TXT_XS__')
+        .replace(/\btext-sm\b/g, '__PM_TXT_SM__')
+        .replace(/__PM_TXT_9__/g, 'text-[10px]')
+        .replace(/__PM_TXT_10__/g, 'text-[11px]')
+        .replace(/__PM_TXT_11__/g, 'text-[12px]')
+        .replace(/__PM_TXT_XS__/g, 'text-sm')
+        .replace(/__PM_TXT_SM__/g, 'text-base');
+}
+
 window.getOrderHTML = function(o, type) { 
     const isOrder = type === 'order'; 
     const logoImg = ''; 
@@ -1105,10 +1126,10 @@ window.getOrderHTML = function(o, type) {
         const sid = String(c?.meta?.space_id || '');
         const spName = sid ? (detailSpaces.find(sp => String(sp.espacio_id || sp.space_id || '') === sid)?.espacio_nombre || '') : '';
         const label = `${spName ? `${spName} - ` : ''}${c.description || c.nombre || 'Adicional'}`;
-        rowsHtml += `<tr><td class="py-2 px-3 text-xs text-gray-600 break-words leading-snug">${label}</td><td class="py-2 px-3"></td><td class="py-2 px-3 text-right text-xs text-gray-600">${sign} ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(amount)}</td></tr>`; 
+        rowsHtml += `<tr><td class="py-2 px-3 text-[13px] font-medium text-gray-600 break-words leading-snug">${label}</td><td class="py-2 px-3"></td><td class="py-2 px-3 text-right text-[13px] font-medium text-gray-600">${sign} ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(amount)}</td></tr>`; 
     }); 
     
-    if(o.tipo_ajuste && o.tipo_ajuste !== 'ninguno') { let val = parseFloat(o.valor_ajuste); let displayAmount = val; if (o.ajuste_es_porcentaje) { displayAmount = runningSubtotal * (val / 100); } const sign = o.tipo_ajuste === 'descuento' ? '-' : '+'; if(o.tipo_ajuste==='descuento') runningSubtotal -= displayAmount; else runningSubtotal += displayAmount; rowsHtml += `<tr class="bg-gray-50"><td class="py-2 px-3 italic text-xs text-gray-500">Ajuste Global</td><td></td><td class="py-2 px-3 text-right font-bold text-xs text-gray-600">${sign} ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(displayAmount)}</td></tr>`; } 
+    if(o.tipo_ajuste && o.tipo_ajuste !== 'ninguno') { let val = parseFloat(o.valor_ajuste); let displayAmount = val; if (o.ajuste_es_porcentaje) { displayAmount = runningSubtotal * (val / 100); } const sign = o.tipo_ajuste === 'descuento' ? '-' : '+'; if(o.tipo_ajuste==='descuento') runningSubtotal -= displayAmount; else runningSubtotal += displayAmount; rowsHtml += `<tr class="bg-gray-50"><td class="py-2 px-3 italic text-[12px] text-gray-500">Ajuste Global</td><td></td><td class="py-2 px-3 text-right font-bold text-[12px] text-gray-600">${sign} ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(displayAmount)}</td></tr>`; } 
     let taxRows = '';
     let taxIds = [];
     if (o.desglose_precios && o.desglose_precios.impuestos_detalle) taxIds = o.desglose_precios.impuestos_detalle;
@@ -1132,12 +1153,13 @@ window.getOrderHTML = function(o, type) {
         signBlock = `<div class="text-center w-56"><div class="border-b border-black mb-1"></div><p class="font-bold text-xs text-brand-dark">${staffName}</p><p class="text-[10px] text-gray-500 uppercase">Staff Plaza Mayor</p></div><div class="text-center w-56"><div class="border-b border-black mb-1"></div><p class="font-bold text-xs text-brand-dark uppercase">${o.cliente_nombre.substring(0,25)}</p><p class="text-[10px] text-gray-500 uppercase">Cliente / Representante</p></div>`; 
     } 
     
-    const page1Raw = `<div style="width: 100%; min-height: 1054px; height: 1054px; overflow: hidden; padding: 48px 64px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between;"><div>${renderHeader(docTitle)}${clientComponent}${isOrder ? `<div class="mb-2 bg-gray-100 p-2 rounded text-base flex justify-between"><span>Folio de Servicio: <strong class="font-black text-lg">${folio}</strong></span><span>Contrato: <strong class="font-black text-lg">${o.numero_contrato||'---'}</strong></span></div>` : ''}<table class="w-full text-left mb-2 mt-3 table-fixed border-separate border-spacing-0"><colgroup><col style="width:64%;"><col style="width:16%;"><col style="width:20%;"></colgroup><thead class="bg-gray-100 text-xs font-black text-gray-500 uppercase"><tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">Fecha</th><th class="py-2 px-3 text-right rounded-r">Importe</th></tr></thead><tbody class="divide-y divide-gray-50 text-[11px]">${rowsHtml}</tbody></table> ${totalsBlock}</div><div class="pb-2">${!isOrder ? `<div class="grid grid-cols-2 gap-4 mb-20 pt-4 border-t border-gray-100"><div><h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">Condiciones:</h4><ul class="list-none text-xs text-gray-600 space-y-0.5 leading-tight"><li>a) Pago anticipado.</li><li>b) Doc. completa 3 semanas antes.</li><li>c) Sujeto a disponibilidad.</li></ul></div><div><h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">Vigencia:</h4><p class="text-xs text-gray-600">7 días naturales a partir de la emisión.</p></div></div>` : ''}<div class="flex justify-between items-start px-2">${signBlock}</div>${footerHubHTML}</div></div>`; 
-    let page1Content = __pmWrapLetterheadPage(page1Raw, { baseWidth: 816, baseHeight: 1054 });
+    const pageBaseHeight = Number(__pmContentBaseHeightPx().toFixed(2));
+    const page1Raw = `<div style="width: 100%; min-height: ${pageBaseHeight}px; height: ${pageBaseHeight}px; overflow: hidden; padding: 16px 64px 48px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between;"><div>${renderHeader(docTitle)}${clientComponent}${isOrder ? `<div class="mb-2 bg-gray-100 p-2 rounded text-base flex justify-between"><span>Folio de Servicio: <strong class="font-black text-lg">${folio}</strong></span><span>Contrato: <strong class="font-black text-lg">${o.numero_contrato||'---'}</strong></span></div>` : ''}<table class="w-full text-left mb-2 mt-3 table-fixed border-separate border-spacing-0"><colgroup><col style="width:64%;"><col style="width:16%;"><col style="width:20%;"></colgroup><thead class="bg-gray-100 text-sm font-black text-gray-500 uppercase"><tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">Fecha</th><th class="py-2 px-3 text-right rounded-r">Importe</th></tr></thead><tbody class="divide-y divide-gray-50 text-[12px]">${rowsHtml}</tbody></table> ${totalsBlock}</div><div class="pb-2">${!isOrder ? `<div class="grid grid-cols-2 gap-4 mb-20 pt-4 border-t border-gray-100"><div><h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">Condiciones:</h4><ul class="list-none text-xs text-gray-600 space-y-0.5 leading-tight"><li>a) Pago anticipado.</li><li>b) Doc. completa 3 semanas antes.</li><li>c) Sujeto a disponibilidad.</li></ul></div><div><h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">Vigencia:</h4><p class="text-xs text-gray-600">7 días naturales a partir de la emisión.</p></div></div>` : ''}<div class="flex justify-between items-start px-2">${signBlock}</div>${footerHubHTML}</div></div>`; 
+    let page1Content = __pmWrapLetterheadPage(__pmOrdersBoostPdfTypography(page1Raw), { baseWidth: __PM_PDF_CONTENT_BASE_WIDTH_PX, baseHeight: pageBaseHeight });
     let page2Content = ''; 
     if (!isOrder) { 
-        const page2Raw = `<div style="width: 100%; min-height: 1054px; height: 1054px; overflow: hidden; padding: 48px 64px; box-sizing: border-box;">${renderHeader("CONDICIONES GENERALES")}<ol class="list-decimal list-outside ml-6 text-xs text-gray-800 space-y-4 text-justify leading-loose mt-8"><li><span class="font-bold">La instalación será responsabilidad exclusiva del cliente.</span> Esto incluye cualquier costo asociado con la instalación, como mano de obra, herramientas, y materiales necesarios. El cliente debe coordinar con el personal del centro comercial para asegurar que la instalación cumpla con las normativas y políticas de Plaza Mayor.</li><li><span class="font-bold">El diseño y contenido del material publicitario deben cumplir con las normativas establecidas por el centro comercial.</span> Antes de la instalación, el cliente deberá obtener la aprobación necesaria de Plaza Mayor para asegurar la conformidad con las políticas vigentes.</li><li><span class="font-bold">El cliente es completamente responsable del contenido del material publicitario.</span> Debe garantizar que el contenido no infrinja derechos de terceros, incluyendo derechos de autor, marcas registradas u otros derechos de propiedad intelectual. El centro comercial se reserva el derecho de rechazar la instalación de cualquier material que considere inapropiado o que viole las normativas establecidas.</li><li><span class="font-bold">Durante el proceso de instalación y desinstalación, el cliente será responsable de cualquier daño causado al espacio o propiedad del centro comercial.</span> Se recomienda que el cliente cuente con un seguro de responsabilidad civil para cubrir cualquier daño potencial.</li><li><span class="font-bold">Cualquier modificación en la duración, diseño o ubicación del material publicitario debe ser comunicada y aprobada por el centro comercial con anticipación.</span></li><li><span class="font-bold">No se permite volanteo fuera del espacio designado, ni equipo de audio (perifoneo, música, etc) salvo previa autorización por escrito de la Gerencia de Mercadotecnia.</span> Se prohíbe el uso de globos con helio.</li><li><span class="font-bold">Al finalizar la campaña publicitaria, el cliente deberá retirar el material publicitario a más tardar al día siguiente.</span> Cualquier demora en la retirada puede estar sujeta a cargos adicionales.</li><li><span class="font-bold">No se permite la venta ni promoción de artículos para adultos (como juguetes sexuales), bebidas alcohólicas, tabaco, CBD y/o cannabinoides.</span></li><li><span class="font-bold">El almacenamiento y/o recolección de basura correrá por cuenta del cliente.</span> En caso de no hacerlo, Plaza Mayor podrá generar un cargo adicional por este concepto.</li><li><span class="font-bold">El cliente deberá instalar la toma eléctrica necesaria.</span> Plaza Mayor podrá suministrar energía eléctrica de 110v para uso moderado de algunos equipos. Este tema deberá definirse previamente por escrito con la autorización de Gerencia de Operaciones.</li><li><span class="font-bold">Esta es una propuesta económica, las condiciones generales y específicas se presentarán en el contrato correspondiente, posterior a haberse autorizado este documento.</span></li></ol></div>`; 
-        page2Content = `<div class="html2pdf__page-break"></div>${__pmWrapLetterheadPage(page2Raw, { baseWidth: 816, baseHeight: 1054 })}`;
+        const page2Raw = `<div style="width: 100%; min-height: ${pageBaseHeight}px; height: ${pageBaseHeight}px; overflow: hidden; padding: 16px 64px 48px; box-sizing: border-box;">${renderHeader("CONDICIONES GENERALES")}<ol class="list-decimal list-outside ml-6 text-xs text-gray-800 space-y-4 text-justify leading-loose mt-8"><li><span class="font-bold">La instalación será responsabilidad exclusiva del cliente.</span> Esto incluye cualquier costo asociado con la instalación, como mano de obra, herramientas, y materiales necesarios. El cliente debe coordinar con el personal del centro comercial para asegurar que la instalación cumpla con las normativas y políticas de Plaza Mayor.</li><li><span class="font-bold">El diseño y contenido del material publicitario deben cumplir con las normativas establecidas por el centro comercial.</span> Antes de la instalación, el cliente deberá obtener la aprobación necesaria de Plaza Mayor para asegurar la conformidad con las políticas vigentes.</li><li><span class="font-bold">El cliente es completamente responsable del contenido del material publicitario.</span> Debe garantizar que el contenido no infrinja derechos de terceros, incluyendo derechos de autor, marcas registradas u otros derechos de propiedad intelectual. El centro comercial se reserva el derecho de rechazar la instalación de cualquier material que considere inapropiado o que viole las normativas establecidas.</li><li><span class="font-bold">Durante el proceso de instalación y desinstalación, el cliente será responsable de cualquier daño causado al espacio o propiedad del centro comercial.</span> Se recomienda que el cliente cuente con un seguro de responsabilidad civil para cubrir cualquier daño potencial.</li><li><span class="font-bold">Cualquier modificación en la duración, diseño o ubicación del material publicitario debe ser comunicada y aprobada por el centro comercial con anticipación.</span></li><li><span class="font-bold">No se permite volanteo fuera del espacio designado, ni equipo de audio (perifoneo, música, etc) salvo previa autorización por escrito de la Gerencia de Mercadotecnia.</span> Se prohíbe el uso de globos con helio.</li><li><span class="font-bold">Al finalizar la campaña publicitaria, el cliente deberá retirar el material publicitario a más tardar al día siguiente.</span> Cualquier demora en la retirada puede estar sujeta a cargos adicionales.</li><li><span class="font-bold">No se permite la venta ni promoción de artículos para adultos (como juguetes sexuales), bebidas alcohólicas, tabaco, CBD y/o cannabinoides.</span></li><li><span class="font-bold">El almacenamiento y/o recolección de basura correrá por cuenta del cliente.</span> En caso de no hacerlo, Plaza Mayor podrá generar un cargo adicional por este concepto.</li><li><span class="font-bold">El cliente deberá instalar la toma eléctrica necesaria.</span> Plaza Mayor podrá suministrar energía eléctrica de 110v para uso moderado de algunos equipos. Este tema deberá definirse previamente por escrito con la autorización de Gerencia de Operaciones.</li><li><span class="font-bold">Esta es una propuesta económica, las condiciones generales y específicas se presentarán en el contrato correspondiente, posterior a haberse autorizado este documento.</span></li></ol></div>`; 
+        page2Content = __pmWrapLetterheadPage(__pmOrdersBoostPdfTypography(page2Raw), { baseWidth: __PM_PDF_CONTENT_BASE_WIDTH_PX, baseHeight: pageBaseHeight });
     } 
     const raw = `<div style="width:816px;margin:0;padding:0;box-sizing:border-box;background:#ffffff;word-break:break-word;overflow-wrap:anywhere;">${page1Content}${page2Content}</div>`;
     return __pmOrdersTransparentPdfHtml(raw); 
@@ -2073,6 +2095,7 @@ window.getOrderHTML = function(o, type) {
     viewport.scrollBy({ left: (direction || 1) * delta, behavior: "smooth" });
   };
 })();
+
 
 
 

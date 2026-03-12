@@ -49,6 +49,7 @@ const __PDF_PAGE_HEIGHT_PX = 1056;
 const __LETTERHEAD_DESIGN_WIDTH_PX = 1275;
 const __LETTERHEAD_DESIGN_HEIGHT_PX = 1650;
 const __LETTERHEAD_MARGINS_DESIGN_PX = { top: 202.2, right: 61.1, bottom: 113.38, left: 61.1 };
+const __ORDER_PDF_CONTENT_BASE_WIDTH_PX = 816;
 const __CP_CFG_LETTERHEAD_KEY = 'pdf_letterhead_path';
 const __CP_LETTERHEAD_PATH = 'membretes_pdf';
 
@@ -80,6 +81,12 @@ function __orderLetterheadFrame() {
         width: __PDF_PAGE_WIDTH_PX - left - right,
         height: __PDF_PAGE_HEIGHT_PX - top - bottom
     };
+}
+
+function __orderContentBaseHeightPx() {
+    const frame = __orderLetterheadFrame();
+    if (!frame.width || !frame.height) return 945;
+    return (__ORDER_PDF_CONTENT_BASE_WIDTH_PX * frame.height) / frame.width;
 }
 
 function __orderWrapLetterheadPage(innerHtml, options = {}) {
@@ -1462,6 +1469,20 @@ function __cpOrdersTransparentPdfHtml(html) {
         .replace(/\s{2,}/g, ' ');
 }
 
+function __cpOrdersBoostPdfTypography(html) {
+    return String(html || '')
+        .replace(/\btext-\[9px\]\b/g, '__CP_TXT_9__')
+        .replace(/\btext-\[10px\]\b/g, '__CP_TXT_10__')
+        .replace(/\btext-\[11px\]\b/g, '__CP_TXT_11__')
+        .replace(/\btext-xs\b/g, '__CP_TXT_XS__')
+        .replace(/\btext-sm\b/g, '__CP_TXT_SM__')
+        .replace(/__CP_TXT_9__/g, 'text-[10px]')
+        .replace(/__CP_TXT_10__/g, 'text-[11px]')
+        .replace(/__CP_TXT_11__/g, 'text-[12px]')
+        .replace(/__CP_TXT_XS__/g, 'text-sm')
+        .replace(/__CP_TXT_SM__/g, 'text-base');
+}
+
 window.getOrderHTML = function(o, type) { 
     const isOrder = type === 'order'; 
     const logoImg = ''; 
@@ -1547,10 +1568,10 @@ window.getOrderHTML = function(o, type) {
         const amountCell = (Math.abs(parseFloat(amount || 0)) < 0.000001)
             ? '---'
             : `${sign} ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(amount)}`;
-        rowsHtml += `<tr><td class="py-2 px-3 align-top text-[11px] text-gray-600 leading-snug break-words">${descHtml}</td><td class="py-2 px-3"></td><td class="py-2 px-3 text-right text-[11px] text-gray-600">${amountCell}</td></tr>`; 
+        rowsHtml += `<tr><td class="py-2 px-3 align-top text-[13px] font-medium text-gray-600 leading-snug break-words">${descHtml}</td><td class="py-2 px-3"></td><td class="py-2 px-3 text-right text-[13px] font-medium text-gray-600">${amountCell}</td></tr>`; 
     }); 
     
-    if(o.tipo_ajuste && o.tipo_ajuste !== 'ninguno') { let val = parseFloat(o.valor_ajuste); let displayAmount = val; if (o.ajuste_es_porcentaje) { displayAmount = runningSubtotal * (val / 100); } const sign = o.tipo_ajuste === 'descuento' ? '-' : '+'; if(o.tipo_ajuste==='descuento') runningSubtotal -= displayAmount; else runningSubtotal += displayAmount; rowsHtml += `<tr class="bg-gray-50"><td class="py-2 px-3 italic text-[11px] text-gray-500">Ajuste Global</td><td></td><td class="py-2 px-3 text-right font-bold text-[11px] text-gray-600">${sign} ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(displayAmount)}</td></tr>`; } 
+    if(o.tipo_ajuste && o.tipo_ajuste !== 'ninguno') { let val = parseFloat(o.valor_ajuste); let displayAmount = val; if (o.ajuste_es_porcentaje) { displayAmount = runningSubtotal * (val / 100); } const sign = o.tipo_ajuste === 'descuento' ? '-' : '+'; if(o.tipo_ajuste==='descuento') runningSubtotal -= displayAmount; else runningSubtotal += displayAmount; rowsHtml += `<tr class="bg-gray-50"><td class="py-2 px-3 italic text-[12px] text-gray-500">Ajuste Global</td><td></td><td class="py-2 px-3 text-right font-bold text-[12px] text-gray-600">${sign} ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(displayAmount)}</td></tr>`; } 
     let taxRows = ''; let taxIds = []; if (o.desglose_precios && o.desglose_precios.impuestos_detalle) taxIds = o.desglose_precios.impuestos_detalle; else { const s = allSpaces.find(sp => sp.id === o.espacio_id); taxIds = s ? parseIds(s.impuestos_ids || s.impuestos) : []; } taxRows += `<tr><td class="py-1 px-3 text-[10px] font-bold text-gray-500 text-right" colspan="2">Subtotal</td><td class="py-1 px-3 text-right text-xs font-bold text-gray-800">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(runningSubtotal)}</td></tr>`; if (taxIds.length > 0 && dbTaxes.length > 0) { taxIds.forEach(tid => { const t = dbTaxes.find(x => x.id == tid); if(t) { const rate = t.porcentaje > 1 ? t.porcentaje/100 : t.porcentaje; const val = runningSubtotal * rate; taxRows += `<tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="2">${t.nombre} (${t.porcentaje}%)</td><td class="py-1 px-3 text-right text-xs text-red-500 font-bold">+ ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(val)}</td></tr>`; } }); } const totalsBlock = `<div class="flex justify-end mb-2 pr-4"><div class="w-64"><table class="w-full border-collapse">${taxRows}<tr><td class="pt-2 border-t-2 border-gray-800 align-middle text-right" colspan="2"><span class="text-[10px] font-bold uppercase text-gray-500 mr-2">Total Neto</span></td><td class="pt-2 border-t-2 border-gray-800 align-middle text-right"><span class="text-xl font-black text-gray-900">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(o.precio_final)}</span></td></tr></table></div></div>`; 
     
     let staffName = window.currentUserProfile?.Usernames || window.currentUserProfile?.username || window.currentUserProfile?.full_name || 'Staff';
@@ -1578,8 +1599,9 @@ window.getOrderHTML = function(o, type) {
             </div>
         </div>` : '';
 
+    const pageBaseHeight = Number(__orderContentBaseHeightPx().toFixed(2));
     const page1Raw = `
-        <div style="height: 1054px; overflow: hidden; padding: 48px 64px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between;">
+        <div style="height: ${pageBaseHeight}px; min-height: ${pageBaseHeight}px; overflow: hidden; padding: 16px 64px 48px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between;">
             <div>
                 ${renderHeader(docTitle)}
                 ${clientComponent}
@@ -1590,10 +1612,10 @@ window.getOrderHTML = function(o, type) {
                         <col style="width: 16%;">
                         <col style="width: 20%;">
                     </colgroup>
-                    <thead class="bg-gray-100 text-xs font-black text-gray-500 uppercase">
+                    <thead class="bg-gray-100 text-sm font-black text-gray-500 uppercase">
                         <tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">Fecha</th><th class="py-2 px-3 text-right rounded-r">Importe</th></tr>
                     </thead>
-                    <tbody class="divide-y divide-gray-50 text-[11px]">${rowsHtml}</tbody>
+                    <tbody class="divide-y divide-gray-50 text-[12px]">${rowsHtml}</tbody>
                 </table>
                 ${totalsBlock}
             </div>
@@ -1603,12 +1625,12 @@ window.getOrderHTML = function(o, type) {
                 ${footerHubHTML}
             </div>
         </div>`;
-    let page1Content = __orderWrapLetterheadPage(page1Raw, { baseWidth: 816, baseHeight: 1054 });
+    let page1Content = __orderWrapLetterheadPage(__cpOrdersBoostPdfTypography(page1Raw), { baseWidth: __ORDER_PDF_CONTENT_BASE_WIDTH_PX, baseHeight: pageBaseHeight });
 
     let page2Content = '';
     if (!isOrder) {
         const page2Raw = `
-            <div style="height: 1054px; overflow: hidden; padding: 48px 64px; box-sizing: border-box;">
+            <div style="height: ${pageBaseHeight}px; min-height: ${pageBaseHeight}px; overflow: hidden; padding: 16px 64px 48px; box-sizing: border-box;">
                 ${renderHeader("CONDICIONES GENERALES")}
                 <div class="text-xs text-gray-800 space-y-3 text-justify leading-relaxed mt-6">
                     <p><strong>Proveedores autorizados:</strong> Todo proveedor deberá ser aprobado previamente por Casa de Piedra. Se comparte lista autorizada para selección del cliente.</p>
@@ -1620,7 +1642,7 @@ window.getOrderHTML = function(o, type) {
                     <p><strong>Estacionamiento:</strong> Cortesía. Valet Parking se cotiza aparte con proveedor autorizado por Casa de Piedra.</p>
                 </div>
             </div>`;
-        page2Content = `<div class="html2pdf__page-break"></div>${__orderWrapLetterheadPage(page2Raw, { baseWidth: 816, baseHeight: 1054 })}`;
+        page2Content = __orderWrapLetterheadPage(__cpOrdersBoostPdfTypography(page2Raw), { baseWidth: __ORDER_PDF_CONTENT_BASE_WIDTH_PX, baseHeight: pageBaseHeight });
     }
     const raw = `<div style="width:816px;margin:0;padding:0;box-sizing:border-box;background:#ffffff;">${page1Content}${page2Content}</div>`;
     return __cpOrdersTransparentPdfHtml(raw); 
