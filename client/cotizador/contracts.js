@@ -71,7 +71,11 @@ window.switchTab = function(tab) {
         document.getElementById('sidebar-receipt').classList.add('flex');
         document.getElementById('sidebar-contract').classList.add('hidden');
         document.getElementById('sidebar-contract').classList.remove('flex');
-        if (styleEditor && __pmContractsIsAdminProfile()) styleEditor.classList.remove('hidden');
+        if (styleEditor && __pmContractsIsAdminProfile()) {
+            styleEditor.classList.remove('hidden');
+            __pmContractsRenderPdfResourcesEditorList();
+            __pmContractsHighlightSelectedResource();
+        }
         
         setTimeout(window.adjustPreviewScale, 50);
         
@@ -242,6 +246,7 @@ const TEMPLATE_PATH = 'templates_contratos';
 const LETTERHEAD_PATH = 'membretes_pdf';
 const CFG_TEMPLATE_DEFAULT_KEY = 'contract_template_default';
 const CFG_LETTERHEAD_KEY = 'pdf_letterhead_path';
+const __PM_CONTRACT_TEMPLATE_LETTERHEAD_STORAGE_KEY = 'pm_contract_template_letterhead_enabled';
 
 const AVAILABLE_VARS = [
     { key: '{{CLIENTE}}', desc: 'Nombre del Cliente' },
@@ -262,6 +267,42 @@ let approvedOrders = [], selectedOrder = null, templates = [], signedFileToUploa
 let currentRemainingBalance = 0;
 let pendingAction = null;
 let defaultTemplateFile = '';
+let __pmContractsTemplateLetterheadEnabled = true;
+
+function __pmContractsIsTemplateLetterheadEnabled() {
+    return __pmContractsTemplateLetterheadEnabled !== false;
+}
+
+function __pmContractsSyncTemplateLetterheadToggle() {
+    const toggle = document.getElementById('contract-letterhead-toggle');
+    if (toggle) toggle.checked = __pmContractsIsTemplateLetterheadEnabled();
+}
+
+function __pmContractsLoadTemplateLetterheadPreference() {
+    try {
+        const stored = window.localStorage.getItem(__PM_CONTRACT_TEMPLATE_LETTERHEAD_STORAGE_KEY);
+        __pmContractsTemplateLetterheadEnabled = stored !== 'false';
+    } catch (_) {
+        __pmContractsTemplateLetterheadEnabled = true;
+    }
+    __pmContractsSyncTemplateLetterheadToggle();
+}
+
+function __pmContractsBindTemplateLetterheadToggle() {
+    const toggle = document.getElementById('contract-letterhead-toggle');
+    if (!toggle || toggle.dataset.bound === '1') {
+        __pmContractsSyncTemplateLetterheadToggle();
+        return;
+    }
+    toggle.dataset.bound = '1';
+    toggle.addEventListener('change', () => {
+        __pmContractsTemplateLetterheadEnabled = !!toggle.checked;
+        try {
+            window.localStorage.setItem(__PM_CONTRACT_TEMPLATE_LETTERHEAD_STORAGE_KEY, String(__pmContractsTemplateLetterheadEnabled));
+        } catch (_) {}
+    });
+    __pmContractsSyncTemplateLetterheadToggle();
+}
 
 function __pmContractsPayments(order) {
     return Array.isArray(order?.historial_pagos) ? order.historial_pagos : [];
@@ -344,6 +385,7 @@ const __PM_CONTRACTS_PDF_STYLE_CONTENT_DEFAULTS = Object.freeze({
 const __PM_CONTRACTS_PDF_STYLE_DEFAULTS = Object.freeze({
     fontFamilyKey: 'segoe',
     headerLinePx: 4,
+    signLinePx: 2,
     titlePx: 30,
     metaPx: 13,
     tableHeadPx: 14,
@@ -356,6 +398,7 @@ const __PM_CONTRACTS_PDF_STYLE_DEFAULTS = Object.freeze({
     offsetXPx: 0,
     offsetYPx: 0,
     extraPages: 0,
+    resources: [],
     content: __PM_CONTRACTS_PDF_STYLE_CONTENT_DEFAULTS,
     headerAlign: 'right',
     metaAlign: 'right',
@@ -369,9 +412,12 @@ const __PM_CONTRACTS_PDF_STYLE_DEFAULTS = Object.freeze({
 const __PM_CONTRACTS_PDF_STYLE_UI_STATE_KEY = 'pm_contracts_pdf_style_ui';
 let __pmContractsPdfStyleState = null;
 let __pmContractsPdfStyleConfigRecordId = '';
+let __pmContractsPdfStyleRawPayload = null;
 let __pmContractsPdfStyleSyncTimer = null;
 let __pmContractsPdfStyleUiState = { collapsed: false, pinned: false };
 let __pmContractsPdfStyleActiveProfile = 'receipt';
+let __pmContractsPdfResourceSelectedId = '';
+let __pmContractsPdfResourcePointerState = null;
 
 function __pmContractsClampStyleNumber(value, min, max, fallback) {
     const num = parseInt(value, 10);
@@ -391,6 +437,66 @@ function __pmContractsSafeHtml(value) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+}
+
+function __pmContractsNormalizeHexColor(value, fallback = '#111827') {
+    const raw = String(value || '').trim();
+    if (/^#([0-9a-fA-F]{3}){1,2}$/.test(raw)) {
+        if (raw.length === 4) {
+            return `#${raw[1]}${raw[1]}${raw[2]}${raw[2]}${raw[3]}${raw[3]}`.toLowerCase();
+        }
+        return raw.toLowerCase();
+    }
+    return fallback;
+}
+
+function __pmContractsNormalizePdfResources(raw) {
+    const list = Array.isArray(raw) ? raw : [];
+    return list.slice(0, 80).map((item, index) => {
+        const base = item && typeof item === 'object' ? item : {};
+        const type = ['bar', 'sign-line', 'logo'].includes(String(base.type || '').toLowerCase()) ? String(base.type).toLowerCase() : 'bar';
+        const minH = type === 'sign-line' ? 1 : (type === 'logo' ? 24 : 4);
+        const defaultW = type === 'logo' ? 180 : (type === 'sign-line' ? 220 : 260);
+        const defaultH = type === 'logo' ? 72 : (type === 'sign-line' ? 2 : 14);
+        const defaultColor = type === 'sign-line' ? '#111827' : '#d32f2f';
+        return {
+            id: String(base.id || `pmc_res_${Date.now()}_${index}`),
+            type,
+            enabled: base.enabled !== false,
+            page: __pmContractsClampStyleNumber(base.page, 1, 8, 1),
+            x: __pmContractsClampStyleNumber(base.x, -4000, 4000, 80),
+            y: __pmContractsClampStyleNumber(base.y, -5000, 5000, 120),
+            w: __pmContractsClampStyleNumber(base.w, 16, 4000, defaultW),
+            h: __pmContractsClampStyleNumber(base.h, minH, 5000, defaultH),
+            bgColor: __pmContractsNormalizeHexColor(base.bgColor, defaultColor)
+        };
+    });
+}
+
+function __pmContractsRenderPdfResources(style, pageIndex) {
+    const cfg = __pmContractsNormalizePdfStyle(style || {});
+    const resources = __pmContractsNormalizePdfResources(cfg.resources);
+    if (!resources.length) return '';
+    return resources
+        .filter((resource) => resource.enabled && resource.page === pageIndex)
+        .map((resource) => {
+            const common = `position:absolute;left:${resource.x}px;top:${resource.y}px;width:${resource.w}px;height:${resource.h}px;z-index:35;box-sizing:border-box;pointer-events:${__pmContractsIsAdminProfile() ? 'auto' : 'none'};`;
+            if (resource.type === 'logo') {
+                return `<div class="pmc-pdf-resource ${__pmContractsIsAdminProfile() ? 'pmc-pdf-editable' : ''}" data-res-id="${__pmContractsSafeHtml(resource.id)}" data-res-page="${resource.page}" data-res-type="logo" style="${common}background:transparent;padding:0;border-radius:0;"><img src="${__pmContractsSafeHtml(LOGO_URL)}" alt="Logo tenant" draggable="false" style="width:100%;height:100%;object-fit:contain;pointer-events:none;user-select:none;"></div>`;
+            }
+            const radius = resource.type === 'sign-line' ? '999px' : '2px';
+            return `<div class="pmc-pdf-resource ${__pmContractsIsAdminProfile() ? 'pmc-pdf-editable' : ''}" data-res-id="${__pmContractsSafeHtml(resource.id)}" data-res-page="${resource.page}" data-res-type="${resource.type}" style="${common}background:${resource.bgColor};border-radius:${radius};"></div>`;
+        })
+        .join('');
+}
+
+function __pmContractsInjectResourcesIntoPage(rawHtml, resourcesHtml) {
+    const html = String(rawHtml || '');
+    const extra = String(resourcesHtml || '');
+    if (!extra) return html;
+    const idx = html.lastIndexOf('</div>');
+    if (idx < 0) return `${html}${extra}`;
+    return `${html.slice(0, idx)}${extra}${html.slice(idx)}`;
 }
 
 function __pmContractsNormalizePdfContent(raw) {
@@ -415,6 +521,7 @@ function __pmContractsNormalizePdfStyle(raw = {}) {
     return {
         fontFamilyKey: __PM_CONTRACTS_PDF_STYLE_FONT_MAP[fontKey] ? fontKey : __PM_CONTRACTS_PDF_STYLE_DEFAULTS.fontFamilyKey,
         headerLinePx: __pmContractsClampStyleNumber(base.headerLinePx, 1, 8, __PM_CONTRACTS_PDF_STYLE_DEFAULTS.headerLinePx),
+        signLinePx: __pmContractsClampStyleNumber(base.signLinePx, 1, 16, __PM_CONTRACTS_PDF_STYLE_DEFAULTS.signLinePx),
         titlePx: __pmContractsClampStyleNumber(base.titlePx, 20, 42, __PM_CONTRACTS_PDF_STYLE_DEFAULTS.titlePx),
         metaPx: __pmContractsClampStyleNumber(base.metaPx, 8, 18, __PM_CONTRACTS_PDF_STYLE_DEFAULTS.metaPx),
         tableHeadPx: __pmContractsClampStyleNumber(base.tableHeadPx, 9, 18, __PM_CONTRACTS_PDF_STYLE_DEFAULTS.tableHeadPx),
@@ -427,6 +534,7 @@ function __pmContractsNormalizePdfStyle(raw = {}) {
         offsetXPx: __pmContractsClampStyleNumber(base.offsetXPx, -120, 120, __PM_CONTRACTS_PDF_STYLE_DEFAULTS.offsetXPx),
         offsetYPx: __pmContractsClampStyleNumber(base.offsetYPx, -120, 120, __PM_CONTRACTS_PDF_STYLE_DEFAULTS.offsetYPx),
         extraPages: __pmContractsClampStyleNumber(base.extraPages, 0, 6, __PM_CONTRACTS_PDF_STYLE_DEFAULTS.extraPages),
+        resources: __pmContractsNormalizePdfResources(base.resources),
         content: __pmContractsNormalizePdfContent(base.content),
         headerAlign: __pmContractsNormalizeAlign(base.headerAlign, __PM_CONTRACTS_PDF_STYLE_DEFAULTS.headerAlign),
         metaAlign: __pmContractsNormalizeAlign(base.metaAlign, __PM_CONTRACTS_PDF_STYLE_DEFAULTS.metaAlign),
@@ -453,6 +561,31 @@ function __pmContractsExtractPdfStyleProfile(raw, profile = 'receipt') {
         if (candidate && typeof candidate === 'object') return candidate;
     }
     return cfg;
+}
+
+function __pmContractsNormalizePdfStyleProfiles(raw) {
+    const cfg = raw && typeof raw === 'object' ? raw : {};
+    const profiles = cfg.profiles && typeof cfg.profiles === 'object' ? cfg.profiles : null;
+    const fallback = __pmContractsNormalizePdfStyle(profiles ? (profiles.receipt || profiles.quote || profiles.default || __PM_CONTRACTS_PDF_STYLE_DEFAULTS) : cfg);
+    const out = {};
+    __PM_CONTRACTS_PDF_STYLE_PROFILE_KEYS.forEach((key) => {
+        out[key] = __pmContractsNormalizePdfStyle(profiles ? (profiles[key] || fallback) : fallback);
+    });
+    return out;
+}
+
+function __pmContractsBuildPdfStyleConfigPayload(rawExisting, style, profile = __pmContractsPdfStyleActiveProfile) {
+    const existing = rawExisting && typeof rawExisting === 'object' ? rawExisting : {};
+    const key = __pmContractsNormalizeProfileKey(profile);
+    const profiles = __pmContractsNormalizePdfStyleProfiles(existing);
+    profiles[key] = __pmContractsNormalizePdfStyle(style);
+    return {
+        ...existing,
+        tenant: __PM_CONTRACTS_PDF_STYLE_TENANT,
+        version: Math.max(2, parseInt(existing.version, 10) || 2),
+        updated_at: new Date().toISOString(),
+        profiles
+    };
 }
 
 function __pmContractsLoadPdfStyleState() {
@@ -487,6 +620,7 @@ function __pmContractsPdfStyleVars(style) {
     return {
         '--pm-font-family': __PM_CONTRACTS_PDF_STYLE_FONT_MAP[safe.fontFamilyKey],
         '--pm-header-line': `${safe.headerLinePx}px`,
+        '--pm-sign-line': `${safe.signLinePx}px`,
         '--pm-title-size': `${safe.titlePx}px`,
         '--pm-meta-size': `${safe.metaPx}px`,
         '--pm-date-size': `${Math.max(8, safe.metaPx - 2)}px`,
@@ -523,6 +657,7 @@ function __pmContractsApplyPdfStyleToLivePreview() {
     rootNodes.forEach((node) => {
         Object.entries(vars).forEach(([k, v]) => node.style.setProperty(k, v));
     });
+    __pmContractsHighlightSelectedResource();
 }
 
 function __pmContractsSyncPdfStyleValueLabels(style) {
@@ -532,6 +667,7 @@ function __pmContractsSyncPdfStyleValueLabels(style) {
         if (el) el.textContent = val;
     };
     setText('pdf-style-header-line-value', `${cfg.headerLinePx}px`);
+    setText('pdf-style-sign-line-value', `${cfg.signLinePx}px`);
     setText('pdf-style-title-size-value', `${cfg.titlePx}px`);
     setText('pdf-style-meta-size-value', `${cfg.metaPx}px`);
     setText('pdf-style-table-size-value', `${cfg.tableBodyPx}px`);
@@ -552,6 +688,7 @@ function __pmContractsWritePdfStyleControls(style) {
     };
     setValue('pdf-style-font-family', cfg.fontFamilyKey);
     setValue('pdf-style-header-line', cfg.headerLinePx);
+    setValue('pdf-style-sign-line', cfg.signLinePx);
     setValue('pdf-style-title-size', cfg.titlePx);
     setValue('pdf-style-meta-size', cfg.metaPx);
     setValue('pdf-style-table-size', cfg.tableBodyPx);
@@ -574,9 +711,12 @@ function __pmContractsWritePdfStyleControls(style) {
 }
 
 function __pmContractsReadPdfStyleControls() {
+    const current = __pmContractsGetPdfStyleConfig();
     return __pmContractsNormalizePdfStyle({
+        ...current,
         fontFamilyKey: document.getElementById('pdf-style-font-family')?.value || __PM_CONTRACTS_PDF_STYLE_DEFAULTS.fontFamilyKey,
         headerLinePx: document.getElementById('pdf-style-header-line')?.value,
+        signLinePx: document.getElementById('pdf-style-sign-line')?.value,
         titlePx: document.getElementById('pdf-style-title-size')?.value,
         metaPx: document.getElementById('pdf-style-meta-size')?.value,
         tableHeadPx: (parseInt(document.getElementById('pdf-style-table-size')?.value || __PM_CONTRACTS_PDF_STYLE_DEFAULTS.tableBodyPx, 10) + 2),
@@ -596,7 +736,8 @@ function __pmContractsReadPdfStyleControls() {
         conditionsAlign: document.getElementById('pdf-style-align-conditions')?.value,
         signAlign: document.getElementById('pdf-style-align-sign')?.value,
         summaryAlign: document.getElementById('pdf-style-align-summary')?.value,
-        footerAlign: document.getElementById('pdf-style-align-footer')?.value
+        footerAlign: document.getElementById('pdf-style-align-footer')?.value,
+        resources: current.resources
     });
 }
 
@@ -621,9 +762,11 @@ async function __pmContractsLoadSharedPdfStyleConfig(profile = 'receipt') {
             .maybeSingle();
         if (error || !data) {
             __pmContractsPdfStyleActiveProfile = profileKey;
+            __pmContractsPdfStyleRawPayload = null;
             return;
         }
         __pmContractsPdfStyleConfigRecordId = String(data.id || '');
+        __pmContractsPdfStyleRawPayload = data.valor_json || {};
         const resolved = __pmContractsExtractPdfStyleProfile(data.valor_json || __PM_CONTRACTS_PDF_STYLE_DEFAULTS, profileKey);
         __pmContractsSetPdfStyleConfig(resolved || __PM_CONTRACTS_PDF_STYLE_DEFAULTS, { applyToDom: false });
         __pmContractsPdfStyleActiveProfile = profileKey;
@@ -636,29 +779,38 @@ async function __pmContractsPersistSharedPdfStyleConfig(style) {
     if (!__pmContractsIsAdminProfile() || !window.tenantPocketBase) return;
     const normalized = __pmContractsNormalizePdfStyle(style);
     try {
+        let existingPayload = __pmContractsPdfStyleRawPayload && typeof __pmContractsPdfStyleRawPayload === 'object'
+            ? __pmContractsPdfStyleRawPayload
+            : {};
         if (!__pmContractsPdfStyleConfigRecordId) {
             const { data: existing, error: existingError } = await window.tenantPocketBase
                 .from('configuracion')
-                .select('id')
+                .select('id,valor_json')
                 .eq('clave', __PM_CONTRACTS_PDF_STYLE_CONFIG_KEY)
                 .maybeSingle();
-            if (!existingError && existing?.id) __pmContractsPdfStyleConfigRecordId = String(existing.id);
+            if (!existingError && existing?.id) {
+                __pmContractsPdfStyleConfigRecordId = String(existing.id);
+                existingPayload = existing.valor_json && typeof existing.valor_json === 'object' ? existing.valor_json : existingPayload;
+            }
         }
+        const payload = __pmContractsBuildPdfStyleConfigPayload(existingPayload, normalized, __pmContractsPdfStyleActiveProfile);
         if (__pmContractsPdfStyleConfigRecordId) {
             const { error: updError } = await window.tenantPocketBase
                 .from('configuracion')
-                .update({ valor_json: normalized })
+                .update({ valor_json: payload })
                 .eq('id', __pmContractsPdfStyleConfigRecordId);
             if (updError) throw updError;
+            __pmContractsPdfStyleRawPayload = payload;
             return;
         }
         const { data: inserted, error: insError } = await window.tenantPocketBase
             .from('configuracion')
-            .insert({ tenant: __PM_CONTRACTS_PDF_STYLE_TENANT, clave: __PM_CONTRACTS_PDF_STYLE_CONFIG_KEY, valor_json: normalized })
+            .insert({ tenant: __PM_CONTRACTS_PDF_STYLE_TENANT, clave: __PM_CONTRACTS_PDF_STYLE_CONFIG_KEY, valor_json: payload })
             .select('id')
             .single();
         if (insError) throw insError;
         __pmContractsPdfStyleConfigRecordId = String(inserted?.id || '');
+        __pmContractsPdfStyleRawPayload = payload;
     } catch (e) {
         console.warn('No se pudo guardar estilo PDF compartido (PM contracts):', e);
     }
@@ -736,8 +888,308 @@ function __pmContractsInitPdfStyleEditor() {
     const editorWrap = document.getElementById('pdf-style-editor');
     if (!editorWrap || !document.getElementById('pdf-style-font-family')) return;
     if (!__pmContractsPdfStyleState) __pmContractsPdfStyleState = __pmContractsLoadPdfStyleState();
-    // Editor centralizado en users1.html (admin). En contratos solo se aplica configuración.
-    editorWrap.classList.add('hidden');
+    __pmContractsPdfStyleUiState = __pmContractsLoadPdfStyleUiState();
+    __pmContractsWritePdfStyleControls(__pmContractsGetPdfStyleConfig());
+    __pmContractsApplyPdfStyleEditorUiState();
+
+    if (!__pmContractsIsAdminProfile()) {
+        editorWrap.classList.add('hidden');
+        return;
+    }
+
+    if (editorWrap.dataset.bound !== '1') {
+        editorWrap.querySelectorAll('.pdf-style-control').forEach((control) => {
+            control.addEventListener('input', __pmContractsHandlePdfStyleControlChange);
+            control.addEventListener('change', __pmContractsHandlePdfStyleControlChange);
+        });
+        document.getElementById('btn-reset-pdf-style')?.addEventListener('click', () => {
+            const reset = __pmContractsNormalizePdfStyle(__PM_CONTRACTS_PDF_STYLE_DEFAULTS);
+            __pmContractsSetPdfStyleConfig(reset, { applyToDom: true });
+            __pmContractsWritePdfStyleControls(reset);
+            __pmContractsScheduleSharedPdfStyleSync(reset);
+            __pmContractsRenderPdfResourcesEditorList();
+            __pmContractsRefreshPreviewFromStyleState();
+        });
+        document.getElementById('btn-pdf-style-toggle')?.addEventListener('click', __pmContractsTogglePdfStylePanel);
+        document.getElementById('btn-pdf-style-pin')?.addEventListener('click', __pmContractsTogglePdfStylePin);
+        editorWrap.dataset.bound = '1';
+    }
+
+    __pmContractsBindPdfResourceEditor();
+    __pmContractsBindPdfResourceDrag();
+    const receiptVisible = !document.getElementById('view-receipt')?.classList.contains('hidden');
+    editorWrap.classList.toggle('hidden', !receiptVisible);
+}
+
+function __pmContractsRefreshPreviewFromStyleState() {
+    if (!selectedOrder) return;
+    window.updateReceiptPreview();
+}
+
+function __pmContractsCommitPdfResources(resources, options = {}) {
+    const cfg = __pmContractsGetPdfStyleConfig();
+    const next = __pmContractsNormalizePdfStyle({ ...cfg, resources: __pmContractsNormalizePdfResources(resources) });
+    __pmContractsSetPdfStyleConfig(next, { applyToDom: true });
+    __pmContractsScheduleSharedPdfStyleSync(next);
+    if (options.refreshPreview !== false) __pmContractsRefreshPreviewFromStyleState();
+    __pmContractsRenderPdfResourcesEditorList();
+}
+
+function __pmContractsGetPdfResourcesFromState() {
+    return __pmContractsNormalizePdfResources(__pmContractsGetPdfStyleConfig().resources);
+}
+
+function __pmContractsHighlightSelectedResource() {
+    document.querySelectorAll('#receipt-preview-box .pmc-pdf-resource.pmc-pdf-edit-selected').forEach((node) => {
+        node.classList.remove('pmc-pdf-edit-selected');
+    });
+    if (!__pmContractsIsAdminProfile()) return;
+    const selected = String(__pmContractsPdfResourceSelectedId || '');
+    if (!selected) return;
+    document.querySelectorAll('#receipt-preview-box .pmc-pdf-resource[data-res-id]').forEach((node) => {
+        if (String(node.getAttribute('data-res-id') || '') === selected) node.classList.add('pmc-pdf-edit-selected');
+    });
+}
+
+function __pmContractsAddPdfResource(type) {
+    const safeType = ['bar', 'sign-line', 'logo'].includes(type) ? type : 'bar';
+    const resources = __pmContractsGetPdfResourcesFromState();
+    resources.push({
+        id: `pmc_res_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+        type: safeType,
+        enabled: true,
+        page: 1,
+        x: 80,
+        y: 120,
+        w: safeType === 'logo' ? 180 : (safeType === 'sign-line' ? 220 : 260),
+        h: safeType === 'logo' ? 72 : (safeType === 'sign-line' ? 2 : 14),
+        bgColor: safeType === 'sign-line' ? '#111827' : '#d32f2f'
+    });
+    __pmContractsPdfResourceSelectedId = resources[resources.length - 1].id;
+    __pmContractsCommitPdfResources(resources);
+}
+
+function __pmContractsRenderPdfResourcesEditorList() {
+    const list = document.getElementById('pdf-style-resources-list');
+    if (!list) return;
+    if (!__pmContractsIsAdminProfile()) {
+        list.innerHTML = '';
+        return;
+    }
+    const resources = __pmContractsGetPdfResourcesFromState();
+    if (resources.length && !resources.some((resource) => resource.id === __pmContractsPdfResourceSelectedId)) {
+        __pmContractsPdfResourceSelectedId = resources[0].id;
+    }
+    const typeLabel = (type) => {
+        if (type === 'sign-line') return 'Linea firma';
+        if (type === 'logo') return 'Logo';
+        return 'Barra';
+    };
+    const rows = resources.map((resource) => {
+        const selectedClass = resource.id === __pmContractsPdfResourceSelectedId ? 'border-brand-red' : 'border-gray-600';
+        const hideColor = resource.type === 'logo' ? 'hidden' : '';
+        return `
+            <div class="border ${selectedClass} rounded-md p-2 bg-gray-950/50 space-y-1" data-res-row="${__pmContractsSafeHtml(resource.id)}">
+                <div class="flex items-center justify-between gap-1">
+                    <button type="button" data-res-action="select" data-res-id="${__pmContractsSafeHtml(resource.id)}" class="text-[10px] font-bold uppercase text-gray-200">${typeLabel(resource.type)} · P${resource.page}</button>
+                    <button type="button" data-res-action="remove" data-res-id="${__pmContractsSafeHtml(resource.id)}" class="text-red-300 hover:text-red-200 text-xs" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
+                </div>
+                <div class="grid grid-cols-3 gap-1">
+                    <label class="text-[9px] text-gray-400">Pag
+                        <input data-res-id="${__pmContractsSafeHtml(resource.id)}" data-res-field="page" type="number" min="1" max="8" value="${resource.page}" class="w-full bg-gray-900 border border-gray-700 rounded px-1 py-0.5 text-[10px]">
+                    </label>
+                    <label class="text-[9px] text-gray-400">X
+                        <input data-res-id="${__pmContractsSafeHtml(resource.id)}" data-res-field="x" type="number" value="${resource.x}" class="w-full bg-gray-900 border border-gray-700 rounded px-1 py-0.5 text-[10px]">
+                    </label>
+                    <label class="text-[9px] text-gray-400">Y
+                        <input data-res-id="${__pmContractsSafeHtml(resource.id)}" data-res-field="y" type="number" value="${resource.y}" class="w-full bg-gray-900 border border-gray-700 rounded px-1 py-0.5 text-[10px]">
+                    </label>
+                    <label class="text-[9px] text-gray-400">Ancho
+                        <input data-res-id="${__pmContractsSafeHtml(resource.id)}" data-res-field="w" type="number" min="16" value="${resource.w}" class="w-full bg-gray-900 border border-gray-700 rounded px-1 py-0.5 text-[10px]">
+                    </label>
+                    <label class="text-[9px] text-gray-400">Alto
+                        <input data-res-id="${__pmContractsSafeHtml(resource.id)}" data-res-field="h" type="number" min="1" value="${resource.h}" class="w-full bg-gray-900 border border-gray-700 rounded px-1 py-0.5 text-[10px]">
+                    </label>
+                    <label class="text-[9px] text-gray-400">Activo
+                        <select data-res-id="${__pmContractsSafeHtml(resource.id)}" data-res-field="enabled" class="w-full bg-gray-900 border border-gray-700 rounded px-1 py-0.5 text-[10px]">
+                            <option value="true" ${resource.enabled ? 'selected' : ''}>Si</option>
+                            <option value="false" ${!resource.enabled ? 'selected' : ''}>No</option>
+                        </select>
+                    </label>
+                </div>
+                <label class="text-[9px] text-gray-400 block ${hideColor}">Color
+                    <input data-res-id="${__pmContractsSafeHtml(resource.id)}" data-res-field="bgColor" type="color" value="${resource.bgColor}" class="w-full h-6 bg-gray-900 border border-gray-700 rounded">
+                </label>
+            </div>
+        `;
+    }).join('');
+    list.innerHTML = resources.length
+        ? rows
+        : '<p class="text-[10px] text-gray-400">Sin recursos. Usa + Barra, + Firma o + Logo.</p>';
+    __pmContractsHighlightSelectedResource();
+}
+
+function __pmContractsHandleResourceListEvent(event) {
+    const trigger = event.target.closest('[data-res-action], [data-res-field]');
+    if (!trigger || !__pmContractsIsAdminProfile()) return;
+    const id = String(trigger.dataset.resId || '');
+    const resources = __pmContractsGetPdfResourcesFromState();
+    const idx = resources.findIndex((resource) => resource.id === id);
+    if (idx < 0) return;
+
+    if (trigger.dataset.resAction === 'remove') {
+        resources.splice(idx, 1);
+        if (__pmContractsPdfResourceSelectedId === id) __pmContractsPdfResourceSelectedId = resources[0]?.id || '';
+        __pmContractsCommitPdfResources(resources);
+        return;
+    }
+    if (trigger.dataset.resAction === 'select') {
+        __pmContractsPdfResourceSelectedId = id;
+        __pmContractsRenderPdfResourcesEditorList();
+        return;
+    }
+
+    const field = String(trigger.dataset.resField || '');
+    if (!field) return;
+    let nextValue = trigger.value;
+    if (field === 'enabled') nextValue = String(nextValue) === 'true';
+    if (['page', 'x', 'y', 'w', 'h'].includes(field)) nextValue = parseInt(nextValue, 10);
+    if (field === 'bgColor') nextValue = __pmContractsNormalizeHexColor(nextValue, resources[idx].bgColor);
+    resources[idx] = { ...resources[idx], [field]: nextValue };
+    __pmContractsPdfResourceSelectedId = id;
+    __pmContractsCommitPdfResources(resources);
+}
+
+function __pmContractsBindPdfResourceEditor() {
+    if (!__pmContractsIsAdminProfile()) return;
+    const list = document.getElementById('pdf-style-resources-list');
+    if (list && list.dataset.bound !== '1') {
+        list.addEventListener('input', __pmContractsHandleResourceListEvent);
+        list.addEventListener('change', __pmContractsHandleResourceListEvent);
+        list.addEventListener('click', __pmContractsHandleResourceListEvent);
+        list.dataset.bound = '1';
+    }
+    const addBar = document.getElementById('pdf-style-add-bar');
+    if (addBar && addBar.dataset.bound !== '1') {
+        addBar.addEventListener('click', () => __pmContractsAddPdfResource('bar'));
+        addBar.dataset.bound = '1';
+    }
+    const addSign = document.getElementById('pdf-style-add-sign-line');
+    if (addSign && addSign.dataset.bound !== '1') {
+        addSign.addEventListener('click', () => __pmContractsAddPdfResource('sign-line'));
+        addSign.dataset.bound = '1';
+    }
+    const addLogo = document.getElementById('pdf-style-add-logo');
+    if (addLogo && addLogo.dataset.bound !== '1') {
+        addLogo.addEventListener('click', () => __pmContractsAddPdfResource('logo'));
+        addLogo.dataset.bound = '1';
+    }
+    __pmContractsRenderPdfResourcesEditorList();
+}
+
+function __pmContractsApplyResourceGeometryToNode(node, resource) {
+    if (!(node instanceof HTMLElement)) return;
+    node.style.left = `${resource.x}px`;
+    node.style.top = `${resource.y}px`;
+    node.style.width = `${resource.w}px`;
+    node.style.height = `${resource.h}px`;
+}
+
+function __pmContractsBindPdfResourceDrag() {
+    if (document.body.dataset.pmContractsResourceDragBound === '1') return;
+    document.body.dataset.pmContractsResourceDragBound = '1';
+    const getPointerScale = (node) => {
+        const ref = node?.parentElement || node;
+        if (!ref || !(ref instanceof HTMLElement)) return { x: 1, y: 1 };
+        const rect = ref.getBoundingClientRect();
+        const rawWidth = ref.offsetWidth || parseFloat(ref.style.width || '0') || rect.width || 1;
+        const rawHeight = ref.offsetHeight || parseFloat(ref.style.height || '0') || rect.height || 1;
+        const scaleX = rect.width > 0 && rawWidth > 0 ? (rect.width / rawWidth) : 1;
+        const scaleY = rect.height > 0 && rawHeight > 0 ? (rect.height / rawHeight) : 1;
+        return { x: scaleX > 0 ? scaleX : 1, y: scaleY > 0 ? scaleY : 1 };
+    };
+    const isResizeGesture = (rect, event) => (
+        event.shiftKey ||
+        (((rect.right - event.clientX) < 18) && ((rect.bottom - event.clientY) < 18))
+    );
+    const minHeightForType = (type) => (type === 'sign-line' ? 1 : (type === 'logo' ? 24 : 4));
+    const releasePointer = (state) => {
+        const captureNode = state?.captureNode;
+        if (!captureNode || typeof captureNode.releasePointerCapture !== 'function') return;
+        try { captureNode.releasePointerCapture(state.pointerId); } catch (_) {}
+    };
+    const endDrag = () => {
+        if (!__pmContractsPdfResourcePointerState) return;
+        const state = __pmContractsPdfResourcePointerState;
+        const resources = __pmContractsGetPdfResourcesFromState();
+        const idx = resources.findIndex((resource) => resource.id === state.id && resource.page === state.page);
+        if (idx >= 0) {
+            resources[idx] = { ...resources[idx], ...(state.current || state.origin) };
+            __pmContractsCommitPdfResources(resources, { refreshPreview: false });
+        }
+        document.body.style.userSelect = '';
+        document.body.style.cursor = '';
+        releasePointer(state);
+        __pmContractsPdfResourcePointerState = null;
+        __pmContractsHighlightSelectedResource();
+    };
+    document.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0) return;
+        if (!__pmContractsIsAdminProfile()) return;
+        const target = event.target instanceof Element ? event.target : null;
+        if (!target) return;
+        const node = target.closest('#receipt-preview-box .pmc-pdf-resource[data-res-id]');
+        if (!node) return;
+        const id = String(node.getAttribute('data-res-id') || '');
+        const page = parseInt(node.getAttribute('data-res-page') || '1', 10);
+        const resources = __pmContractsGetPdfResourcesFromState();
+        const idx = resources.findIndex((resource) => resource.id === id && resource.page === page);
+        if (idx < 0) return;
+        const rect = node.getBoundingClientRect();
+        const scale = getPointerScale(node);
+        const mode = isResizeGesture(rect, event) ? 'resize' : 'move';
+        __pmContractsPdfResourceSelectedId = id;
+        __pmContractsRenderPdfResourcesEditorList();
+        __pmContractsPdfResourcePointerState = {
+            id,
+            page,
+            mode,
+            startX: event.clientX,
+            startY: event.clientY,
+            pointerId: event.pointerId,
+            captureNode: node,
+            scaleX: scale.x,
+            scaleY: scale.y,
+            origin: { ...resources[idx] },
+            current: { ...resources[idx] }
+        };
+        if (typeof node.setPointerCapture === 'function') {
+            try { node.setPointerCapture(event.pointerId); } catch (_) {}
+        }
+        document.body.style.userSelect = 'none';
+        document.body.style.cursor = mode === 'resize' ? 'nwse-resize' : 'grabbing';
+        event.preventDefault();
+    });
+    document.addEventListener('pointermove', (event) => {
+        if (!__pmContractsPdfResourcePointerState) return;
+        const state = __pmContractsPdfResourcePointerState;
+        const dx = Math.round((event.clientX - state.startX) / (state.scaleX || 1));
+        const dy = Math.round((event.clientY - state.startY) / (state.scaleY || 1));
+        const next = { ...state.origin };
+        if (state.mode === 'resize') {
+            next.w = Math.max(16, next.w + dx);
+            next.h = Math.max(minHeightForType(next.type), next.h + dy);
+        } else {
+            next.x += dx;
+            next.y += dy;
+        }
+        state.current = next;
+        const node = document.querySelector(`#receipt-preview-box .pmc-pdf-resource[data-res-id="${state.id}"][data-res-page="${state.page}"]`);
+        if (node) __pmContractsApplyResourceGeometryToNode(node, next);
+        __pmContractsHighlightSelectedResource();
+    });
+    document.addEventListener('pointerup', endDrag);
+    document.addEventListener('pointercancel', endDrag);
 }
 
 function __pmContractsBasename(path) {
@@ -816,6 +1268,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     await __pmContractsLoadSharedPdfStyleConfig();
     __pmContractsInitPdfStyleEditor();
+    __pmContractsLoadTemplateLetterheadPreference();
+    __pmContractsBindTemplateLetterheadToggle();
 
     console.log("Sistema iniciado correctamente. Cargando módulos...");
 
@@ -1107,6 +1561,7 @@ window.updateReceiptPreview = function() {
         document.getElementById('rcp-amount').value = "0.00";
     }
     document.getElementById('receipt-preview-box').innerHTML = getReceiptHTML(true);
+    __pmContractsHighlightSelectedResource();
     const remaining = currentRemainingBalance - amount;
     document.getElementById('lbl-remaining').innerText = formatMoney(remaining < 0 ? 0 : remaining);
     window.adjustPreviewScale();
@@ -1291,6 +1746,7 @@ function __pmContractsBuildPrintableContractHtml(previewDoc) {
         baseHeight: contractBaseHeight,
         id: 'contract-print-area'
     });
+    const printableBody = __pmContractsIsTemplateLetterheadEnabled() ? wrappedPage : bodyHtml;
 
     return `<!doctype html>
 <html>
@@ -1303,15 +1759,15 @@ ${headHtml}
   body {
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
-    display: flex;
-    justify-content: center;
-    align-items: flex-start;
+    display: ${__pmContractsIsTemplateLetterheadEnabled() ? 'flex' : 'block'};
+    justify-content: ${__pmContractsIsTemplateLetterheadEnabled() ? 'center' : 'initial'};
+    align-items: ${__pmContractsIsTemplateLetterheadEnabled() ? 'flex-start' : 'initial'};
   }
   .var-highlight { font-weight: bold; background: transparent !important; padding: 0 !important; border-radius: 0 !important; }
 </style>
 </head>
 <body>
-${wrappedPage}
+${printableBody}
 </body>
 </html>`;
 }
@@ -1523,16 +1979,20 @@ function getReceiptHTML(isVisual = false) {
     const pdfStyle = __pmContractsGetPdfStyleConfig();
     const pdfContent = __pmContractsNormalizePdfContent(pdfStyle.content);
     const pdfStyleInlineVars = __pmContractsPdfStyleVarsInline(pdfStyle);
-    const pdfStyleTag = `<style>.pmc-pdf-root{font-family:var(--pm-font-family)!important;}.pmc-pdf-root .pmc-pdf-shift{transform:translate(var(--pm-offset-x),var(--pm-offset-y));}.pmc-pdf-root .pmc-pdf-header{border-bottom-width:var(--pm-header-line)!important;justify-content:var(--pm-header-justify)!important;}.pmc-pdf-root .pmc-pdf-title{font-size:var(--pm-title-size)!important;line-height:1.05!important;text-align:var(--pm-header-align)!important;}.pmc-pdf-root .pmc-pdf-meta,.pmc-pdf-root .pmc-pdf-meta *{font-size:var(--pm-meta-size)!important;text-align:var(--pm-meta-align)!important;}.pmc-pdf-root .pmc-pdf-table-head th{font-size:var(--pm-table-head-size)!important;}.pmc-pdf-root .pmc-pdf-table-body td,.pmc-pdf-root .pmc-pdf-table-body p,.pmc-pdf-root .pmc-pdf-table-body span{font-size:var(--pm-table-body-size)!important;line-height:var(--pm-line-height)!important;}.pmc-pdf-root .pmc-pdf-table-body td:first-child,.pmc-pdf-root .pmc-pdf-table-body td:first-child *{text-align:var(--pm-table-align)!important;}.pmc-pdf-root .pmc-pdf-summary,.pmc-pdf-root .pmc-pdf-summary *{text-align:var(--pm-summary-align)!important;}.pmc-pdf-root .pmc-pdf-quick,.pmc-pdf-root .pmc-pdf-quick *{font-size:var(--pm-quick-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-quick-align)!important;}.pmc-pdf-root .pmc-pdf-general-conditions,.pmc-pdf-root .pmc-pdf-general-conditions *{font-size:var(--pm-conditions-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-conditions-align)!important;}.pmc-pdf-root .pmc-pdf-sign,.pmc-pdf-root .pmc-pdf-sign *{font-size:var(--pm-sign-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-sign-align)!important;}.pmc-pdf-root .pmc-pdf-footer-text{font-size:var(--pm-footer-size)!important;text-align:var(--pm-footer-align)!important;}</style>`;
+    const pdfStyleTag = `<style>.pmc-pdf-root{font-family:var(--pm-font-family)!important;}.pmc-pdf-root .pmc-pdf-shift{transform:translate(var(--pm-offset-x),var(--pm-offset-y));}.pmc-pdf-root .pmc-pdf-header{border-bottom-width:var(--pm-header-line)!important;justify-content:var(--pm-header-justify)!important;}.pmc-pdf-root .pmc-pdf-sign-line{width:100%;height:var(--pm-sign-line)!important;background:#111827!important;border-radius:999px;}.pmc-pdf-root .pmc-pdf-title{font-size:var(--pm-title-size)!important;line-height:1.05!important;text-align:var(--pm-header-align)!important;}.pmc-pdf-root .pmc-pdf-meta,.pmc-pdf-root .pmc-pdf-meta *{font-size:var(--pm-meta-size)!important;text-align:var(--pm-meta-align)!important;}.pmc-pdf-root .pmc-pdf-table-head th{font-size:var(--pm-table-head-size)!important;}.pmc-pdf-root .pmc-pdf-table-body td,.pmc-pdf-root .pmc-pdf-table-body p,.pmc-pdf-root .pmc-pdf-table-body span{font-size:var(--pm-table-body-size)!important;line-height:var(--pm-line-height)!important;}.pmc-pdf-root .pmc-pdf-table-body td:first-child,.pmc-pdf-root .pmc-pdf-table-body td:first-child *{text-align:var(--pm-table-align)!important;}.pmc-pdf-root .pmc-pdf-summary,.pmc-pdf-root .pmc-pdf-summary *{text-align:var(--pm-summary-align)!important;}.pmc-pdf-root .pmc-pdf-quick,.pmc-pdf-root .pmc-pdf-quick *{font-size:var(--pm-quick-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-quick-align)!important;}.pmc-pdf-root .pmc-pdf-general-conditions,.pmc-pdf-root .pmc-pdf-general-conditions *{font-size:var(--pm-conditions-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-conditions-align)!important;}.pmc-pdf-root .pmc-pdf-sign,.pmc-pdf-root .pmc-pdf-sign *{font-size:var(--pm-sign-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-sign-align)!important;}.pmc-pdf-root .pmc-pdf-footer-text{font-size:var(--pm-footer-size)!important;text-align:var(--pm-footer-align)!important;}.pmc-pdf-root .pmc-pdf-resource{cursor:default;box-sizing:border-box;outline:none;outline-offset:1px;}.pmc-pdf-root.pmc-pdf-admin-enabled .pmc-pdf-resource{cursor:move;outline:1px dashed rgba(239,68,68,.45);}.pmc-pdf-root .pmc-pdf-resource.pmc-pdf-edit-selected{outline:2px solid #ef4444!important;}</style>`;
     const wrapStyledReceipt = (rawHtml, extraPages = 0) => {
+        const pageOneRaw = __pmContractsInjectResourcesIntoPage(rawHtml, __pmContractsRenderPdfResources(pdfStyle, 1));
         const pages = [
-            __pmContractsWrapLetterheadPage(__pmContractsTransparentPdfHtml(__pmContractsBoostPdfTypography(rawHtml)), { baseWidth: PM_CONTRACTS_CONTENT_BASE_WIDTH_PX, baseHeight: receiptBaseHeight, id: 'receipt-print-area' })
+            __pmContractsWrapLetterheadPage(__pmContractsTransparentPdfHtml(__pmContractsBoostPdfTypography(pageOneRaw)), { baseWidth: PM_CONTRACTS_CONTENT_BASE_WIDTH_PX, baseHeight: receiptBaseHeight, id: 'receipt-print-area' })
         ];
         for (let i = 0; i < extraPages; i += 1) {
             const annexRaw = `<div class="pmc-pdf-main pmc-pdf-shift font-sans text-gray-800 w-full h-full relative leading-relaxed" style="width: ${PM_CONTRACTS_CONTENT_BASE_WIDTH_PX}px; min-height: ${receiptBaseHeight}px; height: ${receiptBaseHeight}px; padding: 20px 80px 56px; box-sizing: border-box; overflow: hidden;"><div class="pmc-pdf-header flex justify-end items-start mb-8 border-b-4 border-brand-red pb-3"><div class="pmc-pdf-meta text-right"><h1 class="pmc-pdf-title text-2xl font-black uppercase text-gray-900 tracking-tighter">ANEXO ${i + 1}</h1></div></div><div class="pmc-pdf-general-conditions text-[13px] text-gray-700 leading-relaxed mt-6 border border-dashed border-gray-300 rounded-lg p-4"><p class="font-black uppercase text-gray-500 text-[11px] mb-2">${__pmContractsSafeHtml(pdfContent.annexHintTitle || 'Página adicional editable')}</p><p>${__pmContractsSafeHtml(pdfContent.annexHintBody || '')}</p></div></div>`;
-            pages.push(__pmContractsWrapLetterheadPage(__pmContractsTransparentPdfHtml(__pmContractsBoostPdfTypography(annexRaw)), { baseWidth: PM_CONTRACTS_CONTENT_BASE_WIDTH_PX, baseHeight: receiptBaseHeight }));
+            const pageIndex = i + 2;
+            const withResources = __pmContractsInjectResourcesIntoPage(annexRaw, __pmContractsRenderPdfResources(pdfStyle, pageIndex));
+            pages.push(__pmContractsWrapLetterheadPage(__pmContractsTransparentPdfHtml(__pmContractsBoostPdfTypography(withResources)), { baseWidth: PM_CONTRACTS_CONTENT_BASE_WIDTH_PX, baseHeight: receiptBaseHeight }));
         }
-        return `<div class="pmc-pdf-root" style="width:816px;margin:0;padding:0;box-sizing:border-box;background:#ffffff;${pdfStyleInlineVars}">${pdfStyleTag}${pages.join('')}</div>`;
+        const adminClass = __pmContractsIsAdminProfile() ? ' pmc-pdf-admin-enabled' : '';
+        return `<div class="pmc-pdf-root${adminClass}" style="width:816px;margin:0;padding:0;box-sizing:border-box;background:#ffffff;${pdfStyleInlineVars}">${pdfStyleTag}${pages.join('')}</div>`;
     };
     const extraPages = __pmContractsClampStyleNumber(pdfStyle.extraPages, 0, 6, 0);
     
@@ -1566,7 +2026,7 @@ function getReceiptHTML(isVisual = false) {
                     <div class="pmc-pdf-summary mb-12 flex justify-end"><div class="bg-green-50 px-8 py-5 rounded-xl border border-green-100 text-right shadow-sm"><p class="text-xs font-bold text-green-600 uppercase tracking-widest mb-1">Saldo Pendiente</p><p class="text-3xl font-black text-green-700">$0.00</p></div></div>
                 </div>
                 <div style="margin-top: auto; position: relative; z-index: 10;">
-                    <div class="pmc-pdf-sign flex justify-between gap-16 mb-8"><div class="w-1/2 text-center"><div class="border-b-2 border-gray-800 mb-2"></div><p class="text-xs font-bold text-gray-900 uppercase">Cobranza</p></div><div class="w-1/2 text-center"><div class="border-b-2 border-gray-800 mb-2"></div><p class="text-xs font-bold text-gray-900 uppercase">Administración</p></div></div>
+                    <div class="pmc-pdf-sign flex justify-between gap-16 mb-8"><div class="w-1/2 text-center"><div class="pmc-pdf-sign-line mb-2"></div><p class="text-xs font-bold text-gray-900 uppercase">Cobranza</p></div><div class="w-1/2 text-center"><div class="pmc-pdf-sign-line mb-2"></div><p class="text-xs font-bold text-gray-900 uppercase">Administración</p></div></div>
                     <div class="pmc-pdf-footer-text pmc-pdf-general-conditions text-[10px] text-center text-gray-400 mt-4"><p class="mb-1">${__pmContractsSafeHtml(pdfContent.liquidatedFooterLine1 || '')}</p><p>${__pmContractsSafeHtml(pdfContent.liquidatedFooterLine2 || '')}</p></div>
                 </div>
             </div>`;
@@ -1599,7 +2059,7 @@ function getReceiptHTML(isVisual = false) {
                 <div class="pmc-pdf-summary mb-12 flex justify-end"><div class="bg-red-50 px-8 py-4 rounded-xl border border-red-100 text-right shadow-sm"><p class="text-xs font-bold text-red-400 uppercase tracking-widest mb-1">Saldo Pendiente por Liquidar</p><p class="text-2xl font-black text-red-600">${window.formatMoney(projectedRemaining)}</p></div></div>
             </div>
             <div style="margin-top: auto;">
-                <div class="pmc-pdf-sign flex justify-between gap-16 mb-8"><div class="w-1/2 text-center"><div class="border-b-2 border-gray-800 mb-1"></div><p class="text-xs font-bold text-gray-900 uppercase">Cobranza / Finanzas</p><p class="text-[10px] text-gray-400 uppercase">Plaza Mayor</p></div><div class="w-1/2 text-center"><div class="border-b-2 border-gray-800 mb-1"></div><p class="text-xs font-bold text-gray-900 uppercase">Mercadotecnia</p><p class="text-[10px] text-gray-400 uppercase">Plaza Mayor</p></div></div>
+                <div class="pmc-pdf-sign flex justify-between gap-16 mb-8"><div class="w-1/2 text-center"><div class="pmc-pdf-sign-line mb-1"></div><p class="text-xs font-bold text-gray-900 uppercase">Cobranza / Finanzas</p><p class="text-[10px] text-gray-400 uppercase">Plaza Mayor</p></div><div class="w-1/2 text-center"><div class="pmc-pdf-sign-line mb-1"></div><p class="text-xs font-bold text-gray-900 uppercase">Mercadotecnia</p><p class="text-[10px] text-gray-400 uppercase">Plaza Mayor</p></div></div>
                 <div class="pmc-pdf-footer-text pmc-pdf-general-conditions text-[10px] text-center text-gray-400 mt-4"><p class="mb-1">${__pmContractsSafeHtml(pdfContent.receiptFooterLine1 || '')}</p><p>${__pmContractsSafeHtml(pdfContent.receiptFooterLine2 || '')}</p></div>
             </div>
         </div>`;

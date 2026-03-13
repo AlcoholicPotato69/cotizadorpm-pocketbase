@@ -1,8 +1,3 @@
-/**
- * DOC: client\cotizador\orders.js
- * Proposito: Listado y edicion de cotizaciones existentes.
- * Notas: Este archivo forma parte del cotizador. Ver documentacion completa en docs/10-funcionamiento-general-del-codigo.txt.
- */
 
 // =========================================================================
 // MÓDULO DE COTIZACIONES ADMIN - PLAZA MAYOR
@@ -48,6 +43,21 @@ const __PM_LETTERHEAD_MARGINS_DESIGN_PX = { top: 150, right: 45, bottom: 85, lef
 const __PM_PDF_CONTENT_BASE_WIDTH_PX = 816;
 const __PM_CFG_LETTERHEAD_KEY = 'pdf_letterhead_path';
 const __PM_LETTERHEAD_PATH = 'membretes_pdf';
+let PB_URL = '';
+let PB_KEY = '';
+let FIN_SCHEMA = 'finanzas';
+let __pmPdfRenderWarmPromise = null;
+const __pmPdfWarmImageCache = new Set();
+
+function __pmSyncHubRuntimeConfig() {
+    PB_URL = window.HUB_CONFIG?.pocketbaseUrl || window.ENV?.POCKETBASE_URL || '';
+    PB_KEY = window.HUB_CONFIG?.pocketbaseAnonKey || window.ENV?.POCKETBASE_ANON_KEY || '';
+    FIN_SCHEMA = (typeof TENANT_SCHEMA !== 'undefined' && TENANT_SCHEMA)
+        ? TENANT_SCHEMA
+        : (window.HUB_CONFIG?.finanzasSchema || window.ENV?.SCHEMA_PLAZA_MAYOR || 'finanzas');
+}
+
+__pmSyncHubRuntimeConfig();
 
 function __pmCssSafeUrl(url) {
     return String(url || '')
@@ -90,19 +100,13 @@ async function __pmLoadLetterheadConfig() {
 }
 
 function __pmLetterheadFrame() {
-    const sx = __PM_PDF_PAGE_WIDTH_PX / __PM_LETTERHEAD_DESIGN_WIDTH_PX;
-    const sy = __PM_PDF_PAGE_HEIGHT_PX / __PM_LETTERHEAD_DESIGN_HEIGHT_PX;
-    const top = __PM_LETTERHEAD_MARGINS_DESIGN_PX.top * sy;
-    const right = __PM_LETTERHEAD_MARGINS_DESIGN_PX.right * sx;
-    const bottom = __PM_LETTERHEAD_MARGINS_DESIGN_PX.bottom * sy;
-    const left = __PM_LETTERHEAD_MARGINS_DESIGN_PX.left * sx;
     return {
-        top,
-        right,
-        bottom,
-        left,
-        width: __PM_PDF_PAGE_WIDTH_PX - left - right,
-        height: __PM_PDF_PAGE_HEIGHT_PX - top - bottom
+        top: 0,
+        right: 0,
+        bottom: 0,
+        left: 0,
+        width: __PM_PDF_PAGE_WIDTH_PX,
+        height: __PM_PDF_PAGE_HEIGHT_PX
     };
 }
 
@@ -128,11 +132,6 @@ function __pmWrapLetterheadPage(innerHtml, options = {}) {
     return `<div style="position:relative;width:${__PM_PDF_PAGE_WIDTH_PX}px;height:${__PM_PDF_PAGE_HEIGHT_PX}px;box-sizing:border-box;overflow:hidden;background:#f5f5f5;">${imageLayer}<div style="position:absolute;left:${left.toFixed(2)}px;top:${top.toFixed(2)}px;width:${baseWidth}px;height:${baseHeight}px;transform:scale(${scale.toFixed(6)});transform-origin:top left;overflow:hidden;z-index:1;">${innerHtml}</div></div>`;
 }
 
-const PB_URL = window.HUB_CONFIG?.pocketbaseUrl || window.ENV?.POCKETBASE_URL || '';
-const PB_KEY = window.HUB_CONFIG?.pocketbaseAnonKey || window.ENV?.POCKETBASE_ANON_KEY || '';
-const FIN_SCHEMA = (typeof TENANT_SCHEMA !== 'undefined' && TENANT_SCHEMA)
-    ? TENANT_SCHEMA
-    : (window.HUB_CONFIG?.finanzasSchema || window.ENV?.SCHEMA_PLAZA_MAYOR || 'finanzas');
 const STATUS_LEVEL = { 'pendiente': 0, 'rechazada': 0, 'aprobada': 1, 'finalizada': 2 };
 const PM_ORDERS_PAGE_MODE = window.__PM_ORDERS_MODE || 'list';
 const IS_PM_ORDER_DETAIL_PAGE = PM_ORDERS_PAGE_MODE === 'detail';
@@ -246,9 +245,13 @@ async function __pmWaitForPdfAssets(node, timeoutMs = 7000) {
     const imgs = Array.from(node.querySelectorAll('img'));
     await Promise.race([
         Promise.all(imgs.map(img => {
-            if (img.complete && (img.naturalWidth || img.naturalHeight)) return Promise.resolve();
+            const decodeImage = () => {
+                if (typeof img.decode === 'function') return img.decode().catch(() => {});
+                return Promise.resolve();
+            };
+            if (img.complete && (img.naturalWidth || img.naturalHeight)) return decodeImage();
             return new Promise(resolve => {
-                const done = () => resolve();
+                const done = () => { decodeImage().finally(resolve); };
                 img.addEventListener('load', done, { once: true });
                 img.addEventListener('error', done, { once: true });
             });
@@ -280,8 +283,39 @@ function __pmGetPdfRenderHost() {
     return host;
 }
 
+function __pmPrimePdfImage(url) {
+    const safeUrl = String(url || '').trim();
+    if (!safeUrl || __pmPdfWarmImageCache.has(safeUrl)) return Promise.resolve();
+    __pmPdfWarmImageCache.add(safeUrl);
+    return new Promise((resolve) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        const done = () => resolve();
+        img.onload = done;
+        img.onerror = done;
+        img.src = safeUrl;
+        if (img.complete) done();
+    });
+}
+
+function __pmPrewarmPdfRenderer() {
+    const safeLetterhead = String(__PM_LETTERHEAD_URL || '').trim();
+    if (__pmPdfRenderWarmPromise && (!safeLetterhead || __pmPdfWarmImageCache.has(safeLetterhead))) return __pmPdfRenderWarmPromise;
+    __pmPdfRenderWarmPromise = (async () => {
+        __pmGetPdfRenderHost();
+        await __pmPrimePdfImage(safeLetterhead);
+        if (document.fonts && typeof document.fonts.ready?.then === 'function') {
+            await Promise.race([document.fonts.ready, new Promise((resolve) => setTimeout(resolve, 1000))]);
+        }
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        return true;
+    })().catch(() => false);
+    return __pmPdfRenderWarmPromise;
+}
+
 window.generatePdfBlobFromNode = async function(sourceNode, extraOptions = {}) {
     if (!sourceNode) throw new Error('No hay contenido para generar PDF.');
+    await __pmPrewarmPdfRenderer();
     const host = __pmGetPdfRenderHost();
     const markup = String(sourceNode.innerHTML || '').trim();
     if (!markup) throw new Error('Contenido PDF vacío.');
@@ -289,7 +323,7 @@ window.generatePdfBlobFromNode = async function(sourceNode, extraOptions = {}) {
         host.innerHTML = markup;
         const target = host.firstElementChild || host;
         if (target?.classList?.contains('hidden')) target.classList.remove('hidden');
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise(resolve => setTimeout(resolve, 120));
         await __pmWaitForPdfAssets(target, 7000);
 
         const baseOptions = {
@@ -300,6 +334,7 @@ window.generatePdfBlobFromNode = async function(sourceNode, extraOptions = {}) {
                 useCORS: true,
                 letterRendering: true,
                 scrollY: 0,
+                logging: false,
                 backgroundColor: '#ffffff'
             },
             jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' }
@@ -461,12 +496,18 @@ window.addEventListener('click', function(e) {
 });
 
 document.addEventListener('DOMContentLoaded', async () => {
+    if (window.HUB_CONFIG_READY && typeof window.HUB_CONFIG_READY.then === 'function') {
+        await window.HUB_CONFIG_READY;
+    }
+    __pmSyncHubRuntimeConfig();
     if (window.PB_CLIENT) {
         if(!window.tenantPocketBase) window.tenantPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY, { db: { schema: FIN_SCHEMA } });
         if(!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
     }
     const { data: { session } } = await window.globalPocketBase.auth.getSession(); if (!session) return;
     await __pmLoadLetterheadConfig();
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(() => { void __pmPrewarmPdfRenderer(); }, { timeout: 1500 });
+    else setTimeout(() => { void __pmPrewarmPdfRenderer(); }, 250);
     
     const { data: profile } = await window.globalPocketBase.from('profiles').select('*').eq('id', session.user.id).single();
     window.currentUserProfile = profile;
@@ -828,6 +869,7 @@ window.attemptSaveOrder = function() {
 
 window.initiateApprovalSnapshot = async function() {
     await __pmEnsurePdfStyleProfile('quote');
+    void __pmPrewarmPdfRenderer();
     const formData = window.getFormDataFromModal();
     if (!formData.numero_orden) { formData.numero_orden = currentPreviewOrder.id.split('-')[0].toUpperCase(); }
 
@@ -838,6 +880,7 @@ window.initiateApprovalSnapshot = async function() {
     const btnAction = document.getElementById('btn-download-preview');
     
     pdfContainer.innerHTML = content;
+    __pmResetPreviewEditingState();
     __pmApplyPdfStyleToLivePreview();
     pdfContainer.classList.remove('hidden');
     embedViewer.classList.add('hidden');
@@ -946,6 +989,7 @@ window.processSaveOrder = async function() {
 
 window.previewOrderForGeneration = async function(id) {
     await __pmEnsurePdfStyleProfile('order');
+    void __pmPrewarmPdfRenderer();
     const order = allOrders.find(o => o.id === id);
     if(!order) return;
     currentPreviewOrder = { ...order, docType: 'order' }; 
@@ -956,6 +1000,7 @@ window.previewOrderForGeneration = async function(id) {
     const embed = document.getElementById('doc-preview');
     
     pdfContainer.innerHTML = content;
+    __pmResetPreviewEditingState();
     __pmApplyPdfStyleToLivePreview();
     pdfContainer.classList.remove('hidden');
     embed.classList.add('hidden');
@@ -1006,7 +1051,7 @@ window.openDocsModal = function(id) {
     const list = document.getElementById('docs-list'); list.innerHTML = '';
     
     const createBtn = (label, icon, color, action) => {
-        list.innerHTML += `<button onclick="${action}" class="w-full text-left px-4 py-3 rounded-xl border border-gray-200 hover:bg-gray-50 flex items-center gap-3 transition shadow-sm group bg-white mb-2"><div class="w-8 h-8 rounded-full bg-${color}-100 text-${color}-600 flex items-center justify-center shrink-0"><i class="${icon}"></i></div><div class="flex-grow"><p class="text-xs font-bold text-gray-700">${label}</p></div><i class="fa-solid fa-arrow-right text-xs text-gray-300"></i></button>`;
+        list.innerHTML += `<button type="button" onclick="${action}" class="w-full text-left px-4 py-3 rounded-xl border border-gray-200 hover:bg-gray-50 flex items-center gap-3 transition shadow-sm group bg-white mb-2"><div class="w-8 h-8 rounded-full bg-${color}-100 text-${color}-600 flex items-center justify-center shrink-0"><i class="${icon}"></i></div><div class="flex-grow"><p class="text-xs font-bold text-gray-700">${label}</p></div><i class="fa-solid fa-arrow-right text-xs text-gray-300"></i></button>`;
     };
 
     if (order.url_cotizacion_final) { createBtn('Ver Cotización Aprobada', 'fa-solid fa-file-circle-check', 'blue', `window.openStoredDocument('${order.url_cotizacion_final}')`); } else { createBtn('Ver Borrador Cotización', 'fa-solid fa-file-pen', 'gray', `window.openPDFPreview('${order.id}', 'quote')`); }
@@ -1033,13 +1078,14 @@ window.openDocsModal = function(id) {
 
 window.openPDFPreview = async function(id, type) { 
     await __pmEnsurePdfStyleProfile(type);
+    void __pmPrewarmPdfRenderer();
     const o = allOrders.find(x => x.id === id); if(!o) return; 
     currentPreviewOrder = { ...o, docType: type }; 
     const content = await window.getOrderHTML(o, type); 
     const pdfContainer = document.getElementById('pdf-content'); 
     const embedViewer = document.getElementById('doc-preview'); 
     const btnDownload = document.getElementById('btn-download-preview'); 
-    pdfContainer.classList.remove('hidden'); embedViewer.classList.add('hidden'); pdfContainer.innerHTML = content; __pmApplyPdfStyleToLivePreview();
+    pdfContainer.classList.remove('hidden'); embedViewer.classList.add('hidden'); pdfContainer.innerHTML = content; __pmResetPreviewEditingState(); __pmApplyPdfStyleToLivePreview();
     btnDownload.innerHTML = '<i class="fa-solid fa-download"></i> Descargar';
     btnDownload.className = "bg-brand-red hover:bg-red-600 text-white px-5 py-2 rounded-full text-xs font-bold uppercase shadow-lg transition flex items-center gap-2";
     btnDownload.onclick = window.downloadPDFFromPreview; 
@@ -1083,12 +1129,12 @@ const __PM_PDF_STYLE_CONFIG_KEY = 'pdf_typography_style';
 const __PM_PDF_STYLE_TENANT = 'plaza_mayor';
 const __PM_PDF_STYLE_PROFILE_KEYS = Object.freeze(['quote', 'order', 'receipt', 'contract']);
 const __PM_PDF_STYLE_FONT_MAP = Object.freeze({
-    segoe: '"Segoe UI", Arial, sans-serif',
+    segoe: 'Segoe UI, Arial, sans-serif',
     arial: 'Arial, Helvetica, sans-serif',
     verdana: 'Verdana, Geneva, sans-serif',
-    georgia: 'Georgia, "Times New Roman", serif',
-    times: '"Times New Roman", Times, serif',
-    trebuchet: '"Trebuchet MS", Arial, sans-serif'
+    georgia: 'Georgia, Times New Roman, serif',
+    times: 'Times New Roman, Times, serif',
+    trebuchet: 'Trebuchet MS, Arial, sans-serif'
 });
 const __PM_PDF_STYLE_FONT_LABELS = Object.freeze({
     segoe: 'Segoe UI',
@@ -1101,14 +1147,39 @@ const __PM_PDF_STYLE_FONT_LABELS = Object.freeze({
 const __PM_PDF_BASE_TEXT_BLOCKS = Object.freeze([
     { id: 'base:header-title', key: 'header-title', label: 'Título Encabezado', sizeField: 'titlePx', alignField: 'headerAlign' },
     { id: 'base:header-meta', key: 'header-meta', label: 'Meta Encabezado', sizeField: 'metaPx', alignField: 'metaAlign' },
-    { id: 'base:table-body', key: 'table-body', label: 'Tabla Conceptos', sizeField: 'tableBodyPx', alignField: 'tableAlign' },
-    { id: 'base:summary', key: 'summary', label: 'Resumen Totales', alignField: 'summaryAlign' },
-    { id: 'base:quick', key: 'quick', label: 'Notas', sizeField: 'quickPx', alignField: 'quickAlign' },
-    { id: 'base:conditions', key: 'conditions', label: 'Condiciones', sizeField: 'conditionsPx', alignField: 'conditionsAlign' },
+    { id: 'base:header-line', key: 'header-line', label: 'Linea Encabezado', sizeField: 'headerLinePx', kind: 'shape', inspectorEnabled: false },
+    { id: 'base:table', key: 'table', label: 'Tabla Conceptos', sizeField: 'tableBodyPx', alignField: 'tableAlign' },
+    { id: 'base:summary-client', key: 'summary-client', label: 'Resumen Cliente', alignField: 'summaryAlign' },
+    { id: 'base:summary-totals', key: 'summary-totals', label: 'Resumen Totales', alignField: 'summaryAlign' },
+    { id: 'base:quick', key: 'quick', label: 'Notas', sizeField: 'quickPx', alignField: 'quickAlign', contentEditor: 'quick' },
+    { id: 'base:conditions', key: 'conditions', label: 'Condiciones', sizeField: 'conditionsPx', alignField: 'conditionsAlign', contentEditor: 'conditions' },
+    { id: 'base:sign-line', key: 'sign-line', label: 'Linea Firma', sizeField: 'signLinePx', kind: 'shape', inspectorEnabled: false },
     { id: 'base:sign', key: 'sign', label: 'Firmas', sizeField: 'signPx', alignField: 'signAlign' },
     { id: 'base:footer', key: 'footer', label: 'Footer', sizeField: 'footerPx', alignField: 'footerAlign' }
 ]);
+const __PM_PDF_BASE_LAYOUT_LIMITS = Object.freeze({
+    x: { min: -2400, max: 2400 },
+    y: { min: -3200, max: 3200 },
+    scalePct: { min: 15, max: 500 }
+});
+const __PM_PDF_BASE_LAYOUT_ALIASES = Object.freeze({
+    'header-line': ['header-line'],
+    'sign-line': ['sign-line'],
+    table: ['table', 'table-body'],
+    'summary-client': ['summary-client', 'summary'],
+    'summary-totals': ['summary-totals', 'summary']
+});
+const __PM_PDF_BASE_TEXT_STYLE_DEFAULTS = Object.freeze({
+    fontFamilyKey: '',
+    fontSize: null,
+    color: '',
+    bold: false,
+    italic: false,
+    underline: false
+});
 const __PM_PDF_BASE_SIZE_LIMITS = Object.freeze({
+    headerLinePx: { min: 1, max: 16 },
+    signLinePx: { min: 1, max: 16 },
     titlePx: { min: 20, max: 42 },
     metaPx: { min: 8, max: 18 },
     tableBodyPx: { min: 9, max: 16 },
@@ -1116,6 +1187,20 @@ const __PM_PDF_BASE_SIZE_LIMITS = Object.freeze({
     conditionsPx: { min: 9, max: 18 },
     signPx: { min: 9, max: 16 },
     footerPx: { min: 8, max: 14 }
+});
+const __PM_PDF_CONTENT_EDITOR_FIELDS = Object.freeze({
+    quick: Object.freeze([
+        { key: 'quickLeftTitle', label: 'Titulo izquierda', multiline: false, max: 80 },
+        { key: 'quickLeftLines', label: 'Notas izquierda', multiline: true, rows: 5, max: 1200 },
+        { key: 'quickRightTitle', label: 'Titulo derecha', multiline: false, max: 80 },
+        { key: 'quickRightBody', label: 'Texto derecha', multiline: true, rows: 4, max: 700 }
+    ]),
+    conditions: Object.freeze([
+        { key: 'conditionsTitle', label: 'Titulo condiciones', multiline: false, max: 120 },
+        { key: 'conditionsLines', label: 'Condiciones', multiline: true, rows: 8, max: 5000 },
+        { key: 'annexHintTitle', label: 'Titulo anexo', multiline: false, max: 120 },
+        { key: 'annexHintBody', label: 'Texto anexo', multiline: true, rows: 4, max: 900 }
+    ])
 });
 const __PM_PDF_STYLE_CONTENT_DEFAULTS = Object.freeze({
     quickLeftTitle: 'Condiciones:',
@@ -1142,6 +1227,7 @@ const __PM_PDF_STYLE_CONTENT_DEFAULTS = Object.freeze({
 const __PM_PDF_STYLE_DEFAULTS = Object.freeze({
     fontFamilyKey: 'segoe',
     headerLinePx: 4,
+    signLinePx: 1,
     titlePx: 30,
     metaPx: 13,
     tableHeadPx: 14,
@@ -1154,6 +1240,8 @@ const __PM_PDF_STYLE_DEFAULTS = Object.freeze({
     offsetXPx: 0,
     offsetYPx: 0,
     extraPages: 0,
+    baseLayouts: {},
+    baseTextStyles: {},
     resources: [],
     content: __PM_PDF_STYLE_CONTENT_DEFAULTS,
     headerAlign: 'right',
@@ -1173,6 +1261,8 @@ let __pmPdfStyleUiState = { collapsed: false, pinned: false };
 let __pmPdfResourceEditorSelectedId = '';
 let __pmPdfResourcePointerState = null;
 let __pmPdfStyleActiveProfile = 'quote';
+let __pmPdfPreviewEditLocked = true;
+let __pmPdfTextInspectorState = null;
 
 function __pmClampStyleNumber(value, min, max, fallback) {
     const num = parseInt(value, 10);
@@ -1200,6 +1290,88 @@ function __pmNormalizeHexColor(value, fallback) {
     return /^#[0-9a-fA-F]{6}$/.test(candidate) ? candidate.toLowerCase() : fallback;
 }
 
+function __pmNormalizeOptionalFontKey(value) {
+    const fontKey = String(value || '').toLowerCase().trim();
+    return __PM_PDF_STYLE_FONT_MAP[fontKey] ? fontKey : '';
+}
+
+function __pmNormalizeOptionalHexColor(value) {
+    const input = String(value || '').trim();
+    if (!input) return '';
+    const candidate = input.startsWith('#') ? input : `#${input}`;
+    return /^#[0-9a-fA-F]{6}$/.test(candidate) ? candidate.toLowerCase() : '';
+}
+
+function __pmNormalizeNullableStyleNumber(value, min, max) {
+    const num = parseInt(value, 10);
+    if (!Number.isFinite(num)) return null;
+    return Math.min(max, Math.max(min, num));
+}
+
+function __pmGetPdfBaseBlockMeta(key) {
+    const safe = String(key || '').trim();
+    return __PM_PDF_BASE_TEXT_BLOCKS.find((block) => block.key === safe) || null;
+}
+
+function __pmNormalizePdfBaseLayout(raw = {}) {
+    const base = raw && typeof raw === 'object' ? raw : {};
+    return {
+        x: __pmClampStyleNumber(base.x, __PM_PDF_BASE_LAYOUT_LIMITS.x.min, __PM_PDF_BASE_LAYOUT_LIMITS.x.max, 0),
+        y: __pmClampStyleNumber(base.y, __PM_PDF_BASE_LAYOUT_LIMITS.y.min, __PM_PDF_BASE_LAYOUT_LIMITS.y.max, 0),
+        scalePct: __pmClampStyleNumber(base.scalePct ?? base.scale, __PM_PDF_BASE_LAYOUT_LIMITS.scalePct.min, __PM_PDF_BASE_LAYOUT_LIMITS.scalePct.max, 100),
+        hidden: base.hidden === true
+    };
+}
+
+function __pmNormalizePdfBaseLayouts(raw) {
+    const source = raw && typeof raw === 'object' ? raw : {};
+    const out = {};
+    __PM_PDF_BASE_TEXT_BLOCKS.forEach((block) => {
+        const aliases = __PM_PDF_BASE_LAYOUT_ALIASES[block.key] || [block.key];
+        let candidate = null;
+        aliases.some((alias) => {
+            if (source[alias] && typeof source[alias] === 'object') {
+                candidate = source[alias];
+                return true;
+            }
+            return false;
+        });
+        out[block.key] = __pmNormalizePdfBaseLayout(candidate || {});
+    });
+    return out;
+}
+
+function __pmNormalizePdfBaseTextStyle(raw = {}) {
+    const base = raw && typeof raw === 'object' ? raw : {};
+    return {
+        fontFamilyKey: __pmNormalizeOptionalFontKey(base.fontFamilyKey),
+        fontSize: __pmNormalizeNullableStyleNumber(base.fontSize, 8, 72),
+        color: __pmNormalizeOptionalHexColor(base.color),
+        bold: base.bold === true,
+        italic: base.italic === true,
+        underline: base.underline === true
+    };
+}
+
+function __pmNormalizePdfBaseTextStyles(raw) {
+    const source = raw && typeof raw === 'object' ? raw : {};
+    const out = {};
+    __PM_PDF_BASE_TEXT_BLOCKS.forEach((block) => {
+        out[block.key] = __pmNormalizePdfBaseTextStyle(source[block.key] || {});
+    });
+    return out;
+}
+
+function __pmHasPdfBaseTextStyle(style) {
+    const safe = __pmNormalizePdfBaseTextStyle(style);
+    return !!(safe.fontFamilyKey || safe.fontSize || safe.color || safe.bold || safe.italic || safe.underline);
+}
+
+function __pmBuildPdfBaseTransform(layout) {
+    const safe = __pmNormalizePdfBaseLayout(layout);
+    return `translate(${safe.x}px, ${safe.y}px) scale(${(safe.scalePct / 100).toFixed(3)})`;
+}
+
 function __pmNormalizePdfContent(raw) {
     const base = raw && typeof raw === 'object' ? raw : {};
     const defaults = __PM_PDF_STYLE_CONTENT_DEFAULTS;
@@ -1216,23 +1388,36 @@ function __pmNormalizePdfContent(raw) {
     };
 }
 
+function __pmGetPdfContentEditorFieldConfig(fieldKey) {
+    const safe = String(fieldKey || '').trim();
+    const groups = Object.values(__PM_PDF_CONTENT_EDITOR_FIELDS);
+    for (const fields of groups) {
+        const match = fields.find((field) => field.key === safe);
+        if (match) return match;
+    }
+    return null;
+}
+
 function __pmNormalizePdfResources(raw) {
     const list = Array.isArray(raw) ? raw : [];
     return list.slice(0, 80).map((item, index) => {
         const base = item && typeof item === 'object' ? item : {};
-        const type = ['bar', 'title', 'text'].includes(String(base.type || '').toLowerCase()) ? String(base.type).toLowerCase() : 'text';
+        const type = ['bar', 'title', 'text', 'logo'].includes(String(base.type || '').toLowerCase()) ? String(base.type).toLowerCase() : 'text';
         return {
             id: String(base.id || `pmres_${Date.now()}_${index}`),
             type,
             enabled: base.enabled !== false,
             page: __pmClampStyleNumber(base.page, 1, 8, 1),
-            x: __pmClampStyleNumber(base.x, -200, 900, 80),
-            y: __pmClampStyleNumber(base.y, -200, 1400, 120),
-            w: __pmClampStyleNumber(base.w, 16, 900, type === 'bar' ? 240 : 260),
-            h: __pmClampStyleNumber(base.h, 10, 1200, type === 'bar' ? 12 : 42),
-            text: String(base.text || (type === 'title' ? 'TITULO' : 'Texto editable')).slice(0, 180),
+            x: __pmClampStyleNumber(base.x, -4000, 4000, 80),
+            y: __pmClampStyleNumber(base.y, -5000, 5000, 120),
+            w: __pmClampStyleNumber(base.w, 16, 4000, type === 'bar' ? 240 : (type === 'logo' ? 180 : 260)),
+            h: __pmClampStyleNumber(base.h, 10, 5000, type === 'bar' ? 12 : (type === 'logo' ? 72 : 42)),
+            text: String(base.text || (type === 'title' ? 'TITULO' : (type === 'logo' ? '' : 'Texto editable'))).slice(0, 180),
             fontSize: __pmClampStyleNumber(base.fontSize, 8, 72, type === 'title' ? 24 : 14),
+            fontFamilyKey: __pmNormalizeOptionalFontKey(base.fontFamilyKey),
             bold: base.bold !== false,
+            italic: base.italic === true,
+            underline: base.underline === true,
             align: __pmNormalizeStyleAlign(base.align, 'left'),
             color: __pmNormalizeHexColor(base.color, '#111827'),
             bgColor: __pmNormalizeHexColor(base.bgColor, type === 'bar' ? '#d32f2f' : '#ffffff')
@@ -1249,11 +1434,123 @@ function __pmRenderPdfResources(style, pageIndex) {
         .map((resource) => {
             const common = `position:absolute;left:${resource.x}px;top:${resource.y}px;width:${resource.w}px;height:${resource.h}px;z-index:20;box-sizing:border-box;pointer-events:${__pmIsAdminProfile() ? 'auto' : 'none'};`;
             if (resource.type === 'bar') {
-                return `<div class="pm-pdf-resource" data-res-id="${__pmSafeHtml(resource.id)}" data-res-page="${pageIndex}" data-res-type="bar" style="${common}background:${resource.bgColor};border-radius:2px;"></div>`;
+                return `<div class="pm-pdf-resource ${__pmIsAdminProfile() ? 'pm-pdf-editable' : ''}" data-res-id="${__pmSafeHtml(resource.id)}" data-res-page="${pageIndex}" data-res-type="bar" style="${common}background:${resource.bgColor};border-radius:2px;"></div>`;
             }
-            return `<div class="pm-pdf-resource" data-res-id="${__pmSafeHtml(resource.id)}" data-res-page="${pageIndex}" data-res-type="${__pmSafeHtml(resource.type)}" style="${common}color:${resource.color};background:${resource.bgColor};font-size:${resource.fontSize}px;line-height:1.2;font-weight:${resource.bold ? 800 : 500};text-align:${resource.align};white-space:pre-wrap;overflow:hidden;padding:3px 6px;border-radius:2px;">${__pmSafeHtml(resource.text)}</div>`;
+            if (resource.type === 'logo') {
+                return `<div class="pm-pdf-resource ${__pmIsAdminProfile() ? 'pm-pdf-editable' : ''}" data-res-id="${__pmSafeHtml(resource.id)}" data-res-page="${pageIndex}" data-res-type="logo" style="${common}padding:0;background:transparent;border-radius:0;"><img src="${__pmSafeHtml(COMPANY_LOGO_URL)}" alt="Logo tenant" draggable="false" style="width:100%;height:100%;object-fit:contain;pointer-events:none;user-select:none;"></div>`;
+            }
+            const resourceFont = resource.fontFamilyKey && __PM_PDF_STYLE_FONT_MAP[resource.fontFamilyKey]
+                ? `font-family:${__PM_PDF_STYLE_FONT_MAP[resource.fontFamilyKey]};`
+                : '';
+            return `<div class="pm-pdf-resource ${__pmIsAdminProfile() ? 'pm-pdf-editable' : ''}" data-res-id="${__pmSafeHtml(resource.id)}" data-res-page="${pageIndex}" data-res-type="${__pmSafeHtml(resource.type)}" data-res-font-size="${resource.fontSize}" style="${common}color:${resource.color};background:${resource.bgColor};font-size:${resource.fontSize}px;line-height:1.2;font-weight:${resource.bold ? 800 : 500};font-style:${resource.italic ? 'italic' : 'normal'};text-decoration:${resource.underline ? 'underline' : 'none'};text-align:${resource.align};white-space:pre-wrap;overflow:hidden;padding:3px 6px;border-radius:2px;${resourceFont}">${__pmSafeHtml(resource.text)}</div>`;
         })
         .join('');
+}
+
+function __pmAutoFitPdfTextNode(node) {
+    if (!(node instanceof HTMLElement)) return;
+    const type = String(node.getAttribute('data-res-type') || '').trim();
+    if (!type || type === 'bar' || type === 'logo') return;
+    const baseFont = __pmClampStyleNumber(
+        node.getAttribute('data-res-font-size') || node.style.fontSize || window.getComputedStyle(node).fontSize,
+        8,
+        72,
+        14
+    );
+    node.style.fontSize = `${baseFont}px`;
+    node.style.lineHeight = '1.2';
+    if ((node.scrollWidth <= node.clientWidth + 1) && (node.scrollHeight <= node.clientHeight + 1)) return;
+    let low = 8;
+    let high = baseFont;
+    let best = 8;
+    while (low <= high) {
+        const mid = Math.floor((low + high) / 2);
+        node.style.fontSize = `${mid}px`;
+        if ((node.scrollWidth <= node.clientWidth + 1) && (node.scrollHeight <= node.clientHeight + 1)) {
+            best = mid;
+            low = mid + 1;
+        } else {
+            high = mid - 1;
+        }
+    }
+    node.style.fontSize = `${best}px`;
+}
+
+function __pmAutoFitPdfTextResources() {
+    document.querySelectorAll('#pdf-content .pm-pdf-resource[data-res-type="text"], #pdf-content .pm-pdf-resource[data-res-type="title"]').forEach((node) => {
+        __pmAutoFitPdfTextNode(node);
+    });
+}
+
+function __pmSyncPdfResourceNodes() {
+    const resources = __pmGetPdfResourcesFromState();
+    const resourceMap = new Map(resources.map((resource) => [`${resource.id}:${resource.page}`, resource]));
+    document.querySelectorAll('#pdf-content .pm-pdf-resource[data-res-id][data-res-page]').forEach((node) => {
+        const resourceId = String(node.getAttribute('data-res-id') || '');
+        const resourcePage = parseInt(node.getAttribute('data-res-page') || '1', 10);
+        const resource = resourceMap.get(`${resourceId}:${resourcePage}`);
+        if (!resource || !resource.enabled) {
+            node.remove();
+            return;
+        }
+        node.setAttribute('data-res-type', resource.type);
+        node.setAttribute('data-res-font-size', String(resource.fontSize || 14));
+        node.style.left = `${resource.x}px`;
+        node.style.top = `${resource.y}px`;
+        node.style.width = `${resource.w}px`;
+        node.style.height = `${resource.h}px`;
+        node.style.pointerEvents = __pmIsAdminProfile() ? 'auto' : 'none';
+        node.style.borderRadius = '2px';
+        if (resource.type === 'bar') {
+            node.textContent = '';
+            node.style.background = resource.bgColor;
+            node.style.padding = '0';
+            node.style.color = 'transparent';
+            node.style.fontSize = '0';
+            node.style.fontWeight = '400';
+            node.style.fontStyle = 'normal';
+            node.style.textDecoration = 'none';
+            node.style.textAlign = 'left';
+            node.style.whiteSpace = 'normal';
+            node.style.overflow = 'hidden';
+            node.style.removeProperty('font-family');
+            return;
+        }
+        if (resource.type === 'logo') {
+            node.style.background = 'transparent';
+            node.style.padding = '0';
+            node.style.color = 'transparent';
+            node.style.fontSize = '0';
+            node.style.fontWeight = '400';
+            node.style.fontStyle = 'normal';
+            node.style.textDecoration = 'none';
+            node.style.textAlign = 'left';
+            node.style.whiteSpace = 'normal';
+            node.style.overflow = 'hidden';
+            node.style.removeProperty('font-family');
+            const currentImg = node.querySelector('img');
+            if (currentImg) currentImg.setAttribute('src', COMPANY_LOGO_URL);
+            else node.innerHTML = `<img src="${__pmSafeHtml(COMPANY_LOGO_URL)}" alt="Logo tenant" draggable="false" style="width:100%;height:100%;object-fit:contain;pointer-events:none;user-select:none;">`;
+            return;
+        }
+        if (node.querySelector('img')) node.innerHTML = '';
+        node.textContent = resource.text || '';
+        node.style.background = resource.bgColor;
+        node.style.color = resource.color;
+        node.style.fontSize = `${resource.fontSize}px`;
+        node.style.fontWeight = resource.bold ? '800' : '500';
+        node.style.fontStyle = resource.italic ? 'italic' : 'normal';
+        node.style.textDecoration = resource.underline ? 'underline' : 'none';
+        node.style.textAlign = resource.align;
+        node.style.whiteSpace = 'pre-wrap';
+        node.style.overflow = 'hidden';
+        node.style.overflowWrap = 'anywhere';
+        node.style.wordBreak = 'break-word';
+        node.style.padding = '3px 6px';
+        if (resource.fontFamilyKey && __PM_PDF_STYLE_FONT_MAP[resource.fontFamilyKey]) node.style.fontFamily = __PM_PDF_STYLE_FONT_MAP[resource.fontFamilyKey];
+        else node.style.removeProperty('font-family');
+    });
+    __pmAutoFitPdfTextResources();
 }
 
 function __pmNormalizePdfStyle(raw = {}) {
@@ -1261,7 +1558,8 @@ function __pmNormalizePdfStyle(raw = {}) {
     const fontKey = String(base.fontFamilyKey || '').toLowerCase();
     return {
         fontFamilyKey: __PM_PDF_STYLE_FONT_MAP[fontKey] ? fontKey : __PM_PDF_STYLE_DEFAULTS.fontFamilyKey,
-        headerLinePx: __pmClampStyleNumber(base.headerLinePx, 1, 8, __PM_PDF_STYLE_DEFAULTS.headerLinePx),
+        headerLinePx: __pmClampStyleNumber(base.headerLinePx, 1, 16, __PM_PDF_STYLE_DEFAULTS.headerLinePx),
+        signLinePx: __pmClampStyleNumber(base.signLinePx, 1, 16, __PM_PDF_STYLE_DEFAULTS.signLinePx),
         titlePx: __pmClampStyleNumber(base.titlePx, 20, 42, __PM_PDF_STYLE_DEFAULTS.titlePx),
         metaPx: __pmClampStyleNumber(base.metaPx, 8, 18, __PM_PDF_STYLE_DEFAULTS.metaPx),
         tableHeadPx: __pmClampStyleNumber(base.tableHeadPx, 9, 18, __PM_PDF_STYLE_DEFAULTS.tableHeadPx),
@@ -1274,6 +1572,8 @@ function __pmNormalizePdfStyle(raw = {}) {
         offsetXPx: __pmClampStyleNumber(base.offsetXPx, -120, 120, __PM_PDF_STYLE_DEFAULTS.offsetXPx),
         offsetYPx: __pmClampStyleNumber(base.offsetYPx, -120, 120, __PM_PDF_STYLE_DEFAULTS.offsetYPx),
         extraPages: __pmClampStyleNumber(base.extraPages, -1, 6, __PM_PDF_STYLE_DEFAULTS.extraPages),
+        baseLayouts: __pmNormalizePdfBaseLayouts(base.baseLayouts),
+        baseTextStyles: __pmNormalizePdfBaseTextStyles(base.baseTextStyles),
         resources: __pmNormalizePdfResources(base.resources),
         content: __pmNormalizePdfContent(base.content),
         headerAlign: __pmNormalizeStyleAlign(base.headerAlign, __PM_PDF_STYLE_DEFAULTS.headerAlign),
@@ -1302,6 +1602,31 @@ function __pmExtractPdfStyleProfile(raw, profile = 'quote') {
         if (candidate && typeof candidate === 'object') return candidate;
     }
     return cfg;
+}
+
+function __pmNormalizePdfStyleProfiles(raw) {
+    const cfg = raw && typeof raw === 'object' ? raw : {};
+    const profiles = cfg.profiles && typeof cfg.profiles === 'object' ? cfg.profiles : null;
+    const fallback = __pmNormalizePdfStyle(profiles ? (profiles.quote || profiles.default || __PM_PDF_STYLE_DEFAULTS) : cfg);
+    const out = {};
+    __PM_PDF_STYLE_PROFILE_KEYS.forEach((profileKey) => {
+        out[profileKey] = __pmNormalizePdfStyle(profiles ? (profiles[profileKey] || fallback) : fallback);
+    });
+    return out;
+}
+
+function __pmBuildPdfStyleConfigPayload(rawExisting, style, profile = __pmPdfStyleActiveProfile) {
+    const existing = rawExisting && typeof rawExisting === 'object' ? rawExisting : {};
+    const normalizedProfile = __pmNormalizePdfStyleProfileKey(profile);
+    const profiles = __pmNormalizePdfStyleProfiles(existing);
+    profiles[normalizedProfile] = __pmNormalizePdfStyle(style);
+    return {
+        ...existing,
+        tenant: __PM_PDF_STYLE_TENANT,
+        version: Math.max(2, parseInt(existing.version, 10) || 2),
+        updated_at: new Date().toISOString(),
+        profiles
+    };
 }
 
 function __pmLoadPdfStyleState() {
@@ -1336,6 +1661,7 @@ function __pmPdfStyleVars(style) {
     return {
         '--pm-font-family': __PM_PDF_STYLE_FONT_MAP[safe.fontFamilyKey],
         '--pm-header-line': `${safe.headerLinePx}px`,
+        '--pm-sign-line': `${safe.signLinePx}px`,
         '--pm-title-size': `${safe.titlePx}px`,
         '--pm-meta-size': `${safe.metaPx}px`,
         '--pm-date-size': `${Math.max(8, safe.metaPx - 2)}px`,
@@ -1365,6 +1691,586 @@ function __pmPdfStyleVarsInline(style) {
     return Object.entries(vars).map(([key, value]) => `${key}:${value};`).join('');
 }
 
+function __pmApplyPdfBaseLayouts() {
+    const cfg = __pmGetPdfStyleConfig();
+    const layouts = __pmNormalizePdfBaseLayouts(cfg.baseLayouts);
+    document.querySelectorAll('#pdf-content [data-base-resource]').forEach((node) => {
+        const key = String(node.getAttribute('data-base-resource') || '').trim();
+        const layout = layouts[key] || __pmNormalizePdfBaseLayout();
+        node.style.position = 'relative';
+        node.style.transformOrigin = 'top left';
+        node.style.transform = __pmBuildPdfBaseTransform(layout);
+        node.style.display = layout.hidden ? 'none' : '';
+        node.classList.toggle('pm-pdf-editable', __pmIsAdminProfile());
+    });
+}
+
+function __pmCommitPdfBaseLayout(key, layout) {
+    const meta = __pmGetPdfBaseBlockMeta(key);
+    if (!meta) return;
+    const cfg = __pmGetPdfStyleConfig();
+    const baseLayouts = {
+        ...__pmNormalizePdfBaseLayouts(cfg.baseLayouts),
+        [meta.key]: __pmNormalizePdfBaseLayout(layout)
+    };
+    const next = __pmNormalizePdfStyle({ ...cfg, baseLayouts });
+    __pmSetPdfStyleConfig(next, { applyToDom: false });
+    __pmApplyPdfBaseLayouts();
+    __pmScheduleSharedPdfStyleSync(next);
+}
+
+function __pmCommitBaseLayoutField(baseId, field, rawValue) {
+    const key = String(baseId || '').replace(/^base:/, '').trim();
+    const meta = __pmGetPdfBaseBlockMeta(key);
+    if (!meta) return;
+    const cfg = __pmGetPdfStyleConfig();
+    const baseLayouts = __pmNormalizePdfBaseLayouts(cfg.baseLayouts);
+    const current = baseLayouts[meta.key] || __pmNormalizePdfBaseLayout();
+    let nextLayout = { ...current };
+    if (field === 'x' || field === 'y') {
+        const limits = __PM_PDF_BASE_LAYOUT_LIMITS[field];
+        nextLayout[field] = __pmClampStyleNumber(rawValue, limits.min, limits.max, current[field]);
+    } else if (field === 'scalePct') {
+        const limits = __PM_PDF_BASE_LAYOUT_LIMITS.scalePct;
+        nextLayout.scalePct = __pmClampStyleNumber(rawValue, limits.min, limits.max, current.scalePct);
+    } else if (field === 'visible') {
+        nextLayout.hidden = !rawValue;
+    } else {
+        return;
+    }
+    const next = __pmNormalizePdfStyle({
+        ...cfg,
+        baseLayouts: {
+            ...baseLayouts,
+            [meta.key]: __pmNormalizePdfBaseLayout(nextLayout)
+        }
+    });
+    __pmSetPdfStyleConfig(next, { applyToDom: true });
+    __pmScheduleSharedPdfStyleSync(next);
+}
+
+function __pmApplyPdfBaseTextStyles() {
+    const cfg = __pmGetPdfStyleConfig();
+    const styles = __pmNormalizePdfBaseTextStyles(cfg.baseTextStyles);
+    document.querySelectorAll('#pdf-content [data-base-resource]').forEach((node) => {
+        const key = String(node.getAttribute('data-base-resource') || '').trim();
+        const styleCfg = styles[key] || __PM_PDF_BASE_TEXT_STYLE_DEFAULTS;
+        const hasFontFamily = !!styleCfg.fontFamilyKey && !!__PM_PDF_STYLE_FONT_MAP[styleCfg.fontFamilyKey];
+        const hasFontSize = Number.isFinite(styleCfg.fontSize) && styleCfg.fontSize > 0;
+        const hasColor = !!styleCfg.color;
+        node.classList.toggle('pm-pdf-base-font-family', hasFontFamily);
+        node.classList.toggle('pm-pdf-base-font-size', hasFontSize);
+        node.classList.toggle('pm-pdf-base-color', hasColor);
+        node.classList.toggle('pm-pdf-base-font-weight', !!styleCfg.bold);
+        node.classList.toggle('pm-pdf-base-font-italic', !!styleCfg.italic);
+        node.classList.toggle('pm-pdf-base-font-underline', !!styleCfg.underline);
+        if (hasFontFamily) node.style.setProperty('--pm-base-font-family', __PM_PDF_STYLE_FONT_MAP[styleCfg.fontFamilyKey]);
+        else node.style.removeProperty('--pm-base-font-family');
+        if (hasFontSize) node.style.setProperty('--pm-base-font-size', `${styleCfg.fontSize}px`);
+        else node.style.removeProperty('--pm-base-font-size');
+        if (hasColor) node.style.setProperty('--pm-base-color', styleCfg.color);
+        else node.style.removeProperty('--pm-base-color');
+    });
+}
+
+function __pmCommitPdfBaseBlockInspectorField(key, field, rawValue) {
+    const meta = __pmGetPdfBaseBlockMeta(key);
+    if (!meta) return;
+    const cfg = __pmGetPdfStyleConfig();
+    const nextRaw = { ...cfg };
+    const baseTextStyles = {
+        ...__pmNormalizePdfBaseTextStyles(cfg.baseTextStyles),
+        [meta.key]: __pmNormalizePdfBaseTextStyle((cfg.baseTextStyles || {})[meta.key] || {})
+    };
+    const currentStyle = baseTextStyles[meta.key];
+    if (field === 'align' && meta.alignField) {
+        nextRaw[meta.alignField] = __pmNormalizeStyleAlign(rawValue, cfg[meta.alignField] || 'left');
+    } else if (field === 'fontSize') {
+        if (meta.sizeField) {
+            const limits = __PM_PDF_BASE_SIZE_LIMITS[meta.sizeField] || { min: 8, max: 72 };
+            nextRaw[meta.sizeField] = __pmClampStyleNumber(rawValue, limits.min, limits.max, cfg[meta.sizeField] || __PM_PDF_STYLE_DEFAULTS[meta.sizeField] || 12);
+            if (meta.sizeField === 'tableBodyPx') {
+                nextRaw.tableHeadPx = __pmClampStyleNumber((parseInt(nextRaw.tableBodyPx, 10) || cfg.tableBodyPx) + 2, 9, 18, cfg.tableHeadPx);
+            }
+        } else {
+            baseTextStyles[meta.key] = __pmNormalizePdfBaseTextStyle({ ...currentStyle, fontSize: rawValue });
+        }
+    } else if (field === 'fontFamilyKey') {
+        baseTextStyles[meta.key] = __pmNormalizePdfBaseTextStyle({ ...currentStyle, fontFamilyKey: rawValue });
+    } else if (field === 'color') {
+        baseTextStyles[meta.key] = __pmNormalizePdfBaseTextStyle({ ...currentStyle, color: rawValue });
+    } else if (field === 'bold' || field === 'italic' || field === 'underline') {
+        baseTextStyles[meta.key] = __pmNormalizePdfBaseTextStyle({ ...currentStyle, [field]: !!rawValue });
+    } else {
+        return;
+    }
+    nextRaw.baseTextStyles = baseTextStyles;
+    const next = __pmNormalizePdfStyle(nextRaw);
+    __pmSetPdfStyleConfig(next, { applyToDom: true });
+    __pmScheduleSharedPdfStyleSync(next);
+}
+
+function __pmCommitPdfContentField(field, rawValue) {
+    const schema = __pmGetPdfContentEditorFieldConfig(field);
+    if (!schema) return;
+    const cfg = __pmGetPdfStyleConfig();
+    const next = __pmNormalizePdfStyle({
+        ...cfg,
+        content: {
+            ...__pmNormalizePdfContent(cfg.content),
+            [schema.key]: String(rawValue || '').slice(0, schema.max || 5000)
+        }
+    });
+    __pmSetPdfStyleConfig(next, { applyToDom: false });
+    __pmRefreshPreviewFromStyleState();
+    __pmScheduleSharedPdfStyleSync(next);
+}
+
+function __pmResetPdfBaseBlockInspectorStyle(key) {
+    const meta = __pmGetPdfBaseBlockMeta(key);
+    if (!meta) return;
+    const cfg = __pmGetPdfStyleConfig();
+    const nextRaw = { ...cfg };
+    const baseTextStyles = __pmNormalizePdfBaseTextStyles(cfg.baseTextStyles);
+    baseTextStyles[meta.key] = __pmNormalizePdfBaseTextStyle({});
+    nextRaw.baseTextStyles = baseTextStyles;
+    if (meta.alignField && Object.prototype.hasOwnProperty.call(__PM_PDF_STYLE_DEFAULTS, meta.alignField)) {
+        nextRaw[meta.alignField] = __PM_PDF_STYLE_DEFAULTS[meta.alignField];
+    }
+    if (meta.sizeField && Object.prototype.hasOwnProperty.call(__PM_PDF_STYLE_DEFAULTS, meta.sizeField)) {
+        nextRaw[meta.sizeField] = __PM_PDF_STYLE_DEFAULTS[meta.sizeField];
+        if (meta.sizeField === 'tableBodyPx') nextRaw.tableHeadPx = __PM_PDF_STYLE_DEFAULTS.tableHeadPx;
+    }
+    const next = __pmNormalizePdfStyle(nextRaw);
+    __pmSetPdfStyleConfig(next, { applyToDom: true });
+    __pmScheduleSharedPdfStyleSync(next);
+}
+
+function __pmCommitPdfResourceInspectorField(resourceId, field, rawValue) {
+    const resources = __pmGetPdfResourcesFromState();
+    const idx = resources.findIndex((resource) => resource.id === resourceId);
+    if (idx < 0) return;
+    if (field === 'text') {
+        resources[idx].text = String(rawValue || '').slice(0, 180);
+    } else if (field === 'fontFamilyKey') {
+        resources[idx].fontFamilyKey = __pmNormalizeOptionalFontKey(rawValue);
+    } else if (field === 'fontSize') {
+        resources[idx].fontSize = __pmClampStyleNumber(rawValue, 8, 72, resources[idx].fontSize);
+    } else if (field === 'align') {
+        resources[idx].align = __pmNormalizeStyleAlign(rawValue, resources[idx].align);
+    } else if (field === 'color') {
+        resources[idx].color = __pmNormalizeHexColor(rawValue, resources[idx].color);
+    } else if (field === 'bold' || field === 'italic' || field === 'underline') {
+        resources[idx][field] = !!rawValue;
+    } else {
+        return;
+    }
+    __pmCommitPdfResources(resources, { refreshPreview: false });
+}
+
+function __pmResetPdfResourceInspectorStyle(resourceId) {
+    const resources = __pmGetPdfResourcesFromState();
+    const idx = resources.findIndex((resource) => resource.id === resourceId);
+    if (idx < 0) return;
+    const current = resources[idx];
+    const reset = __pmNormalizePdfResources([{
+        id: current.id,
+        type: current.type,
+        enabled: current.enabled,
+        page: current.page,
+        x: current.x,
+        y: current.y,
+        w: current.w,
+        h: current.h,
+        text: current.text
+    }])[0];
+    resources[idx] = { ...current, ...reset, text: current.text };
+    __pmCommitPdfResources(resources, { refreshPreview: false });
+}
+
+function __pmSyncPreviewEditMode() {
+    const editingEnabled = __pmIsAdminProfile() && !__pmPdfPreviewEditLocked;
+    document.querySelectorAll('#pdf-content .pm-pdf-root').forEach((node) => {
+        node.classList.toggle('pm-pdf-admin-enabled', editingEnabled);
+    });
+    const toggleBtn = document.getElementById('pm-pdf-edit-toggle');
+    if (toggleBtn) {
+        toggleBtn.classList.toggle('hidden', !__pmIsAdminProfile());
+        toggleBtn.innerHTML = `<i class="fa-solid ${editingEnabled ? 'fa-lock-open' : 'fa-lock'}"></i><span>Edición</span>`;
+        toggleBtn.classList.toggle('bg-emerald-600', editingEnabled);
+        toggleBtn.classList.toggle('hover:bg-emerald-500', editingEnabled);
+        toggleBtn.classList.toggle('border-emerald-400/50', editingEnabled);
+        toggleBtn.classList.toggle('bg-gray-800', !editingEnabled);
+        toggleBtn.classList.toggle('hover:bg-gray-700', !editingEnabled);
+        toggleBtn.classList.toggle('border-gray-700', !editingEnabled);
+    }
+}
+
+function __pmGetPdfTextInspectorTarget() {
+    if (!__pmPdfTextInspectorState || !__pmIsAdminProfile()) return null;
+    const cfg = __pmGetPdfStyleConfig();
+    if (__pmPdfTextInspectorState.kind === 'base') {
+        const meta = __pmGetPdfBaseBlockMeta(__pmPdfTextInspectorState.key);
+        if (!meta) return null;
+        if (meta.kind === 'shape' || meta.inspectorEnabled === false) return null;
+        const custom = __pmNormalizePdfBaseTextStyles(cfg.baseTextStyles)[meta.key] || __PM_PDF_BASE_TEXT_STYLE_DEFAULTS;
+        const baseFontSize = meta.sizeField ? Number(cfg[meta.sizeField] || __PM_PDF_STYLE_DEFAULTS[meta.sizeField] || 12) : Number(custom.fontSize || 14);
+        return {
+            kind: 'base',
+            id: meta.key,
+            label: meta.label,
+            fontFamilyKey: custom.fontFamilyKey || cfg.fontFamilyKey,
+            fontSize: baseFontSize,
+            align: meta.alignField ? String(cfg[meta.alignField] || 'left') : 'left',
+            color: custom.color || '#111827',
+            bold: custom.bold,
+            italic: custom.italic,
+            underline: custom.underline,
+            text: '',
+            allowText: false,
+            contentFields: meta.contentEditor && __PM_PDF_CONTENT_EDITOR_FIELDS[meta.contentEditor]
+                ? __PM_PDF_CONTENT_EDITOR_FIELDS[meta.contentEditor].map((field) => ({
+                    ...field,
+                    value: String(__pmNormalizePdfContent(cfg.content)[field.key] || '')
+                }))
+                : []
+        };
+    }
+    if (__pmPdfTextInspectorState.kind === 'resource') {
+        const resource = __pmGetPdfResourcesFromState().find((item) => item.id === __pmPdfTextInspectorState.id);
+        if (!resource || resource.type === 'bar' || resource.type === 'logo') return null;
+        return {
+            kind: 'resource',
+            id: resource.id,
+            label: resource.type === 'title' ? 'Título libre' : 'Texto libre',
+            fontFamilyKey: resource.fontFamilyKey || cfg.fontFamilyKey,
+            fontSize: Number(resource.fontSize || 14),
+            align: resource.align || 'left',
+            color: resource.color || '#111827',
+            bold: !!resource.bold,
+            italic: !!resource.italic,
+            underline: !!resource.underline,
+            text: resource.text || '',
+            allowText: true,
+            contentFields: []
+        };
+    }
+    return null;
+}
+
+function __pmGetPdfTextInspectorAnchorNode() {
+    if (!__pmPdfTextInspectorState) return null;
+    if (__pmPdfTextInspectorState.kind === 'resource') {
+        const selector = __pmPdfTextInspectorState.page
+            ? `#pdf-content .pm-pdf-resource[data-res-id="${__pmPdfTextInspectorState.id}"][data-res-page="${__pmPdfTextInspectorState.page}"]`
+            : `#pdf-content .pm-pdf-resource[data-res-id="${__pmPdfTextInspectorState.id}"]`;
+        return document.querySelector(selector);
+    }
+    if (__pmPdfTextInspectorState.kind === 'base') {
+        const nodes = Array.from(document.querySelectorAll(`#pdf-content [data-base-resource="${__pmPdfTextInspectorState.key}"]`));
+        if (!nodes.length) return null;
+        const preferredIndex = Number.isFinite(__pmPdfTextInspectorState.anchorIndex)
+            ? __pmPdfTextInspectorState.anchorIndex
+            : 0;
+        return nodes[Math.max(0, Math.min(nodes.length - 1, preferredIndex))] || nodes[0];
+    }
+    return document.querySelector('#pdf-content .pm-pdf-edit-selected');
+}
+
+function __pmPositionPdfTextInspector() {
+    const panel = document.getElementById('pm-pdf-text-inspector');
+    const previewContainer = document.getElementById('preview-container');
+    const anchorNode = __pmGetPdfTextInspectorAnchorNode();
+    if (!panel || !previewContainer || !anchorNode || panel.classList.contains('hidden')) return;
+    const containerRect = previewContainer.getBoundingClientRect();
+    const anchorRect = anchorNode.getBoundingClientRect();
+    const panelWidth = panel.offsetWidth || 290;
+    const panelHeight = panel.offsetHeight || 260;
+    const gap = 14;
+    const scrollLeft = previewContainer.scrollLeft;
+    const scrollTop = previewContainer.scrollTop;
+    const minLeft = scrollLeft + 8;
+    const maxLeft = Math.max(minLeft, scrollLeft + previewContainer.clientWidth - panelWidth - 8);
+    const minTop = scrollTop + 8;
+    const maxTop = Math.max(minTop, scrollTop + previewContainer.clientHeight - panelHeight - 8);
+    let left = (anchorRect.right - containerRect.left) + scrollLeft + gap;
+    if (left > maxLeft) left = (anchorRect.left - containerRect.left) + scrollLeft - panelWidth - gap;
+    if (left < minLeft) left = Math.max(minLeft, Math.min(maxLeft, (anchorRect.left - containerRect.left) + scrollLeft));
+    let top = (anchorRect.top - containerRect.top) + scrollTop;
+    top = Math.max(minTop, Math.min(maxTop, top));
+    panel.style.left = `${left}px`;
+    panel.style.top = `${top}px`;
+    panel.style.right = 'auto';
+}
+
+function __pmRenderPdfTextInspector() {
+    const panel = document.getElementById('pm-pdf-text-inspector');
+    if (!panel) return;
+    const target = __pmGetPdfTextInspectorTarget();
+    if (!target || __pmPdfPreviewEditLocked) {
+        panel.classList.add('hidden');
+        return;
+    }
+    const title = panel.querySelector('[data-inspector-role="title"]');
+    const textRow = panel.querySelector('[data-inspector-row="text"]');
+    const textInput = panel.querySelector('[data-inspector-field="text"]');
+    const fontSelect = panel.querySelector('[data-inspector-field="fontFamilyKey"]');
+    const fontSize = panel.querySelector('[data-inspector-field="fontSize"]');
+    const colorInput = panel.querySelector('[data-inspector-field="color"]');
+    const alignSelect = panel.querySelector('[data-inspector-field="align"]');
+    const contentSection = panel.querySelector('[data-inspector-content-section]');
+    if (title) title.textContent = target.label;
+    if (textRow) textRow.classList.toggle('hidden', !target.allowText);
+    if (textInput) {
+        textInput.value = target.text || '';
+        textInput.dataset.targetId = target.id;
+        textInput.dataset.targetKind = target.kind;
+    }
+    if (fontSelect) {
+        fontSelect.innerHTML = __pmRenderFontFamilyOptions(target.fontFamilyKey || __PM_PDF_STYLE_DEFAULTS.fontFamilyKey);
+        fontSelect.dataset.targetId = target.id;
+        fontSelect.dataset.targetKind = target.kind;
+    }
+    if (fontSize) {
+        fontSize.value = String(target.fontSize || 14);
+        fontSize.dataset.targetId = target.id;
+        fontSize.dataset.targetKind = target.kind;
+    }
+    if (colorInput) {
+        colorInput.value = target.color || '#111827';
+        colorInput.dataset.targetId = target.id;
+        colorInput.dataset.targetKind = target.kind;
+    }
+    if (alignSelect) {
+        alignSelect.value = target.align || 'left';
+        alignSelect.dataset.targetId = target.id;
+        alignSelect.dataset.targetKind = target.kind;
+    }
+    if (contentSection) {
+        const fields = Array.isArray(target.contentFields) ? target.contentFields : [];
+        if (fields.length) {
+            contentSection.classList.remove('hidden');
+            contentSection.innerHTML = fields.map((field) => {
+                if (field.multiline) {
+                    return `<label class="flex flex-col gap-1">
+                        <span class="text-[10px] font-black uppercase tracking-wide text-gray-400">${field.label}</span>
+                        <textarea data-content-field="${field.key}" rows="${field.rows || 4}" maxlength="${field.max || 5000}" class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 outline-none transition focus:border-brand-red">${__pmSafeHtml(field.value || '')}</textarea>
+                    </label>`;
+                }
+                return `<label class="flex flex-col gap-1">
+                    <span class="text-[10px] font-black uppercase tracking-wide text-gray-400">${field.label}</span>
+                    <input data-content-field="${field.key}" type="text" maxlength="${field.max || 5000}" value="${__pmSafeHtml(field.value || '')}" class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 outline-none transition focus:border-brand-red">
+                </label>`;
+            }).join('');
+        } else {
+            contentSection.classList.add('hidden');
+            contentSection.innerHTML = '';
+        }
+    }
+    panel.querySelectorAll('[data-inspector-toggle]').forEach((btn) => {
+        const field = String(btn.getAttribute('data-inspector-toggle') || '');
+        const active = !!target[field];
+        btn.dataset.targetId = target.id;
+        btn.dataset.targetKind = target.kind;
+        btn.classList.toggle('bg-brand-red', active);
+        btn.classList.toggle('text-white', active);
+        btn.classList.toggle('border-brand-red', active);
+        btn.classList.toggle('bg-white', !active);
+        btn.classList.toggle('text-gray-600', !active);
+        btn.classList.toggle('border-gray-200', !active);
+    });
+    const resetBtn = panel.querySelector('[data-inspector-action="reset"]');
+    if (resetBtn) {
+        resetBtn.dataset.targetId = target.id;
+        resetBtn.dataset.targetKind = target.kind;
+    }
+    panel.classList.remove('hidden');
+    requestAnimationFrame(__pmPositionPdfTextInspector);
+}
+
+function __pmClosePdfTextInspector() {
+    __pmPdfTextInspectorState = null;
+    const panel = document.getElementById('pm-pdf-text-inspector');
+    if (panel) panel.classList.add('hidden');
+}
+
+function __pmOpenPdfTextInspector(state) {
+    if (!state || __pmPdfPreviewEditLocked || !__pmIsAdminProfile()) return;
+    __pmPdfTextInspectorState = { ...state };
+    if (state.kind === 'base') __pmPdfResourceEditorSelectedId = `base:${state.key}`;
+    if (state.kind === 'resource') __pmPdfResourceEditorSelectedId = state.id;
+    __pmHighlightSelectedBaseTextBlock();
+    __pmRenderPdfTextInspector();
+}
+
+function __pmHandlePdfTextInspectorInput(event) {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const contentField = String(target.getAttribute('data-content-field') || '');
+    if (contentField) {
+        if (event.type === 'change') {
+            __pmCommitPdfContentField(contentField, target.value);
+            __pmRenderPdfTextInspector();
+        }
+        return;
+    }
+    const field = String(target.getAttribute('data-inspector-field') || '');
+    const kind = String(target.getAttribute('data-target-kind') || '');
+    const id = String(target.getAttribute('data-target-id') || '');
+    if (!field || !kind || !id) return;
+    const rawValue = target.type === 'checkbox'
+        ? !!target.checked
+        : target.value;
+    if (kind === 'base') __pmCommitPdfBaseBlockInspectorField(id, field, rawValue);
+    if (kind === 'resource') __pmCommitPdfResourceInspectorField(id, field, rawValue);
+    __pmRenderPdfTextInspector();
+}
+
+function __pmHandlePdfTextInspectorClick(event) {
+    const button = event.target instanceof Element ? event.target.closest('[data-inspector-action],[data-inspector-toggle]') : null;
+    if (!button) return;
+    const action = String(button.getAttribute('data-inspector-action') || '');
+    const toggleField = String(button.getAttribute('data-inspector-toggle') || '');
+    const kind = String(button.getAttribute('data-target-kind') || '');
+    const id = String(button.getAttribute('data-target-id') || '');
+    if (action === 'close') {
+        __pmClosePdfTextInspector();
+        return;
+    }
+    if (!kind || !id) return;
+    if (action === 'reset') {
+        if (kind === 'base') __pmResetPdfBaseBlockInspectorStyle(id);
+        if (kind === 'resource') __pmResetPdfResourceInspectorStyle(id);
+        __pmRenderPdfTextInspector();
+        return;
+    }
+    if (!toggleField) return;
+    const target = __pmGetPdfTextInspectorTarget();
+    if (!target) return;
+    const nextValue = !target[toggleField];
+    if (kind === 'base') __pmCommitPdfBaseBlockInspectorField(id, toggleField, nextValue);
+    if (kind === 'resource') __pmCommitPdfResourceInspectorField(id, toggleField, nextValue);
+    __pmRenderPdfTextInspector();
+}
+
+function __pmSetPreviewEditLocked(locked) {
+    __pmPdfPreviewEditLocked = locked !== false;
+    if (__pmPdfPreviewEditLocked) __pmClosePdfTextInspector();
+    __pmSyncPreviewEditMode();
+}
+
+function __pmResetPreviewEditingState() {
+    __pmPdfResourcePointerState = null;
+    __pmPdfResourceEditorSelectedId = '';
+    __pmSetPreviewEditLocked(true);
+    __pmHighlightSelectedBaseTextBlock();
+}
+
+function __pmEnsurePreviewEditingChrome() {
+    const previewModal = document.getElementById('preview-modal');
+    const previewContainer = document.getElementById('preview-container');
+    if (!previewModal || !previewContainer) return;
+    const header = previewModal.querySelector('.bg-gray-900');
+    const actionBar = header?.lastElementChild;
+    if (actionBar && !document.getElementById('pm-pdf-edit-toggle')) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.id = 'pm-pdf-edit-toggle';
+        button.className = 'hidden inline-flex items-center gap-2 rounded-full border px-4 py-2 text-[11px] font-black uppercase tracking-wide text-white transition';
+        button.addEventListener('click', () => __pmSetPreviewEditLocked(!__pmPdfPreviewEditLocked));
+        actionBar.insertBefore(button, actionBar.firstChild || null);
+    }
+    previewContainer.style.position = 'relative';
+    if (!document.getElementById('pm-pdf-text-inspector')) {
+        const panel = document.createElement('aside');
+        panel.id = 'pm-pdf-text-inspector';
+        panel.className = 'hidden absolute z-[90] w-[290px] max-w-[calc(100%-2rem)] rounded-2xl border border-gray-200 bg-white/95 shadow-2xl backdrop-blur';
+        panel.innerHTML = `
+            <div class="flex items-start justify-between gap-3 border-b border-gray-100 px-4 py-3">
+                <div>
+                    <p class="text-[10px] font-black uppercase tracking-widest text-gray-400">Edición</p>
+                    <h4 data-inspector-role="title" class="text-sm font-black text-gray-800">Texto</h4>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button type="button" data-inspector-action="reset" class="rounded-full border border-gray-200 px-3 py-1 text-[10px] font-black uppercase text-gray-500 transition hover:border-brand-red hover:text-brand-red">Restablecer</button>
+                    <button type="button" data-inspector-action="close" class="h-8 w-8 rounded-full bg-gray-100 text-gray-500 transition hover:bg-gray-200"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+            </div>
+            <div class="space-y-3 px-4 py-4 text-xs text-gray-600">
+                <label data-inspector-row="text" class="flex flex-col gap-1">
+                    <span class="text-[10px] font-black uppercase tracking-wide text-gray-400">Texto</span>
+                    <textarea data-inspector-field="text" rows="3" maxlength="180" class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 outline-none transition focus:border-brand-red"></textarea>
+                </label>
+                <div data-inspector-content-section class="hidden space-y-3"></div>
+                <div class="grid grid-cols-2 gap-3">
+                    <label class="flex flex-col gap-1">
+                        <span class="text-[10px] font-black uppercase tracking-wide text-gray-400">Fuente</span>
+                        <select data-inspector-field="fontFamilyKey" class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 outline-none transition focus:border-brand-red"></select>
+                    </label>
+                    <label class="flex flex-col gap-1">
+                        <span class="text-[10px] font-black uppercase tracking-wide text-gray-400">Tamaño</span>
+                        <input data-inspector-field="fontSize" type="number" min="8" max="72" class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 outline-none transition focus:border-brand-red">
+                    </label>
+                    <label class="flex flex-col gap-1">
+                        <span class="text-[10px] font-black uppercase tracking-wide text-gray-400">Color</span>
+                        <input data-inspector-field="color" type="color" class="h-10 w-full rounded-xl border border-gray-200 bg-white px-2 py-1 outline-none transition focus:border-brand-red">
+                    </label>
+                    <label class="flex flex-col gap-1">
+                        <span class="text-[10px] font-black uppercase tracking-wide text-gray-400">Alineación</span>
+                        <select data-inspector-field="align" class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 outline-none transition focus:border-brand-red">
+                            <option value="left">Izquierda</option>
+                            <option value="center">Centro</option>
+                            <option value="right">Derecha</option>
+                            <option value="justify">Justificado</option>
+                        </select>
+                    </label>
+                </div>
+                <div class="grid grid-cols-3 gap-2">
+                    <button type="button" data-inspector-toggle="bold" class="rounded-xl border px-3 py-2 text-[10px] font-black uppercase transition">Negrita</button>
+                    <button type="button" data-inspector-toggle="italic" class="rounded-xl border px-3 py-2 text-[10px] font-black uppercase transition">Itálica</button>
+                    <button type="button" data-inspector-toggle="underline" class="rounded-xl border px-3 py-2 text-[10px] font-black uppercase transition">Subrayado</button>
+                </div>
+            </div>`;
+        previewContainer.appendChild(panel);
+        panel.addEventListener('input', __pmHandlePdfTextInspectorInput);
+        panel.addEventListener('change', __pmHandlePdfTextInspectorInput);
+        panel.addEventListener('click', __pmHandlePdfTextInspectorClick);
+    }
+    if (previewContainer.dataset.pmPdfTextInspectorPositionBound !== '1') {
+        previewContainer.dataset.pmPdfTextInspectorPositionBound = '1';
+        previewContainer.addEventListener('scroll', () => requestAnimationFrame(__pmPositionPdfTextInspector), { passive: true });
+        window.addEventListener('resize', () => requestAnimationFrame(__pmPositionPdfTextInspector));
+    }
+    if (document.body.dataset.pmPdfTextInspectorBound !== '1') {
+        document.body.dataset.pmPdfTextInspectorBound = '1';
+        document.addEventListener('dblclick', (event) => {
+            if (!__pmIsAdminProfile() || __pmPdfPreviewEditLocked) return;
+            const eventTarget = event.target instanceof Element ? event.target : null;
+            if (!eventTarget) return;
+            if (eventTarget.closest('#pm-pdf-text-inspector')) return;
+            const resourceNode = eventTarget.closest('#pdf-content .pm-pdf-resource[data-res-id][data-res-type]:not([data-res-type="bar"]):not([data-res-type="logo"])');
+            if (resourceNode) {
+                __pmOpenPdfTextInspector({
+                    kind: 'resource',
+                    id: String(resourceNode.getAttribute('data-res-id') || ''),
+                    page: parseInt(resourceNode.getAttribute('data-res-page') || '1', 10)
+                });
+                return;
+            }
+            const baseNode = eventTarget.closest('#pdf-content [data-base-resource]');
+            if (!baseNode) return;
+            const baseKey = String(baseNode.getAttribute('data-base-resource') || '').trim();
+            const baseMeta = __pmGetPdfBaseBlockMeta(baseKey);
+            if (!baseMeta || baseMeta.kind === 'shape' || baseMeta.inspectorEnabled === false) return;
+            const anchorNodes = Array.from(document.querySelectorAll(`#pdf-content [data-base-resource="${baseKey}"]`));
+            __pmOpenPdfTextInspector({ kind: 'base', key: baseKey, anchorIndex: anchorNodes.indexOf(baseNode) });
+        });
+    }
+    if (!__pmIsAdminProfile()) __pmClosePdfTextInspector();
+    __pmSyncPreviewEditMode();
+    __pmRenderPdfTextInspector();
+}
+
 function __pmApplyPdfStyleToLivePreview() {
     const rootNodes = document.querySelectorAll('#pdf-content .pm-pdf-root');
     if (!rootNodes.length) return;
@@ -1372,6 +2278,10 @@ function __pmApplyPdfStyleToLivePreview() {
     rootNodes.forEach((node) => {
         Object.entries(vars).forEach(([k, v]) => node.style.setProperty(k, v));
     });
+    __pmApplyPdfBaseLayouts();
+    __pmApplyPdfBaseTextStyles();
+    __pmEnsurePreviewEditingChrome();
+    __pmSyncPdfResourceNodes();
     __pmBindPdfResourceDrag();
     __pmHighlightSelectedBaseTextBlock();
     if (__pmIsAdminProfile()) __pmRenderPdfResourcesEditorList();
@@ -1420,6 +2330,7 @@ function __pmWritePdfStyleControls(style) {
 }
 
 function __pmReadPdfStyleControls() {
+    const current = __pmGetPdfStyleConfig();
     return __pmNormalizePdfStyle({
         fontFamilyKey: document.getElementById('pdf-style-font-family')?.value || __PM_PDF_STYLE_DEFAULTS.fontFamilyKey,
         headerLinePx: document.getElementById('pdf-style-header-line')?.value,
@@ -1431,11 +2342,14 @@ function __pmReadPdfStyleControls() {
         offsetXPx: document.getElementById('pdf-style-offset-x')?.value,
         offsetYPx: document.getElementById('pdf-style-offset-y')?.value,
         extraPages: document.getElementById('pdf-style-extra-pages')?.value,
-        resources: __pmGetPdfStyleConfig().resources,
+        baseLayouts: current.baseLayouts,
+        baseTextStyles: current.baseTextStyles,
+        resources: current.resources,
+        content: current.content,
         quickPx: document.getElementById('pdf-style-quick-size')?.value,
         conditionsPx: document.getElementById('pdf-style-conditions-size')?.value,
         signPx: document.getElementById('pdf-style-sign-size')?.value,
-        footerPx: __pmGetPdfStyleConfig().footerPx,
+        footerPx: current.footerPx,
         headerAlign: document.getElementById('pdf-style-align-header')?.value,
         metaAlign: document.getElementById('pdf-style-align-meta')?.value,
         tableAlign: document.getElementById('pdf-style-align-table')?.value,
@@ -1489,25 +2403,41 @@ async function __pmPersistSharedPdfStyleConfig(style) {
     if (!__pmIsAdminProfile() || !window.tenantPocketBase) return;
     const normalized = __pmNormalizePdfStyle(style);
     try {
+        let existingPayload = null;
+        if (__pmPdfStyleConfigRecordId) {
+            const { data: existing, error: existingError } = await window.tenantPocketBase
+                .from('configuracion')
+                .select('id,valor_json')
+                .eq('id', __pmPdfStyleConfigRecordId)
+                .maybeSingle();
+            if (!existingError && existing?.id) {
+                __pmPdfStyleConfigRecordId = String(existing.id);
+                existingPayload = existing.valor_json && typeof existing.valor_json === 'object' ? existing.valor_json : {};
+            }
+        }
         if (!__pmPdfStyleConfigRecordId) {
             const { data: existing, error: existingError } = await window.tenantPocketBase
                 .from('configuracion')
-                .select('id')
+                .select('id,valor_json')
                 .eq('clave', __PM_PDF_STYLE_CONFIG_KEY)
                 .maybeSingle();
-            if (!existingError && existing?.id) __pmPdfStyleConfigRecordId = String(existing.id);
+            if (!existingError && existing?.id) {
+                __pmPdfStyleConfigRecordId = String(existing.id);
+                existingPayload = existing.valor_json && typeof existing.valor_json === 'object' ? existing.valor_json : {};
+            }
         }
+        const payload = __pmBuildPdfStyleConfigPayload(existingPayload, normalized, __pmPdfStyleActiveProfile);
         if (__pmPdfStyleConfigRecordId) {
             const { error: updError } = await window.tenantPocketBase
                 .from('configuracion')
-                .update({ valor_json: normalized })
+                .update({ valor_json: payload })
                 .eq('id', __pmPdfStyleConfigRecordId);
             if (updError) throw updError;
             return;
         }
         const { data: inserted, error: insError } = await window.tenantPocketBase
             .from('configuracion')
-            .insert({ tenant: __PM_PDF_STYLE_TENANT, clave: __PM_PDF_STYLE_CONFIG_KEY, valor_json: normalized })
+            .insert({ tenant: __PM_PDF_STYLE_TENANT, clave: __PM_PDF_STYLE_CONFIG_KEY, valor_json: payload })
             .select('id')
             .single();
         if (insError) throw insError;
@@ -1563,11 +2493,49 @@ function __pmRenderFontFamilyOptions(selectedKey) {
 }
 
 function __pmRenderBaseTextBlocksEditorList(cfg) {
+    const baseLayouts = __pmNormalizePdfBaseLayouts(cfg.baseLayouts);
     return __PM_PDF_BASE_TEXT_BLOCKS.map((block) => {
         const selectedClass = block.id === __pmPdfResourceEditorSelectedId ? 'border-brand-red' : 'border-gray-700';
         const sizeCfg = block.sizeField ? (__PM_PDF_BASE_SIZE_LIMITS[block.sizeField] || { min: 8, max: 72 }) : null;
         const sizeValue = block.sizeField ? Number(cfg[block.sizeField] || __PM_PDF_STYLE_DEFAULTS[block.sizeField] || 12) : null;
         const alignValue = String(cfg[block.alignField] || 'left');
+        const layout = baseLayouts[block.key] || __pmNormalizePdfBaseLayout();
+        const layoutHtml = `
+            <div class="grid grid-cols-4 gap-1">
+                <label class="text-[9px] text-gray-400">X
+                    <input data-base-id="${block.id}" data-base-layout-field="x" type="number" value="${layout.x}" class="w-full bg-gray-950 border border-gray-700 rounded px-1 py-0.5 text-[10px]">
+                </label>
+                <label class="text-[9px] text-gray-400">Y
+                    <input data-base-id="${block.id}" data-base-layout-field="y" type="number" value="${layout.y}" class="w-full bg-gray-950 border border-gray-700 rounded px-1 py-0.5 text-[10px]">
+                </label>
+                <label class="text-[9px] text-gray-400">Escala
+                    <input data-base-id="${block.id}" data-base-layout-field="scalePct" type="number" min="${__PM_PDF_BASE_LAYOUT_LIMITS.scalePct.min}" max="${__PM_PDF_BASE_LAYOUT_LIMITS.scalePct.max}" value="${layout.scalePct}" class="w-full bg-gray-950 border border-gray-700 rounded px-1 py-0.5 text-[10px]">
+                </label>
+                <label class="text-[9px] text-gray-400">Visible
+                    <select data-base-id="${block.id}" data-base-layout-field="visible" class="w-full bg-gray-950 border border-gray-700 rounded px-1 py-0.5 text-[10px]">
+                        <option value="true" ${!layout.hidden ? 'selected' : ''}>Si</option>
+                        <option value="false" ${layout.hidden ? 'selected' : ''}>No</option>
+                    </select>
+                </label>
+            </div>
+        `;
+        if (block.kind === 'shape') {
+            return `
+                <div class="border ${selectedClass} rounded-md p-2 bg-gray-900/70 space-y-1">
+                    <div class="flex items-center justify-between gap-1">
+                        <button type="button" data-base-action="select" data-base-id="${block.id}" class="text-[10px] font-bold uppercase text-gray-100">${block.label}</button>
+                        <span class="text-[9px] uppercase text-gray-400">Forma</span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-1">
+                        ${sizeCfg ? `<label class="text-[9px] text-gray-400">Grosor
+                            <input data-base-id="${block.id}" data-base-field="${block.sizeField}" type="number" min="${sizeCfg.min}" max="${sizeCfg.max}" value="${sizeValue}" class="w-full bg-gray-950 border border-gray-700 rounded px-1 py-0.5 text-[10px]">
+                        </label>` : '<div></div>'}
+                        <div class="text-[9px] text-gray-500 flex items-end">Mueve, escala u oculta</div>
+                    </div>
+                    ${layoutHtml}
+                </div>
+            `;
+        }
         return `
             <div class="border ${selectedClass} rounded-md p-2 bg-gray-900/70 space-y-1">
                 <div class="flex items-center justify-between gap-1">
@@ -1591,8 +2559,9 @@ function __pmRenderBaseTextBlocksEditorList(cfg) {
                     ${sizeCfg ? `<label class="text-[9px] text-gray-400">Tamaño
                         <input data-base-id="${block.id}" data-base-field="${block.sizeField}" type="number" min="${sizeCfg.min}" max="${sizeCfg.max}" value="${sizeValue}" class="w-full bg-gray-950 border border-gray-700 rounded px-1 py-0.5 text-[10px]">
                     </label>` : `<div class="text-[9px] text-gray-500 flex items-end">Sin tamaño dedicado</div>`}
-                    <div class="text-[9px] text-gray-500 flex items-end">Click sobre el PDF para seleccionar</div>
+                    <div class="text-[9px] text-gray-500 flex items-end">${block.contentEditor ? 'Doble click para editar contenido' : 'Click sobre el PDF para seleccionar'}</div>
                 </div>
+                ${layoutHtml}
             </div>
         `;
     }).join('');
@@ -1623,17 +2592,21 @@ function __pmCommitBaseTextBlockField(field, rawValue) {
 }
 
 function __pmHighlightSelectedBaseTextBlock() {
-    document.querySelectorAll('#pdf-content [data-base-resource].pm-pdf-base-selected').forEach((node) => node.classList.remove('pm-pdf-base-selected'));
+    document.querySelectorAll('#pdf-content .pm-pdf-edit-selected').forEach((node) => node.classList.remove('pm-pdf-edit-selected'));
     if (!__pmIsAdminProfile()) return;
     const selected = String(__pmPdfResourceEditorSelectedId || '');
-    if (!selected.startsWith('base:')) return;
-    const key = selected.slice(5);
-    document.querySelectorAll(`#pdf-content [data-base-resource="${key}"]`).forEach((node) => node.classList.add('pm-pdf-base-selected'));
+    if (!selected) return;
+    if (selected.startsWith('base:')) {
+        const key = selected.slice(5);
+        document.querySelectorAll(`#pdf-content [data-base-resource="${key}"]`).forEach((node) => node.classList.add('pm-pdf-edit-selected'));
+        return;
+    }
+    document.querySelectorAll(`#pdf-content .pm-pdf-resource[data-res-id="${selected}"]`).forEach((node) => node.classList.add('pm-pdf-edit-selected'));
 }
 
 function __pmAddPdfResource(type) {
     const resources = __pmGetPdfResourcesFromState();
-    const safeType = ['bar', 'title', 'text'].includes(type) ? type : 'text';
+    const safeType = ['bar', 'logo', 'title', 'text'].includes(type) ? type : 'text';
     resources.push({
         id: `pmres_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
         type: safeType,
@@ -1641,11 +2614,14 @@ function __pmAddPdfResource(type) {
         page: 1,
         x: 80,
         y: 120,
-        w: safeType === 'bar' ? 240 : 260,
-        h: safeType === 'bar' ? 12 : 42,
+        w: safeType === 'bar' ? 240 : (safeType === 'logo' ? 180 : 260),
+        h: safeType === 'bar' ? 12 : (safeType === 'logo' ? 72 : 42),
         text: safeType === 'title' ? 'TITULO NUEVO' : (safeType === 'text' ? 'Texto nuevo' : ''),
         fontSize: safeType === 'title' ? 24 : 14,
+        fontFamilyKey: '',
         bold: true,
+        italic: false,
+        underline: false,
         align: 'left',
         color: '#111827',
         bgColor: safeType === 'bar' ? '#d32f2f' : '#ffffff'
@@ -1662,6 +2638,8 @@ function __pmRenderPdfResourcesEditorList() {
     const baseBlocksHtml = __pmRenderBaseTextBlocksEditorList(cfg);
     const resourcesHtml = resources.map((resource) => {
         const selectedClass = resource.id === __pmPdfResourceEditorSelectedId ? 'border-brand-red' : 'border-gray-600';
+        const isTextLike = resource.type === 'title' || resource.type === 'text';
+        const isLogo = resource.type === 'logo';
         return `
             <div class="border ${selectedClass} rounded-md p-2 bg-gray-950/50 space-y-1" data-res-row="${__pmSafeHtml(resource.id)}">
                 <div class="flex items-center justify-between gap-1">
@@ -1672,6 +2650,7 @@ function __pmRenderPdfResourcesEditorList() {
                     <label class="text-[9px] text-gray-400">Tipo
                         <select data-res-id="${__pmSafeHtml(resource.id)}" data-res-field="type" class="w-full bg-gray-900 border border-gray-700 rounded px-1 py-0.5 text-[10px]">
                             <option value="bar" ${resource.type === 'bar' ? 'selected' : ''}>Barra</option>
+                            <option value="logo" ${resource.type === 'logo' ? 'selected' : ''}>Logo</option>
                             <option value="title" ${resource.type === 'title' ? 'selected' : ''}>Título</option>
                             <option value="text" ${resource.type === 'text' ? 'selected' : ''}>Texto</option>
                         </select>
@@ -1691,7 +2670,7 @@ function __pmRenderPdfResourcesEditorList() {
                     <label class="text-[9px] text-gray-400">Alto
                         <input data-res-id="${__pmSafeHtml(resource.id)}" data-res-field="h" type="number" min="10" value="${resource.h}" class="w-full bg-gray-900 border border-gray-700 rounded px-1 py-0.5 text-[10px]">
                     </label>
-                    <label class="text-[9px] text-gray-400">Fuente
+                    <label class="text-[9px] text-gray-400 ${isTextLike ? '' : 'opacity-50'}">Fuente
                         <input data-res-id="${__pmSafeHtml(resource.id)}" data-res-field="fontSize" type="number" min="8" max="72" value="${resource.fontSize}" class="w-full bg-gray-900 border border-gray-700 rounded px-1 py-0.5 text-[10px]">
                     </label>
                     <label class="text-[9px] text-gray-400">Activo
@@ -1701,7 +2680,7 @@ function __pmRenderPdfResourcesEditorList() {
                         </select>
                     </label>
                 </div>
-                <div class="grid grid-cols-2 gap-1">
+                <div class="grid grid-cols-2 gap-1 ${isLogo ? 'hidden' : ''}">
                     <label class="text-[9px] text-gray-400">Color Texto
                         <input data-res-id="${__pmSafeHtml(resource.id)}" data-res-field="color" type="color" value="${resource.color}" class="w-full h-6 bg-gray-900 border border-gray-700 rounded">
                     </label>
@@ -1709,13 +2688,14 @@ function __pmRenderPdfResourcesEditorList() {
                         <input data-res-id="${__pmSafeHtml(resource.id)}" data-res-field="bgColor" type="color" value="${resource.bgColor}" class="w-full h-6 bg-gray-900 border border-gray-700 rounded">
                     </label>
                 </div>
-                <label class="text-[9px] text-gray-400 block">Texto
+                <label class="text-[9px] text-gray-400 block ${isTextLike ? '' : 'hidden'}">Texto
                     <input data-res-id="${__pmSafeHtml(resource.id)}" data-res-field="text" type="text" value="${__pmSafeHtml(resource.text)}" class="w-full bg-gray-900 border border-gray-700 rounded px-1 py-0.5 text-[10px]">
                 </label>
+                <p class="text-[9px] text-gray-500 ${isLogo ? '' : 'hidden'}">Usa el logo configurado para el tenant actual.</p>
             </div>
         `;
     }).join('');
-    const customEmpty = !resources.length ? '<p class="text-[10px] text-gray-400">Sin recursos personalizados. Usa + Barra, + Título o + Texto.</p>' : '';
+    const customEmpty = !resources.length ? '<p class="text-[10px] text-gray-400">Sin recursos personalizados. Usa + Barra, + Logo, + Título o + Texto.</p>' : '';
     list.innerHTML = `
         <div class="space-y-2">
             <p class="text-[9px] uppercase tracking-wider text-gray-400 font-bold">Textos base del PDF</p>
@@ -1731,13 +2711,24 @@ function __pmRenderPdfResourcesEditorList() {
 }
 
 function __pmHandleResourceListEvent(event) {
-    const trigger = event.target.closest('[data-res-action], [data-res-field], [data-base-action], [data-base-field]');
+    const trigger = event.target.closest('[data-res-action], [data-res-field], [data-base-action], [data-base-field], [data-base-layout-field]');
     if (!trigger) return;
     const baseId = String(trigger.dataset.baseId || '');
     const baseAction = String(trigger.dataset.baseAction || '');
     const baseField = String(trigger.dataset.baseField || '');
+    const baseLayoutField = String(trigger.dataset.baseLayoutField || '');
     if (baseAction === 'select' && baseId.startsWith('base:')) {
         __pmPdfResourceEditorSelectedId = baseId;
+        __pmRenderPdfResourcesEditorList();
+        __pmHighlightSelectedBaseTextBlock();
+        return;
+    }
+    if (baseLayoutField && baseId.startsWith('base:')) {
+        __pmPdfResourceEditorSelectedId = baseId;
+        const rawValue = trigger.type === 'checkbox'
+            ? !!trigger.checked
+            : (String(trigger.value) === 'true' ? true : (String(trigger.value) === 'false' ? false : trigger.value));
+        __pmCommitBaseLayoutField(baseId, baseLayoutField, rawValue);
         __pmRenderPdfResourcesEditorList();
         __pmHighlightSelectedBaseTextBlock();
         return;
@@ -1787,6 +2778,7 @@ function __pmBindPdfResourceEditor() {
         list.dataset.bound = '1';
     }
     document.getElementById('pdf-style-add-bar')?.addEventListener('click', () => __pmAddPdfResource('bar'));
+    document.getElementById('pdf-style-add-logo')?.addEventListener('click', () => __pmAddPdfResource('logo'));
     document.getElementById('pdf-style-add-title')?.addEventListener('click', () => __pmAddPdfResource('title'));
     document.getElementById('pdf-style-add-text')?.addEventListener('click', () => __pmAddPdfResource('text'));
     __pmRenderPdfResourcesEditorList();
@@ -1795,73 +2787,179 @@ function __pmBindPdfResourceEditor() {
 function __pmBindPdfResourceDrag() {
     if (document.body.dataset.pmPdfResourceDragBound === '1') return;
     document.body.dataset.pmPdfResourceDragBound = '1';
-    document.addEventListener('pointerdown', (event) => {
-        if (!__pmIsAdminProfile()) return;
-        const baseNode = event.target.closest('#pdf-content [data-base-resource]');
-        if (baseNode && !event.target.closest('#pdf-content .pm-pdf-resource[data-res-id]')) {
-            const baseKey = String(baseNode.getAttribute('data-base-resource') || '').trim();
-            if (baseKey) {
-                __pmPdfResourceEditorSelectedId = `base:${baseKey}`;
-                __pmRenderPdfResourcesEditorList();
-                __pmHighlightSelectedBaseTextBlock();
+    const getPointerScale = (node) => {
+        const ref = node?.parentElement || node;
+        if (!ref || !(ref instanceof HTMLElement)) return { x: 1, y: 1 };
+        const rect = ref.getBoundingClientRect();
+        const rawWidth = ref.offsetWidth || parseFloat(ref.style.width || '0') || rect.width || 1;
+        const rawHeight = ref.offsetHeight || parseFloat(ref.style.height || '0') || rect.height || 1;
+        const scaleX = rect.width > 0 && rawWidth > 0 ? (rect.width / rawWidth) : 1;
+        const scaleY = rect.height > 0 && rawHeight > 0 ? (rect.height / rawHeight) : 1;
+        return {
+            x: scaleX > 0 ? scaleX : 1,
+            y: scaleY > 0 ? scaleY : 1
+        };
+    };
+    const isResizeGesture = (rect, event) => (
+        event.shiftKey ||
+        (((rect.right - event.clientX) < 18) && ((rect.bottom - event.clientY) < 18))
+    );
+    const releasePointer = (state) => {
+        const captureNode = state?.captureNode;
+        if (!captureNode || typeof captureNode.releasePointerCapture !== 'function') return;
+        try { captureNode.releasePointerCapture(state.pointerId); } catch (_) {}
+    };
+    const endDrag = () => {
+        if (!__pmPdfResourcePointerState) return;
+        const state = __pmPdfResourcePointerState;
+        if (state.kind === 'base') {
+            __pmCommitPdfBaseLayout(state.key, state.current || state.origin);
+            __pmHighlightSelectedBaseTextBlock();
+        } else {
+            const resources = __pmGetPdfResourcesFromState();
+            const idx = resources.findIndex((resource) => resource.id === state.id);
+            if (idx >= 0) {
+                resources[idx] = { ...resources[idx], ...(state.current || state.origin) };
+                __pmCommitPdfResources(resources, { refreshPreview: false });
             }
         }
-        const node = event.target.closest('#pdf-content .pm-pdf-resource[data-res-id]');
-        if (!node) return;
-        const resourceId = String(node.getAttribute('data-res-id') || '');
-        const page = parseInt(node.getAttribute('data-res-page') || '1', 10);
-        const resources = __pmGetPdfResourcesFromState();
-        const idx = resources.findIndex((resource) => resource.id === resourceId);
-        if (idx < 0) return;
-        const rect = node.getBoundingClientRect();
-        const mode = ((rect.right - event.clientX) < 14 && (rect.bottom - event.clientY) < 14) || event.shiftKey ? 'resize' : 'move';
-        __pmPdfResourceEditorSelectedId = resourceId;
+        document.body.style.userSelect = '';
+        document.body.style.cursor = '';
+        releasePointer(state);
+        __pmPdfResourcePointerState = null;
+    };
+    document.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0) return;
+        if (!__pmIsAdminProfile() || __pmPdfPreviewEditLocked) return;
+        const target = event.target instanceof Element ? event.target : null;
+        if (!target) return;
+        const node = target.closest('#pdf-content .pm-pdf-resource[data-res-id]');
+        if (node) {
+            const resourceId = String(node.getAttribute('data-res-id') || '');
+            const page = parseInt(node.getAttribute('data-res-page') || '1', 10);
+            const resources = __pmGetPdfResourcesFromState();
+            const idx = resources.findIndex((resource) => resource.id === resourceId);
+            if (idx < 0) return;
+            const rect = node.getBoundingClientRect();
+            const scale = getPointerScale(node);
+            const mode = isResizeGesture(rect, event) ? 'resize' : 'move';
+            __pmPdfResourceEditorSelectedId = resourceId;
+            __pmRenderPdfResourcesEditorList();
+            __pmHighlightSelectedBaseTextBlock();
+            if (__pmPdfTextInspectorState?.kind === 'resource' && __pmPdfTextInspectorState.id === resourceId) {
+                __pmPdfTextInspectorState = { ...__pmPdfTextInspectorState, page };
+            }
+            __pmPdfResourcePointerState = {
+                kind: 'resource',
+                id: resourceId,
+                page,
+                mode,
+                startX: event.clientX,
+                startY: event.clientY,
+                pointerId: event.pointerId,
+                captureNode: node,
+                scaleX: scale.x,
+                scaleY: scale.y,
+                origin: { ...resources[idx] },
+                current: { ...resources[idx] }
+            };
+            if (typeof node.setPointerCapture === 'function') {
+                try { node.setPointerCapture(event.pointerId); } catch (_) {}
+            }
+            document.body.style.userSelect = 'none';
+            document.body.style.cursor = mode === 'resize' ? 'nwse-resize' : 'move';
+            event.preventDefault();
+            return;
+        }
+
+        const baseNode = target.closest('#pdf-content [data-base-resource]');
+        if (!baseNode) return;
+        const baseKey = String(baseNode.getAttribute('data-base-resource') || '').trim();
+        if (!__pmGetPdfBaseBlockMeta(baseKey)) return;
+        const rect = baseNode.getBoundingClientRect();
+        const scale = getPointerScale(baseNode);
+        const mode = isResizeGesture(rect, event) ? 'scale' : 'move';
+        const cfg = __pmGetPdfStyleConfig();
+        const layouts = __pmNormalizePdfBaseLayouts(cfg.baseLayouts);
+        __pmPdfResourceEditorSelectedId = `base:${baseKey}`;
         __pmRenderPdfResourcesEditorList();
+        __pmHighlightSelectedBaseTextBlock();
+        const anchorNodes = Array.from(document.querySelectorAll(`#pdf-content [data-base-resource="${baseKey}"]`));
+        const anchorIndex = anchorNodes.indexOf(baseNode);
+        if (__pmPdfTextInspectorState?.kind === 'base' && __pmPdfTextInspectorState.key === baseKey) {
+            __pmPdfTextInspectorState = { ...__pmPdfTextInspectorState, anchorIndex };
+        }
         __pmPdfResourcePointerState = {
-            id: resourceId,
-            page,
+            kind: 'base',
+            key: baseKey,
             mode,
             startX: event.clientX,
             startY: event.clientY,
-            origin: { ...resources[idx] }
+            pointerId: event.pointerId,
+            captureNode: baseNode,
+            scaleX: scale.x,
+            scaleY: scale.y,
+            origin: { ...(layouts[baseKey] || __pmNormalizePdfBaseLayout()) },
+            current: { ...(layouts[baseKey] || __pmNormalizePdfBaseLayout()) }
         };
+        if (typeof baseNode.setPointerCapture === 'function') {
+            try { baseNode.setPointerCapture(event.pointerId); } catch (_) {}
+        }
+        document.body.style.userSelect = 'none';
+        document.body.style.cursor = mode === 'scale' ? 'nwse-resize' : 'move';
         event.preventDefault();
     });
     document.addEventListener('pointermove', (event) => {
         if (!__pmPdfResourcePointerState) return;
         const state = __pmPdfResourcePointerState;
-        const node = document.querySelector(`#pdf-content .pm-pdf-resource[data-res-id="${state.id}"][data-res-page="${state.page}"]`);
-        if (!node) return;
-        const dx = Math.round(event.clientX - state.startX);
-        const dy = Math.round(event.clientY - state.startY);
-        if (state.mode === 'resize') {
-            node.style.width = `${Math.max(16, state.origin.w + dx)}px`;
-            node.style.height = `${Math.max(10, state.origin.h + dy)}px`;
-        } else {
-            node.style.left = `${state.origin.x + dx}px`;
-            node.style.top = `${state.origin.y + dy}px`;
-        }
-    });
-    document.addEventListener('pointerup', () => {
-        if (!__pmPdfResourcePointerState) return;
-        const state = __pmPdfResourcePointerState;
-        const resources = __pmGetPdfResourcesFromState();
-        const idx = resources.findIndex((resource) => resource.id === state.id);
-        if (idx >= 0) {
-            const node = document.querySelector(`#pdf-content .pm-pdf-resource[data-res-id="${state.id}"][data-res-page="${state.page}"]`);
-            if (node) {
-                if (state.mode === 'resize') {
-                    resources[idx].w = __pmClampStyleNumber(parseInt(node.style.width, 10), 16, 900, resources[idx].w);
-                    resources[idx].h = __pmClampStyleNumber(parseInt(node.style.height, 10), 10, 1200, resources[idx].h);
-                } else {
-                    resources[idx].x = __pmClampStyleNumber(parseInt(node.style.left, 10), -200, 900, resources[idx].x);
-                    resources[idx].y = __pmClampStyleNumber(parseInt(node.style.top, 10), -200, 1400, resources[idx].y);
-                }
-                __pmCommitPdfResources(resources, { refreshPreview: false });
+        if (state.pointerId !== undefined && event.pointerId !== state.pointerId) return;
+        const dx = (event.clientX - state.startX) / (state.scaleX || 1);
+        const dy = (event.clientY - state.startY) / (state.scaleY || 1);
+        if (state.kind === 'base') {
+            if (state.mode === 'scale') {
+                const delta = (dx + dy) / 2;
+                const next = __pmNormalizePdfBaseLayout({ ...state.origin, scalePct: state.origin.scalePct + delta });
+                state.current = next;
+                document.querySelectorAll(`#pdf-content [data-base-resource="${state.key}"]`).forEach((baseNode) => {
+                    baseNode.style.transform = __pmBuildPdfBaseTransform(next);
+                });
+            } else {
+                const next = __pmNormalizePdfBaseLayout({ ...state.origin, x: state.origin.x + dx, y: state.origin.y + dy });
+                state.current = next;
+                document.querySelectorAll(`#pdf-content [data-base-resource="${state.key}"]`).forEach((baseNode) => {
+                    baseNode.style.transform = __pmBuildPdfBaseTransform(next);
+                });
             }
+            __pmPositionPdfTextInspector();
+        } else {
+            const node = document.querySelector(`#pdf-content .pm-pdf-resource[data-res-id="${state.id}"][data-res-page="${state.page}"]`);
+            if (!node) return;
+            if (state.mode === 'resize') {
+                const next = {
+                    ...state.current,
+                    w: Math.max(16, state.origin.w + dx),
+                    h: Math.max(10, state.origin.h + dy)
+                };
+                state.current = next;
+                node.style.width = `${next.w.toFixed(2)}px`;
+                node.style.height = `${next.h.toFixed(2)}px`;
+                __pmAutoFitPdfTextNode(node);
+            } else {
+                const next = {
+                    ...state.current,
+                    x: state.origin.x + dx,
+                    y: state.origin.y + dy
+                };
+                state.current = next;
+                node.style.left = `${next.x.toFixed(2)}px`;
+                node.style.top = `${next.y.toFixed(2)}px`;
+            }
+            __pmPositionPdfTextInspector();
         }
-        __pmPdfResourcePointerState = null;
+        event.preventDefault();
     });
+    document.addEventListener('pointerup', endDrag);
+    document.addEventListener('pointercancel', endDrag);
 }
 
 function __pmApplyPdfStyleEditorUiState() {
@@ -1940,7 +3038,8 @@ window.getOrderHTML = function(o, type) {
     const pdfStyle = __pmGetPdfStyleConfig();
     const pdfContent = __pmNormalizePdfContent(pdfStyle.content);
     const pdfStyleInlineVars = __pmPdfStyleVarsInline(pdfStyle);
-    const pdfStyleTag = `<style>.pm-pdf-root{font-family:var(--pm-font-family)!important;}.pm-pdf-root .pm-pdf-shift{transform:translate(var(--pm-offset-x),var(--pm-offset-y));position:relative;}.pm-pdf-root .pm-pdf-header{border-bottom-width:var(--pm-header-line)!important;justify-content:var(--pm-header-justify)!important;}.pm-pdf-root .pm-pdf-header>div:last-child{ text-align:var(--pm-header-align)!important;}.pm-pdf-root .pm-pdf-title{font-size:var(--pm-title-size)!important;line-height:1.05!important;text-align:var(--pm-header-align)!important;}.pm-pdf-root .pm-pdf-folio{font-size:var(--pm-meta-size)!important;text-align:var(--pm-meta-align)!important;}.pm-pdf-root .pm-pdf-date{font-size:var(--pm-date-size)!important;text-align:var(--pm-meta-align)!important;}.pm-pdf-root .pm-pdf-table-head th{font-size:var(--pm-table-head-size)!important;}.pm-pdf-root .pm-pdf-table-body td,.pm-pdf-root .pm-pdf-table-body p,.pm-pdf-root .pm-pdf-table-body span{font-size:var(--pm-table-body-size)!important;line-height:var(--pm-line-height)!important;}.pm-pdf-root .pm-pdf-table-body td:first-child,.pm-pdf-root .pm-pdf-table-body td:first-child *{text-align:var(--pm-table-align)!important;}.pm-pdf-root .pm-pdf-summary,.pm-pdf-root .pm-pdf-summary *{text-align:var(--pm-summary-align)!important;}.pm-pdf-root .pm-pdf-quick,.pm-pdf-root .pm-pdf-quick *{font-size:var(--pm-quick-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-quick-align)!important;}.pm-pdf-root .pm-pdf-general-conditions,.pm-pdf-root .pm-pdf-general-conditions *{font-size:var(--pm-conditions-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-conditions-align)!important;}.pm-pdf-root .pm-pdf-sign,.pm-pdf-root .pm-pdf-sign *{font-size:var(--pm-sign-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-sign-align)!important;}.pm-pdf-root .pm-pdf-footer-text{font-size:var(--pm-footer-size)!important;text-align:var(--pm-footer-align)!important;}.pm-pdf-root [data-base-resource]{cursor:${__pmIsAdminProfile() ? 'pointer' : 'default'};}.pm-pdf-root .pm-pdf-base-selected{outline:2px dashed #ef4444;outline-offset:2px;}.pm-pdf-root .pm-pdf-resource{cursor:move;}.pm-pdf-root .pm-pdf-resource::after{content:'';position:absolute;right:-6px;bottom:-6px;width:10px;height:10px;border-radius:999px;background:#ef4444;opacity:${__pmIsAdminProfile() ? '0.8' : '0'};}</style>`;
+    const isAdminPreview = __pmIsAdminProfile();
+    const pdfStyleTag = `<style>.pm-pdf-root{font-family:var(--pm-font-family)!important;}.pm-pdf-root .pm-pdf-shift{transform:translate(var(--pm-offset-x),var(--pm-offset-y));position:relative;}.pm-pdf-root .pm-pdf-header{justify-content:var(--pm-header-justify)!important;}.pm-pdf-root .pm-pdf-header>div:last-child{text-align:var(--pm-header-align)!important;}.pm-pdf-root .pm-pdf-header-line{width:100%;height:var(--pm-header-line)!important;background:#ef4444!important;}.pm-pdf-root .pm-pdf-sign-line{width:100%;height:var(--pm-sign-line)!important;background:#111827!important;border-radius:999px;}.pm-pdf-root .pm-pdf-title{font-size:var(--pm-title-size)!important;line-height:1.05!important;text-align:var(--pm-header-align)!important;}.pm-pdf-root .pm-pdf-folio{font-size:var(--pm-meta-size)!important;text-align:var(--pm-meta-align)!important;}.pm-pdf-root .pm-pdf-date{font-size:var(--pm-date-size)!important;text-align:var(--pm-meta-align)!important;}.pm-pdf-root .pm-pdf-table-head th{font-size:var(--pm-table-head-size)!important;}.pm-pdf-root .pm-pdf-table-body td,.pm-pdf-root .pm-pdf-table-body p,.pm-pdf-root .pm-pdf-table-body span{font-size:var(--pm-table-body-size)!important;line-height:var(--pm-line-height)!important;}.pm-pdf-root .pm-pdf-table-body td:first-child,.pm-pdf-root .pm-pdf-table-body td:first-child *{text-align:var(--pm-table-align)!important;}.pm-pdf-root .pm-pdf-summary,.pm-pdf-root .pm-pdf-summary *{text-align:var(--pm-summary-align)!important;}.pm-pdf-root .pm-pdf-quick,.pm-pdf-root .pm-pdf-quick *{font-size:var(--pm-quick-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-quick-align)!important;}.pm-pdf-root .pm-pdf-general-conditions,.pm-pdf-root .pm-pdf-general-conditions *{font-size:var(--pm-conditions-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-conditions-align)!important;}.pm-pdf-root .pm-pdf-sign,.pm-pdf-root .pm-pdf-sign *{font-size:var(--pm-sign-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-sign-align)!important;}.pm-pdf-root .pm-pdf-footer-text{font-size:var(--pm-footer-size)!important;text-align:var(--pm-footer-align)!important;}.pm-pdf-root [data-base-resource]{position:relative;transform-origin:top left;}.pm-pdf-root .pm-pdf-resource,.pm-pdf-root .pm-pdf-editable{cursor:default;}.pm-pdf-root .pm-pdf-editable{box-sizing:border-box;outline:none;outline-offset:2px;}.pm-pdf-root .pm-pdf-editable::after{content:'';position:absolute;right:-7px;bottom:-7px;width:12px;height:12px;border-radius:999px;background:#ef4444;box-shadow:0 0 0 2px #ffffff;opacity:0;}.pm-pdf-root .pm-pdf-edit-selected{outline:none;outline-offset:2px;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-resource,.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-editable{cursor:move;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-editable{outline:1px dashed rgba(239,68,68,0.45);}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-editable::after{opacity:.9;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-edit-selected{outline:2px solid #ef4444;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-edit-selected::after{opacity:1;transform:scale(1.08);}.pm-pdf-root [data-base-resource].pm-pdf-base-font-family,.pm-pdf-root [data-base-resource].pm-pdf-base-font-family *{font-family:var(--pm-base-font-family)!important;}.pm-pdf-root [data-base-resource].pm-pdf-base-font-size,.pm-pdf-root [data-base-resource].pm-pdf-base-font-size *{font-size:var(--pm-base-font-size)!important;line-height:var(--pm-line-height)!important;}.pm-pdf-root [data-base-resource].pm-pdf-base-color,.pm-pdf-root [data-base-resource].pm-pdf-base-color *{color:var(--pm-base-color)!important;}.pm-pdf-root [data-base-resource].pm-pdf-base-font-weight,.pm-pdf-root [data-base-resource].pm-pdf-base-font-weight *{font-weight:800!important;}.pm-pdf-root [data-base-resource].pm-pdf-base-font-italic,.pm-pdf-root [data-base-resource].pm-pdf-base-font-italic *{font-style:italic!important;}.pm-pdf-root [data-base-resource].pm-pdf-base-font-underline,.pm-pdf-root [data-base-resource].pm-pdf-base-font-underline *{text-decoration:underline!important;}</style>`;
 
     const now = new Date(); const dateStr = now.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' }); const genDateTime = now.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'medium' }); let docTitle = isOrder ? "ORDEN DE COMPRA" : "COTIZACIÓN"; 
     
@@ -1948,8 +3047,8 @@ window.getOrderHTML = function(o, type) {
     
     const space = allSpaces.find(s=>s.id==o.espacio_id); const basePrice = parseFloat(space ? space.precio_base : 0); 
     const descHTML = isOrder ? '' : `<p class="text-[9px] text-gray-500 italic mt-0.5 truncate max-w-xs">${space?.descripcion || ''}</p>`; 
-    const footerHubHTML = `<div class="w-full text-center mt-10"><p class="pm-pdf-footer-text text-[10px] text-gray-400 font-medium leading-tight" data-base-resource="footer">Generado el ${genDateTime}<br>a través de Marketing Hub - Plaza Mayor</p></div>`; 
-    const renderHeader = (title) => `<div class="pm-pdf-header flex justify-end items-start border-b-4 border-brand-red pb-3 mb-2">${logoImg}<div class="text-right"><h1 class="pm-pdf-title text-2xl font-black text-gray-800 tracking-tighter uppercase" data-base-resource="header-title">${title}</h1><p class="pm-pdf-folio text-sm font-mono text-brand-red font-bold mt-1" data-base-resource="header-meta">FOLIO: ${folio}</p><p class="pm-pdf-date text-[10px] text-gray-500 mt-1" data-base-resource="header-meta">${dateStr}</p></div></div>`; 
+    const footerHubHTML = `<div class="w-full text-center mt-10"><p class="pm-pdf-footer-text text-[10px] text-gray-400 font-medium leading-tight ${isAdminPreview ? 'pm-pdf-editable' : ''}" data-base-resource="footer">Generado el ${genDateTime}<br>a través de Marketing Hub - Plaza Mayor</p></div>`; 
+    const renderHeader = (title) => `<div class="pm-pdf-header flex justify-end items-start pb-1">${logoImg}<div class="text-right"><div class="${isAdminPreview ? 'pm-pdf-editable' : ''}" data-base-resource="header-title"><h1 class="pm-pdf-title text-2xl font-black text-gray-800 tracking-tighter uppercase">${title}</h1></div><div class="${isAdminPreview ? 'pm-pdf-editable' : ''}" data-base-resource="header-meta"><p class="pm-pdf-folio text-sm font-mono text-brand-red font-bold mt-1">FOLIO: ${folio}</p><p class="pm-pdf-date text-[10px] text-gray-500 mt-1">${dateStr}</p></div></div></div><div class="${isAdminPreview ? 'pm-pdf-editable' : ''} mb-2" data-base-resource="header-line"><div class="pm-pdf-header-line rounded-full"></div></div>`; 
     const quickLeftItems = String(pdfContent.quickLeftLines || '')
         .split(/\r?\n/)
         .map(line => line.trim())
@@ -1971,8 +3070,8 @@ window.getOrderHTML = function(o, type) {
     const quoteStatus = String(o?.status || '').toLowerCase();
     const isApprovedQuote = !isOrder && ['aprobada', 'finalizada'].includes(quoteStatus);
     const clientComponent = (isOrder || isApprovedQuote)
-        ? `<div class="pm-pdf-summary flex flex-row justify-between items-center mb-2 p-2 bg-gray-50 rounded border border-gray-100" data-base-resource="summary"><div class="w-1/2 border-r border-gray-200 pr-2"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Cliente / Empresa</p><p class="font-black ${nameSizeClass} text-gray-800 leading-tight">${clientName}</p></div><div class="w-1/2 pl-2"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Contacto / Fiscal</p><p class="font-mono text-xs text-gray-700 truncate">${o.cliente_email || 'Sin correo'}</p>${clientRfc ? `<p class="font-mono text-xs text-gray-700 mt-0.5">RFC: <strong>${clientRfc}</strong></p>` : ''}</div></div>`
-        : `<div class="pm-pdf-summary mb-2 p-2 bg-gray-50 rounded border border-gray-100" data-base-resource="summary"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Cliente / Empresa</p><p class="font-black ${nameSizeClass} text-gray-800 leading-tight">${clientName}</p></div>`;
+        ? `<div class="pm-pdf-summary flex flex-row justify-between items-center mb-2 p-2 bg-gray-50 rounded border border-gray-100 ${isAdminPreview ? 'pm-pdf-editable' : ''}" data-base-resource="summary-client"><div class="w-1/2 border-r border-gray-200 pr-2"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Cliente / Empresa</p><p class="font-black ${nameSizeClass} text-gray-800 leading-tight">${clientName}</p></div><div class="w-1/2 pl-2"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Contacto / Fiscal</p><p class="font-mono text-xs text-gray-700 truncate">${o.cliente_email || 'Sin correo'}</p>${clientRfc ? `<p class="font-mono text-xs text-gray-700 mt-0.5">RFC: <strong>${clientRfc}</strong></p>` : ''}</div></div>`
+        : `<div class="pm-pdf-summary mb-2 p-2 bg-gray-50 rounded border border-gray-100 ${isAdminPreview ? 'pm-pdf-editable' : ''}" data-base-resource="summary-client"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Cliente / Empresa</p><p class="font-black ${nameSizeClass} text-gray-800 leading-tight">${clientName}</p></div>`;
     
     let detailSpaces = [];
     if (Array.isArray(o.espacios_detalle)) detailSpaces = o.espacios_detalle;
@@ -2021,25 +3120,25 @@ window.getOrderHTML = function(o, type) {
     } else if (taxIds.length > 0 && dbTaxes.length > 0) {
         taxIds.forEach(tid => { const t = dbTaxes.find(x => x.id == tid); if(t) { const rate = t.porcentaje > 1 ? t.porcentaje/100 : t.porcentaje; const val = runningSubtotal * rate; taxRows += `<tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="2">${t.nombre} (${t.porcentaje}%)</td><td class="py-1 px-3 text-right text-xs text-red-500 font-bold">+ ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(val)}</td></tr>`; } });
     }
-    const totalsBlock = `<div class="pm-pdf-summary flex justify-end mb-2 pr-4" data-base-resource="summary"><div class="w-64"><table class="w-full border-collapse">${taxRows}<tr><td class="pt-2 border-t-2 border-gray-800 align-middle text-right" colspan="2"><span class="text-[10px] font-bold uppercase text-gray-500 mr-2">Total Neto</span></td><td class="pt-2 border-t-2 border-gray-800 align-middle text-right"><span class="text-xl font-black text-gray-900">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(o.precio_final)}</span></td></tr></table></div></div>`; 
+    const totalsBlock = `<div class="pm-pdf-summary flex justify-end mb-2 pr-4 ${isAdminPreview ? 'pm-pdf-editable' : ''}" data-base-resource="summary-totals"><div class="w-64"><table class="w-full border-collapse">${taxRows}<tr><td class="pt-2 border-t-2 border-gray-800 align-middle text-right" colspan="2"><span class="text-[10px] font-bold uppercase text-gray-500 mr-2">Total Neto</span></td><td class="pt-2 border-t-2 border-gray-800 align-middle text-right"><span class="text-xl font-black text-gray-900">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(o.precio_final)}</span></td></tr></table></div></div>`; 
     
     // FIRMA DINÁMICA
     let staffName = window.currentUserProfile?.Usernames || window.currentUserProfile?.username || window.currentUserProfile?.full_name || 'Staff';
 
     let signBlock = ''; 
     if (isOrder) { 
-        signBlock = `<div class="flex justify-center w-full"><div class="text-center w-64"><div class="border-b border-black mb-1"></div><p class="font-bold text-xs text-brand-dark">${staffName}</p><p class="text-[10px] text-gray-500 uppercase">Staff Plaza Mayor</p></div></div>`; 
+        signBlock = `<div class="flex justify-center w-full"><div class="text-center w-64"><div class="${isAdminPreview ? 'pm-pdf-editable' : ''} mb-1" data-base-resource="sign-line"><div class="pm-pdf-sign-line"></div></div><p class="font-bold text-xs text-brand-dark">${staffName}</p><p class="text-[10px] text-gray-500 uppercase">Staff Plaza Mayor</p></div></div>`; 
     } else { 
-        signBlock = `<div class="text-center w-56"><div class="border-b border-black mb-1"></div><p class="font-bold text-xs text-brand-dark">${staffName}</p><p class="text-[10px] text-gray-500 uppercase">Staff Plaza Mayor</p></div><div class="text-center w-56"><div class="border-b border-black mb-1"></div><p class="font-bold text-xs text-brand-dark uppercase">${o.cliente_nombre.substring(0,25)}</p><p class="text-[10px] text-gray-500 uppercase">Cliente / Representante</p></div>`; 
+        signBlock = `<div class="text-center w-56"><div class="${isAdminPreview ? 'pm-pdf-editable' : ''} mb-1" data-base-resource="sign-line"><div class="pm-pdf-sign-line"></div></div><p class="font-bold text-xs text-brand-dark">${staffName}</p><p class="text-[10px] text-gray-500 uppercase">Staff Plaza Mayor</p></div><div class="text-center w-56"><div class="${isAdminPreview ? 'pm-pdf-editable' : ''} mb-1" data-base-resource="sign-line"><div class="pm-pdf-sign-line"></div></div><p class="font-bold text-xs text-brand-dark uppercase">${o.cliente_nombre.substring(0,25)}</p><p class="text-[10px] text-gray-500 uppercase">Cliente / Representante</p></div>`; 
     } 
     
     const pageBaseHeight = Number(__pmContentBaseHeightPx().toFixed(2));
-    const page1Raw = `<div class="pm-pdf-shift" style="width: 100%; min-height: ${pageBaseHeight}px; height: ${pageBaseHeight}px; overflow: hidden; padding: 16px 64px 48px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between;"><div>${renderHeader(docTitle)}${clientComponent}${isOrder ? `<div class="mb-2 bg-gray-100 p-2 rounded text-base flex justify-between"><span>Folio de Servicio: <strong class="font-black text-lg">${folio}</strong></span><span>Contrato: <strong class="font-black text-lg">${o.numero_contrato||'---'}</strong></span></div>` : ''}<table class="w-full text-left mb-2 mt-3 table-fixed border-separate border-spacing-0"><colgroup><col style="width:64%;"><col style="width:16%;"><col style="width:20%;"></colgroup><thead class="pm-pdf-table-head bg-gray-100 text-sm font-black text-gray-500 uppercase"><tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">Fecha</th><th class="py-2 px-3 text-right rounded-r">Importe</th></tr></thead><tbody class="pm-pdf-table-body divide-y divide-gray-50 text-[12px]" data-base-resource="table-body">${rowsHtml}</tbody></table> ${totalsBlock}</div><div class="pb-2">${!isOrder ? `<div class="pm-pdf-quick grid grid-cols-2 gap-4 mb-20 pt-4 border-t border-gray-100" data-base-resource="quick"><div><h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">${__pmSafeHtml(pdfContent.quickLeftTitle || 'Condiciones:')}</h4><ul class="list-none text-xs text-gray-600 space-y-0.5 leading-tight">${quickLeftItemsHtml}</ul></div><div><h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">${__pmSafeHtml(pdfContent.quickRightTitle || 'Vigencia:')}</h4><p class="text-xs text-gray-600">${__pmSafeHtml(pdfContent.quickRightBody || '')}</p></div></div>` : ''}<div class="pm-pdf-sign flex justify-between items-start px-2" data-base-resource="sign">${signBlock}</div>${footerHubHTML}</div>${__pmRenderPdfResources(pdfStyle, 1)}</div>`; 
+    const page1Raw = `<div class="pm-pdf-shift" style="width: 100%; min-height: ${pageBaseHeight}px; height: ${pageBaseHeight}px; overflow: hidden; padding: 0; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between;"><div>${renderHeader(docTitle)}${clientComponent}${isOrder ? `<div class="mb-2 bg-gray-100 p-2 rounded text-base flex justify-between"><span>Folio de Servicio: <strong class="font-black text-lg">${folio}</strong></span><span>Contrato: <strong class="font-black text-lg">${o.numero_contrato||'---'}</strong></span></div>` : ''}<div class="${isAdminPreview ? 'pm-pdf-editable' : ''}" data-base-resource="table"><table class="w-full text-left mb-2 mt-3 table-fixed border-separate border-spacing-0"><colgroup><col style="width:64%;"><col style="width:16%;"><col style="width:20%;"></colgroup><thead class="pm-pdf-table-head bg-gray-100 text-sm font-black text-gray-500 uppercase"><tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">Fecha</th><th class="py-2 px-3 text-right rounded-r">Importe</th></tr></thead><tbody class="pm-pdf-table-body divide-y divide-gray-50 text-[12px]">${rowsHtml}</tbody></table></div>${totalsBlock}</div><div class="pb-2">${!isOrder ? `<div class="pm-pdf-quick grid grid-cols-2 gap-4 mb-20 pt-4 border-t border-gray-100 ${isAdminPreview ? 'pm-pdf-editable' : ''}" data-base-resource="quick"><div><h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">${__pmSafeHtml(pdfContent.quickLeftTitle || 'Condiciones:')}</h4><ul class="list-none text-xs text-gray-600 space-y-0.5 leading-tight">${quickLeftItemsHtml}</ul></div><div><h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">${__pmSafeHtml(pdfContent.quickRightTitle || 'Vigencia:')}</h4><p class="text-xs text-gray-600">${__pmSafeHtml(pdfContent.quickRightBody || '')}</p></div></div>` : ''}<div class="pm-pdf-sign flex justify-between items-start px-2 ${isAdminPreview ? 'pm-pdf-editable' : ''}" data-base-resource="sign">${signBlock}</div>${footerHubHTML}</div>${__pmRenderPdfResources(pdfStyle, 1)}</div>`; 
     const pages = [
         __pmWrapLetterheadPage(__pmOrdersBoostPdfTypography(page1Raw), { baseWidth: __PM_PDF_CONTENT_BASE_WIDTH_PX, baseHeight: pageBaseHeight })
     ];
     if (!isOrder) { 
-        const page2Raw = `<div class="pm-pdf-shift" style="width: 100%; min-height: ${pageBaseHeight}px; height: ${pageBaseHeight}px; overflow: hidden; padding: 16px 64px 52px; box-sizing: border-box;">${renderHeader(__pmSafeHtml(pdfContent.conditionsTitle || 'CONDICIONES GENERALES'))}<ol class="pm-pdf-general-conditions list-decimal list-outside ml-6 text-[14px] text-gray-800 space-y-2 text-justify leading-tight mt-5" data-base-resource="conditions">${conditionsItemsHtml}</ol>${__pmRenderPdfResources(pdfStyle, 2)}</div>`; 
+        const page2Raw = `<div class="pm-pdf-shift" style="width: 100%; min-height: ${pageBaseHeight}px; height: ${pageBaseHeight}px; overflow: hidden; padding: 0; box-sizing: border-box;">${renderHeader(__pmSafeHtml(pdfContent.conditionsTitle || 'CONDICIONES GENERALES'))}<ol class="pm-pdf-general-conditions list-decimal list-outside ml-6 text-[14px] text-gray-800 space-y-2 text-justify leading-tight mt-5 ${isAdminPreview ? 'pm-pdf-editable' : ''}" data-base-resource="conditions">${conditionsItemsHtml}</ol>${__pmRenderPdfResources(pdfStyle, 2)}</div>`; 
         pages.push(__pmWrapLetterheadPage(page2Raw, { baseWidth: __PM_PDF_CONTENT_BASE_WIDTH_PX, baseHeight: pageBaseHeight }));
     } 
     const extraPages = __pmClampStyleNumber(pdfStyle.extraPages, -1, 6, 0);
@@ -2048,7 +3147,7 @@ window.getOrderHTML = function(o, type) {
         pages.length = keepCount;
     } else if (extraPages > 0) {
         for (let i = 0; i < extraPages; i += 1) {
-            const extraRaw = `<div class="pm-pdf-shift" style="width: 100%; min-height: ${pageBaseHeight}px; height: ${pageBaseHeight}px; overflow: hidden; padding: 16px 64px 52px; box-sizing: border-box;">${renderHeader(`ANEXO ${i + 1}`)}<div class="pm-pdf-general-conditions text-[13px] text-gray-700 leading-relaxed mt-6 border border-dashed border-gray-300 rounded-lg p-4" data-base-resource="conditions"><p class="font-black uppercase text-gray-500 text-[11px] mb-2">${__pmSafeHtml(pdfContent.annexHintTitle || 'Página adicional editable')}</p><p>${__pmSafeHtml(pdfContent.annexHintBody || '')}</p></div>${footerHubHTML}${__pmRenderPdfResources(pdfStyle, (isOrder ? 2 : 3) + i)}</div>`;
+            const extraRaw = `<div class="pm-pdf-shift" style="width: 100%; min-height: ${pageBaseHeight}px; height: ${pageBaseHeight}px; overflow: hidden; padding: 0; box-sizing: border-box;">${renderHeader(`ANEXO ${i + 1}`)}<div class="pm-pdf-general-conditions text-[13px] text-gray-700 leading-relaxed mt-6 border border-dashed border-gray-300 rounded-lg p-4 ${isAdminPreview ? 'pm-pdf-editable' : ''}" data-base-resource="conditions"><p class="font-black uppercase text-gray-500 text-[11px] mb-2">${__pmSafeHtml(pdfContent.annexHintTitle || 'Página adicional editable')}</p><p>${__pmSafeHtml(pdfContent.annexHintBody || '')}</p></div>${footerHubHTML}${__pmRenderPdfResources(pdfStyle, (isOrder ? 2 : 3) + i)}</div>`;
             pages.push(__pmWrapLetterheadPage(extraRaw, { baseWidth: __PM_PDF_CONTENT_BASE_WIDTH_PX, baseHeight: pageBaseHeight }));
         }
     }
@@ -2190,6 +3289,7 @@ window.getOrderHTML = function(o, type) {
   async function renderPdfBlobFallback(sourceNode) {
     const sourceRoot = sourceNode?.firstElementChild || sourceNode;
     if (!sourceRoot) throw new Error("No hay contenido PDF para generar.");
+    await __pmPrewarmPdfRenderer();
     const hostId = "pm-order-pdf-fallback-host";
     let host = document.getElementById(hostId);
     if (!host) {
@@ -2216,7 +3316,7 @@ window.getOrderHTML = function(o, type) {
     target.style.boxSizing = "border-box";
     target.style.background = "#ffffff";
     host.replaceChildren(target);
-    await new Promise((resolve) => setTimeout(resolve, 900));
+    await new Promise((resolve) => setTimeout(resolve, 120));
     const width = Math.max(816, Math.ceil(target.scrollWidth || 0), Math.ceil(target.getBoundingClientRect?.().width || 0));
     const blob = await html2pdf().set({
       margin: 0,
@@ -2231,6 +3331,7 @@ window.getOrderHTML = function(o, type) {
         windowWidth: width,
         windowHeight: 1056,
         width,
+        logging: false,
         backgroundColor: "#ffffff"
       },
       jsPDF: { unit: "in", format: "letter", orientation: "portrait" }
@@ -2824,6 +3925,7 @@ window.getOrderHTML = function(o, type) {
         const embedViewer = document.getElementById("doc-preview");
         const btnDownload = document.getElementById("btn-download-preview");
         pdfContainer.innerHTML = content;
+        __pmResetPreviewEditingState();
         __pmApplyPdfStyleToLivePreview();
         pdfContainer.classList.remove("hidden");
         embedViewer.classList.add("hidden");

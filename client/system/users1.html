@@ -186,9 +186,6 @@
         <button type="button" id="menu-docs" onclick="switchView('v_docs'); return false;" class="tool-tab">
           <i class="fa-solid fa-file-lines"></i> Documentos
         </button>
-        <button type="button" id="menu-pdf-editor" onclick="switchView('v_pdf_editor'); return false;" class="tool-tab">
-          <i class="fa-solid fa-file-pen"></i> Editor PDF
-        </button>
         <button type="button" id="menu-cp-settings" onclick="switchView('v_cp_settings'); return false;" class="tool-tab hidden">
           <i class="fa-solid fa-sliders"></i> Config CP
         </button>
@@ -530,114 +527,6 @@
         <div class="text-[10px] font-black uppercase tracking-wider text-amber-500">Casa de Piedra</div>
         <div class="text-sm font-black text-gray-800 mt-1">Configuración de Premontaje y Horas Extra</div>
         <div class="text-xs text-gray-500 mt-1">Usa esta sección para configurar porcentaje de premontaje y regla de horas extra para CP.</div>
-      </div>
-    </div>
-
-    <div id="v_pdf_editor" class="view hidden fade-in">
-      <div class="grid grid-cols-1 xl:grid-cols-[380px,1fr] gap-6">
-        <div class="bg-white rounded-3xl border border-gray-100 shadow-sm p-5 space-y-4 pdf-editor-pane overflow-y-auto custom-scroll">
-          <div>
-            <div class="text-[10px] font-black uppercase tracking-wider text-gray-400">Editor PDF central</div>
-            <h3 class="text-lg font-black text-gray-800">Diseño por tipo de documento</h3>
-            <p class="text-xs text-gray-500 mt-1">Selecciona el tipo de PDF para editar su estilo y recursos visuales.</p>
-          </div>
-
-          <div id="pdf-editor-doc-cards" class="grid grid-cols-1 gap-2"></div>
-
-          <div class="border-t border-gray-100 pt-4 space-y-2">
-            <div class="flex items-center justify-between">
-              <p class="text-[10px] font-black uppercase tracking-wider text-gray-400">Plantillas</p>
-              <span class="text-[10px] text-gray-500">Por tipo de PDF</span>
-            </div>
-            <select id="adm-pdf-template-select" class="w-full p-2 bg-gray-50 border border-gray-200 rounded-lg text-xs font-bold">
-              <option value="">Sin plantilla</option>
-            </select>
-            <div class="grid grid-cols-[1fr,auto] gap-2">
-              <input id="adm-pdf-template-name" type="text" maxlength="80" placeholder="Nombre de plantilla"
-                class="w-full p-2 bg-gray-50 border border-gray-200 rounded-lg text-xs font-bold">
-              <button type="button" id="adm-pdf-template-save" class="px-3 py-2 rounded-lg bg-gray-900 text-white text-[10px] font-black uppercase">Guardar</button>
-            </div>
-            <div class="flex items-center gap-2">
-              <button type="button" id="adm-pdf-template-apply" class="flex-1 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-[10px] font-black uppercase">Aplicar</button>
-              <button type="button" id="adm-pdf-template-delete" class="px-3 py-2 rounded-lg border border-red-200 text-red-600 text-[10px] font-black uppercase">Eliminar</button>
-            </div>
-          </div>
-
-          <div class="border-t border-gray-100 pt-4 space-y-3">
-            <div class="grid grid-cols-2 gap-2">
-              <label class="text-[10px] font-black uppercase text-gray-400">Fuente
-                <select id="adm-pdf-font" class="w-full mt-1 p-2 bg-gray-50 border border-gray-200 rounded-lg text-xs font-bold"></select>
-              </label>
-              <label class="text-[10px] font-black uppercase text-gray-400">Altura %
-                <input id="adm-pdf-line-height" type="number" min="90" max="180" step="5" class="w-full mt-1 p-2 bg-gray-50 border border-gray-200 rounded-lg text-xs font-bold">
-              </label>
-              <label class="text-[10px] font-black uppercase text-gray-400">Offset X
-                <input id="adm-pdf-offset-x" type="number" min="-120" max="120" step="1" class="w-full mt-1 p-2 bg-gray-50 border border-gray-200 rounded-lg text-xs font-bold">
-              </label>
-              <label class="text-[10px] font-black uppercase text-gray-400">Offset Y
-                <input id="adm-pdf-offset-y" type="number" min="-120" max="120" step="1" class="w-full mt-1 p-2 bg-gray-50 border border-gray-200 rounded-lg text-xs font-bold">
-              </label>
-              <label class="text-[10px] font-black uppercase text-gray-400">Páginas extra
-                <input id="adm-pdf-extra-pages" type="number" min="-1" max="6" step="1" class="w-full mt-1 p-2 bg-gray-50 border border-gray-200 rounded-lg text-xs font-bold">
-              </label>
-            </div>
-          </div>
-
-          <div class="border-t border-gray-100 pt-4 space-y-3">
-            <div class="flex items-center justify-between">
-              <p class="text-[10px] font-black uppercase tracking-wider text-gray-400">Textos base</p>
-              <span class="text-[10px] text-gray-500">Encabezado, tabla, firmas...</span>
-            </div>
-            <div id="adm-pdf-base-list" class="space-y-2 max-h-56 overflow-y-auto custom-scroll pr-1"></div>
-          </div>
-
-          <div class="border-t border-gray-100 pt-4 space-y-3">
-            <div class="flex items-center justify-between">
-              <p class="text-[10px] font-black uppercase tracking-wider text-gray-400">Contenido</p>
-              <span class="text-[10px] text-gray-500">Texto editable del PDF</span>
-            </div>
-            <div id="adm-pdf-content-list" class="space-y-2 max-h-60 overflow-y-auto custom-scroll pr-1"></div>
-          </div>
-
-          <div class="border-t border-gray-100 pt-4 space-y-3">
-            <div class="flex items-center justify-between">
-              <p class="text-[10px] font-black uppercase tracking-wider text-gray-400">Recursos</p>
-              <div class="flex items-center gap-1">
-                <button type="button" id="adm-pdf-add-bar" class="px-2 py-1 rounded bg-gray-100 text-gray-700 text-[10px] font-black uppercase">+ Barra</button>
-                <button type="button" id="adm-pdf-add-title" class="px-2 py-1 rounded bg-gray-100 text-gray-700 text-[10px] font-black uppercase">+ Título</button>
-                <button type="button" id="adm-pdf-add-text" class="px-2 py-1 rounded bg-gray-100 text-gray-700 text-[10px] font-black uppercase">+ Texto</button>
-              </div>
-            </div>
-            <div id="adm-pdf-res-list" class="space-y-2 max-h-56 overflow-y-auto custom-scroll pr-1"></div>
-            <p class="text-[10px] text-gray-500">Arrastra recursos sobre la hoja. Para redimensionar usa la esquina roja.</p>
-          </div>
-
-          <div class="border-t border-gray-100 pt-4 flex items-center gap-2">
-            <button type="button" id="btn-save-pdf-editor" onclick="savePdfEditorConfig(false)"
-              class="flex-1 bg-gray-900 text-white py-2.5 rounded-xl font-bold text-xs uppercase hover:bg-black transition">
-              Guardar
-            </button>
-            <button type="button" onclick="resetPdfEditorProfile()"
-              class="px-4 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-xs font-bold uppercase hover:bg-gray-50 transition">
-              Restablecer
-            </button>
-          </div>
-        </div>
-
-        <div class="bg-white rounded-3xl border border-gray-100 shadow-sm p-4 pdf-editor-pane flex flex-col">
-          <div class="flex items-center justify-between mb-3">
-            <div>
-              <div class="text-[10px] font-black uppercase tracking-wider text-gray-400">Vista previa</div>
-              <div id="adm-pdf-preview-title" class="text-sm font-black text-gray-800">Documento</div>
-            </div>
-            <div class="text-[10px] text-gray-500 font-bold">Hoja carta (816x1056)</div>
-          </div>
-          <div id="adm-pdf-preview-shell" class="pdf-preview-shell">
-            <div id="adm-pdf-preview-stage" class="pdf-preview-stage">
-              <div id="adm-pdf-preview-page" class="pdf-preview-page"></div>
-            </div>
-          </div>
-        </div>
       </div>
     </div>
 
@@ -2333,7 +2222,6 @@
         { id: 'menu-concepts', view: 'v_concepts' },
         { id: 'menu-taxes', view: 'v_taxes' },
         { id: 'menu-docs', view: 'v_docs' },
-        { id: 'menu-pdf-editor', view: 'v_pdf_editor' },
         { id: 'menu-cp-settings', view: 'v_cp_settings' }
       ];
       links.forEach(item => {
@@ -2423,7 +2311,6 @@
       if(viewId === 'v_concepts') await loadConcepts();
       if(viewId === 'v_taxes') await loadTaxesConfig();
       if(viewId === 'v_docs') await loadDocsConfig();
-      if(viewId === 'v_pdf_editor') await loadPdfEditorConfig();
       if(viewId === 'v_cp_settings' && currentTenant === 'cp') {
         await loadPremontajePct();
         await loadHoraExtraCfg();
@@ -2657,7 +2544,6 @@
       // default PM
       activePocketBase = pmPocketBase;
       currentTenant = 'pm';
-      initPdfEditor();
       paintTenantUI();
       await loadPremontajePct();
       await loadHoraExtraCfg();
@@ -2669,6 +2555,7 @@
 
 </body>
 </html>
+
 
 
 

@@ -136,7 +136,7 @@
                 <div class="flex-grow relative bg-gray-200 overflow-hidden hidden" id="wk-content">
                     <div id="pdf-style-editor" class="hidden absolute top-3 left-3 z-30 bg-gray-800/95 border border-gray-700 text-[10px] text-gray-200 rounded-xl shadow-2xl w-full max-w-[760px] max-h-[78vh] overflow-auto backdrop-blur-sm">
                         <div class="px-3 py-2 flex flex-wrap items-center gap-2 border-b border-gray-700">
-                            <p class="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Editor PDF por Secciones (solo admin, texto bloqueado)</p>
+                            <p class="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Editor PDF Recibo (solo admin)</p>
                             <div class="ml-auto flex items-center gap-2">
                                 <button id="btn-pdf-style-pin" type="button" class="bg-gray-700 hover:bg-gray-600 text-white px-2.5 py-1 rounded text-[10px] font-bold uppercase transition">Fijar</button>
                                 <button id="btn-pdf-style-toggle" type="button" class="bg-gray-700 hover:bg-gray-600 text-white px-2.5 py-1 rounded text-[10px] font-bold uppercase transition">Ocultar</button>
@@ -158,7 +158,7 @@
                                     </select>
                                 </div>
                                 <div class="flex flex-col gap-1">
-                                    <label class="uppercase font-bold text-gray-400">Altura Texto</label>
+                                    <label class="uppercase font-bold text-gray-400">Altura texto</label>
                                     <input id="pdf-style-line-height" type="range" min="90" max="180" step="5" class="pdf-style-control accent-brand-red">
                                     <span id="pdf-style-line-height-value" class="font-mono text-[10px] text-gray-300">120%</span>
                                 </div>
@@ -175,78 +175,46 @@
                                     </div>
                                 </div>
                                 <div class="flex flex-col gap-1">
-                                    <label class="uppercase font-bold text-gray-400">Páginas +/-</label>
+                                    <label class="uppercase font-bold text-gray-400">Paginas extra</label>
                                     <input id="pdf-style-extra-pages" type="range" min="0" max="6" step="1" class="pdf-style-control accent-brand-red">
                                     <span id="pdf-style-extra-pages-value" class="font-mono text-[10px] text-gray-300">+0</span>
                                 </div>
                             </div>
                             <div class="bg-gray-900/70 border border-gray-700 rounded-lg p-2 space-y-2">
-                                <p class="text-[10px] font-black uppercase tracking-wider text-gray-300">Encabezado</p>
-                                <div class="flex flex-col gap-1">
-                                    <label class="uppercase font-bold text-gray-400">Línea Enc.</label>
-                                    <input id="pdf-style-header-line" type="range" min="1" max="8" step="1" class="pdf-style-control accent-brand-red">
-                                    <span id="pdf-style-header-line-value" class="font-mono text-[10px] text-gray-300">4px</span>
+                                <p class="text-[10px] font-black uppercase tracking-wider text-gray-300">Encabezado y Firmas</p>
+                                <div class="grid grid-cols-2 gap-2">
+                                    <div class="flex flex-col gap-1">
+                                        <label class="uppercase font-bold text-gray-400">Linea encabezado</label>
+                                        <input id="pdf-style-header-line" type="range" min="1" max="8" step="1" class="pdf-style-control accent-brand-red">
+                                        <span id="pdf-style-header-line-value" class="font-mono text-[10px] text-gray-300">4px</span>
+                                    </div>
+                                    <div class="flex flex-col gap-1">
+                                        <label class="uppercase font-bold text-gray-400">Linea firma</label>
+                                        <input id="pdf-style-sign-line" type="range" min="1" max="16" step="1" class="pdf-style-control accent-brand-red">
+                                        <span id="pdf-style-sign-line-value" class="font-mono text-[10px] text-gray-300">2px</span>
+                                    </div>
                                 </div>
                                 <div class="grid grid-cols-2 gap-2">
                                     <div class="flex flex-col gap-1">
-                                        <label class="uppercase font-bold text-gray-400">Título</label>
+                                        <label class="uppercase font-bold text-gray-400">Titulo</label>
                                         <input id="pdf-style-title-size" type="range" min="20" max="42" step="1" class="pdf-style-control accent-brand-red">
                                         <span id="pdf-style-title-size-value" class="font-mono text-[10px] text-gray-300">30px</span>
                                     </div>
                                     <div class="flex flex-col gap-1">
-                                        <label class="uppercase font-bold text-gray-400">Meta Enc.</label>
+                                        <label class="uppercase font-bold text-gray-400">Meta</label>
                                         <input id="pdf-style-meta-size" type="range" min="8" max="18" step="1" class="pdf-style-control accent-brand-red">
                                         <span id="pdf-style-meta-size-value" class="font-mono text-[10px] text-gray-300">13px</span>
                                     </div>
                                 </div>
-                                <div class="grid grid-cols-2 gap-2">
-                                    <div class="flex flex-col gap-1">
-                                        <label class="uppercase font-bold text-gray-400">Alineación Título</label>
-                                        <select id="pdf-style-align-header" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white">
-                                            <option value="left">Izquierda</option>
-                                            <option value="center">Centro</option>
-                                            <option value="right">Derecha</option>
-                                        </select>
-                                    </div>
-                                    <div class="flex flex-col gap-1">
-                                        <label class="uppercase font-bold text-gray-400">Alineación Meta</label>
-                                        <select id="pdf-style-align-meta" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white">
-                                            <option value="left">Izquierda</option>
-                                            <option value="center">Centro</option>
-                                            <option value="right">Derecha</option>
-                                        </select>
-                                    </div>
-                                </div>
                             </div>
                             <div class="bg-gray-900/70 border border-gray-700 rounded-lg p-2 space-y-2">
-                                <p class="text-[10px] font-black uppercase tracking-wider text-gray-300">Tabla y Resumen</p>
-                                <div class="flex flex-col gap-1">
-                                    <label class="uppercase font-bold text-gray-400">Tabla</label>
-                                    <input id="pdf-style-table-size" type="range" min="9" max="16" step="1" class="pdf-style-control accent-brand-red">
-                                    <span id="pdf-style-table-size-value" class="font-mono text-[10px] text-gray-300">12px</span>
-                                </div>
-                                <div class="grid grid-cols-2 gap-2">
+                                <p class="text-[10px] font-black uppercase tracking-wider text-gray-300">Tabla y Texto</p>
+                                <div class="grid grid-cols-3 gap-2">
                                     <div class="flex flex-col gap-1">
-                                        <label class="uppercase font-bold text-gray-400">Alineación Tabla</label>
-                                        <select id="pdf-style-align-table" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white">
-                                            <option value="left">Izquierda</option>
-                                            <option value="center">Centro</option>
-                                            <option value="right">Derecha</option>
-                                        </select>
+                                        <label class="uppercase font-bold text-gray-400">Tabla</label>
+                                        <input id="pdf-style-table-size" type="range" min="9" max="16" step="1" class="pdf-style-control accent-brand-red">
+                                        <span id="pdf-style-table-size-value" class="font-mono text-[10px] text-gray-300">12px</span>
                                     </div>
-                                    <div class="flex flex-col gap-1">
-                                        <label class="uppercase font-bold text-gray-400">Alineación Resumen</label>
-                                        <select id="pdf-style-align-summary" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white">
-                                            <option value="left">Izquierda</option>
-                                            <option value="center">Centro</option>
-                                            <option value="right">Derecha</option>
-                                        </select>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="bg-gray-900/70 border border-gray-700 rounded-lg p-2 space-y-2">
-                                <p class="text-[10px] font-black uppercase tracking-wider text-gray-300">Notas y Condiciones</p>
-                                <div class="grid grid-cols-2 gap-2">
                                     <div class="flex flex-col gap-1">
                                         <label class="uppercase font-bold text-gray-400">Notas</label>
                                         <input id="pdf-style-quick-size" type="range" min="9" max="16" step="1" class="pdf-style-control accent-brand-red">
@@ -258,51 +226,36 @@
                                         <span id="pdf-style-conditions-size-value" class="font-mono text-[10px] text-gray-300">14px</span>
                                     </div>
                                 </div>
-                                <div class="grid grid-cols-2 gap-2">
-                                    <div class="flex flex-col gap-1">
-                                        <label class="uppercase font-bold text-gray-400">Alineación Notas</label>
-                                        <select id="pdf-style-align-quick" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white">
-                                            <option value="left">Izquierda</option>
-                                            <option value="center">Centro</option>
-                                            <option value="right">Derecha</option>
-                                        </select>
-                                    </div>
-                                    <div class="flex flex-col gap-1">
-                                        <label class="uppercase font-bold text-gray-400">Alineación Condiciones</label>
-                                        <select id="pdf-style-align-conditions" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white">
-                                            <option value="left">Izquierda</option>
-                                            <option value="center">Centro</option>
-                                            <option value="right">Derecha</option>
-                                            <option value="justify">Justificado</option>
-                                        </select>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="bg-gray-900/70 border border-gray-700 rounded-lg p-2 space-y-2">
-                                <p class="text-[10px] font-black uppercase tracking-wider text-gray-300">Firmas y Pie</p>
                                 <div class="flex flex-col gap-1">
                                     <label class="uppercase font-bold text-gray-400">Firmas</label>
                                     <input id="pdf-style-sign-size" type="range" min="9" max="16" step="1" class="pdf-style-control accent-brand-red">
                                     <span id="pdf-style-sign-size-value" class="font-mono text-[10px] text-gray-300">12px</span>
                                 </div>
+                            </div>
+                            <div class="bg-gray-900/70 border border-gray-700 rounded-lg p-2 space-y-2">
+                                <p class="text-[10px] font-black uppercase tracking-wider text-gray-300">Alineacion</p>
                                 <div class="grid grid-cols-2 gap-2">
-                                    <div class="flex flex-col gap-1">
-                                        <label class="uppercase font-bold text-gray-400">Alineación Firmas</label>
-                                        <select id="pdf-style-align-sign" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white">
-                                            <option value="left">Izquierda</option>
-                                            <option value="center">Centro</option>
-                                            <option value="right">Derecha</option>
-                                        </select>
-                                    </div>
-                                    <div class="flex flex-col gap-1">
-                                        <label class="uppercase font-bold text-gray-400">Alineación Pie</label>
-                                        <select id="pdf-style-align-footer" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white">
-                                            <option value="left">Izquierda</option>
-                                            <option value="center">Centro</option>
-                                            <option value="right">Derecha</option>
-                                        </select>
+                                    <select id="pdf-style-align-header" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white"><option value="left">Header Izq</option><option value="center">Header Centro</option><option value="right">Header Der</option></select>
+                                    <select id="pdf-style-align-meta" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white"><option value="left">Meta Izq</option><option value="center">Meta Centro</option><option value="right">Meta Der</option></select>
+                                    <select id="pdf-style-align-table" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white"><option value="left">Tabla Izq</option><option value="center">Tabla Centro</option><option value="right">Tabla Der</option></select>
+                                    <select id="pdf-style-align-summary" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white"><option value="left">Resumen Izq</option><option value="center">Resumen Centro</option><option value="right">Resumen Der</option></select>
+                                    <select id="pdf-style-align-quick" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white"><option value="left">Notas Izq</option><option value="center">Notas Centro</option><option value="right">Notas Der</option></select>
+                                    <select id="pdf-style-align-conditions" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white"><option value="left">Cond Izq</option><option value="center">Cond Centro</option><option value="right">Cond Der</option><option value="justify">Cond Just</option></select>
+                                    <select id="pdf-style-align-sign" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white"><option value="left">Firma Izq</option><option value="center">Firma Centro</option><option value="right">Firma Der</option></select>
+                                    <select id="pdf-style-align-footer" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white"><option value="left">Footer Izq</option><option value="center">Footer Centro</option><option value="right">Footer Der</option></select>
+                                </div>
+                            </div>
+                            <div class="bg-gray-900/70 border border-gray-700 rounded-lg p-2 space-y-2">
+                                <div class="flex items-center justify-between gap-2">
+                                    <p class="text-[10px] font-black uppercase tracking-wider text-gray-300">Recursos</p>
+                                    <div class="flex items-center gap-1">
+                                        <button id="pdf-style-add-bar" type="button" class="bg-gray-700 hover:bg-gray-600 text-white px-2 py-0.5 rounded text-[10px] font-bold">+ Barra</button>
+                                        <button id="pdf-style-add-sign-line" type="button" class="bg-gray-700 hover:bg-gray-600 text-white px-2 py-0.5 rounded text-[10px] font-bold">+ Firma</button>
+                                        <button id="pdf-style-add-logo" type="button" class="bg-gray-700 hover:bg-gray-600 text-white px-2 py-0.5 rounded text-[10px] font-bold">+ Logo</button>
                                     </div>
                                 </div>
+                                <p class="text-[9px] text-gray-400">Activa, mueve por coordenadas y elimina con papelera.</p>
+                                <div id="pdf-style-resources-list" class="space-y-2 max-h-72 overflow-y-auto pr-1 custom-scroll"></div>
                             </div>
                         </div>
                     </div>
@@ -376,7 +329,16 @@
                         </div>
 
                         <div class="bg-white p-3 rounded-xl border border-gray-200 shadow-sm">
-                            <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">2. Folio Asignado</label>
+                            <label class="block text-[10px] font-bold text-gray-400 uppercase mb-2">2. Membrete</label>
+                            <label class="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                                <span class="text-xs font-bold text-gray-700">Aplicar membrete al imprimir</span>
+                                <input id="contract-letterhead-toggle" type="checkbox" class="h-4 w-4 accent-brand-red">
+                            </label>
+                            <p class="text-[9px] text-gray-400 mt-1 italic leading-tight">Solo activa o desactiva el membrete al imprimir. La plantilla no se edita.</p>
+                        </div>
+
+                        <div class="bg-white p-3 rounded-xl border border-gray-200 shadow-sm">
+                            <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">3. Folio Asignado</label>
                             <div class="flex gap-2">
                                 <input id="contract-num-assign" placeholder="Ej: CON-2024-001" class="w-full border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none focus:border-brand-red uppercase">
                                 <button id="btn-save-contract-num" onclick="window.saveContractNumber()" class="bg-gray-800 text-white px-3 rounded-lg hover:bg-black transition shadow-sm" title="Guardar Folio"><i class="fa-solid fa-save"></i></button>

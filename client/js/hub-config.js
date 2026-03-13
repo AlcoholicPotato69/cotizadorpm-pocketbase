@@ -9,6 +9,7 @@ const __hubNested = /\/(cotizador|cotizadorcp|public|system)\//.test(__hubPath);
 const __hubAssetsBase = __hubNested ? '../../assets' : '../assets';
 const __hubPublicBase = __hubNested ? '../public' : './public';
 const __hubConfigBase = __hubNested ? '../config' : './config';
+const __HUB_RUNTIME_CONFIG_CACHE_KEY = 'hub_runtime_config_cache_v1';
 
 function __hubNormalizeBackendUrl(raw) {
   let text = String(raw || '').trim();
@@ -89,27 +90,54 @@ function __hubRuntimeConfigCandidates() {
   });
 }
 
+function __hubReadCachedRuntimeConfig() {
+  try {
+    const raw = localStorage.getItem(__HUB_RUNTIME_CONFIG_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function __hubWriteCachedRuntimeConfig(config) {
+  try {
+    if (!config || typeof config !== 'object' || !Object.keys(config).length) return;
+    localStorage.setItem(__HUB_RUNTIME_CONFIG_CACHE_KEY, JSON.stringify(config));
+  } catch (_) {}
+}
+
 function __hubLoadRuntimeConfig() {
   try {
     if (window.__HUB_RUNTIME_CONFIG && typeof window.__HUB_RUNTIME_CONFIG === 'object') {
       return window.__HUB_RUNTIME_CONFIG;
     }
   } catch (_) {}
+  const cached = __hubReadCachedRuntimeConfig();
+  if (cached) {
+    window.__HUB_RUNTIME_CONFIG = cached;
+    return cached;
+  }
+  return {};
+}
 
+async function __hubFetchRuntimeConfig() {
   const candidates = __hubRuntimeConfigCandidates();
   for (let i = 0; i < candidates.length; i += 1) {
     const path = candidates[i];
     try {
-      const xhr = new XMLHttpRequest();
-      xhr.open('GET', path, false);
-      xhr.send(null);
-      if (xhr.status >= 200 && xhr.status < 300 && xhr.responseText) {
-        const parsed = JSON.parse(xhr.responseText);
-        if (parsed && typeof parsed === 'object') return parsed;
-      }
+      const response = await fetch(path, {
+        method: 'GET',
+        cache: 'no-store',
+        credentials: 'same-origin'
+      });
+      if (!response.ok) continue;
+      const parsed = await response.json();
+      if (parsed && typeof parsed === 'object') return parsed;
     } catch (_) {}
   }
-  return {};
+  return null;
 }
 
 const __hubRuntimeConfig = __hubLoadRuntimeConfig();
@@ -235,6 +263,48 @@ window.clearCpCalendarIcsConfig = function (options = {}) {
   if (reload) window.location.reload();
 };
 
+function __hubApplyResolvedConfig(runtimeConfig = {}) {
+  const runtime = runtimeConfig && typeof runtimeConfig === 'object' ? runtimeConfig : {};
+  window.__HUB_RUNTIME_CONFIG = runtime;
+  __hubWriteCachedRuntimeConfig(runtime);
+
+  const runtimeBackend = String(runtime.POCKETBASE_URL || runtime.BACKEND_URL || '').trim();
+  const runtimeAnonKey = String(runtime.POCKETBASE_ANON_KEY || runtime.POCKETBASE_PUBLIC_KEY || '').trim();
+  const runtimeFinanzasSchema = String(runtime.FINANZAS_SCHEMA || runtime.SCHEMA_PLAZA_MAYOR || '').trim();
+  const runtimeLocalMode = __hubToBoolean(runtime.LOCAL_MODE, null);
+  const runtimeCompanyLogo = String(runtime.COMPANY_LOGO_URL || '').trim();
+  const runtimeCompanyLogoCp = String(runtime.COMPANY_LOGO_URL_CP || runtime.CP_LOGO_URL || '').trim();
+  const runtimePmLetterhead = String(runtime.PM_PDF_LETTERHEAD_URL || runtime.PDF_LETTERHEAD_PM_URL || '').trim();
+  const runtimeCpLetterhead = String(runtime.CP_PDF_LETTERHEAD_URL || runtime.PDF_LETTERHEAD_CP_URL || '').trim();
+  const runtimeIcsUrl = String(runtime.CP_CALENDAR_ICS_URL || '').trim();
+  const runtimeIcsToken = String(runtime.CP_CALENDAR_ICS_TOKEN || '').trim();
+
+  __hubBackendBase = __hubNormalizeBackendUrl(
+    __hubBackendFromQuery || __hubBackendFromStorage || __hubBackendFromGlobal || runtimeBackend || __hubBackendFromEnv || __hubDefaultBackendUrl
+  ) || __hubDefaultBackendUrl;
+
+  __hubCpCalendarIcsUrlRaw = String(
+    __hubIcsUrlFromQuery || __hubIcsUrlFromStorage || __hubIcsUrlFromGlobal || runtimeIcsUrl || __hubIcsUrlFromEnv || ''
+  ).trim();
+  __hubCpCalendarIcsToken = String(
+    __hubIcsTokenFromQuery || __hubIcsTokenFromStorage || __hubIcsTokenFromGlobal || runtimeIcsToken || __hubIcsTokenFromEnv || 'b1a38ff792a127d89980285a05cc8525bdcc2195227ca8a4b7b51a56ae312aa5'
+  ).trim();
+
+  const target = (window.HUB_CONFIG && typeof window.HUB_CONFIG === 'object') ? window.HUB_CONFIG : {};
+  target.pocketbaseUrl = __hubBackendBase;
+  target.pocketbaseAnonKey = runtimeAnonKey || __hubAnonKeyFromEnv || '';
+  target.finanzasSchema = String(runtimeFinanzasSchema || __hubFinanzasSchemaFromEnv || 'finanzas');
+  target.localMode = (runtimeLocalMode !== null ? runtimeLocalMode : (__hubLocalModeFromEnv !== null ? __hubLocalModeFromEnv : true));
+  target.companyLogoUrl = String(runtimeCompanyLogo || __hubCompanyLogoFromEnv || `${__hubAssetsBase}/logo.png`);
+  target.companyLogoUrlCP = String(runtimeCompanyLogoCp || __hubCompanyLogoCpFromEnv || `${__hubAssetsBase}/logocp.png`);
+  target.pmPdfLetterheadUrl = String(runtimePmLetterhead || __hubPmPdfLetterheadFromEnv || `${__hubPublicBase}/assets/img/pm-letterhead-default.png`);
+  target.cpPdfLetterheadUrl = String(runtimeCpLetterhead || __hubCpPdfLetterheadFromEnv || `${__hubPublicBase}/assets/img/cp-letterhead-default.png`);
+  target.cpCalendarIcsUrl = window.getCpCalendarIcsUrl();
+  target.cpCalendarIcsToken = __hubCpCalendarIcsToken;
+  window.HUB_CONFIG = target;
+  return target;
+}
+
 window.HUB_CONFIG = {
   // Backend API (usa override por query/localStorage/global/runtime/env y fallback automatico)
   pocketbaseUrl: __hubBackendBase,
@@ -278,5 +348,24 @@ window.HUB_CONFIG = {
     { name: 'Cotizador - Plaza Mayor',    description: 'Acceso al cotizador de Plaza Mayor.',    icon: 'fa-store', url_path: 'cotizador/catalog.html',   color: 'red',  tenant: 'plaza_mayor' },
     { name: 'Cotizador - Casa de Piedra', description: 'Acceso al cotizador de Casa de Piedra.', icon: 'fa-gem',   url_path: 'cotizadorcp/catalog.html', color: 'cp', tenant: 'casa_de_piedra' }
   ]
+};
+
+__hubApplyResolvedConfig(__hubRuntimeConfig);
+
+window.HUB_CONFIG_READY = __hubFetchRuntimeConfig()
+  .then((runtimeConfig) => {
+    if (!runtimeConfig) return window.HUB_CONFIG;
+    return __hubApplyResolvedConfig(runtimeConfig);
+  })
+  .catch(() => window.HUB_CONFIG)
+  .then((config) => {
+    try {
+      window.dispatchEvent(new CustomEvent('hub:config-ready', { detail: config }));
+    } catch (_) {}
+    return config;
+  });
+
+window.getHubConfigReady = function () {
+  return window.HUB_CONFIG_READY || Promise.resolve(window.HUB_CONFIG);
 };
 

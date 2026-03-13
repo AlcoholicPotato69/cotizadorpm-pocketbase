@@ -216,12 +216,17 @@
 
     <script>
         // --- CONFIGURACIÓN ---
-        const HUB_URL = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseUrl) || 'http://127.0.0.1:8090';
-        const HUB_KEY = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseAnonKey) || '';
+        let HUB_URL = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseUrl) || 'http://127.0.0.1:8090';
+        let HUB_KEY = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseAnonKey) || '';
         let hubPocketBase;
         let hubAuthNative = null;
         let useNativeAuth = false;
         let currentUser = null;
+
+        function syncHubRuntimeConfig() {
+            HUB_URL = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseUrl) || 'http://127.0.0.1:8090';
+            HUB_KEY = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseAnonKey) || '';
+        }
 
         // --- UTILIDADES UI ---
         function getTextColorClass(c){ const map={red:'text-brand-red',blue:'text-blue-600',green:'text-green-600',purple:'text-purple-600',cyan:'text-cyan-600',orange:'text-orange-600',pink:'text-pink-600'}; return map[c]||'text-gray-600'; }
@@ -230,6 +235,11 @@
 
         // --- INICIALIZACIÓN SEGURA ---
         document.addEventListener('DOMContentLoaded', async () => {
+            if (window.HUB_CONFIG_READY && typeof window.HUB_CONFIG_READY.then === 'function') {
+                await window.HUB_CONFIG_READY;
+            }
+            syncHubRuntimeConfig();
+
             // 1. Inicializar cliente nativo y fallback compat
             hubAuthNative = window.PB_SERVICES && window.PB_SERVICES.auth ? window.PB_SERVICES.auth : null;
             useNativeAuth = !!hubAuthNative;
