@@ -39,7 +39,7 @@
     const cpLogo = (window.HUB_CONFIG && (window.HUB_CONFIG.companyLogoUrlCP || window.HUB_CONFIG.cpLogoUrl)) || '../assets/logocp.png';
     const layoutLogoSrc = _isCP ? cpLogo : pmLogo;
     const layoutBrandName = _isCP ? 'CASA DE PIEDRA' : 'PLAZA MAYOR';
-    const layoutAccentHex = _isCP ? '#deac07' : '#D32F2F';
+    const layoutAccentHex = _isCP ? '#c1621e' : '#D32F2F';
 // --- FORZAR FAVICON ---
     (function forceFavicon() {
         const iconPath = scriptTag ? scriptTag.getAttribute('src').replace('layout.js', 'favicon.png') : 'js/favicon.png';

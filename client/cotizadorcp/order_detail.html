@@ -25,7 +25,7 @@
     <script src="../../assets/libs/js/chart.js"></script>
     <script src="../../assets/libs/js/fullcalendar.js"></script>
     
-    <script>tailwind.config = { theme: { extend: { colors: { brand: { red: '#deac07', dark: '#1a1a1a', gray: '#f3f4f6' } } } } }</script>
+    <script>tailwind.config = { theme: { extend: { colors: { brand: { red: '#c1621e', dark: '#1a1a1a', gray: '#f3f4f6' } } } } }</script>
     <style>
         body { font-family: 'Segoe UI', sans-serif; background-color: #eef2f6; }
         .hidden { display: none !important; }
@@ -413,6 +413,35 @@
                             <input id="pdf-style-line-height" type="range" min="90" max="180" step="5" class="pdf-style-control accent-brand-red">
                             <span id="pdf-style-line-height-value" class="font-mono text-[10px] text-gray-300">120%</span>
                         </div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div class="flex flex-col gap-1">
+                                <label class="uppercase font-bold text-gray-400">Mover X</label>
+                                <input id="pdf-style-offset-x" type="range" min="-120" max="120" step="1" class="pdf-style-control accent-brand-red">
+                                <span id="pdf-style-offset-x-value" class="font-mono text-[10px] text-gray-300">0px</span>
+                            </div>
+                            <div class="flex flex-col gap-1">
+                                <label class="uppercase font-bold text-gray-400">Mover Y</label>
+                                <input id="pdf-style-offset-y" type="range" min="-120" max="120" step="1" class="pdf-style-control accent-brand-red">
+                                <span id="pdf-style-offset-y-value" class="font-mono text-[10px] text-gray-300">0px</span>
+                            </div>
+                        </div>
+                        <div class="flex flex-col gap-1">
+                            <label class="uppercase font-bold text-gray-400">Páginas +/-</label>
+                            <input id="pdf-style-extra-pages" type="range" min="-1" max="6" step="1" class="pdf-style-control accent-brand-red">
+                            <span id="pdf-style-extra-pages-value" class="font-mono text-[10px] text-gray-300">+0</span>
+                        </div>
+                    </div>
+                    <div class="bg-gray-900/70 border border-gray-700 rounded-lg p-2 space-y-2">
+                        <div class="flex items-center justify-between gap-2">
+                            <p class="text-[10px] font-black uppercase tracking-wider text-gray-300">Recursos Canva</p>
+                            <div class="flex items-center gap-1">
+                                <button id="pdf-style-add-bar" type="button" class="bg-gray-700 hover:bg-gray-600 text-white px-2 py-0.5 rounded text-[10px] font-bold">+ Barra</button>
+                                <button id="pdf-style-add-title" type="button" class="bg-gray-700 hover:bg-gray-600 text-white px-2 py-0.5 rounded text-[10px] font-bold">+ Título</button>
+                                <button id="pdf-style-add-text" type="button" class="bg-gray-700 hover:bg-gray-600 text-white px-2 py-0.5 rounded text-[10px] font-bold">+ Texto</button>
+                            </div>
+                        </div>
+                        <p class="text-[9px] text-gray-400">Arrastra los recursos sobre el PDF. Para redimensionar usa esquina inferior derecha o mantén Shift.</p>
+                        <div id="pdf-style-resources-list" class="space-y-2 max-h-72 overflow-y-auto pr-1 custom-scroll"></div>
                     </div>
                     <div class="bg-gray-900/70 border border-gray-700 rounded-lg p-2 space-y-2">
                         <p class="text-[10px] font-black uppercase tracking-wider text-gray-300">Encabezado</p>

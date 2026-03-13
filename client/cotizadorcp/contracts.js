@@ -191,7 +191,7 @@ const RECEIPT_PAGE_WIDTH_PX = 816;
 const RECEIPT_PAGE_HEIGHT_PX = 1056;
 const LETTERHEAD_DESIGN_WIDTH_PX = 1275;
 const LETTERHEAD_DESIGN_HEIGHT_PX = 1650;
-const LETTERHEAD_MARGINS_DESIGN_PX = { top: 202.2, right: 61.1, bottom: 113.38, left: 61.1 };
+const LETTERHEAD_MARGINS_DESIGN_PX = { top: 150, right: 45, bottom: 85, left: 45 };
 const CP_CONTRACTS_CONTENT_BASE_WIDTH_PX = 816;
 
 function __contractsCssSafeUrl(url) {
@@ -326,6 +326,7 @@ function __contractsBoostPdfTypography(html) {
 
 const __CP_CONTRACTS_PDF_STYLE_CONFIG_KEY = 'pdf_typography_style';
 const __CP_CONTRACTS_PDF_STYLE_TENANT = 'casa_de_piedra';
+const __CP_CONTRACTS_PDF_STYLE_PROFILE_KEYS = Object.freeze(['quote', 'order', 'receipt', 'contract']);
 const __CP_CONTRACTS_PDF_STYLE_FONT_MAP = Object.freeze({
     segoe: '"Segoe UI", Arial, sans-serif',
     arial: 'Arial, Helvetica, sans-serif',
@@ -333,6 +334,16 @@ const __CP_CONTRACTS_PDF_STYLE_FONT_MAP = Object.freeze({
     georgia: 'Georgia, "Times New Roman", serif',
     times: '"Times New Roman", Times, serif',
     trebuchet: '"Trebuchet MS", Arial, sans-serif'
+});
+const __CP_CONTRACTS_PDF_STYLE_CONTENT_DEFAULTS = Object.freeze({
+    liquidatedTitle: 'Constancia de Liquidación',
+    liquidatedFooterLine1: 'Este documento certifica que la orden de referencia ha sido liquidada en su totalidad.',
+    liquidatedFooterLine2: 'Generado digitalmente a través de Marketing Hub.',
+    receiptTitle: 'Recibo de Pago',
+    receiptFooterLine1: 'Este documento es un comprobante de pago interno. No válido como factura fiscal.',
+    receiptFooterLine2: 'Generado digitalmente a través de Marketing Hub.',
+    annexHintTitle: 'Página adicional editable',
+    annexHintBody: 'Utiliza el editor para ajustar tipografía, posición y estilo de esta página adicional.'
 });
 const __CP_CONTRACTS_PDF_STYLE_DEFAULTS = Object.freeze({
     fontFamilyKey: 'segoe',
@@ -346,6 +357,10 @@ const __CP_CONTRACTS_PDF_STYLE_DEFAULTS = Object.freeze({
     conditionsPx: 14,
     signPx: 12,
     footerPx: 10,
+    offsetXPx: 0,
+    offsetYPx: 0,
+    extraPages: 0,
+    content: __CP_CONTRACTS_PDF_STYLE_CONTENT_DEFAULTS,
     headerAlign: 'right',
     metaAlign: 'right',
     tableAlign: 'left',
@@ -360,6 +375,7 @@ let __contractsPdfStyleState = null;
 let __contractsPdfStyleConfigRecordId = '';
 let __contractsPdfStyleSyncTimer = null;
 let __contractsPdfStyleUiState = { collapsed: false, pinned: false };
+let __contractsPdfStyleActiveProfile = 'receipt';
 
 function __contractsClampStyleNumber(value, min, max, fallback) {
     const num = parseInt(value, 10);
@@ -370,6 +386,31 @@ function __contractsClampStyleNumber(value, min, max, fallback) {
 function __contractsNormalizeAlign(value, fallback = 'left') {
     const safe = String(value || '').toLowerCase();
     return ['left', 'center', 'right', 'justify'].includes(safe) ? safe : fallback;
+}
+
+function __contractsSafeHtml(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function __contractsNormalizePdfContent(raw) {
+    const base = raw && typeof raw === 'object' ? raw : {};
+    const defaults = __CP_CONTRACTS_PDF_STYLE_CONTENT_DEFAULTS;
+    const normalizeText = (key, max) => String(base[key] ?? defaults[key] ?? '').slice(0, max);
+    return {
+        liquidatedTitle: normalizeText('liquidatedTitle', 120),
+        liquidatedFooterLine1: normalizeText('liquidatedFooterLine1', 180),
+        liquidatedFooterLine2: normalizeText('liquidatedFooterLine2', 180),
+        receiptTitle: normalizeText('receiptTitle', 120),
+        receiptFooterLine1: normalizeText('receiptFooterLine1', 180),
+        receiptFooterLine2: normalizeText('receiptFooterLine2', 180),
+        annexHintTitle: normalizeText('annexHintTitle', 120),
+        annexHintBody: normalizeText('annexHintBody', 900)
+    };
 }
 
 function __contractsNormalizePdfStyle(raw = {}) {
@@ -387,6 +428,10 @@ function __contractsNormalizePdfStyle(raw = {}) {
         conditionsPx: __contractsClampStyleNumber(base.conditionsPx, 9, 18, __CP_CONTRACTS_PDF_STYLE_DEFAULTS.conditionsPx),
         signPx: __contractsClampStyleNumber(base.signPx, 9, 16, __CP_CONTRACTS_PDF_STYLE_DEFAULTS.signPx),
         footerPx: __contractsClampStyleNumber(base.footerPx, 8, 14, __CP_CONTRACTS_PDF_STYLE_DEFAULTS.footerPx),
+        offsetXPx: __contractsClampStyleNumber(base.offsetXPx, -120, 120, __CP_CONTRACTS_PDF_STYLE_DEFAULTS.offsetXPx),
+        offsetYPx: __contractsClampStyleNumber(base.offsetYPx, -120, 120, __CP_CONTRACTS_PDF_STYLE_DEFAULTS.offsetYPx),
+        extraPages: __contractsClampStyleNumber(base.extraPages, 0, 6, __CP_CONTRACTS_PDF_STYLE_DEFAULTS.extraPages),
+        content: __contractsNormalizePdfContent(base.content),
         headerAlign: __contractsNormalizeAlign(base.headerAlign, __CP_CONTRACTS_PDF_STYLE_DEFAULTS.headerAlign),
         metaAlign: __contractsNormalizeAlign(base.metaAlign, __CP_CONTRACTS_PDF_STYLE_DEFAULTS.metaAlign),
         tableAlign: __contractsNormalizeAlign(base.tableAlign, __CP_CONTRACTS_PDF_STYLE_DEFAULTS.tableAlign),
@@ -396,6 +441,22 @@ function __contractsNormalizePdfStyle(raw = {}) {
         summaryAlign: __contractsNormalizeAlign(base.summaryAlign, __CP_CONTRACTS_PDF_STYLE_DEFAULTS.summaryAlign),
         footerAlign: __contractsNormalizeAlign(base.footerAlign, __CP_CONTRACTS_PDF_STYLE_DEFAULTS.footerAlign)
     };
+}
+
+function __contractsNormalizeProfileKey(profile) {
+    const safe = String(profile || '').toLowerCase();
+    return __CP_CONTRACTS_PDF_STYLE_PROFILE_KEYS.includes(safe) ? safe : 'receipt';
+}
+
+function __contractsExtractPdfStyleProfile(raw, profile = 'receipt') {
+    const cfg = raw && typeof raw === 'object' ? raw : {};
+    const key = __contractsNormalizeProfileKey(profile);
+    const profiles = cfg.profiles && typeof cfg.profiles === 'object' ? cfg.profiles : null;
+    if (profiles) {
+        const candidate = profiles[key] || profiles.receipt || profiles.quote || profiles.default;
+        if (candidate && typeof candidate === 'object') return candidate;
+    }
+    return cfg;
 }
 
 function __contractsLoadPdfStyleState() {
@@ -440,6 +501,8 @@ function __contractsPdfStyleVars(style) {
         '--cp-conditions-size': `${safe.conditionsPx}px`,
         '--cp-sign-size': `${safe.signPx}px`,
         '--cp-footer-size': `${safe.footerPx}px`,
+        '--cp-offset-x': `${safe.offsetXPx}px`,
+        '--cp-offset-y': `${safe.offsetYPx}px`,
         '--cp-header-align': headerAlign,
         '--cp-header-justify': headerAlign === 'left' ? 'flex-start' : (headerAlign === 'center' ? 'center' : 'flex-end'),
         '--cp-meta-align': safe.metaAlign,
@@ -477,6 +540,9 @@ function __contractsSyncPdfStyleValueLabels(style) {
     setText('pdf-style-meta-size-value', `${cfg.metaPx}px`);
     setText('pdf-style-table-size-value', `${cfg.tableBodyPx}px`);
     setText('pdf-style-line-height-value', `${cfg.lineHeightPct}%`);
+    setText('pdf-style-offset-x-value', `${cfg.offsetXPx}px`);
+    setText('pdf-style-offset-y-value', `${cfg.offsetYPx}px`);
+    setText('pdf-style-extra-pages-value', `+${cfg.extraPages}`);
     setText('pdf-style-quick-size-value', `${cfg.quickPx}px`);
     setText('pdf-style-conditions-size-value', `${cfg.conditionsPx}px`);
     setText('pdf-style-sign-size-value', `${cfg.signPx}px`);
@@ -494,6 +560,9 @@ function __contractsWritePdfStyleControls(style) {
     setValue('pdf-style-meta-size', cfg.metaPx);
     setValue('pdf-style-table-size', cfg.tableBodyPx);
     setValue('pdf-style-line-height', cfg.lineHeightPct);
+    setValue('pdf-style-offset-x', cfg.offsetXPx);
+    setValue('pdf-style-offset-y', cfg.offsetYPx);
+    setValue('pdf-style-extra-pages', cfg.extraPages);
     setValue('pdf-style-quick-size', cfg.quickPx);
     setValue('pdf-style-conditions-size', cfg.conditionsPx);
     setValue('pdf-style-sign-size', cfg.signPx);
@@ -517,6 +586,9 @@ function __contractsReadPdfStyleControls() {
         tableHeadPx: (parseInt(document.getElementById('pdf-style-table-size')?.value || __CP_CONTRACTS_PDF_STYLE_DEFAULTS.tableBodyPx, 10) + 2),
         tableBodyPx: document.getElementById('pdf-style-table-size')?.value,
         lineHeightPct: document.getElementById('pdf-style-line-height')?.value,
+        offsetXPx: document.getElementById('pdf-style-offset-x')?.value,
+        offsetYPx: document.getElementById('pdf-style-offset-y')?.value,
+        extraPages: document.getElementById('pdf-style-extra-pages')?.value,
         quickPx: document.getElementById('pdf-style-quick-size')?.value,
         conditionsPx: document.getElementById('pdf-style-conditions-size')?.value,
         signPx: document.getElementById('pdf-style-sign-size')?.value,
@@ -542,17 +614,23 @@ function __contractsIsAdminProfile() {
     return String(window.currentUserProfile?.role || '').toLowerCase() === 'admin';
 }
 
-async function __contractsLoadSharedPdfStyleConfig() {
+async function __contractsLoadSharedPdfStyleConfig(profile = 'receipt') {
     if (!window.tenantPocketBase) return;
+    const profileKey = __contractsNormalizeProfileKey(profile);
     try {
         const { data, error } = await window.tenantPocketBase
             .from('configuracion')
             .select('id,valor_json')
             .eq('clave', __CP_CONTRACTS_PDF_STYLE_CONFIG_KEY)
             .maybeSingle();
-        if (error || !data) return;
+        if (error || !data) {
+            __contractsPdfStyleActiveProfile = profileKey;
+            return;
+        }
         __contractsPdfStyleConfigRecordId = String(data.id || '');
-        __contractsSetPdfStyleConfig(data.valor_json || __CP_CONTRACTS_PDF_STYLE_DEFAULTS, { applyToDom: false });
+        const resolved = __contractsExtractPdfStyleProfile(data.valor_json || __CP_CONTRACTS_PDF_STYLE_DEFAULTS, profileKey);
+        __contractsSetPdfStyleConfig(resolved || __CP_CONTRACTS_PDF_STYLE_DEFAULTS, { applyToDom: false });
+        __contractsPdfStyleActiveProfile = profileKey;
     } catch (e) {
         console.warn('No se pudo cargar estilo PDF compartido (CP contracts):', e);
     }
@@ -662,29 +740,8 @@ function __contractsInitPdfStyleEditor() {
     const editorWrap = document.getElementById('pdf-style-editor');
     if (!editorWrap || !document.getElementById('pdf-style-font-family')) return;
     if (!__contractsPdfStyleState) __contractsPdfStyleState = __contractsLoadPdfStyleState();
-    if (!__contractsIsAdminProfile()) {
-        editorWrap.classList.add('hidden');
-        return;
-    }
-    editorWrap.classList.remove('hidden');
-    __contractsPdfStyleUiState = __contractsLoadPdfStyleUiState();
-    __contractsWritePdfStyleControls(__contractsPdfStyleState);
-    __contractsApplyPdfStyleEditorUiState();
-    if (document.body.dataset.cpContractsPdfStyleBound === '1') return;
-    const controls = Array.from(document.querySelectorAll('.pdf-style-control'));
-    controls.forEach((el) => {
-        el.addEventListener('input', __contractsHandlePdfStyleControlChange);
-        el.addEventListener('change', __contractsHandlePdfStyleControlChange);
-    });
-    document.getElementById('btn-pdf-style-toggle')?.addEventListener('click', __contractsTogglePdfStylePanel);
-    document.getElementById('btn-pdf-style-pin')?.addEventListener('click', __contractsTogglePdfStylePin);
-    document.getElementById('btn-reset-pdf-style')?.addEventListener('click', () => {
-        const reset = __contractsNormalizePdfStyle(__CP_CONTRACTS_PDF_STYLE_DEFAULTS);
-        __contractsSetPdfStyleConfig(reset, { applyToDom: true });
-        __contractsWritePdfStyleControls(reset);
-        __contractsScheduleSharedPdfStyleSync(reset);
-    });
-    document.body.dataset.cpContractsPdfStyleBound = '1';
+    // Editor centralizado en users1.html (admin). En contratos solo se aplica configuración.
+    editorWrap.classList.add('hidden');
 }
 
 function __contractsBasename(path) {
@@ -1468,12 +1525,20 @@ function getReceiptHTML(isVisual = false) {
     const isLiquidated = currentRemainingBalance <= 0.01;
     const receiptBaseHeight = Number(__contractsContentBaseHeightPx().toFixed(2));
     const pdfStyle = __contractsGetPdfStyleConfig();
+    const pdfContent = __contractsNormalizePdfContent(pdfStyle.content);
     const pdfStyleInlineVars = __contractsPdfStyleVarsInline(pdfStyle);
-    const pdfStyleTag = `<style>.cpc-pdf-root{font-family:var(--cp-font-family)!important;}.cpc-pdf-root .cpc-pdf-header{border-bottom-width:var(--cp-header-line)!important;justify-content:var(--cp-header-justify)!important;}.cpc-pdf-root .cpc-pdf-title{font-size:var(--cp-title-size)!important;line-height:1.05!important;text-align:var(--cp-header-align)!important;}.cpc-pdf-root .cpc-pdf-meta,.cpc-pdf-root .cpc-pdf-meta *{font-size:var(--cp-meta-size)!important;text-align:var(--cp-meta-align)!important;}.cpc-pdf-root .cpc-pdf-table-head th{font-size:var(--cp-table-head-size)!important;}.cpc-pdf-root .cpc-pdf-table-body td,.cpc-pdf-root .cpc-pdf-table-body p,.cpc-pdf-root .cpc-pdf-table-body span{font-size:var(--cp-table-body-size)!important;line-height:var(--cp-line-height)!important;}.cpc-pdf-root .cpc-pdf-table-body td:first-child,.cpc-pdf-root .cpc-pdf-table-body td:first-child *{text-align:var(--cp-table-align)!important;}.cpc-pdf-root .cpc-pdf-summary,.cpc-pdf-root .cpc-pdf-summary *{text-align:var(--cp-summary-align)!important;}.cpc-pdf-root .cpc-pdf-quick,.cpc-pdf-root .cpc-pdf-quick *{font-size:var(--cp-quick-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-quick-align)!important;}.cpc-pdf-root .cpc-pdf-general-conditions,.cpc-pdf-root .cpc-pdf-general-conditions *{font-size:var(--cp-conditions-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-conditions-align)!important;}.cpc-pdf-root .cpc-pdf-sign,.cpc-pdf-root .cpc-pdf-sign *{font-size:var(--cp-sign-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-sign-align)!important;}.cpc-pdf-root .cpc-pdf-footer-text{font-size:var(--cp-footer-size)!important;text-align:var(--cp-footer-align)!important;}</style>`;
-    const wrapStyledReceipt = (rawHtml) => {
-        const page = __contractsWrapLetterheadPage(__contractsTransparentPdfHtml(__contractsBoostPdfTypography(rawHtml)), { baseWidth: CP_CONTRACTS_CONTENT_BASE_WIDTH_PX, baseHeight: receiptBaseHeight, id: 'receipt-print-area' });
-        return `<div class="cpc-pdf-root" style="width:816px;margin:0;padding:0;box-sizing:border-box;background:#ffffff;${pdfStyleInlineVars}">${pdfStyleTag}${page}</div>`;
+    const pdfStyleTag = `<style>.cpc-pdf-root{font-family:var(--cp-font-family)!important;}.cpc-pdf-root .cpc-pdf-shift{transform:translate(var(--cp-offset-x),var(--cp-offset-y));}.cpc-pdf-root .cpc-pdf-header{border-bottom-width:var(--cp-header-line)!important;justify-content:var(--cp-header-justify)!important;}.cpc-pdf-root .cpc-pdf-title{font-size:var(--cp-title-size)!important;line-height:1.05!important;text-align:var(--cp-header-align)!important;}.cpc-pdf-root .cpc-pdf-meta,.cpc-pdf-root .cpc-pdf-meta *{font-size:var(--cp-meta-size)!important;text-align:var(--cp-meta-align)!important;}.cpc-pdf-root .cpc-pdf-table-head th{font-size:var(--cp-table-head-size)!important;}.cpc-pdf-root .cpc-pdf-table-body td,.cpc-pdf-root .cpc-pdf-table-body p,.cpc-pdf-root .cpc-pdf-table-body span{font-size:var(--cp-table-body-size)!important;line-height:var(--cp-line-height)!important;}.cpc-pdf-root .cpc-pdf-table-body td:first-child,.cpc-pdf-root .cpc-pdf-table-body td:first-child *{text-align:var(--cp-table-align)!important;}.cpc-pdf-root .cpc-pdf-summary,.cpc-pdf-root .cpc-pdf-summary *{text-align:var(--cp-summary-align)!important;}.cpc-pdf-root .cpc-pdf-quick,.cpc-pdf-root .cpc-pdf-quick *{font-size:var(--cp-quick-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-quick-align)!important;}.cpc-pdf-root .cpc-pdf-general-conditions,.cpc-pdf-root .cpc-pdf-general-conditions *{font-size:var(--cp-conditions-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-conditions-align)!important;}.cpc-pdf-root .cpc-pdf-sign,.cpc-pdf-root .cpc-pdf-sign *{font-size:var(--cp-sign-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-sign-align)!important;}.cpc-pdf-root .cpc-pdf-footer-text{font-size:var(--cp-footer-size)!important;text-align:var(--cp-footer-align)!important;}</style>`;
+    const wrapStyledReceipt = (rawHtml, extraPages = 0) => {
+        const pages = [
+            __contractsWrapLetterheadPage(__contractsTransparentPdfHtml(__contractsBoostPdfTypography(rawHtml)), { baseWidth: CP_CONTRACTS_CONTENT_BASE_WIDTH_PX, baseHeight: receiptBaseHeight, id: 'receipt-print-area' })
+        ];
+        for (let i = 0; i < extraPages; i += 1) {
+            const annexRaw = `<div class="cpc-pdf-main cpc-pdf-shift font-sans text-gray-800 w-full h-full relative leading-relaxed" style="width: ${CP_CONTRACTS_CONTENT_BASE_WIDTH_PX}px; min-height: ${receiptBaseHeight}px; height: ${receiptBaseHeight}px; padding: 20px 80px 56px; box-sizing: border-box; overflow: hidden;"><div class="cpc-pdf-header flex justify-end items-start mb-8 border-b-4 border-brand-red pb-3"><div class="cpc-pdf-meta text-right"><h1 class="cpc-pdf-title text-2xl font-black uppercase text-gray-900 tracking-tighter">ANEXO ${i + 1}</h1></div></div><div class="cpc-pdf-general-conditions text-[13px] text-gray-700 leading-relaxed mt-6 border border-dashed border-gray-300 rounded-lg p-4"><p class="font-black uppercase text-gray-500 text-[11px] mb-2">${__contractsSafeHtml(pdfContent.annexHintTitle || 'Página adicional editable')}</p><p>${__contractsSafeHtml(pdfContent.annexHintBody || '')}</p></div></div>`;
+            pages.push(__contractsWrapLetterheadPage(__contractsTransparentPdfHtml(__contractsBoostPdfTypography(annexRaw)), { baseWidth: CP_CONTRACTS_CONTENT_BASE_WIDTH_PX, baseHeight: receiptBaseHeight }));
+        }
+        return `<div class="cpc-pdf-root" style="width:816px;margin:0;padding:0;box-sizing:border-box;background:#ffffff;${pdfStyleInlineVars}">${pdfStyleTag}${pages.join('')}</div>`;
     };
+    const extraPages = __contractsClampStyleNumber(pdfStyle.extraPages, 0, 6, 0);
     
     if (isLiquidated) {
         const payments = selectedOrder.historial_pagos || [];
@@ -1490,11 +1555,11 @@ function getReceiptHTML(isVisual = false) {
         });
         let watermark = `<div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-45deg); font-size: 118px; color: rgba(34, 197, 94, 0.16); font-weight: 900; z-index: 0; pointer-events: none; white-space: nowrap;">LIQUIDADO</div>`;
         const receiptRaw = `
-            <div class="cpc-pdf-main font-sans text-gray-800 w-full h-full relative leading-relaxed" style="width: ${CP_CONTRACTS_CONTENT_BASE_WIDTH_PX}px; min-height: ${receiptBaseHeight}px; height: ${receiptBaseHeight}px; padding: 20px 80px 56px; box-sizing: border-box; overflow: hidden; display: flex; flex-direction: column;">
+            <div class="cpc-pdf-main cpc-pdf-shift font-sans text-gray-800 w-full h-full relative leading-relaxed" style="width: ${CP_CONTRACTS_CONTENT_BASE_WIDTH_PX}px; min-height: ${receiptBaseHeight}px; height: ${receiptBaseHeight}px; padding: 20px 80px 56px; box-sizing: border-box; overflow: hidden; display: flex; flex-direction: column;">
                 ${watermark}
                 <div style="position: relative; z-index: 10; flex-grow: 1;">
                     <div class="cpc-pdf-header flex justify-end items-start mb-10 border-b-4 border-green-600 pb-4">
-                        <div class="cpc-pdf-meta text-right"><h1 class="cpc-pdf-title text-2xl font-black uppercase text-gray-900 tracking-tighter">Constancia de Liquidación</h1><p class="text-sm text-gray-500 font-mono mt-1">EMISIÓN: ${dateStr} ${timeStr}</p></div>
+                        <div class="cpc-pdf-meta text-right"><h1 class="cpc-pdf-title text-2xl font-black uppercase text-gray-900 tracking-tighter">${__contractsSafeHtml(pdfContent.liquidatedTitle || 'Constancia de Liquidación')}</h1><p class="text-sm text-gray-500 font-mono mt-1">EMISIÓN: ${dateStr} ${timeStr}</p></div>
                     </div>
                     <div class="cpc-pdf-summary mb-8 p-8 bg-gray-50 rounded-xl border border-gray-200 shadow-sm">
                         <div class="flex justify-between mb-4 border-b border-gray-200 pb-3"><span class="text-xs font-bold text-gray-500 uppercase tracking-wider">Cliente:</span><span class="text-lg font-bold text-gray-900">${selectedOrder.cliente_nombre}</span></div>
@@ -1506,10 +1571,10 @@ function getReceiptHTML(isVisual = false) {
                 </div>
                 <div style="margin-top: auto; position: relative; z-index: 10;">
                     <div class="cpc-pdf-sign flex justify-between gap-16 mb-8"><div class="w-1/2 text-center"><div class="border-b-2 border-gray-800 mb-2"></div><p class="text-xs font-bold text-gray-900 uppercase">Cobranza</p></div><div class="w-1/2 text-center"><div class="border-b-2 border-gray-800 mb-2"></div><p class="text-xs font-bold text-gray-900 uppercase">Administración</p></div></div>
-                    <div class="cpc-pdf-footer-text cpc-pdf-general-conditions text-[10px] text-center text-gray-400 mt-4"><p class="mb-1">Este documento certifica que la orden de referencia ha sido liquidada en su totalidad.</p><p>Generado digitalmente a través de Marketing Hub.</p></div>
+                    <div class="cpc-pdf-footer-text cpc-pdf-general-conditions text-[10px] text-center text-gray-400 mt-4"><p class="mb-1">${__contractsSafeHtml(pdfContent.liquidatedFooterLine1 || '')}</p><p>${__contractsSafeHtml(pdfContent.liquidatedFooterLine2 || '')}</p></div>
                 </div>
             </div>`;
-        return wrapStyledReceipt(receiptRaw);
+        return wrapStyledReceipt(receiptRaw, extraPages);
     }
     
     const amount = parseFloat(document.getElementById('rcp-amount').value) || 0;
@@ -1520,10 +1585,10 @@ function getReceiptHTML(isVisual = false) {
     let projectedRemaining = currentRemainingBalance - amount; if (projectedRemaining < 0) projectedRemaining = 0;
 
     const receiptRaw = `
-        <div class="cpc-pdf-main font-sans text-gray-800 w-full h-full relative leading-relaxed" style="width: ${CP_CONTRACTS_CONTENT_BASE_WIDTH_PX}px; min-height: ${receiptBaseHeight}px; height: ${receiptBaseHeight}px; padding: 20px 80px 56px; box-sizing: border-box; display: flex; flex-direction: column;">
+        <div class="cpc-pdf-main cpc-pdf-shift font-sans text-gray-800 w-full h-full relative leading-relaxed" style="width: ${CP_CONTRACTS_CONTENT_BASE_WIDTH_PX}px; min-height: ${receiptBaseHeight}px; height: ${receiptBaseHeight}px; padding: 20px 80px 56px; box-sizing: border-box; display: flex; flex-direction: column;">
             <div style="flex-grow: 1;">
                 <div class="cpc-pdf-header flex justify-end items-start mb-10 border-b-4 border-brand-red pb-4">
-                    <div class="cpc-pdf-meta text-right"><h1 class="cpc-pdf-title text-3xl font-black uppercase text-gray-900 tracking-tighter">Recibo de Pago</h1><p class="text-sm text-gray-500 font-mono mt-1">FECHA: ${dateStr}</p><p class="text-xs text-gray-400 font-mono">HORA: ${timeStr}</p></div>
+                    <div class="cpc-pdf-meta text-right"><h1 class="cpc-pdf-title text-3xl font-black uppercase text-gray-900 tracking-tighter">${__contractsSafeHtml(pdfContent.receiptTitle || 'Recibo de Pago')}</h1><p class="text-sm text-gray-500 font-mono mt-1">FECHA: ${dateStr}</p><p class="text-xs text-gray-400 font-mono">HORA: ${timeStr}</p></div>
                 </div>
                 <div class="cpc-pdf-summary mb-8 p-8 bg-gray-50 rounded-xl border border-gray-200 shadow-sm">
                     <div class="flex justify-between mb-4 border-b border-gray-200 pb-3"><span class="text-xs font-bold text-gray-500 uppercase tracking-wider">Recibimos de:</span><span class="text-lg font-bold text-gray-900">${selectedOrder.cliente_nombre}</span></div>
@@ -1539,10 +1604,10 @@ function getReceiptHTML(isVisual = false) {
             </div>
             <div style="margin-top: auto;">
                 <div class="cpc-pdf-sign flex justify-between gap-16 mb-8"><div class="w-1/2 text-center"><div class="border-b-2 border-gray-800 mb-1"></div><p class="text-xs font-bold text-gray-900 uppercase">Cobranza / Finanzas</p><p class="text-[10px] text-gray-400 uppercase">Plaza Mayor</p></div><div class="w-1/2 text-center"><div class="border-b-2 border-gray-800 mb-1"></div><p class="text-xs font-bold text-gray-900 uppercase">Mercadotecnia</p><p class="text-[10px] text-gray-400 uppercase">Plaza Mayor</p></div></div>
-                <div class="cpc-pdf-footer-text cpc-pdf-general-conditions text-[10px] text-center text-gray-400 mt-4"><p class="mb-1">Este documento es un comprobante de pago interno. No válido como factura fiscal.</p><p>Generado digitalmente a través de Marketing Hub.</p></div>
+                <div class="cpc-pdf-footer-text cpc-pdf-general-conditions text-[10px] text-center text-gray-400 mt-4"><p class="mb-1">${__contractsSafeHtml(pdfContent.receiptFooterLine1 || '')}</p><p>${__contractsSafeHtml(pdfContent.receiptFooterLine2 || '')}</p></div>
             </div>
         </div>`;
-    return wrapStyledReceipt(receiptRaw);
+    return wrapStyledReceipt(receiptRaw, extraPages);
 }
 
 

@@ -15,7 +15,7 @@
     <script src="../../assets/libs/js/chart.js"></script>
 
     <script>
-        tailwind.config = { theme: { extend: { colors: { brand: { red: '#deac07', dark: '#1a1a1a', gray: '#f3f4f6' } } } } }
+        tailwind.config = { theme: { extend: { colors: { brand: { red: '#c1621e', dark: '#1a1a1a', gray: '#f3f4f6' } } } } }
     </script>
 
     <style>
@@ -39,7 +39,7 @@
         .var-highlight { font-weight: 800; background-color: #fef08a; padding: 0 2px; border-radius: 2px; }
         .var-tag { background-color: #f3f4f6; border: 1px solid #d1d5db; color: #374151; padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 10px; cursor: pointer; transition: all 0.2s; display: inline-block; margin: 2px; }
         .var-tag:hover { background-color: #e5e7eb; border-color: #9ca3af; }
-        .active-tab { color: #deac07 !important; border-bottom-color: #deac07 !important; background-color: #fff !important; }
+        .active-tab { color: #c1621e !important; border-bottom-color: #c1621e !important; background-color: #fff !important; }
 
         /* PREVIEW RESPONSIVO */
         #receipt-preview-container, #contract-preview-container {
@@ -161,6 +161,23 @@
                                     <label class="uppercase font-bold text-gray-400">Altura Texto</label>
                                     <input id="pdf-style-line-height" type="range" min="90" max="180" step="5" class="pdf-style-control accent-brand-red">
                                     <span id="pdf-style-line-height-value" class="font-mono text-[10px] text-gray-300">120%</span>
+                                </div>
+                                <div class="grid grid-cols-2 gap-2">
+                                    <div class="flex flex-col gap-1">
+                                        <label class="uppercase font-bold text-gray-400">Mover X</label>
+                                        <input id="pdf-style-offset-x" type="range" min="-120" max="120" step="1" class="pdf-style-control accent-brand-red">
+                                        <span id="pdf-style-offset-x-value" class="font-mono text-[10px] text-gray-300">0px</span>
+                                    </div>
+                                    <div class="flex flex-col gap-1">
+                                        <label class="uppercase font-bold text-gray-400">Mover Y</label>
+                                        <input id="pdf-style-offset-y" type="range" min="-120" max="120" step="1" class="pdf-style-control accent-brand-red">
+                                        <span id="pdf-style-offset-y-value" class="font-mono text-[10px] text-gray-300">0px</span>
+                                    </div>
+                                </div>
+                                <div class="flex flex-col gap-1">
+                                    <label class="uppercase font-bold text-gray-400">Páginas +/-</label>
+                                    <input id="pdf-style-extra-pages" type="range" min="0" max="6" step="1" class="pdf-style-control accent-brand-red">
+                                    <span id="pdf-style-extra-pages-value" class="font-mono text-[10px] text-gray-300">+0</span>
                                 </div>
                             </div>
                             <div class="bg-gray-900/70 border border-gray-700 rounded-lg p-2 space-y-2">

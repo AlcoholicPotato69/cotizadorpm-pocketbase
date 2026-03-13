@@ -42,7 +42,7 @@
       --tenant-muted: rgba(255,255,255,0.18);
     }
     body.tenant-cp {
-      --tenant-primary: #deac07;
+      --tenant-primary: #c1621e;
       --tenant-primary-dark: #c18e00;
       --tenant-soft: #fff7dc;
       --tenant-muted: rgba(255,255,255,0.18);
@@ -108,6 +108,64 @@
       box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1),
                   0 10px 10px -5px rgba(0, 0, 0, 0.04);
     }
+    .pdf-type-card {
+      border: 1px solid #e5e7eb;
+      border-radius: 14px;
+      padding: 10px 12px;
+      background: #fff;
+      cursor: pointer;
+      transition: all 0.25s ease;
+    }
+    .pdf-type-card:hover { border-color: var(--tenant-primary, #D32F2F); box-shadow: 0 10px 20px -14px rgba(0,0,0,0.35); }
+    .pdf-type-card.is-active {
+      border-color: var(--tenant-primary, #D32F2F);
+      background: var(--tenant-soft, #fef2f2);
+      box-shadow: inset 0 0 0 1px rgba(0,0,0,0.02);
+    }
+    .pdf-preview-shell {
+      background: linear-gradient(145deg, #f3f4f6, #e5e7eb);
+      border: 1px solid #e5e7eb;
+      border-radius: 16px;
+      padding: 12px;
+      overflow: hidden;
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .pdf-preview-stage {
+      position: relative;
+      margin: 0 auto;
+    }
+    .pdf-preview-page {
+      width: 816px;
+      height: 1056px;
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 16px 40px -22px rgba(0,0,0,0.35);
+      position: absolute;
+      top: 0;
+      left: 0;
+      overflow: hidden;
+      user-select: none;
+      transform-origin: top left;
+    }
+    .pdf-editor-pane {
+      height: clamp(560px, calc(100vh - 230px), 860px);
+    }
+    .pdf-preview-base-selected { outline: 2px dashed var(--tenant-primary, #D32F2F); outline-offset: 2px; }
+    .pdf-preview-resource { position: absolute; cursor: move; z-index: 25; box-sizing: border-box; }
+    .pdf-preview-resource::after {
+      content: '';
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      right: -6px;
+      bottom: -6px;
+      border-radius: 999px;
+      background: var(--tenant-primary, #D32F2F);
+      opacity: 0.85;
+    }
   </style>
 </head>
 
@@ -127,6 +185,9 @@
         </button>
         <button type="button" id="menu-docs" onclick="switchView('v_docs'); return false;" class="tool-tab">
           <i class="fa-solid fa-file-lines"></i> Documentos
+        </button>
+        <button type="button" id="menu-pdf-editor" onclick="switchView('v_pdf_editor'); return false;" class="tool-tab">
+          <i class="fa-solid fa-file-pen"></i> Editor PDF
         </button>
         <button type="button" id="menu-cp-settings" onclick="switchView('v_cp_settings'); return false;" class="tool-tab hidden">
           <i class="fa-solid fa-sliders"></i> Config CP
@@ -472,6 +533,114 @@
       </div>
     </div>
 
+    <div id="v_pdf_editor" class="view hidden fade-in">
+      <div class="grid grid-cols-1 xl:grid-cols-[380px,1fr] gap-6">
+        <div class="bg-white rounded-3xl border border-gray-100 shadow-sm p-5 space-y-4 pdf-editor-pane overflow-y-auto custom-scroll">
+          <div>
+            <div class="text-[10px] font-black uppercase tracking-wider text-gray-400">Editor PDF central</div>
+            <h3 class="text-lg font-black text-gray-800">Diseño por tipo de documento</h3>
+            <p class="text-xs text-gray-500 mt-1">Selecciona el tipo de PDF para editar su estilo y recursos visuales.</p>
+          </div>
+
+          <div id="pdf-editor-doc-cards" class="grid grid-cols-1 gap-2"></div>
+
+          <div class="border-t border-gray-100 pt-4 space-y-2">
+            <div class="flex items-center justify-between">
+              <p class="text-[10px] font-black uppercase tracking-wider text-gray-400">Plantillas</p>
+              <span class="text-[10px] text-gray-500">Por tipo de PDF</span>
+            </div>
+            <select id="adm-pdf-template-select" class="w-full p-2 bg-gray-50 border border-gray-200 rounded-lg text-xs font-bold">
+              <option value="">Sin plantilla</option>
+            </select>
+            <div class="grid grid-cols-[1fr,auto] gap-2">
+              <input id="adm-pdf-template-name" type="text" maxlength="80" placeholder="Nombre de plantilla"
+                class="w-full p-2 bg-gray-50 border border-gray-200 rounded-lg text-xs font-bold">
+              <button type="button" id="adm-pdf-template-save" class="px-3 py-2 rounded-lg bg-gray-900 text-white text-[10px] font-black uppercase">Guardar</button>
+            </div>
+            <div class="flex items-center gap-2">
+              <button type="button" id="adm-pdf-template-apply" class="flex-1 px-3 py-2 rounded-lg border border-gray-200 text-gray-700 text-[10px] font-black uppercase">Aplicar</button>
+              <button type="button" id="adm-pdf-template-delete" class="px-3 py-2 rounded-lg border border-red-200 text-red-600 text-[10px] font-black uppercase">Eliminar</button>
+            </div>
+          </div>
+
+          <div class="border-t border-gray-100 pt-4 space-y-3">
+            <div class="grid grid-cols-2 gap-2">
+              <label class="text-[10px] font-black uppercase text-gray-400">Fuente
+                <select id="adm-pdf-font" class="w-full mt-1 p-2 bg-gray-50 border border-gray-200 rounded-lg text-xs font-bold"></select>
+              </label>
+              <label class="text-[10px] font-black uppercase text-gray-400">Altura %
+                <input id="adm-pdf-line-height" type="number" min="90" max="180" step="5" class="w-full mt-1 p-2 bg-gray-50 border border-gray-200 rounded-lg text-xs font-bold">
+              </label>
+              <label class="text-[10px] font-black uppercase text-gray-400">Offset X
+                <input id="adm-pdf-offset-x" type="number" min="-120" max="120" step="1" class="w-full mt-1 p-2 bg-gray-50 border border-gray-200 rounded-lg text-xs font-bold">
+              </label>
+              <label class="text-[10px] font-black uppercase text-gray-400">Offset Y
+                <input id="adm-pdf-offset-y" type="number" min="-120" max="120" step="1" class="w-full mt-1 p-2 bg-gray-50 border border-gray-200 rounded-lg text-xs font-bold">
+              </label>
+              <label class="text-[10px] font-black uppercase text-gray-400">Páginas extra
+                <input id="adm-pdf-extra-pages" type="number" min="-1" max="6" step="1" class="w-full mt-1 p-2 bg-gray-50 border border-gray-200 rounded-lg text-xs font-bold">
+              </label>
+            </div>
+          </div>
+
+          <div class="border-t border-gray-100 pt-4 space-y-3">
+            <div class="flex items-center justify-between">
+              <p class="text-[10px] font-black uppercase tracking-wider text-gray-400">Textos base</p>
+              <span class="text-[10px] text-gray-500">Encabezado, tabla, firmas...</span>
+            </div>
+            <div id="adm-pdf-base-list" class="space-y-2 max-h-56 overflow-y-auto custom-scroll pr-1"></div>
+          </div>
+
+          <div class="border-t border-gray-100 pt-4 space-y-3">
+            <div class="flex items-center justify-between">
+              <p class="text-[10px] font-black uppercase tracking-wider text-gray-400">Contenido</p>
+              <span class="text-[10px] text-gray-500">Texto editable del PDF</span>
+            </div>
+            <div id="adm-pdf-content-list" class="space-y-2 max-h-60 overflow-y-auto custom-scroll pr-1"></div>
+          </div>
+
+          <div class="border-t border-gray-100 pt-4 space-y-3">
+            <div class="flex items-center justify-between">
+              <p class="text-[10px] font-black uppercase tracking-wider text-gray-400">Recursos</p>
+              <div class="flex items-center gap-1">
+                <button type="button" id="adm-pdf-add-bar" class="px-2 py-1 rounded bg-gray-100 text-gray-700 text-[10px] font-black uppercase">+ Barra</button>
+                <button type="button" id="adm-pdf-add-title" class="px-2 py-1 rounded bg-gray-100 text-gray-700 text-[10px] font-black uppercase">+ Título</button>
+                <button type="button" id="adm-pdf-add-text" class="px-2 py-1 rounded bg-gray-100 text-gray-700 text-[10px] font-black uppercase">+ Texto</button>
+              </div>
+            </div>
+            <div id="adm-pdf-res-list" class="space-y-2 max-h-56 overflow-y-auto custom-scroll pr-1"></div>
+            <p class="text-[10px] text-gray-500">Arrastra recursos sobre la hoja. Para redimensionar usa la esquina roja.</p>
+          </div>
+
+          <div class="border-t border-gray-100 pt-4 flex items-center gap-2">
+            <button type="button" id="btn-save-pdf-editor" onclick="savePdfEditorConfig(false)"
+              class="flex-1 bg-gray-900 text-white py-2.5 rounded-xl font-bold text-xs uppercase hover:bg-black transition">
+              Guardar
+            </button>
+            <button type="button" onclick="resetPdfEditorProfile()"
+              class="px-4 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-xs font-bold uppercase hover:bg-gray-50 transition">
+              Restablecer
+            </button>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-3xl border border-gray-100 shadow-sm p-4 pdf-editor-pane flex flex-col">
+          <div class="flex items-center justify-between mb-3">
+            <div>
+              <div class="text-[10px] font-black uppercase tracking-wider text-gray-400">Vista previa</div>
+              <div id="adm-pdf-preview-title" class="text-sm font-black text-gray-800">Documento</div>
+            </div>
+            <div class="text-[10px] text-gray-500 font-bold">Hoja carta (816x1056)</div>
+          </div>
+          <div id="adm-pdf-preview-shell" class="pdf-preview-shell">
+            <div id="adm-pdf-preview-stage" class="pdf-preview-stage">
+              <div id="adm-pdf-preview-page" class="pdf-preview-page"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </main>
 
   <script>
@@ -489,8 +658,1249 @@
     const DOC_LETTERHEAD_PATH = 'membretes_pdf';
     const CFG_TEMPLATE_DEFAULT_KEY = 'contract_template_default';
     const CFG_LETTERHEAD_KEY = 'pdf_letterhead_path';
+    const CFG_PDF_STYLE_KEY = 'pdf_typography_style';
     let docsDefaultTemplateFile = '';
     let docsDefaultLetterheadFile = '';
+    let pdfEditorConfigRecordId = '';
+    let pdfEditorSelectedType = 'quote';
+    let pdfEditorSelectedItemId = '';
+    let pdfEditorSelectedTemplateId = '';
+    let pdfEditorProfiles = {};
+    let pdfEditorTemplates = {};
+    let pdfEditorSyncTimer = null;
+    let pdfEditorDragState = null;
+    let pdfEditorLetterheadUrl = '';
+    let pdfEditorPreviewScale = 1;
+    let pdfEditorResizeBound = false;
+
+    const PDF_EDITOR_DOC_TYPES = Object.freeze([
+      { id: 'quote', title: 'Cotización', icon: 'fa-file-invoice-dollar', note: 'Cotizador' },
+      { id: 'order', title: 'Orden de compra', icon: 'fa-file-contract', note: 'Cotizador' },
+      { id: 'receipt', title: 'Recibos / Constancias', icon: 'fa-receipt', note: 'Contratos' },
+      { id: 'contract', title: 'Contrato', icon: 'fa-file-signature', note: 'Plantilla' }
+    ]);
+    const PDF_EDITOR_FONT_MAP = Object.freeze({
+      segoe: '"Segoe UI", Arial, sans-serif',
+      arial: 'Arial, Helvetica, sans-serif',
+      verdana: 'Verdana, Geneva, sans-serif',
+      georgia: 'Georgia, "Times New Roman", serif',
+      times: '"Times New Roman", Times, serif',
+      trebuchet: '"Trebuchet MS", Arial, sans-serif'
+    });
+    const PDF_EDITOR_FONT_LABELS = Object.freeze({
+      segoe: 'Segoe UI',
+      arial: 'Arial',
+      verdana: 'Verdana',
+      georgia: 'Georgia',
+      times: 'Times New Roman',
+      trebuchet: 'Trebuchet MS'
+    });
+    const PDF_EDITOR_DEFAULTS = Object.freeze({
+      fontFamilyKey: 'segoe',
+      headerLinePx: 4,
+      titlePx: 30,
+      metaPx: 13,
+      tableHeadPx: 14,
+      tableBodyPx: 12,
+      lineHeightPct: 120,
+      quickPx: 12,
+      conditionsPx: 14,
+      signPx: 12,
+      footerPx: 10,
+      offsetXPx: 0,
+      offsetYPx: 0,
+      extraPages: 0,
+      resources: [],
+      headerAlign: 'right',
+      metaAlign: 'right',
+      tableAlign: 'left',
+      quickAlign: 'left',
+      conditionsAlign: 'justify',
+      signAlign: 'center',
+      summaryAlign: 'left',
+      footerAlign: 'center'
+    });
+    const PDF_EDITOR_BASE_SIZE_LIMITS = Object.freeze({
+      titlePx: { min: 20, max: 42 },
+      metaPx: { min: 8, max: 18 },
+      tableBodyPx: { min: 9, max: 16 },
+      quickPx: { min: 9, max: 16 },
+      conditionsPx: { min: 9, max: 18 },
+      signPx: { min: 9, max: 16 },
+      footerPx: { min: 8, max: 14 }
+    });
+    const PDF_EDITOR_BASE_BLOCKS = Object.freeze([
+      { id: 'base:header-title', key: 'header-title', label: 'Título Encabezado', sizeField: 'titlePx', alignField: 'headerAlign' },
+      { id: 'base:header-meta', key: 'header-meta', label: 'Meta Encabezado', sizeField: 'metaPx', alignField: 'metaAlign' },
+      { id: 'base:table-body', key: 'table-body', label: 'Tabla Conceptos', sizeField: 'tableBodyPx', alignField: 'tableAlign' },
+      { id: 'base:summary', key: 'summary', label: 'Resumen Totales', alignField: 'summaryAlign' },
+      { id: 'base:quick', key: 'quick', label: 'Notas', sizeField: 'quickPx', alignField: 'quickAlign' },
+      { id: 'base:conditions', key: 'conditions', label: 'Condiciones', sizeField: 'conditionsPx', alignField: 'conditionsAlign' },
+      { id: 'base:sign', key: 'sign', label: 'Firmas', sizeField: 'signPx', alignField: 'signAlign' },
+      { id: 'base:footer', key: 'footer', label: 'Footer', sizeField: 'footerPx', alignField: 'footerAlign' }
+    ]);
+    const PDF_EDITOR_CONTENT_FIELDS = Object.freeze({
+      quote: [
+        { key: 'quickLeftTitle', label: 'Título notas izquierda', type: 'text', max: 80 },
+        { key: 'quickLeftLines', label: 'Notas izquierda (1 línea por renglón)', type: 'textarea', rows: 4, max: 1200 },
+        { key: 'quickRightTitle', label: 'Título bloque derecho', type: 'text', max: 80 },
+        { key: 'quickRightBody', label: 'Texto bloque derecho', type: 'textarea', rows: 3, max: 700 },
+        { key: 'conditionsTitle', label: 'Título de condiciones', type: 'text', max: 120 },
+        { key: 'conditionsLines', label: 'Condiciones (1 línea por punto)', type: 'textarea', rows: 8, max: 5000 },
+        { key: 'annexHintTitle', label: 'Título de anexos', type: 'text', max: 120 },
+        { key: 'annexHintBody', label: 'Texto de anexos', type: 'textarea', rows: 3, max: 900 }
+      ],
+      order: [
+        { key: 'annexHintTitle', label: 'Título de anexos', type: 'text', max: 120 },
+        { key: 'annexHintBody', label: 'Texto de anexos', type: 'textarea', rows: 4, max: 900 }
+      ],
+      receipt: [
+        { key: 'liquidatedTitle', label: 'Título constancia liquidada', type: 'text', max: 120 },
+        { key: 'liquidatedFooterLine1', label: 'Footer liquidada línea 1', type: 'text', max: 180 },
+        { key: 'liquidatedFooterLine2', label: 'Footer liquidada línea 2', type: 'text', max: 180 },
+        { key: 'receiptTitle', label: 'Título recibo normal', type: 'text', max: 120 },
+        { key: 'receiptFooterLine1', label: 'Footer recibo línea 1', type: 'text', max: 180 },
+        { key: 'receiptFooterLine2', label: 'Footer recibo línea 2', type: 'text', max: 180 },
+        { key: 'annexHintTitle', label: 'Título de anexos', type: 'text', max: 120 },
+        { key: 'annexHintBody', label: 'Texto de anexos', type: 'textarea', rows: 3, max: 900 }
+      ],
+      contract: [
+        { key: 'annexHintTitle', label: 'Título de anexos', type: 'text', max: 120 },
+        { key: 'annexHintBody', label: 'Texto de anexos', type: 'textarea', rows: 4, max: 900 }
+      ]
+    });
+    let pdfEditorControlsBound = false;
+
+    function clampPdfEditorNumber(value, min, max, fallback) {
+      const parsed = parseInt(value, 10);
+      if (!Number.isFinite(parsed)) return fallback;
+      return Math.min(max, Math.max(min, parsed));
+    }
+
+    function normalizePdfEditorAlign(value, fallback = 'left') {
+      const safe = String(value || '').toLowerCase();
+      return ['left', 'center', 'right', 'justify'].includes(safe) ? safe : fallback;
+    }
+
+    function normalizePdfEditorHex(value, fallback) {
+      const raw = String(value || '').trim();
+      const candidate = raw.startsWith('#') ? raw : `#${raw}`;
+      return /^#[0-9a-fA-F]{6}$/.test(candidate) ? candidate.toLowerCase() : fallback;
+    }
+
+    function escapePdfEditorHtml(value) {
+      return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function getPdfEditorAccent() {
+      return currentTenant === 'cp' ? '#c1621e' : '#d32f2f';
+    }
+
+    function getPdfEditorDefaultContent(type, tenant = currentTenant) {
+      const docType = String(type || 'quote').toLowerCase();
+      const isCP = tenant === 'cp';
+      const pmDefaults = {
+        quote: {
+          quickLeftTitle: 'Condiciones:',
+          quickLeftLines: 'a) Pago anticipado.\nb) Doc. completa 3 semanas antes.\nc) Sujeto a disponibilidad.',
+          quickRightTitle: 'Vigencia:',
+          quickRightBody: '7 días naturales a partir de la emisión.',
+          conditionsTitle: 'CONDICIONES GENERALES',
+          conditionsLines: [
+            'La instalación será responsabilidad exclusiva del cliente. Esto incluye mano de obra, herramientas y materiales necesarios.',
+            'El diseño y contenido del material publicitario deben cumplir con las normativas establecidas por Plaza Mayor.',
+            'El cliente es completamente responsable del contenido del material publicitario y de no infringir derechos de terceros.',
+            'Durante instalación y desinstalación, el cliente será responsable de cualquier daño al espacio o propiedad del centro comercial.',
+            'Cualquier modificación en duración, diseño o ubicación del material publicitario debe ser comunicada y aprobada con anticipación.',
+            'No se permite volanteo fuera del espacio designado ni perifoneo/música sin autorización escrita de Mercadotecnia.',
+            'Al finalizar la campaña, el cliente deberá retirar el material publicitario a más tardar al día siguiente.',
+            'No se permite la venta ni promoción de artículos para adultos, bebidas alcohólicas, tabaco, CBD y/o cannabinoides.',
+            'El almacenamiento y/o recolección de basura correrá por cuenta del cliente.',
+            'El cliente deberá instalar la toma eléctrica necesaria. Plaza Mayor puede suministrar energía 110v para uso moderado previa autorización.',
+            'Esta es una propuesta económica. Condiciones generales y específicas finales se establecerán en el contrato.'
+          ].join('\n'),
+          annexHintTitle: 'Página adicional editable',
+          annexHintBody: 'Utiliza el editor para ajustar tipografía, posición y estilo de esta página adicional.'
+        },
+        order: {
+          annexHintTitle: 'Página adicional editable',
+          annexHintBody: 'Utiliza el editor para ajustar tipografía, posición y estilo de esta página adicional.'
+        },
+        receipt: {
+          liquidatedTitle: 'Constancia de Liquidación',
+          liquidatedFooterLine1: 'Este documento certifica que la orden de referencia ha sido liquidada en su totalidad.',
+          liquidatedFooterLine2: 'Generado digitalmente a través de Marketing Hub.',
+          receiptTitle: 'Recibo de Pago',
+          receiptFooterLine1: 'Este documento es un comprobante de pago interno. No válido como factura fiscal.',
+          receiptFooterLine2: 'Generado digitalmente a través de Marketing Hub.',
+          annexHintTitle: 'Página adicional editable',
+          annexHintBody: 'Utiliza el editor para ajustar tipografía, posición y estilo de esta página adicional.'
+        },
+        contract: {
+          annexHintTitle: 'Página adicional editable',
+          annexHintBody: 'Utiliza el editor para ajustar tipografía, posición y estilo de esta página adicional.'
+        }
+      };
+      const cpDefaults = {
+        quote: {
+          quickLeftTitle: 'Notas:',
+          quickLeftLines: 'a) Incluye insumos en baños (papel y jabón).\nb) Uso del espacio por 7 horas + montaje/desmontaje mismo día.\nc) Premontaje: 25% sobre el valor base del día elegido.',
+          quickRightTitle: 'Vigencia:',
+          quickRightBody: '15 días desde la emisión (tarifa sujeta a disponibilidad del espacio).',
+          conditionsTitle: 'CONDICIONES GENERALES',
+          conditionsLines: [
+            'Todo proveedor deberá ser aprobado previamente por Casa de Piedra.',
+            'Carpas: proveedor exclusivo Carpas San Marino (472 595 05 34 / 477 787 85 19).',
+            'Es indispensable contratar generador de energía externo para evitar contratiempos.',
+            'Baños con atención personalizada y seguridad exclusiva se contratan por separado.',
+            'Si cancela el cliente, se penaliza con 100% del anticipo.',
+            'Cambios de fecha o servicios están sujetos a disponibilidad y pueden generar ajustes de costo.',
+            'Estacionamiento de cortesía. Valet Parking se cotiza aparte con proveedor autorizado.'
+          ].join('\n'),
+          annexHintTitle: 'Página adicional editable',
+          annexHintBody: 'Utiliza el editor para ajustar tipografía, posición y estilo de esta página adicional.'
+        },
+        order: {
+          annexHintTitle: 'Página adicional editable',
+          annexHintBody: 'Utiliza el editor para ajustar tipografía, posición y estilo de esta página adicional.'
+        },
+        receipt: {
+          liquidatedTitle: 'Constancia de Liquidación',
+          liquidatedFooterLine1: 'Este documento certifica que la orden de referencia ha sido liquidada en su totalidad.',
+          liquidatedFooterLine2: 'Generado digitalmente a través de Marketing Hub.',
+          receiptTitle: 'Recibo de Pago',
+          receiptFooterLine1: 'Este documento es un comprobante de pago interno. No válido como factura fiscal.',
+          receiptFooterLine2: 'Generado digitalmente a través de Marketing Hub.',
+          annexHintTitle: 'Página adicional editable',
+          annexHintBody: 'Utiliza el editor para ajustar tipografía, posición y estilo de esta página adicional.'
+        },
+        contract: {
+          annexHintTitle: 'Página adicional editable',
+          annexHintBody: 'Utiliza el editor para ajustar tipografía, posición y estilo de esta página adicional.'
+        }
+      };
+      const map = isCP ? cpDefaults : pmDefaults;
+      return { ...(map[docType] || map.quote || {}) };
+    }
+
+    function normalizePdfEditorContent(raw, type, tenant = currentTenant) {
+      const defaults = getPdfEditorDefaultContent(type, tenant);
+      const base = raw && typeof raw === 'object' ? raw : {};
+      const fields = PDF_EDITOR_CONTENT_FIELDS[type] || [];
+      const out = { ...defaults };
+      fields.forEach((field) => {
+        const incoming = base[field.key];
+        if (incoming === undefined || incoming === null) return;
+        out[field.key] = String(incoming).slice(0, field.max || 2000);
+      });
+      return out;
+    }
+
+    function normalizePdfEditorTemplates(rawTemplates) {
+      const source = rawTemplates && typeof rawTemplates === 'object' ? rawTemplates : {};
+      const out = {};
+      PDF_EDITOR_DOC_TYPES.forEach((doc) => {
+        const rawList = Array.isArray(source[doc.id]) ? source[doc.id] : [];
+        out[doc.id] = rawList.slice(0, 40).map((item, idx) => {
+          const base = item && typeof item === 'object' ? item : {};
+          const id = String(base.id || `tpl_${doc.id}_${Date.now()}_${idx}`);
+          const name = String(base.name || `Plantilla ${idx + 1}`).slice(0, 80);
+          const styleRaw = base.style && typeof base.style === 'object' ? base.style : {};
+          return {
+            id,
+            name,
+            style: normalizePdfEditorStyle(styleRaw, doc.id)
+          };
+        });
+      });
+      return out;
+    }
+
+    function buildPdfEditorInitialTemplates() {
+      const profiles = ensurePdfEditorProfiles(pdfEditorProfiles);
+      const makeVariants = (docId) => {
+        const base = normalizePdfEditorStyle(profiles[docId], docId);
+        const compact = normalizePdfEditorStyle({
+          ...base,
+          titlePx: Math.max(20, base.titlePx - 2),
+          metaPx: Math.max(8, base.metaPx - 1),
+          tableBodyPx: Math.max(9, base.tableBodyPx - 1),
+          tableHeadPx: Math.max(9, base.tableHeadPx - 1),
+          quickPx: Math.max(9, base.quickPx - 1),
+          conditionsPx: Math.max(9, base.conditionsPx - 2),
+          signPx: Math.max(9, base.signPx - 1),
+          lineHeightPct: Math.max(95, base.lineHeightPct - 10)
+        }, docId);
+        const premium = normalizePdfEditorStyle({
+          ...base,
+          titlePx: Math.min(42, base.titlePx + 2),
+          metaPx: Math.min(18, base.metaPx + 1),
+          tableBodyPx: Math.min(16, base.tableBodyPx + 1),
+          tableHeadPx: Math.min(18, base.tableHeadPx + 1),
+          quickPx: Math.min(16, base.quickPx + 1),
+          conditionsPx: Math.min(18, base.conditionsPx + 1),
+          signPx: Math.min(16, base.signPx + 1),
+          lineHeightPct: Math.min(160, base.lineHeightPct + 8)
+        }, docId);
+        return [
+          { id: `preset_${docId}_base`, name: 'Base', style: base },
+          { id: `preset_${docId}_compacta`, name: 'Compacta 1 Hoja', style: compact },
+          { id: `preset_${docId}_premium`, name: 'Premium', style: premium }
+        ];
+      };
+      const out = {};
+      PDF_EDITOR_DOC_TYPES.forEach((doc) => {
+        out[doc.id] = makeVariants(doc.id);
+      });
+      return out;
+    }
+
+    function ensurePdfEditorTemplatesSeeded() {
+      const current = normalizePdfEditorTemplates(pdfEditorTemplates);
+      const hasSome = Object.values(current).some(list => Array.isArray(list) && list.length > 0);
+      if (hasSome) {
+        pdfEditorTemplates = current;
+        return false;
+      }
+      pdfEditorTemplates = buildPdfEditorInitialTemplates();
+      return true;
+    }
+
+    async function loadPdfEditorLetterhead() {
+      pdfEditorLetterheadUrl = '';
+      try {
+        const { data, error } = await getDB()
+          .from('configuracion')
+          .select('valor_json')
+          .eq('clave', CFG_LETTERHEAD_KEY)
+          .maybeSingle();
+        if (error) throw error;
+        const cfg = data?.valor_json && typeof data.valor_json === 'object' ? data.valor_json : {};
+        const fileName = String(cfg.file_name || '').trim();
+        const path = String(cfg.path || cfg.file_path || '').trim() || (fileName ? `${DOC_LETTERHEAD_PATH}/${fileName}` : '');
+        if (!path) return;
+        const signed = await getSignedStorageUrl(path);
+        if (signed) pdfEditorLetterheadUrl = signed;
+      } catch (_) {}
+    }
+
+    function fitPdfEditorPreviewScale() {
+      const shell = document.getElementById('adm-pdf-preview-shell');
+      const stage = document.getElementById('adm-pdf-preview-stage');
+      const page = document.getElementById('adm-pdf-preview-page');
+      if (!shell || !stage || !page) return;
+      const baseWidth = 816;
+      const baseHeight = 1056;
+      const availW = Math.max(120, shell.clientWidth - 10);
+      const availH = Math.max(140, shell.clientHeight - 10);
+      const scale = Math.min(availW / baseWidth, availH / baseHeight, 1);
+      pdfEditorPreviewScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+      stage.style.width = `${Math.round(baseWidth * pdfEditorPreviewScale)}px`;
+      stage.style.height = `${Math.round(baseHeight * pdfEditorPreviewScale)}px`;
+      page.style.transform = `scale(${pdfEditorPreviewScale})`;
+    }
+
+    function normalizePdfEditorResources(raw) {
+      const list = Array.isArray(raw) ? raw : [];
+      const accent = getPdfEditorAccent();
+      return list.slice(0, 120).map((item, index) => {
+        const base = item && typeof item === 'object' ? item : {};
+        const type = ['bar', 'title', 'text'].includes(String(base.type || '').toLowerCase())
+          ? String(base.type).toLowerCase()
+          : 'text';
+        return {
+          id: String(base.id || `pdfres_${Date.now()}_${index}`),
+          type,
+          enabled: base.enabled !== false,
+          page: clampPdfEditorNumber(base.page, 1, 8, 1),
+          x: clampPdfEditorNumber(base.x, -220, 920, 88),
+          y: clampPdfEditorNumber(base.y, -220, 1420, 120),
+          w: clampPdfEditorNumber(base.w, 16, 940, type === 'bar' ? 260 : 290),
+          h: clampPdfEditorNumber(base.h, 10, 1240, type === 'bar' ? 14 : 44),
+          text: String(base.text || (type === 'title' ? 'TITULO' : 'Texto editable')).slice(0, 200),
+          fontSize: clampPdfEditorNumber(base.fontSize, 8, 72, type === 'title' ? 24 : 14),
+          bold: base.bold !== false,
+          align: normalizePdfEditorAlign(base.align, 'left'),
+          color: normalizePdfEditorHex(base.color, '#111827'),
+          bgColor: normalizePdfEditorHex(base.bgColor, type === 'bar' ? accent : '#ffffff')
+        };
+      });
+    }
+
+    function normalizePdfEditorStyle(raw = {}, docType = pdfEditorSelectedType) {
+      const resolvedType = PDF_EDITOR_DOC_TYPES.find(doc => doc.id === String(docType || '').toLowerCase())?.id || 'quote';
+      const base = { ...PDF_EDITOR_DEFAULTS, ...(raw || {}) };
+      const fontKey = String(base.fontFamilyKey || '').toLowerCase();
+      return {
+        fontFamilyKey: PDF_EDITOR_FONT_MAP[fontKey] ? fontKey : PDF_EDITOR_DEFAULTS.fontFamilyKey,
+        headerLinePx: clampPdfEditorNumber(base.headerLinePx, 1, 8, PDF_EDITOR_DEFAULTS.headerLinePx),
+        titlePx: clampPdfEditorNumber(base.titlePx, 20, 42, PDF_EDITOR_DEFAULTS.titlePx),
+        metaPx: clampPdfEditorNumber(base.metaPx, 8, 18, PDF_EDITOR_DEFAULTS.metaPx),
+        tableHeadPx: clampPdfEditorNumber(base.tableHeadPx, 9, 18, PDF_EDITOR_DEFAULTS.tableHeadPx),
+        tableBodyPx: clampPdfEditorNumber(base.tableBodyPx, 9, 16, PDF_EDITOR_DEFAULTS.tableBodyPx),
+        lineHeightPct: clampPdfEditorNumber(base.lineHeightPct, 90, 180, PDF_EDITOR_DEFAULTS.lineHeightPct),
+        quickPx: clampPdfEditorNumber(base.quickPx, 9, 16, PDF_EDITOR_DEFAULTS.quickPx),
+        conditionsPx: clampPdfEditorNumber(base.conditionsPx, 9, 18, PDF_EDITOR_DEFAULTS.conditionsPx),
+        signPx: clampPdfEditorNumber(base.signPx, 9, 16, PDF_EDITOR_DEFAULTS.signPx),
+        footerPx: clampPdfEditorNumber(base.footerPx, 8, 14, PDF_EDITOR_DEFAULTS.footerPx),
+        offsetXPx: clampPdfEditorNumber(base.offsetXPx, -120, 120, PDF_EDITOR_DEFAULTS.offsetXPx),
+        offsetYPx: clampPdfEditorNumber(base.offsetYPx, -120, 120, PDF_EDITOR_DEFAULTS.offsetYPx),
+        extraPages: clampPdfEditorNumber(base.extraPages, -1, 6, PDF_EDITOR_DEFAULTS.extraPages),
+        resources: normalizePdfEditorResources(base.resources),
+        headerAlign: normalizePdfEditorAlign(base.headerAlign, PDF_EDITOR_DEFAULTS.headerAlign),
+        metaAlign: normalizePdfEditorAlign(base.metaAlign, PDF_EDITOR_DEFAULTS.metaAlign),
+        tableAlign: normalizePdfEditorAlign(base.tableAlign, PDF_EDITOR_DEFAULTS.tableAlign),
+        quickAlign: normalizePdfEditorAlign(base.quickAlign, PDF_EDITOR_DEFAULTS.quickAlign),
+        conditionsAlign: normalizePdfEditorAlign(base.conditionsAlign, PDF_EDITOR_DEFAULTS.conditionsAlign),
+        signAlign: normalizePdfEditorAlign(base.signAlign, PDF_EDITOR_DEFAULTS.signAlign),
+        summaryAlign: normalizePdfEditorAlign(base.summaryAlign, PDF_EDITOR_DEFAULTS.summaryAlign),
+        footerAlign: normalizePdfEditorAlign(base.footerAlign, PDF_EDITOR_DEFAULTS.footerAlign),
+        content: normalizePdfEditorContent(base.content, resolvedType)
+      };
+    }
+
+    function ensurePdfEditorProfiles(rawProfiles) {
+      const profiles = rawProfiles && typeof rawProfiles === 'object' ? rawProfiles : {};
+      const fallback = normalizePdfEditorStyle(
+        profiles.default && typeof profiles.default === 'object'
+          ? profiles.default
+          : (profiles.quote && typeof profiles.quote === 'object' ? profiles.quote : PDF_EDITOR_DEFAULTS),
+        'quote'
+      );
+      const out = {};
+      PDF_EDITOR_DOC_TYPES.forEach((doc) => {
+        const raw = profiles[doc.id] && typeof profiles[doc.id] === 'object' ? profiles[doc.id] : fallback;
+        out[doc.id] = normalizePdfEditorStyle(raw, doc.id);
+      });
+      return out;
+    }
+
+    function getPdfEditorTypeMeta(type) {
+      return PDF_EDITOR_DOC_TYPES.find(doc => doc.id === type) || PDF_EDITOR_DOC_TYPES[0];
+    }
+
+    function getPdfEditorActiveStyle() {
+      const current = pdfEditorProfiles[pdfEditorSelectedType];
+      return normalizePdfEditorStyle(current || PDF_EDITOR_DEFAULTS, pdfEditorSelectedType);
+    }
+
+    function setPdfEditorActiveStyle(style) {
+      const normalized = normalizePdfEditorStyle(style, pdfEditorSelectedType);
+      pdfEditorProfiles = { ...pdfEditorProfiles, [pdfEditorSelectedType]: normalized };
+      return normalized;
+    }
+
+    function clonePdfEditorStyle(style) {
+      const safe = normalizePdfEditorStyle(style || {}, pdfEditorSelectedType);
+      return {
+        ...safe,
+        resources: safe.resources.map(item => ({ ...item })),
+        content: { ...(safe.content || {}) }
+      };
+    }
+
+    function buildPdfEditorConfigPayload() {
+      return {
+        tenant: currentTenant === 'cp' ? 'casa_de_piedra' : 'plaza_mayor',
+        version: 2,
+        updated_at: new Date().toISOString(),
+        profiles: ensurePdfEditorProfiles(pdfEditorProfiles),
+        templates: normalizePdfEditorTemplates(pdfEditorTemplates)
+      };
+    }
+
+    function getPdfEditorTemplatesForActiveType() {
+      const all = normalizePdfEditorTemplates(pdfEditorTemplates);
+      return Array.isArray(all[pdfEditorSelectedType]) ? all[pdfEditorSelectedType] : [];
+    }
+
+    function schedulePdfEditorSync() {
+      if (!isAdminUser) return;
+      if (pdfEditorSyncTimer) clearTimeout(pdfEditorSyncTimer);
+      pdfEditorSyncTimer = setTimeout(() => {
+        window.savePdfEditorConfig(true);
+      }, 1000);
+    }
+
+    function renderPdfEditorCards() {
+      const host = document.getElementById('pdf-editor-doc-cards');
+      if (!host) return;
+      host.innerHTML = PDF_EDITOR_DOC_TYPES.map((doc) => {
+        const isActive = doc.id === pdfEditorSelectedType;
+        return `
+          <button type="button"
+            onclick="selectPdfEditorType('${doc.id}')"
+            class="pdf-type-card text-left w-full ${isActive ? 'is-active' : ''}">
+            <div class="flex items-center justify-between gap-2">
+              <div class="flex items-center gap-2">
+                <span class="w-8 h-8 rounded-lg bg-gray-100 text-gray-600 flex items-center justify-center">
+                  <i class="fa-solid ${doc.icon}"></i>
+                </span>
+                <div>
+                  <div class="text-xs font-black text-gray-800">${doc.title}</div>
+                  <div class="text-[10px] font-bold uppercase tracking-wide text-gray-400">${doc.note}</div>
+                </div>
+              </div>
+              <span class="text-[10px] font-bold ${isActive ? 'text-gray-700' : 'text-gray-400'}">${isActive ? 'Activo' : ''}</span>
+            </div>
+          </button>
+        `;
+      }).join('');
+    }
+
+    function renderPdfEditorControls(style) {
+      const cfg = normalizePdfEditorStyle(style || {});
+      const fontSel = document.getElementById('adm-pdf-font');
+      if (fontSel && !fontSel.dataset.ready) {
+        fontSel.innerHTML = Object.keys(PDF_EDITOR_FONT_MAP)
+          .map(key => `<option value="${key}">${PDF_EDITOR_FONT_LABELS[key] || key}</option>`)
+          .join('');
+        fontSel.dataset.ready = '1';
+      }
+      if (fontSel) fontSel.value = cfg.fontFamilyKey;
+      const setVal = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.value = String(value);
+      };
+      setVal('adm-pdf-line-height', cfg.lineHeightPct);
+      setVal('adm-pdf-offset-x', cfg.offsetXPx);
+      setVal('adm-pdf-offset-y', cfg.offsetYPx);
+      setVal('adm-pdf-extra-pages', cfg.extraPages);
+      const title = document.getElementById('adm-pdf-preview-title');
+      const meta = getPdfEditorTypeMeta(pdfEditorSelectedType);
+      if (title) {
+        title.innerText = `${meta.title} - ${currentTenant === 'cp' ? 'Casa de Piedra' : 'Plaza Mayor'}`;
+      }
+    }
+
+    function renderPdfEditorTemplateControls() {
+      const select = document.getElementById('adm-pdf-template-select');
+      if (!select) return;
+      const templates = getPdfEditorTemplatesForActiveType();
+      const options = ['<option value="">Sin plantilla</option>']
+        .concat(templates.map(tpl => `<option value="${escapePdfEditorHtml(tpl.id)}">${escapePdfEditorHtml(tpl.name)}</option>`));
+      select.innerHTML = options.join('');
+      if (pdfEditorSelectedTemplateId && templates.some(tpl => tpl.id === pdfEditorSelectedTemplateId)) {
+        select.value = pdfEditorSelectedTemplateId;
+      } else {
+        pdfEditorSelectedTemplateId = '';
+        select.value = '';
+      }
+    }
+
+    function renderPdfEditorContentList(style) {
+      const host = document.getElementById('adm-pdf-content-list');
+      if (!host) return;
+      const cfg = normalizePdfEditorStyle(style || {}, pdfEditorSelectedType);
+      const content = cfg.content || {};
+      const fields = PDF_EDITOR_CONTENT_FIELDS[pdfEditorSelectedType] || [];
+      if (!fields.length) {
+        host.innerHTML = '<div class="text-[10px] text-gray-400 italic p-2 border border-dashed border-gray-200 rounded-lg">Sin campos de contenido para este tipo.</div>';
+        return;
+      }
+      host.innerHTML = fields.map((field) => {
+        const value = String(content[field.key] || '');
+        if (field.type === 'textarea') {
+          return `
+            <label class="block text-[10px] font-black uppercase tracking-wide text-gray-400">
+              ${field.label}
+              <textarea data-content-key="${field.key}" rows="${field.rows || 3}" maxlength="${field.max || 2000}"
+                class="w-full mt-1 p-2 bg-gray-50 border border-gray-200 rounded-lg text-[11px] font-semibold resize-y">${escapePdfEditorHtml(value)}</textarea>
+            </label>
+          `;
+        }
+        return `
+          <label class="block text-[10px] font-black uppercase tracking-wide text-gray-400">
+            ${field.label}
+            <input data-content-key="${field.key}" type="text" maxlength="${field.max || 200}"
+              value="${escapePdfEditorHtml(value)}"
+              class="w-full mt-1 p-2 bg-gray-50 border border-gray-200 rounded-lg text-[11px] font-semibold">
+          </label>
+        `;
+      }).join('');
+    }
+
+    function renderPdfEditorBaseList(style) {
+      const host = document.getElementById('adm-pdf-base-list');
+      if (!host) return;
+      const cfg = normalizePdfEditorStyle(style || {});
+      host.innerHTML = PDF_EDITOR_BASE_BLOCKS.map((block) => {
+        const limit = block.sizeField ? (PDF_EDITOR_BASE_SIZE_LIMITS[block.sizeField] || { min: 8, max: 72 }) : null;
+        const selected = pdfEditorSelectedItemId === block.id;
+        const alignValue = String(cfg[block.alignField] || 'left');
+        const sizeValue = block.sizeField ? cfg[block.sizeField] : '';
+        return `
+          <div class="border rounded-lg p-2 ${selected ? 'border-gray-900 bg-gray-50' : 'border-gray-200'}">
+            <button type="button" onclick="selectPdfEditorBase('${block.id}')" class="w-full text-left">
+              <div class="text-[11px] font-black text-gray-700">${block.label}</div>
+              <div class="text-[10px] text-gray-400">${block.key}</div>
+            </button>
+            <div class="grid grid-cols-2 gap-2 mt-2">
+              ${block.sizeField ? `
+                <label class="text-[10px] font-bold text-gray-500">
+                  Tamaño
+                  <input type="number"
+                    min="${limit.min}"
+                    max="${limit.max}"
+                    step="1"
+                    value="${sizeValue}"
+                    onchange="updatePdfEditorBaseField('${block.id}','${block.sizeField}', this.value)"
+                    class="w-full mt-1 p-1.5 bg-white border border-gray-200 rounded text-[11px] font-bold">
+                </label>
+              ` : '<div class="text-[10px] text-gray-400 font-bold flex items-end">Sin tamaño editable</div>'}
+              <label class="text-[10px] font-bold text-gray-500">
+                Alineación
+                <select onchange="updatePdfEditorBaseField('${block.id}','${block.alignField}', this.value)"
+                  class="w-full mt-1 p-1.5 bg-white border border-gray-200 rounded text-[11px] font-bold">
+                  <option value="left" ${alignValue === 'left' ? 'selected' : ''}>Izquierda</option>
+                  <option value="center" ${alignValue === 'center' ? 'selected' : ''}>Centro</option>
+                  <option value="right" ${alignValue === 'right' ? 'selected' : ''}>Derecha</option>
+                  <option value="justify" ${alignValue === 'justify' ? 'selected' : ''}>Justificado</option>
+                </select>
+              </label>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderPdfEditorResourcesList(style) {
+      const host = document.getElementById('adm-pdf-res-list');
+      if (!host) return;
+      const cfg = normalizePdfEditorStyle(style || {});
+      if (!cfg.resources.length) {
+        host.innerHTML = '<div class="text-[10px] text-gray-400 italic p-2 border border-dashed border-gray-200 rounded-lg">No hay recursos personalizados.</div>';
+        return;
+      }
+      host.innerHTML = cfg.resources.map((res) => {
+        const selected = pdfEditorSelectedItemId === `res:${res.id}`;
+        const encoded = encodeURIComponent(res.id);
+        return `
+          <div class="border rounded-lg p-2 ${selected ? 'border-gray-900 bg-gray-50' : 'border-gray-200'}">
+            <div class="flex items-center justify-between gap-2">
+              <button type="button" onclick="selectPdfEditorResource('${encoded}')" class="text-left flex-1 min-w-0">
+                <div class="text-[11px] font-black text-gray-700 uppercase">${res.type}</div>
+                <div class="text-[10px] text-gray-400 truncate">${res.id}</div>
+              </button>
+              <label class="text-[10px] font-bold text-gray-500 flex items-center gap-1">
+                <input type="checkbox" ${res.enabled ? 'checked' : ''} onchange="updatePdfEditorResourceField('${encoded}','enabled', this.checked)">
+                ON
+              </label>
+              <button type="button" onclick="removePdfEditorResource('${encoded}')" class="text-red-500 hover:text-red-700 text-xs font-black">X</button>
+            </div>
+            <div class="grid grid-cols-3 gap-1 mt-2">
+              <label class="text-[10px] font-bold text-gray-500">Pg
+                <input type="number" min="1" max="8" step="1" value="${res.page}" onchange="updatePdfEditorResourceField('${encoded}','page', this.value)" class="w-full mt-1 p-1 bg-white border border-gray-200 rounded text-[10px] font-bold">
+              </label>
+              <label class="text-[10px] font-bold text-gray-500">X
+                <input type="number" min="-220" max="920" step="1" value="${res.x}" onchange="updatePdfEditorResourceField('${encoded}','x', this.value)" class="w-full mt-1 p-1 bg-white border border-gray-200 rounded text-[10px] font-bold">
+              </label>
+              <label class="text-[10px] font-bold text-gray-500">Y
+                <input type="number" min="-220" max="1420" step="1" value="${res.y}" onchange="updatePdfEditorResourceField('${encoded}','y', this.value)" class="w-full mt-1 p-1 bg-white border border-gray-200 rounded text-[10px] font-bold">
+              </label>
+              <label class="text-[10px] font-bold text-gray-500">W
+                <input type="number" min="16" max="940" step="1" value="${res.w}" onchange="updatePdfEditorResourceField('${encoded}','w', this.value)" class="w-full mt-1 p-1 bg-white border border-gray-200 rounded text-[10px] font-bold">
+              </label>
+              <label class="text-[10px] font-bold text-gray-500">H
+                <input type="number" min="10" max="1240" step="1" value="${res.h}" onchange="updatePdfEditorResourceField('${encoded}','h', this.value)" class="w-full mt-1 p-1 bg-white border border-gray-200 rounded text-[10px] font-bold">
+              </label>
+              <label class="text-[10px] font-bold text-gray-500">px
+                <input type="number" min="8" max="72" step="1" value="${res.fontSize}" onchange="updatePdfEditorResourceField('${encoded}','fontSize', this.value)" class="w-full mt-1 p-1 bg-white border border-gray-200 rounded text-[10px] font-bold" ${res.type === 'bar' ? 'disabled' : ''}>
+              </label>
+            </div>
+            <div class="grid grid-cols-2 gap-1 mt-2">
+              <label class="text-[10px] font-bold text-gray-500">Color
+                <input type="color" value="${res.color}" onchange="updatePdfEditorResourceField('${encoded}','color', this.value)" class="w-full mt-1 h-7 border border-gray-200 rounded bg-white" ${res.type === 'bar' ? 'disabled' : ''}>
+              </label>
+              <label class="text-[10px] font-bold text-gray-500">Fondo
+                <input type="color" value="${res.bgColor}" onchange="updatePdfEditorResourceField('${encoded}','bgColor', this.value)" class="w-full mt-1 h-7 border border-gray-200 rounded bg-white">
+              </label>
+            </div>
+            <div class="grid grid-cols-2 gap-1 mt-2">
+              <label class="text-[10px] font-bold text-gray-500">Alineación
+                <select onchange="updatePdfEditorResourceField('${encoded}','align', this.value)" class="w-full mt-1 p-1 bg-white border border-gray-200 rounded text-[10px] font-bold" ${res.type === 'bar' ? 'disabled' : ''}>
+                  <option value="left" ${res.align === 'left' ? 'selected' : ''}>Izquierda</option>
+                  <option value="center" ${res.align === 'center' ? 'selected' : ''}>Centro</option>
+                  <option value="right" ${res.align === 'right' ? 'selected' : ''}>Derecha</option>
+                </select>
+              </label>
+              <label class="text-[10px] font-bold text-gray-500 flex items-end gap-1">
+                <input type="checkbox" ${res.bold ? 'checked' : ''} onchange="updatePdfEditorResourceField('${encoded}','bold', this.checked)" ${res.type === 'bar' ? 'disabled' : ''}>
+                <span>Negritas</span>
+              </label>
+            </div>
+            ${res.type !== 'bar' ? `
+              <label class="block text-[10px] font-bold text-gray-500 mt-2">Texto
+                <textarea onchange="updatePdfEditorResourceField('${encoded}','text', this.value)" class="w-full mt-1 p-1.5 bg-white border border-gray-200 rounded text-[10px] font-semibold h-14 resize-y">${escapePdfEditorHtml(res.text)}</textarea>
+              </label>
+            ` : ''}
+          </div>
+        `;
+      }).join('');
+    }
+
+    function buildPdfEditorBasePreviewSpec(style) {
+      const cfg = normalizePdfEditorStyle(style || {}, pdfEditorSelectedType);
+      const content = cfg.content || {};
+      const conditionsLines = String(content.conditionsLines || '')
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(Boolean)
+        .slice(0, 4)
+        .join('\n');
+      const quickLines = String(content.quickLeftLines || '')
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(Boolean)
+        .slice(0, 3)
+        .join('\n');
+      const headerSample = (pdfEditorSelectedType === 'receipt')
+        ? (content.receiptTitle || content.liquidatedTitle || 'RECIBO DE PAGO')
+        : (pdfEditorSelectedType === 'order' ? 'ORDEN DE COMPRA' : 'COTIZACION No. 001');
+      const quickSample = quickLines
+        ? `${content.quickLeftTitle || 'Notas'}\n${quickLines}\n${content.quickRightTitle || ''}\n${content.quickRightBody || ''}`.trim()
+        : 'Notas rapidas / observaciones.';
+      const conditionsSample = `${content.conditionsTitle || 'Condiciones'}\n${conditionsLines || (content.annexHintBody || 'Condiciones generales del documento.')}`.trim();
+      return {
+        'header-title': { x: 48, y: 54, w: 362, h: 86, sample: headerSample },
+        'header-meta': { x: 434, y: 54, w: 332, h: 86, sample: 'CLIENTE\\nFECHA\\nFOLIO' },
+        'table-body': { x: 48, y: 172, w: 718, h: 360, sample: 'Tabla de conceptos y descripciones' },
+        'summary': { x: 490, y: 550, w: 276, h: 140, sample: 'Subtotal\\nImpuestos\\nTotal Neto' },
+        'quick': { x: 48, y: 550, w: 420, h: 128, sample: quickSample },
+        'conditions': { x: 48, y: 700, w: 718, h: 188, sample: conditionsSample },
+        'sign': { x: 48, y: 904, w: 718, h: 86, sample: 'Firmas y vistos buenos' },
+        'footer': { x: 48, y: 1000, w: 718, h: 34, sample: 'Pie de pagina' }
+      };
+    }
+
+    function renderPdfEditorPreview(style) {
+      const page = document.getElementById('adm-pdf-preview-page');
+      if (!page) return;
+      const cfg = normalizePdfEditorStyle(style || {});
+      const accent = getPdfEditorAccent();
+      const baseSpec = buildPdfEditorBasePreviewSpec(cfg);
+      const lineHeight = (cfg.lineHeightPct / 100).toFixed(2);
+      const fontFamily = PDF_EDITOR_FONT_MAP[cfg.fontFamilyKey] || PDF_EDITOR_FONT_MAP.segoe;
+
+      const sizeByKey = {
+        'header-title': cfg.titlePx,
+        'header-meta': cfg.metaPx,
+        'table-body': cfg.tableBodyPx,
+        'summary': Math.max(10, cfg.tableBodyPx),
+        'quick': cfg.quickPx,
+        'conditions': cfg.conditionsPx,
+        'sign': cfg.signPx,
+        'footer': cfg.footerPx
+      };
+      const alignByKey = {
+        'header-title': cfg.headerAlign,
+        'header-meta': cfg.metaAlign,
+        'table-body': cfg.tableAlign,
+        'summary': cfg.summaryAlign,
+        'quick': cfg.quickAlign,
+        'conditions': cfg.conditionsAlign,
+        'sign': cfg.signAlign,
+        'footer': cfg.footerAlign
+      };
+      const baseBlocksHtml = PDF_EDITOR_BASE_BLOCKS.map((block) => {
+        const spec = baseSpec[block.key];
+        if (!spec) return '';
+        const selected = pdfEditorSelectedItemId === block.id;
+        const left = spec.x + cfg.offsetXPx;
+        const top = spec.y + cfg.offsetYPx;
+        const align = normalizePdfEditorAlign(alignByKey[block.key] || 'left');
+        const fontSize = clampPdfEditorNumber(sizeByKey[block.key], 8, 72, 12);
+        const borderColor = selected ? accent : '#d1d5db';
+        const bgColor = selected ? `${accent}1A` : '#f9fafb';
+        return `
+          <div data-item-id="${block.id}"
+            class="pdf-preview-base ${selected ? 'pdf-preview-base-selected' : ''}"
+            style="position:absolute;left:${left}px;top:${top}px;width:${spec.w}px;height:${spec.h}px;border:1px dashed ${borderColor};background:${bgColor};padding:6px;box-sizing:border-box;overflow:hidden;cursor:pointer;z-index:12;"
+            onclick="selectPdfEditorBase('${block.id}')">
+            <div style="font-size:10px;font-weight:800;letter-spacing:0.04em;text-transform:uppercase;color:#6b7280;">${escapePdfEditorHtml(block.label)}</div>
+            <div style="margin-top:4px;font-size:${fontSize}px;line-height:${lineHeight};text-align:${align};color:#111827;white-space:pre-wrap;">${escapePdfEditorHtml(spec.sample)}</div>
+          </div>
+        `;
+      }).join('');
+
+      const resourcesHtml = cfg.resources
+        .filter(resource => resource.enabled)
+        .map((resource) => {
+          const selected = pdfEditorSelectedItemId === `res:${resource.id}`;
+          const border = selected ? `box-shadow:inset 0 0 0 2px ${accent};` : 'box-shadow:inset 0 0 0 1px rgba(156,163,175,0.35);';
+          const baseStyle = `left:${resource.x}px;top:${resource.y}px;width:${resource.w}px;height:${resource.h}px;${border}`;
+          if (resource.type === 'bar') {
+            return `
+              <div class="pdf-preview-resource"
+                data-item-id="res:${escapePdfEditorHtml(resource.id)}"
+                data-res-id="${escapePdfEditorHtml(resource.id)}"
+                data-res-type="bar"
+                style="${baseStyle}background:${resource.bgColor};border-radius:2px;"></div>
+            `;
+          }
+          return `
+            <div class="pdf-preview-resource"
+              data-item-id="res:${escapePdfEditorHtml(resource.id)}"
+              data-res-id="${escapePdfEditorHtml(resource.id)}"
+              data-res-type="${escapePdfEditorHtml(resource.type)}"
+              style="${baseStyle}background:${resource.bgColor};color:${resource.color};font-size:${resource.fontSize}px;font-weight:${resource.bold ? 800 : 500};line-height:1.2;text-align:${resource.align};padding:3px 6px;white-space:pre-wrap;overflow:hidden;border-radius:2px;">${escapePdfEditorHtml(resource.text)}</div>
+          `;
+        })
+        .join('');
+
+      page.style.fontFamily = fontFamily;
+      page.style.backgroundImage = pdfEditorLetterheadUrl ? `url("${pdfEditorLetterheadUrl}")` : 'none';
+      page.style.backgroundSize = '100% 100%';
+      page.style.backgroundRepeat = 'no-repeat';
+      page.style.backgroundPosition = 'center';
+      page.innerHTML = `
+        <div style="position:absolute;inset:0;background-image:linear-gradient(to right, rgba(148,163,184,0.08) 1px, transparent 1px),linear-gradient(to bottom, rgba(148,163,184,0.08) 1px, transparent 1px);background-size:24px 24px;pointer-events:none;"></div>
+        ${baseBlocksHtml}
+        ${resourcesHtml}
+      `;
+      fitPdfEditorPreviewScale();
+    }
+
+    function refreshPdfEditorWorkspace() {
+      renderPdfEditorCards();
+      const style = getPdfEditorActiveStyle();
+      renderPdfEditorControls(style);
+      renderPdfEditorTemplateControls();
+      renderPdfEditorBaseList(style);
+      renderPdfEditorContentList(style);
+      renderPdfEditorResourcesList(style);
+      renderPdfEditorPreview(style);
+    }
+
+    function setPdfEditorField(field, rawValue) {
+      const draft = clonePdfEditorStyle(getPdfEditorActiveStyle());
+      if (field === 'fontFamilyKey') {
+        draft.fontFamilyKey = PDF_EDITOR_FONT_MAP[String(rawValue || '').toLowerCase()] ? String(rawValue).toLowerCase() : draft.fontFamilyKey;
+      } else if (field === 'lineHeightPct') {
+        draft.lineHeightPct = clampPdfEditorNumber(rawValue, 90, 180, draft.lineHeightPct);
+      } else if (field === 'offsetXPx') {
+        draft.offsetXPx = clampPdfEditorNumber(rawValue, -120, 120, draft.offsetXPx);
+      } else if (field === 'offsetYPx') {
+        draft.offsetYPx = clampPdfEditorNumber(rawValue, -120, 120, draft.offsetYPx);
+      } else if (field === 'extraPages') {
+        draft.extraPages = clampPdfEditorNumber(rawValue, -1, 6, draft.extraPages);
+      } else {
+        return;
+      }
+      setPdfEditorActiveStyle(draft);
+      renderPdfEditorPreview(draft);
+      schedulePdfEditorSync();
+    }
+
+    function findPdfEditorResourceIndex(id) {
+      const cfg = getPdfEditorActiveStyle();
+      return cfg.resources.findIndex(item => item.id === id);
+    }
+
+    function mutatePdfEditorResource(id, updater) {
+      const draft = clonePdfEditorStyle(getPdfEditorActiveStyle());
+      const idx = draft.resources.findIndex(item => item.id === id);
+      if (idx < 0) return null;
+      const next = updater({ ...draft.resources[idx] });
+      if (!next) return null;
+      draft.resources[idx] = normalizePdfEditorResources([next])[0];
+      setPdfEditorActiveStyle(draft);
+      return draft;
+    }
+
+    function getPdfEditorBaseBlock(baseId) {
+      return PDF_EDITOR_BASE_BLOCKS.find(block => block.id === baseId) || null;
+    }
+
+    function bindPdfEditorControls() {
+      if (pdfEditorControlsBound) return;
+      pdfEditorControlsBound = true;
+
+      const fontSel = document.getElementById('adm-pdf-font');
+      const lineHeight = document.getElementById('adm-pdf-line-height');
+      const offsetX = document.getElementById('adm-pdf-offset-x');
+      const offsetY = document.getElementById('adm-pdf-offset-y');
+      const extraPages = document.getElementById('adm-pdf-extra-pages');
+      if (fontSel) fontSel.addEventListener('change', () => setPdfEditorField('fontFamilyKey', fontSel.value));
+      if (lineHeight) lineHeight.addEventListener('input', () => setPdfEditorField('lineHeightPct', lineHeight.value));
+      if (offsetX) offsetX.addEventListener('input', () => setPdfEditorField('offsetXPx', offsetX.value));
+      if (offsetY) offsetY.addEventListener('input', () => setPdfEditorField('offsetYPx', offsetY.value));
+      if (extraPages) extraPages.addEventListener('input', () => setPdfEditorField('extraPages', extraPages.value));
+
+      const addBar = document.getElementById('adm-pdf-add-bar');
+      const addTitle = document.getElementById('adm-pdf-add-title');
+      const addText = document.getElementById('adm-pdf-add-text');
+      if (addBar) addBar.addEventListener('click', () => window.addPdfEditorResource('bar'));
+      if (addTitle) addTitle.addEventListener('click', () => window.addPdfEditorResource('title'));
+      if (addText) addText.addEventListener('click', () => window.addPdfEditorResource('text'));
+      const templateSelect = document.getElementById('adm-pdf-template-select');
+      const templateSave = document.getElementById('adm-pdf-template-save');
+      const templateApply = document.getElementById('adm-pdf-template-apply');
+      const templateDelete = document.getElementById('adm-pdf-template-delete');
+      const contentHost = document.getElementById('adm-pdf-content-list');
+      if (templateSelect) {
+        templateSelect.addEventListener('change', () => {
+          pdfEditorSelectedTemplateId = String(templateSelect.value || '');
+        });
+      }
+      if (templateSave) templateSave.addEventListener('click', () => window.savePdfEditorTemplate());
+      if (templateApply) templateApply.addEventListener('click', () => window.applyPdfEditorTemplate());
+      if (templateDelete) templateDelete.addEventListener('click', () => window.deletePdfEditorTemplate());
+      if (contentHost) {
+        const onContentChange = (event) => {
+          const key = event?.target?.getAttribute?.('data-content-key');
+          if (!key) return;
+          window.updatePdfEditorContentField(key, event.target.value);
+        };
+        contentHost.addEventListener('input', onContentChange);
+        contentHost.addEventListener('change', onContentChange);
+      }
+      if (!pdfEditorResizeBound) {
+        pdfEditorResizeBound = true;
+        window.addEventListener('resize', () => fitPdfEditorPreviewScale());
+      }
+
+      const preview = document.getElementById('adm-pdf-preview-page');
+      if (preview) {
+        preview.addEventListener('mousedown', (event) => {
+          const node = event.target?.closest?.('.pdf-preview-resource');
+          if (!node) return;
+          const resourceId = node.getAttribute('data-res-id');
+          if (!resourceId) return;
+          const draft = getPdfEditorActiveStyle();
+          const idx = draft.resources.findIndex(resource => resource.id === resourceId);
+          if (idx < 0) return;
+          const target = draft.resources[idx];
+          const rect = node.getBoundingClientRect();
+          const scale = pdfEditorPreviewScale || 1;
+          const edgeThreshold = 14 * scale;
+          const edge = (rect.right - event.clientX <= edgeThreshold) && (rect.bottom - event.clientY <= edgeThreshold);
+          pdfEditorDragState = {
+            id: resourceId,
+            mode: edge ? 'resize' : 'move',
+            startX: event.clientX,
+            startY: event.clientY,
+            origin: { x: target.x, y: target.y, w: target.w, h: target.h },
+            scale
+          };
+          pdfEditorSelectedItemId = `res:${resourceId}`;
+          renderPdfEditorResourcesList(draft);
+          renderPdfEditorPreview(draft);
+          event.preventDefault();
+        });
+      }
+
+      document.addEventListener('mousemove', (event) => {
+        if (!pdfEditorDragState) return;
+        const state = pdfEditorDragState;
+        const scale = state.scale || 1;
+        const deltaX = (event.clientX - state.startX) / scale;
+        const deltaY = (event.clientY - state.startY) / scale;
+        const next = mutatePdfEditorResource(state.id, (resource) => {
+          if (state.mode === 'resize') {
+            resource.w = clampPdfEditorNumber(state.origin.w + deltaX, 16, 940, resource.w);
+            resource.h = clampPdfEditorNumber(state.origin.h + deltaY, 10, 1240, resource.h);
+          } else {
+            resource.x = clampPdfEditorNumber(state.origin.x + deltaX, -220, 920, resource.x);
+            resource.y = clampPdfEditorNumber(state.origin.y + deltaY, -220, 1420, resource.y);
+          }
+          return resource;
+        });
+        if (!next) return;
+        renderPdfEditorPreview(next);
+      });
+
+      document.addEventListener('mouseup', () => {
+        if (!pdfEditorDragState) return;
+        pdfEditorDragState = null;
+        renderPdfEditorResourcesList(getPdfEditorActiveStyle());
+        renderPdfEditorPreview(getPdfEditorActiveStyle());
+        schedulePdfEditorSync();
+      });
+    }
+
+    async function loadPdfEditorConfig() {
+      pdfEditorConfigRecordId = '';
+      pdfEditorProfiles = ensurePdfEditorProfiles({});
+      pdfEditorTemplates = normalizePdfEditorTemplates({});
+      try {
+        const { data, error } = await getDB()
+          .from('configuracion')
+          .select('id,clave,valor_json')
+          .eq('clave', CFG_PDF_STYLE_KEY)
+          .maybeSingle();
+        if (error) throw error;
+        if (data) {
+          pdfEditorConfigRecordId = data.id || '';
+          const raw = data.valor_json && typeof data.valor_json === 'object' ? data.valor_json : {};
+          if (raw.profiles && typeof raw.profiles === 'object') {
+            pdfEditorProfiles = ensurePdfEditorProfiles(raw.profiles);
+          } else {
+            const migrated = normalizePdfEditorStyle(raw, 'quote');
+            pdfEditorProfiles = ensurePdfEditorProfiles({
+              quote: migrated,
+              order: migrated,
+              receipt: migrated,
+              contract: migrated
+            });
+          }
+          pdfEditorTemplates = normalizePdfEditorTemplates(raw.templates || {});
+        }
+      } catch (e) {
+        _toast('No se pudo cargar la configuración del editor PDF: ' + (e.message || e), 'error');
+      }
+      await loadPdfEditorLetterhead();
+      const seededTemplates = ensurePdfEditorTemplatesSeeded();
+      if (seededTemplates && isAdminUser) {
+        await window.savePdfEditorConfig(true);
+      }
+      if (!PDF_EDITOR_DOC_TYPES.find(doc => doc.id === pdfEditorSelectedType)) {
+        pdfEditorSelectedType = 'quote';
+      }
+      pdfEditorSelectedItemId = '';
+      pdfEditorSelectedTemplateId = '';
+      refreshPdfEditorWorkspace();
+    }
+
+    window.savePdfEditorConfig = async (silent) => {
+      if (!isAdminUser) return _toast("Acceso restringido: solo Administrador.", "error");
+      if (pdfEditorSyncTimer) {
+        clearTimeout(pdfEditorSyncTimer);
+        pdfEditorSyncTimer = null;
+      }
+      const payload = {
+        clave: CFG_PDF_STYLE_KEY,
+        valor_json: buildPdfEditorConfigPayload()
+      };
+      try {
+        const { error } = await getDB().from('configuracion').upsert(payload, { onConflict: 'clave' });
+        if (error) throw error;
+        if (!silent) _toast('Editor PDF guardado correctamente', 'success');
+      } catch (e) {
+        if (!silent) _toast('No se pudo guardar el editor PDF: ' + (e.message || e), 'error');
+      }
+    };
+
+    window.resetPdfEditorProfile = () => {
+      if (!isAdminUser) return _toast("Acceso restringido: solo Administrador.", "error");
+      if (!confirm('Se restablecera el estilo del tipo de PDF actual. Deseas continuar?')) return;
+      const next = normalizePdfEditorStyle(PDF_EDITOR_DEFAULTS, pdfEditorSelectedType);
+      pdfEditorProfiles = { ...pdfEditorProfiles, [pdfEditorSelectedType]: next };
+      pdfEditorSelectedItemId = '';
+      refreshPdfEditorWorkspace();
+      schedulePdfEditorSync();
+    };
+
+    window.selectPdfEditorType = (type) => {
+      const docType = PDF_EDITOR_DOC_TYPES.find(doc => doc.id === type);
+      if (!docType) return;
+      pdfEditorSelectedType = docType.id;
+      pdfEditorSelectedItemId = '';
+      pdfEditorSelectedTemplateId = '';
+      refreshPdfEditorWorkspace();
+    };
+
+    window.selectPdfEditorBase = (baseId) => {
+      const block = getPdfEditorBaseBlock(baseId);
+      if (!block) return;
+      pdfEditorSelectedItemId = block.id;
+      renderPdfEditorBaseList(getPdfEditorActiveStyle());
+      renderPdfEditorPreview(getPdfEditorActiveStyle());
+    };
+
+    window.updatePdfEditorBaseField = (baseId, field, rawValue) => {
+      const block = getPdfEditorBaseBlock(baseId);
+      if (!block) return;
+      const draft = clonePdfEditorStyle(getPdfEditorActiveStyle());
+      if (field === block.alignField) {
+        draft[field] = normalizePdfEditorAlign(rawValue, draft[field]);
+      } else if (field === block.sizeField) {
+        const limits = PDF_EDITOR_BASE_SIZE_LIMITS[field] || { min: 8, max: 72 };
+        draft[field] = clampPdfEditorNumber(rawValue, limits.min, limits.max, draft[field]);
+        if (field === 'tableBodyPx') {
+          draft.tableHeadPx = clampPdfEditorNumber(draft.tableBodyPx + 2, 9, 18, draft.tableHeadPx);
+        }
+      } else {
+        return;
+      }
+      setPdfEditorActiveStyle(draft);
+      pdfEditorSelectedItemId = block.id;
+      renderPdfEditorBaseList(draft);
+      renderPdfEditorPreview(draft);
+      schedulePdfEditorSync();
+    };
+
+    window.updatePdfEditorContentField = (key, rawValue) => {
+      const field = (PDF_EDITOR_CONTENT_FIELDS[pdfEditorSelectedType] || []).find(item => item.key === key);
+      if (!field) return;
+      const draft = clonePdfEditorStyle(getPdfEditorActiveStyle());
+      const nextContent = { ...(draft.content || {}) };
+      nextContent[key] = String(rawValue || '').slice(0, field.max || 2000);
+      draft.content = normalizePdfEditorContent(nextContent, pdfEditorSelectedType);
+      setPdfEditorActiveStyle(draft);
+      renderPdfEditorContentList(draft);
+      renderPdfEditorPreview(draft);
+      schedulePdfEditorSync();
+    };
+
+    window.savePdfEditorTemplate = () => {
+      if (!isAdminUser) return _toast("Acceso restringido: solo Administrador.", "error");
+      const nameInput = document.getElementById('adm-pdf-template-name');
+      const templatesByType = normalizePdfEditorTemplates(pdfEditorTemplates);
+      const list = Array.isArray(templatesByType[pdfEditorSelectedType]) ? templatesByType[pdfEditorSelectedType] : [];
+      const fallbackName = `Plantilla ${list.length + 1}`;
+      const templateName = String(nameInput?.value || '').trim().slice(0, 80) || fallbackName;
+      const id = `tpl_${pdfEditorSelectedType}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      list.push({
+        id,
+        name: templateName,
+        style: clonePdfEditorStyle(getPdfEditorActiveStyle())
+      });
+      templatesByType[pdfEditorSelectedType] = list;
+      pdfEditorTemplates = templatesByType;
+      pdfEditorSelectedTemplateId = id;
+      if (nameInput) nameInput.value = '';
+      renderPdfEditorTemplateControls();
+      schedulePdfEditorSync();
+      _toast('Plantilla guardada', 'success');
+    };
+
+    window.applyPdfEditorTemplate = () => {
+      if (!isAdminUser) return _toast("Acceso restringido: solo Administrador.", "error");
+      const id = String(pdfEditorSelectedTemplateId || document.getElementById('adm-pdf-template-select')?.value || '');
+      const list = getPdfEditorTemplatesForActiveType();
+      const template = list.find(item => item.id === id);
+      if (!template) return _toast('Selecciona una plantilla para aplicar', 'error');
+      setPdfEditorActiveStyle(clonePdfEditorStyle(template.style));
+      pdfEditorSelectedItemId = '';
+      refreshPdfEditorWorkspace();
+      schedulePdfEditorSync();
+      _toast('Plantilla aplicada', 'success');
+    };
+
+    window.deletePdfEditorTemplate = () => {
+      if (!isAdminUser) return _toast("Acceso restringido: solo Administrador.", "error");
+      const id = String(pdfEditorSelectedTemplateId || document.getElementById('adm-pdf-template-select')?.value || '');
+      if (!id) return _toast('Selecciona una plantilla para eliminar', 'error');
+      if (!confirm('¿Eliminar plantilla seleccionada?')) return;
+      const templatesByType = normalizePdfEditorTemplates(pdfEditorTemplates);
+      const list = Array.isArray(templatesByType[pdfEditorSelectedType]) ? templatesByType[pdfEditorSelectedType] : [];
+      templatesByType[pdfEditorSelectedType] = list.filter(item => item.id !== id);
+      pdfEditorTemplates = templatesByType;
+      pdfEditorSelectedTemplateId = '';
+      renderPdfEditorTemplateControls();
+      schedulePdfEditorSync();
+      _toast('Plantilla eliminada', 'success');
+    };
+
+    window.addPdfEditorResource = (type) => {
+      const safeType = ['bar', 'title', 'text'].includes(String(type || '').toLowerCase()) ? String(type).toLowerCase() : 'text';
+      const draft = clonePdfEditorStyle(getPdfEditorActiveStyle());
+      const id = `res_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      const accent = getPdfEditorAccent();
+      draft.resources.push(normalizePdfEditorResources([{
+        id,
+        type: safeType,
+        enabled: true,
+        page: 1,
+        x: 84,
+        y: 130,
+        w: safeType === 'bar' ? 280 : 300,
+        h: safeType === 'bar' ? 12 : 46,
+        text: safeType === 'title' ? 'TITULO' : 'Texto editable',
+        fontSize: safeType === 'title' ? 24 : 14,
+        bold: safeType !== 'text',
+        align: 'left',
+        color: '#111827',
+        bgColor: safeType === 'bar' ? accent : '#ffffff'
+      }])[0]);
+      setPdfEditorActiveStyle(draft);
+      pdfEditorSelectedItemId = `res:${id}`;
+      renderPdfEditorResourcesList(draft);
+      renderPdfEditorPreview(draft);
+      schedulePdfEditorSync();
+    };
+
+    window.selectPdfEditorResource = (encodedId) => {
+      const id = decodeURIComponent(String(encodedId || ''));
+      if (!id || findPdfEditorResourceIndex(id) < 0) return;
+      pdfEditorSelectedItemId = `res:${id}`;
+      renderPdfEditorResourcesList(getPdfEditorActiveStyle());
+      renderPdfEditorPreview(getPdfEditorActiveStyle());
+    };
+
+    window.removePdfEditorResource = (encodedId) => {
+      const id = decodeURIComponent(String(encodedId || ''));
+      if (!id) return;
+      const draft = clonePdfEditorStyle(getPdfEditorActiveStyle());
+      const idx = draft.resources.findIndex(item => item.id === id);
+      if (idx < 0) return;
+      draft.resources.splice(idx, 1);
+      setPdfEditorActiveStyle(draft);
+      if (pdfEditorSelectedItemId === `res:${id}`) pdfEditorSelectedItemId = '';
+      renderPdfEditorResourcesList(draft);
+      renderPdfEditorPreview(draft);
+      schedulePdfEditorSync();
+    };
+
+    window.updatePdfEditorResourceField = (encodedId, field, rawValue) => {
+      const id = decodeURIComponent(String(encodedId || ''));
+      if (!id) return;
+      const next = mutatePdfEditorResource(id, (resource) => {
+        if (field === 'enabled' || field === 'bold') {
+          resource[field] = !!rawValue;
+          return resource;
+        }
+        if (field === 'type') {
+          resource.type = ['bar', 'title', 'text'].includes(String(rawValue || '').toLowerCase()) ? String(rawValue).toLowerCase() : resource.type;
+          return resource;
+        }
+        if (field === 'align') {
+          resource.align = normalizePdfEditorAlign(rawValue, resource.align);
+          return resource;
+        }
+        if (field === 'color' || field === 'bgColor') {
+          resource[field] = normalizePdfEditorHex(rawValue, resource[field]);
+          return resource;
+        }
+        if (field === 'text') {
+          resource.text = String(rawValue || '').slice(0, 200);
+          return resource;
+        }
+        const limits = {
+          page: { min: 1, max: 8 },
+          x: { min: -220, max: 920 },
+          y: { min: -220, max: 1420 },
+          w: { min: 16, max: 940 },
+          h: { min: 10, max: 1240 },
+          fontSize: { min: 8, max: 72 }
+        };
+        if (limits[field]) {
+          resource[field] = clampPdfEditorNumber(rawValue, limits[field].min, limits[field].max, resource[field]);
+        }
+        return resource;
+      });
+      if (!next) return;
+      pdfEditorSelectedItemId = `res:${id}`;
+      renderPdfEditorResourcesList(next);
+      renderPdfEditorPreview(next);
+      schedulePdfEditorSync();
+    };
+
+    function initPdfEditor() {
+      pdfEditorProfiles = ensurePdfEditorProfiles({});
+      pdfEditorTemplates = normalizePdfEditorTemplates({});
+      pdfEditorSelectedType = 'quote';
+      pdfEditorSelectedItemId = '';
+      pdfEditorSelectedTemplateId = '';
+      bindPdfEditorControls();
+      refreshPdfEditorWorkspace();
+    }
 
     function _toast(msg, type){
       if (window.showToast) return window.showToast(msg, type);
@@ -923,6 +2333,7 @@
         { id: 'menu-concepts', view: 'v_concepts' },
         { id: 'menu-taxes', view: 'v_taxes' },
         { id: 'menu-docs', view: 'v_docs' },
+        { id: 'menu-pdf-editor', view: 'v_pdf_editor' },
         { id: 'menu-cp-settings', view: 'v_cp_settings' }
       ];
       links.forEach(item => {
@@ -983,6 +2394,8 @@
       if (btnLtrUpload) btnLtrUpload.disabled = !isAdminUser;
       const btnLtrDefault = document.getElementById('btn-save-letterhead-default');
       if (btnLtrDefault) btnLtrDefault.disabled = !isAdminUser;
+      const btnPdfSave = document.getElementById('btn-save-pdf-editor');
+      if (btnPdfSave) btnPdfSave.disabled = !isAdminUser;
     }
 
     window.setTenant = async (t) => {
@@ -1010,6 +2423,7 @@
       if(viewId === 'v_concepts') await loadConcepts();
       if(viewId === 'v_taxes') await loadTaxesConfig();
       if(viewId === 'v_docs') await loadDocsConfig();
+      if(viewId === 'v_pdf_editor') await loadPdfEditorConfig();
       if(viewId === 'v_cp_settings' && currentTenant === 'cp') {
         await loadPremontajePct();
         await loadHoraExtraCfg();
@@ -1243,6 +2657,7 @@
       // default PM
       activePocketBase = pmPocketBase;
       currentTenant = 'pm';
+      initPdfEditor();
       paintTenantUI();
       await loadPremontajePct();
       await loadHoraExtraCfg();
