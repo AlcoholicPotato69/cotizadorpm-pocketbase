@@ -409,3 +409,36 @@ Mejoras del payload ICS:
 - El PDF publico de Casa de Piedra ahora intenta usar `configuracion.pdf_letterhead_path` y fallback a `assets/img/cp-letterhead-default.png`.
 - Se mantiene el flujo funcional: mismos datos, mismos endpoints y mismo guardado de documentos.
 
+
+## 16. Separacion Contratos vs Recibos + Preview de Distribucion (2026-03-15)
+
+- Se separo navegacion por modulo sin romper logica existente:
+  - `client/cotizador/contracts.html` -> modo `contracts` (solo flujo de contratos en UI).
+  - `client/cotizador/receipts.html` -> modo `receipts` (solo flujo de recibos en UI).
+  - `client/cotizadorcp/contracts.html` -> modo `contracts`.
+  - `client/cotizadorcp/receipts.html` -> modo `receipts`.
+- Se agrego `data-page-mode` en `body` para reutilizar el mismo motor JS y evitar duplicar bugs:
+  - `contracts`: fuerza pestaña/flujo de contrato.
+  - `receipts`: fuerza pestaña/flujo de recibo.
+- Archivos JS ajustados para respetar el modo de pagina:
+  - `client/cotizador/contracts.js`
+  - `client/cotizadorcp/contracts.js`
+- Resultado funcional:
+  - En `contracts.html` ya no se trabaja el recibo desde la UI (se gestiona en `receipts.html`).
+  - En `receipts.html` se mantiene snapshot + PDF + historial + recibo externo + editor drag&drop de recursos.
+  - El generador de contratos conserva su flujo de plantilla juridica y switch de membrete.
+- Preview visual de distribucion sobre membrete oficial (para validacion previa):
+  - `client/public/assets/img/layout-preview-pm.png`
+  - `client/public/assets/img/layout-preview-cp.png`
+- Nota: los previews son guias visuales de layout (area util y bloques), no reemplazan los generadores ni los templates finales.
+
+## 17. Pestaña global de Recibos + modulo en Index por tenant (2026-03-15)
+
+- Se agrego el acceso `Recibos` en la barra de navegacion de todos los HTML operativos de:
+  - `client/cotizador/*.html`
+  - `client/cotizadorcp/*.html`
+- La nueva ruta usada en ambos tenants es:
+  - `receipts.html`
+- En `client/index.html` se agrego el modulo tarjeta `Recibos` dentro de `buildModules(prefix, colorKey)`.
+  - Esto aplica cuando el usuario tiene acceso a un solo tenant (PM o CP), mostrando el modulo junto al resto de herramientas.
+- Se agrego fallback de notificaciones para abrir `cotizador/receipts.html` cuando el tipo de notificacion contiene `recibo` o `receipt`.

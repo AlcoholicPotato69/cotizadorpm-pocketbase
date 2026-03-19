@@ -3,6 +3,9 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <title>Configuración Finanzas - Admin</title>
 
   <!-- Local assets -->
@@ -187,7 +190,7 @@
           <i class="fa-solid fa-file-lines"></i> Documentos
         </button>
         <button type="button" id="menu-cp-settings" onclick="switchView('v_cp_settings'); return false;" class="tool-tab hidden">
-          <i class="fa-solid fa-sliders"></i> Config CP
+          <i class="fa-solid fa-cogs"></i> Config CP
         </button>
       </div>
 
@@ -475,6 +478,13 @@
             <div>
               <label class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2">Plantillas cargadas</label>
               <div id="doc-template-list" class="space-y-2 max-h-64 overflow-y-auto custom-scroll"></div>
+            </div>
+
+            <div class="border border-gray-200 rounded-xl p-3 bg-gray-50">
+              <div class="text-[10px] font-black uppercase tracking-wider text-gray-400 mb-2">Vista rápida plantilla</div>
+              <div id="doc-template-preview-empty" class="rounded border border-dashed border-gray-300 bg-white px-4 py-8 text-center text-xs font-semibold text-gray-500">
+                Previsualización embebida desactivada por estabilidad. Usa el selector y guarda la plantilla predeterminada.
+              </div>
             </div>
           </div>
         </div>
@@ -1402,6 +1412,14 @@
       return draft;
     }
 
+    function applyPdfEditorPreviewNodeGeometry(node, resource) {
+      if (!(node instanceof HTMLElement) || !resource) return;
+      node.style.left = `${resource.x}px`;
+      node.style.top = `${resource.y}px`;
+      node.style.width = `${resource.w}px`;
+      node.style.height = `${resource.h}px`;
+    }
+
     function getPdfEditorBaseBlock(baseId) {
       return PDF_EDITOR_BASE_BLOCKS.find(block => block.id === baseId) || null;
     }
@@ -1475,11 +1493,12 @@
             startX: event.clientX,
             startY: event.clientY,
             origin: { x: target.x, y: target.y, w: target.w, h: target.h },
-            scale
+            current: { x: target.x, y: target.y, w: target.w, h: target.h },
+            scale,
+            node
           };
           pdfEditorSelectedItemId = `res:${resourceId}`;
           renderPdfEditorResourcesList(draft);
-          renderPdfEditorPreview(draft);
           event.preventDefault();
         });
       }
@@ -1490,25 +1509,26 @@
         const scale = state.scale || 1;
         const deltaX = (event.clientX - state.startX) / scale;
         const deltaY = (event.clientY - state.startY) / scale;
-        const next = mutatePdfEditorResource(state.id, (resource) => {
-          if (state.mode === 'resize') {
-            resource.w = clampPdfEditorNumber(state.origin.w + deltaX, 16, 940, resource.w);
-            resource.h = clampPdfEditorNumber(state.origin.h + deltaY, 10, 1240, resource.h);
-          } else {
-            resource.x = clampPdfEditorNumber(state.origin.x + deltaX, -220, 920, resource.x);
-            resource.y = clampPdfEditorNumber(state.origin.y + deltaY, -220, 1420, resource.y);
-          }
-          return resource;
-        });
-        if (!next) return;
-        renderPdfEditorPreview(next);
+        const next = { ...state.origin };
+        if (state.mode === 'resize') {
+          next.w = clampPdfEditorNumber(state.origin.w + deltaX, 16, 940, state.origin.w);
+          next.h = clampPdfEditorNumber(state.origin.h + deltaY, 10, 1240, state.origin.h);
+        } else {
+          next.x = clampPdfEditorNumber(state.origin.x + deltaX, -220, 920, state.origin.x);
+          next.y = clampPdfEditorNumber(state.origin.y + deltaY, -220, 1420, state.origin.y);
+        }
+        state.current = next;
+        applyPdfEditorPreviewNodeGeometry(state.node, next);
       });
 
       document.addEventListener('mouseup', () => {
         if (!pdfEditorDragState) return;
+        const state = pdfEditorDragState;
         pdfEditorDragState = null;
-        renderPdfEditorResourcesList(getPdfEditorActiveStyle());
-        renderPdfEditorPreview(getPdfEditorActiveStyle());
+        const next = mutatePdfEditorResource(state.id, (resource) => ({ ...resource, ...(state.current || state.origin) }));
+        const finalStyle = next || getPdfEditorActiveStyle();
+        renderPdfEditorResourcesList(finalStyle);
+        renderPdfEditorPreview(finalStyle);
         schedulePdfEditorSync();
       });
     }
@@ -1834,6 +1854,18 @@
       return data.signedUrl;
     }
 
+    function resetContractTemplatePreview(message){
+      const empty = document.getElementById('doc-template-preview-empty');
+      if (empty) {
+        empty.textContent = message || 'Previsualización embebida desactivada por estabilidad.';
+        empty.classList.remove('hidden');
+      }
+    }
+
+    window.previewSelectedContractTemplate = async () => {
+      resetContractTemplatePreview();
+    };
+
     async function loadDocsConfig(){
       const tplList = document.getElementById('doc-template-list');
       const ltrList = document.getElementById('doc-letterhead-list');
@@ -1869,6 +1901,7 @@
       } catch (_) {}
 
       await Promise.all([loadTemplateFiles(), loadLetterheadFiles()]);
+      await previewSelectedContractTemplate();
       await previewSelectedLetterhead();
     }
 
@@ -1881,7 +1914,10 @@
       const bucket = getTenantBucket();
       const { data, error } = await window.globalPocketBase.storage.from(bucket).list(DOC_TEMPLATE_PATH);
       if (error) {
-        tplList.innerHTML = `<div class="text-xs text-red-500 p-2">Error: ${error.message || error}</div>`;
+        const err = document.createElement('div');
+        err.className = 'text-xs text-red-500 p-2';
+        err.textContent = `Error: ${error.message || error}`;
+        tplList.replaceChildren(err);
         return;
       }
       const files = (Array.isArray(data) ? data : [])
@@ -1894,14 +1930,26 @@
       files.forEach(file => {
         const row = document.createElement('div');
         row.className = 'flex items-center justify-between bg-gray-50 border border-gray-100 rounded-lg p-2';
-        row.innerHTML = `<span class="text-xs font-bold text-gray-700 truncate pr-2">${file.name}</span><button type="button" onclick="deleteContractTemplate('${encodeURIComponent(file.path)}')" class="text-red-500 hover:text-red-700 text-xs font-bold px-2">Eliminar</button>`;
+        const name = document.createElement('span');
+        name.className = 'text-xs font-bold text-gray-700 truncate pr-2';
+        name.textContent = file.name;
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'text-red-500 hover:text-red-700 text-xs font-bold px-2';
+        removeBtn.textContent = 'Eliminar';
+        removeBtn.addEventListener('click', () => deleteContractTemplate(encodeURIComponent(file.path)));
+        row.appendChild(name);
+        row.appendChild(removeBtn);
         tplList.appendChild(row);
         const opt = document.createElement('option');
         opt.value = file.name;
         opt.innerText = file.name;
         tplSel.appendChild(opt);
       });
-      if (docsDefaultTemplateFile) tplSel.value = docsDefaultTemplateFile;
+      const hasDefault = !!files.find(file => file.name === docsDefaultTemplateFile);
+      tplSel.value = hasDefault ? docsDefaultTemplateFile : '';
+      if (tplSel.value) await previewSelectedContractTemplate();
+      else resetContractTemplatePreview();
     }
 
     async function loadLetterheadFiles(){
@@ -1913,7 +1961,10 @@
       const bucket = getTenantBucket();
       const { data, error } = await window.globalPocketBase.storage.from(bucket).list(DOC_LETTERHEAD_PATH);
       if (error) {
-        ltrList.innerHTML = `<div class="text-xs text-red-500 p-2">Error: ${error.message || error}</div>`;
+        const err = document.createElement('div');
+        err.className = 'text-xs text-red-500 p-2';
+        err.textContent = `Error: ${error.message || error}`;
+        ltrList.replaceChildren(err);
         return;
       }
       const files = (Array.isArray(data) ? data : [])
@@ -1926,7 +1977,16 @@
       files.forEach(file => {
         const row = document.createElement('div');
         row.className = 'flex items-center justify-between bg-gray-50 border border-gray-100 rounded-lg p-2';
-        row.innerHTML = `<span class="text-xs font-bold text-gray-700 truncate pr-2">${file.name}</span><button type="button" onclick="deleteLetterheadFile('${encodeURIComponent(file.path)}')" class="text-red-500 hover:text-red-700 text-xs font-bold px-2">Eliminar</button>`;
+        const name = document.createElement('span');
+        name.className = 'text-xs font-bold text-gray-700 truncate pr-2';
+        name.textContent = file.name;
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'text-red-500 hover:text-red-700 text-xs font-bold px-2';
+        removeBtn.textContent = 'Eliminar';
+        removeBtn.addEventListener('click', () => deleteLetterheadFile(encodeURIComponent(file.path)));
+        row.appendChild(name);
+        row.appendChild(removeBtn);
         ltrList.appendChild(row);
         const opt = document.createElement('option');
         opt.value = file.name;
@@ -2009,6 +2069,7 @@
       const { error } = await getDB().from('configuracion').upsert(payload, { onConflict: 'clave' });
       if (error) return _toast("Error al guardar: " + error.message, "error");
       docsDefaultTemplateFile = fileName;
+      await previewSelectedContractTemplate();
       _toast("Plantilla predeterminada guardada", "success");
     };
 
@@ -2199,22 +2260,217 @@
       }
     };
 
+    function normalizeAdminRole(roleValue){
+      const safe = String(roleValue || '').trim().toLowerCase();
+      if (!safe) return '';
+      if (safe === 'administrador' || safe === 'superadmin' || safe === 'super_admin') return 'admin';
+      return safe;
+    }
+
+    function readUsers1StoredAuthState(key){
+      try {
+        const raw = localStorage.getItem(key);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : null;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function collectUsers1RoleCandidates(...groups){
+      const out = [];
+      const seen = new Set();
+      groups.forEach((group) => {
+        if (!Array.isArray(group)) return;
+        group.forEach((candidate) => {
+          const role = normalizeAdminRole(candidate);
+          if (!role) return;
+          if (seen.has(role)) return;
+          seen.add(role);
+          out.push(role);
+        });
+      });
+      return out;
+    }
+
+    function getUsersAdminClient(){
+      const existingClient = window.globalPocketBase || window.pbClient || window.tenantPocketBase;
+      if (existingClient) return existingClient;
+      if (window.PB_CLIENT && window.HUB_CONFIG) {
+        const createdClient = window.PB_CLIENT.createClient(window.HUB_CONFIG.pocketbaseUrl, window.HUB_CONFIG.pocketbaseAnonKey);
+        window.globalPocketBase = window.globalPocketBase || createdClient;
+        window.pbClient = window.pbClient || window.globalPocketBase;
+        return window.globalPocketBase;
+      }
+      return null;
+    }
+
     async function requireAdmin(){
-      const sb = window.pbClient || window.globalPocketBase || window.tenantPocketBase;
+      const compatAuth = readUsers1StoredAuthState('pb_compat_auth_v1');
+      const nativeAuth = readUsers1StoredAuthState('pb_native_auth_v1');
+      const sb = getUsersAdminClient();
       if (!sb) return false;
 
-      const { data: { session } } = await sb.auth.getSession();
-      if (!session) return false;
+      let session = null;
+      try {
+        const sessionResp = await sb.auth.getSession();
+        session = sessionResp?.data?.session || sessionResp?.session || null;
+      } catch (error) {
+        console.warn('No se pudo leer la sesion actual en users1:', error);
+      }
 
-      let role = localStorage.getItem('hub_user_cache_role');
-      if (role === 'admin') return true;
+      let sessionUser = session?.user || null;
+      if (!sessionUser) {
+        try {
+          const userResp = await sb.auth.getUser();
+          sessionUser = userResp?.data?.user || userResp?.user || null;
+        } catch (error) {
+          console.warn('No se pudo leer el usuario autenticado en users1:', error);
+        }
+      }
 
-      const { data, error } = await sb.from('profiles').select('role').eq('id', session.user.id).single();
-      if (!error && data?.role === 'admin') {
+      const identitySources = [
+        sessionUser,
+        compatAuth?.user,
+        compatAuth?.record,
+        nativeAuth?.user,
+        nativeAuth?.record
+      ].filter(Boolean);
+
+      const userRoleCandidates = collectUsers1RoleCandidates(
+        [
+          ...identitySources.map(item => item?.role),
+          ...identitySources.map(item => item?.record?.role),
+          ...identitySources.map(item => item?.profile?.role),
+          ...identitySources.map(item => item?.app_metadata?.role),
+          ...identitySources.map(item => item?.metadata?.role)
+        ]
+      );
+
+      if (userRoleCandidates.includes('admin')) {
         localStorage.setItem('hub_user_cache_role', 'admin');
         return true;
       }
+
+      try {
+        const idCandidates = [...new Set([
+          ...identitySources.map(item => String(item?.id || item?.record?.id || '').trim()),
+          String(compatAuth?.user?.id || '').trim(),
+          String(compatAuth?.record?.id || '').trim(),
+          String(nativeAuth?.user?.id || '').trim(),
+          String(nativeAuth?.record?.id || '').trim()
+        ].filter(Boolean))];
+        const emailCandidates = [...new Set([
+          ...identitySources.map(item => String(item?.email || item?.record?.email || '').trim().toLowerCase()),
+          String(compatAuth?.user?.email || '').trim().toLowerCase(),
+          String(compatAuth?.record?.email || '').trim().toLowerCase(),
+          String(nativeAuth?.user?.email || '').trim().toLowerCase(),
+          String(nativeAuth?.record?.email || '').trim().toLowerCase()
+        ].filter(Boolean))];
+        const usernameCandidates = [...new Set([
+          ...identitySources.map(item => String(item?.username || item?.login_username || item?.record?.username || item?.record?.login_username || '').trim()),
+          String(compatAuth?.user?.username || '').trim(),
+          String(compatAuth?.user?.login_username || '').trim(),
+          String(compatAuth?.record?.username || '').trim(),
+          String(compatAuth?.record?.login_username || '').trim(),
+          String(nativeAuth?.user?.username || '').trim(),
+          String(nativeAuth?.user?.login_username || '').trim(),
+          String(nativeAuth?.record?.username || '').trim(),
+          String(nativeAuth?.record?.login_username || '').trim()
+        ].filter(Boolean))];
+
+        const lookupByField = async (table, field, values) => {
+          for (const value of values) {
+            try {
+              const { data, error } = await sb
+                .from(table)
+                .select('id, role, username, email, allowed_tenants, tenant_default')
+                .eq(field, value)
+                .maybeSingle();
+              if (error) continue;
+              if (data) return data;
+            } catch (_) {}
+          }
+          return null;
+        };
+
+        let appUser = await lookupByField('app_users', 'id', idCandidates);
+        if (!appUser) appUser = await lookupByField('app_users', 'email', emailCandidates);
+        if (!appUser) appUser = await lookupByField('app_users', 'username', usernameCandidates);
+        // Compat extra: algunos flujos guardan app_users en "profiles".
+        let profile = await lookupByField('profiles', 'id', idCandidates);
+        if (!profile) profile = await lookupByField('profiles', 'email', emailCandidates);
+        if (!profile) profile = await lookupByField('profiles', 'username', usernameCandidates);
+
+        const resolvedRole = normalizeAdminRole(
+          appUser?.role
+          || profile?.role
+          || sessionUser?.role
+          || sessionUser?.record?.role
+        );
+        if (resolvedRole) {
+          localStorage.setItem('hub_user_cache_role', resolvedRole);
+        }
+        return resolvedRole === 'admin';
+      } catch (error) {
+        console.warn('No se pudo validar el perfil admin en users1:', error);
+      }
       return false;
+    }
+
+    function showAdminAccessDenied(){
+      const referrer = String(document.referrer || '').trim();
+      const canGoBack = window.history.length > 1;
+      let seconds = 4;
+      const prevOverlay = document.getElementById('users1-admin-denied-overlay');
+      if (prevOverlay) prevOverlay.remove();
+      document.body.classList.add('overflow-hidden');
+
+      const overlay = document.createElement('div');
+      overlay.id = 'users1-admin-denied-overlay';
+      overlay.setAttribute('role', 'alertdialog');
+      overlay.setAttribute('aria-modal', 'true');
+      overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(2,6,23,.92);backdrop-filter:blur(10px);';
+      overlay.innerHTML = `
+        <section style="width:min(100%, 720px);border-radius:28px;border:1px solid rgba(248,113,113,.28);background:linear-gradient(180deg, rgba(15,23,42,.98), rgba(15,23,42,.94));color:#e2e8f0;box-shadow:0 28px 90px rgba(15,23,42,.55);overflow:hidden;">
+          <div style="padding:36px 34px 30px;text-align:center;">
+            <div style="margin:0 auto 20px;display:flex;height:68px;width:68px;align-items:center;justify-content:center;border-radius:999px;background:rgba(239,68,68,.14);color:#fca5a5;font-size:28px;box-shadow:inset 0 0 0 1px rgba(248,113,113,.18);">
+              <i class="fa-solid fa-shield-halved"></i>
+            </div>
+            <p style="margin:0 0 12px;font-size:11px;font-weight:900;letter-spacing:.3em;text-transform:uppercase;color:#fca5a5;">Acceso restringido</p>
+            <h1 style="margin:0 0 12px;font-size:28px;line-height:1.15;font-weight:900;color:#fff;">Solo un usuario con rango admin puede entrar aquí</h1>
+            <p style="margin:0 auto 22px;max-width:520px;font-size:14px;line-height:1.7;color:#cbd5e1;">Tu sesión no pudo validarse como <span style="display:inline-block;padding:2px 8px;border-radius:999px;background:rgba(30,41,59,.92);border:1px solid rgba(148,163,184,.28);font-weight:800;color:#fecaca;">admin</span>, por lo que esta pantalla queda protegida para evitar cambios administrativos no autorizados.</p>
+            <div style="display:flex;justify-content:center;">
+              <p id="admin-denied-back-msg" style="margin:0;display:inline-flex;align-items:center;gap:10px;border-radius:999px;border:1px solid rgba(148,163,184,.2);background:rgba(30,41,59,.88);padding:11px 18px;font-size:12px;font-weight:800;color:#e2e8f0;">
+                <i class="fa-solid fa-rotate-left" style="color:#93c5fd;"></i>
+                <span id="admin-denied-back-count">Volviendo en ${seconds}s...</span>
+              </p>
+            </div>
+          </div>
+        </section>`;
+      document.body.appendChild(overlay);
+      const counter = document.getElementById('admin-denied-back-count');
+      const tick = window.setInterval(() => {
+        seconds -= 1;
+        if (seconds <= 0) {
+          window.clearInterval(tick);
+          return;
+        }
+        if (counter) counter.textContent = `Volviendo en ${seconds}s...`;
+      }, 1000);
+      window.setTimeout(() => {
+        window.clearInterval(tick);
+        if (canGoBack) {
+          window.history.back();
+          return;
+        }
+        if (referrer) {
+          window.location.href = referrer;
+          return;
+        }
+        window.location.href = "../index.html";
+      }, 4000);
     }
 
     function paintViewMenu(){
@@ -2336,40 +2592,64 @@
       list.innerHTML = '';
       if(data && data.length > 0) {
         data.forEach(c => {
-          const statusDot = c.activo
-            ? '<span class="w-2.5 h-2.5 rounded-full bg-green-500 shadow-sm block" title="Activo"></span>'
-            : '<span class="w-2.5 h-2.5 rounded-full bg-gray-300 block" title="Inactivo"></span>';
-
           const priceNum = (c.precio_sugerido == null) ? 0 : Number(c.precio_sugerido);
-          const priceDisplay = priceNum > 0
-            ? `<span class="font-bold text-gray-800">$${priceNum.toLocaleString()}</span>`
-            : '<span class="text-gray-400 text-xs italic font-bold">Precio Variable</span>';
+          const row = document.createElement('li');
+          row.className = 'p-4 flex justify-between items-center group hover:bg-gray-50 transition border-b border-gray-50 last:border-0 rounded-xl mx-2 my-1';
 
-          const actions = isAdminUser ? `
-            <div class="flex gap-2 opacity-0 group-hover:opacity-100 transition duration-200">
-              <button onclick='editConcept(${JSON.stringify(c)})'
-                class="bg-white border border-gray-200 text-blue-600 w-8 h-8 rounded-lg flex items-center justify-center hover:bg-blue-50 shadow-sm transition">
-                <i class="fa-solid fa-pen"></i>
-              </button>
-              <button onclick="deleteConcept(${c.id})"
-                class="bg-white border border-gray-200 text-red-500 w-8 h-8 rounded-lg flex items-center justify-center hover:bg-red-50 shadow-sm transition">
-                <i class="fa-solid fa-trash"></i>
-              </button>
-            </div>
-          ` : '';
+          const left = document.createElement('div');
+          left.className = 'flex items-center gap-4';
+          const statusDot = document.createElement('span');
+          statusDot.className = c.activo
+            ? 'w-2.5 h-2.5 rounded-full bg-green-500 shadow-sm block'
+            : 'w-2.5 h-2.5 rounded-full bg-gray-300 block';
+          statusDot.title = c.activo ? 'Activo' : 'Inactivo';
+          left.appendChild(statusDot);
 
-          list.innerHTML += `
-            <li class="p-4 flex justify-between items-center group hover:bg-gray-50 transition border-b border-gray-50 last:border-0 rounded-xl mx-2 my-1">
-              <div class="flex items-center gap-4">
-                ${statusDot}
-                <div>
-                  <p class="font-bold text-gray-700 text-sm">${c.nombre}</p>
-                  <p class="text-xs text-gray-500 font-mono mt-0.5">${priceDisplay}</p>
-                </div>
-              </div>
-              ${actions}
-            </li>
-          `;
+          const info = document.createElement('div');
+          const nameEl = document.createElement('p');
+          nameEl.className = 'font-bold text-gray-700 text-sm';
+          nameEl.textContent = String(c?.nombre || '');
+          info.appendChild(nameEl);
+
+          const priceEl = document.createElement('p');
+          priceEl.className = 'text-xs text-gray-500 font-mono mt-0.5';
+          if (priceNum > 0) {
+            const strong = document.createElement('span');
+            strong.className = 'font-bold text-gray-800';
+            strong.textContent = `$${priceNum.toLocaleString()}`;
+            priceEl.appendChild(strong);
+          } else {
+            const soft = document.createElement('span');
+            soft.className = 'text-gray-400 text-xs italic font-bold';
+            soft.textContent = 'Precio Variable';
+            priceEl.appendChild(soft);
+          }
+          info.appendChild(priceEl);
+          left.appendChild(info);
+          row.appendChild(left);
+
+          if (isAdminUser) {
+            const actions = document.createElement('div');
+            actions.className = 'flex gap-2 opacity-0 group-hover:opacity-100 transition duration-200';
+
+            const editBtn = document.createElement('button');
+            editBtn.type = 'button';
+            editBtn.className = 'bg-white border border-gray-200 text-blue-600 w-8 h-8 rounded-lg flex items-center justify-center hover:bg-blue-50 shadow-sm transition';
+            editBtn.innerHTML = '<i class="fa-solid fa-pen"></i>';
+            editBtn.addEventListener('click', () => editConcept(c));
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.type = 'button';
+            deleteBtn.className = 'bg-white border border-gray-200 text-red-500 w-8 h-8 rounded-lg flex items-center justify-center hover:bg-red-50 shadow-sm transition';
+            deleteBtn.innerHTML = '<i class="fa-solid fa-trash"></i>';
+            deleteBtn.addEventListener('click', () => deleteConcept(c.id));
+
+            actions.appendChild(editBtn);
+            actions.appendChild(deleteBtn);
+            row.appendChild(actions);
+          }
+
+          list.appendChild(row);
         });
       } else {
         list.innerHTML = '<li class="p-8 text-center text-gray-400 italic">No hay conceptos registrados.</li>';
@@ -2450,23 +2730,39 @@
         data.forEach(t => {
           const statusClass = t.activo ? 'bg-green-100 text-green-700 border-green-200' : 'bg-red-50 text-red-600 border-red-100';
           const statusText = t.activo ? 'ACTIVO' : 'INACTIVO';
-          const actions = isAdminUser ? `
-            <button onclick='editTax(${JSON.stringify(t)})'
-              class="text-blue-500 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 p-2 rounded-lg transition shadow-sm">
-              <i class="fa-solid fa-pen"></i>
-            </button>
-          ` : '';
+          const tr = document.createElement('tr');
+          tr.className = 'hover:bg-gray-50 border-b border-gray-50 last:border-0 group transition';
 
-          tbody.innerHTML += `
-            <tr class="hover:bg-gray-50 border-b border-gray-50 last:border-0 group transition">
-              <td class="p-5 font-bold text-gray-700 pl-8">${t.nombre}</td>
-              <td class="p-5 font-mono font-bold text-brand-dark">${t.porcentaje}%</td>
-              <td class="p-5 text-center">
-                <span class="${statusClass} px-3 py-1 rounded-full text-[10px] font-black border">${statusText}</span>
-              </td>
-              <td class="p-5 text-center pr-8">${actions}</td>
-            </tr>
-          `;
+          const tdName = document.createElement('td');
+          tdName.className = 'p-5 font-bold text-gray-700 pl-8';
+          tdName.textContent = String(t?.nombre || '');
+          tr.appendChild(tdName);
+
+          const tdPct = document.createElement('td');
+          tdPct.className = 'p-5 font-mono font-bold text-brand-dark';
+          tdPct.textContent = `${t.porcentaje}%`;
+          tr.appendChild(tdPct);
+
+          const tdStatus = document.createElement('td');
+          tdStatus.className = 'p-5 text-center';
+          const status = document.createElement('span');
+          status.className = `${statusClass} px-3 py-1 rounded-full text-[10px] font-black border`;
+          status.textContent = statusText;
+          tdStatus.appendChild(status);
+          tr.appendChild(tdStatus);
+
+          const tdActions = document.createElement('td');
+          tdActions.className = 'p-5 text-center pr-8';
+          if (isAdminUser) {
+            const editBtn = document.createElement('button');
+            editBtn.type = 'button';
+            editBtn.className = 'text-blue-500 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 p-2 rounded-lg transition shadow-sm';
+            editBtn.innerHTML = '<i class="fa-solid fa-pen"></i>';
+            editBtn.addEventListener('click', () => editTax(t));
+            tdActions.appendChild(editBtn);
+          }
+          tr.appendChild(tdActions);
+          tbody.appendChild(tr);
         });
       } else {
         tbody.innerHTML = '<tr><td colspan="4" class="p-8 text-center text-gray-400 italic">No hay impuestos registrados.</td></tr>';
@@ -2516,23 +2812,26 @@
     };
 
     document.addEventListener('DOMContentLoaded', async () => {
+      if (window.HUB_CONFIG_READY && typeof window.HUB_CONFIG_READY.then === 'function') {
+        try {
+          await window.HUB_CONFIG_READY;
+        } catch (_) {}
+      }
+
+      if (!window.globalPocketBase && window.PB_CLIENT && window.HUB_CONFIG) {
+        window.globalPocketBase = window.PB_CLIENT.createClient(window.HUB_CONFIG.pocketbaseUrl, window.HUB_CONFIG.pocketbaseAnonKey);
+      }
+      window.pbClient = window.pbClient || window.globalPocketBase;
+
       // 1) Admin guard
       isAdminUser = await requireAdmin();
       if(!isAdminUser){
-        _toast("Acceso restringido: solo Administrador.", "error");
-        setTimeout(() => { window.location.href = "../index.html"; }, 700);
+        showAdminAccessDenied();
         return;
       }
 
       // 2) Tenants (mismo JWT, diferente schema)
-      if (!window.globalPocketBase) {
-        // layout.js debe crear window.globalPocketBase; si no, fallback:
-        if (window.PB_CLIENT && window.HUB_CONFIG) {
-          window.globalPocketBase = window.PB_CLIENT.createClient(window.HUB_CONFIG.pocketbaseUrl, window.HUB_CONFIG.pocketbaseAnonKey);
-        }
-      }
-
-      const root = window.globalPocketBase || window.pbClient;
+      const root = window.globalPocketBase || window.pbClient || window.tenantPocketBase;
       if (!root) {
         _toast("No se pudo inicializar PocketBase (globalPocketBase). Revisa hub-config.js + layout.js.", "error");
         return;

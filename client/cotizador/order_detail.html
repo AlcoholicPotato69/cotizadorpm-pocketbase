@@ -38,7 +38,11 @@
     </style>
 </head>
 <body class="text-gray-800 flex flex-col min-h-screen">
-    <script>const TENANT_SCHEMA='finanzas'; window.__PM_ORDERS_MODE='detail';</script>
+    <script>
+        const TENANT_SCHEMA='finanzas';
+        const __pmOrderParams = new URLSearchParams(window.location.search || '');
+        window.__PM_ORDERS_MODE = __pmOrderParams.get('previewOnly') === '1' ? 'preview' : 'detail';
+    </script>
     <script src="../js/layout.js"></script>
 
     <main class="flex-grow container mx-auto px-4 py-8 max-w-[1440px] animate-enter">
@@ -336,6 +340,9 @@
                                 <button id="pdf-style-add-bar" type="button" class="bg-gray-700 hover:bg-gray-600 text-white px-2 py-0.5 rounded text-[10px] font-bold">+ Barra</button>
                                 <button id="pdf-style-add-title" type="button" class="bg-gray-700 hover:bg-gray-600 text-white px-2 py-0.5 rounded text-[10px] font-bold">+ Título</button>
                                 <button id="pdf-style-add-text" type="button" class="bg-gray-700 hover:bg-gray-600 text-white px-2 py-0.5 rounded text-[10px] font-bold">+ Texto</button>
+                                <button id="pdf-style-add-logo" type="button" class="hidden"></button>
+                                <button id="pdf-style-add-sign-line" type="button" class="hidden"></button>
+                                <button id="pdf-style-add-sign-block" type="button" class="hidden"></button>
                             </div>
                         </div>
                         <p class="text-[9px] text-gray-400">Arrastra los recursos sobre el PDF. Para redimensionar usa esquina inferior derecha o mantén Shift.</p>
@@ -483,9 +490,46 @@
             </div>
         </div>
     </div>
+    <div id="pdf-resource-modal" class="fixed inset-0 z-[320] hidden bg-gray-900/80 backdrop-blur-sm items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col">
+            <div class="bg-gray-50 border-b border-gray-100 p-4 flex justify-between items-center">
+                <h2 class="text-lg font-black text-brand-dark uppercase tracking-tighter">Añadir Recurso</h2>
+                <button type="button" onclick="window.closeModal('pdf-resource-modal')" class="text-gray-400 hover:text-brand-red transition"><i class="fa-solid fa-xmark text-xl"></i></button>
+            </div>
+            <div class="p-6">
+                <div class="grid grid-cols-2 gap-4">
+                    <button type="button" onclick="document.getElementById('pdf-style-add-bar').click(); window.closeModal('pdf-resource-modal')" class="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-xl border border-gray-200 hover:border-brand-red hover:bg-red-50 hover:text-brand-red transition text-gray-700">
+                        <i class="fa-solid fa-minus text-2xl mb-2"></i>
+                        <span class="text-xs font-bold uppercase tracking-wider">Barra</span>
+                    </button>
+                    <button type="button" onclick="document.getElementById('pdf-style-add-logo').click(); window.closeModal('pdf-resource-modal')" class="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-xl border border-gray-200 hover:border-brand-red hover:bg-red-50 hover:text-brand-red transition text-gray-700">
+                        <i class="fa-solid fa-image text-2xl mb-2"></i>
+                        <span class="text-xs font-bold uppercase tracking-wider">Logo</span>
+                    </button>
+                    <button type="button" onclick="document.getElementById('pdf-style-add-title').click(); window.closeModal('pdf-resource-modal')" class="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-xl border border-gray-200 hover:border-brand-red hover:bg-red-50 hover:text-brand-red transition text-gray-700">
+                        <i class="fa-solid fa-heading text-2xl mb-2"></i>
+                        <span class="text-xs font-bold uppercase tracking-wider">Título</span>
+                    </button>
+                    <button type="button" onclick="document.getElementById('pdf-style-add-text').click(); window.closeModal('pdf-resource-modal')" class="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-xl border border-gray-200 hover:border-brand-red hover:bg-red-50 hover:text-brand-red transition text-gray-700">
+                        <i class="fa-solid fa-font text-2xl mb-2"></i>
+                        <span class="text-xs font-bold uppercase tracking-wider">Texto</span>
+                    </button>
+                    <button type="button" onclick="document.getElementById('pdf-style-add-sign-line').click(); window.closeModal('pdf-resource-modal')" class="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-xl border border-gray-200 hover:border-brand-red hover:bg-red-50 hover:text-brand-red transition text-gray-700">
+                        <i class="fa-solid fa-signature text-2xl mb-2"></i>
+                        <span class="text-xs font-bold uppercase tracking-wider">Línea Firma</span>
+                    </button>
+                    <button type="button" onclick="document.getElementById('pdf-style-add-sign-block').click(); window.closeModal('pdf-resource-modal')" class="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-xl border border-gray-200 hover:border-brand-red hover:bg-red-50 hover:text-brand-red transition text-gray-700">
+                        <i class="fa-solid fa-pen-nib text-2xl mb-2"></i>
+                        <span class="text-xs font-bold uppercase tracking-wider">Bloque Firma</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <div id="toast-container" class="fixed top-20 right-4 z-[310] flex flex-col items-end pointer-events-none"></div>
-    <script src="orders.js?v=20260302-pdf-fix3"></script>
+    <script src="../js/pdf-margin-guides.js"></script>
+    <script src="orders.js?v=20260318-pdf-editor7"></script>
 </body>
 </html>
 

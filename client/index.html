@@ -467,6 +467,7 @@
                                     { name: 'Órdenes',   description: 'Gestión de órdenes y seguimiento.',   icon: 'fa-clipboard-list', url_path: `${prefix}/orders.html`,   color: colorKey },
                                     { name: 'Agenda',   description: 'Calendario y agenda de entregas.',    icon: 'fa-calendar-days', url_path: `${prefix}/agenda.html`,   color: colorKey },
                                     { name: 'Contratos',description: 'Plantillas y generación de contratos.',icon:'fa-file-signature', url_path: `${prefix}/contracts.html`, color: colorKey },
+                                    { name: 'Recibos',  description: 'Recibos, constancias y control de pagos.', icon: 'fa-receipt', url_path: `${prefix}/receipts.html`, color: colorKey },
                                     { name: 'Facturas', description: 'Gestión de facturación y recibos.',   icon: 'fa-file-invoice-dollar', url_path: `${prefix}/invoices.html`, color: colorKey },
                                     { name: 'Reportes', description: 'Reportes y métricas del cotizador.',  icon: 'fa-chart-pie',     url_path: `${prefix}/reports.html`,  color: colorKey },
                                 ];
@@ -564,6 +565,7 @@
             if (t.includes('calendar')) return pathPrefix + 'calendar/index.html';
             if (t.includes('ticket')) return pathPrefix + 'tickets/index.html';
             if (t.includes('orden') || t.includes('order')) return pathPrefix + 'cotizador/orders.html';
+            if (t.includes('recibo') || t.includes('receipt')) return pathPrefix + 'cotizador/receipts.html';
             if (t.includes('cotiza') || t.includes('catalog')) return pathPrefix + 'cotizador/catalog.html';
             if (t.includes('fina')) return pathPrefix + 'finanzas/index.html';
             

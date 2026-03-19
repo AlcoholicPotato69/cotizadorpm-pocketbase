@@ -15,6 +15,7 @@ const FIN_SCHEMA = (window.HUB_CONFIG && window.HUB_CONFIG.finanzasSchema) || 'f
 let allClients = [];
 let canManage = false;
 let clientHistoryRows = [];
+let activeHistoryClient = null;
 
 function escapeHTML(str='') {
   return String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
@@ -35,6 +36,38 @@ function safeDate(v){
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return '--';
   const p = s.split('-');
   return `${p[2]}/${p[1]}/${p[0]}`;
+}
+
+function normalizePdfNoteDocType(value='') {
+  const raw = normalize(value);
+  if (['cotizacion', 'cotización', 'quote', 'borrador', 'draft_quote'].includes(raw)) return 'cotizacion';
+  if (['orden', 'order', 'orden_compra', 'purchase_order', 'orden de compra'].includes(raw)) return 'orden';
+  if (['recibo', 'receipt', 'recibos', 'constancia', 'constancia_liquidacion', 'constancia de liquidacion'].includes(raw)) return 'recibo';
+  if (['contrato', 'contract'].includes(raw)) return 'contrato';
+  if (['factura', 'invoice', 'xml', 'factura_pdf', 'factura_xml'].includes(raw)) return 'factura';
+  return raw;
+}
+
+function getQuotePdfNotes(row, docType) {
+  return [];
+}
+
+function formatPdfNoteDate(value='') {
+  const stamp = String(value || '').trim();
+  if (!stamp) return 'Sin fecha registrada';
+  const parsed = new Date(stamp);
+  if (Number.isNaN(parsed.getTime())) return stamp;
+  return parsed.toLocaleString('es-MX', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
+function openClientPdfNotesModal(row, docType, docLabel) {
+  window.showToast?.("El sistema de notas está deshabilitado.", "info");
 }
 
 function showEmptyIfNeeded() {
@@ -261,13 +294,17 @@ function renderClientHistoryRows(rows) {
 }
 
 function createQuoteDocButton(container, label, icon, action, muted=false) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'flex items-stretch gap-2';
   const btn = document.createElement('button');
+  btn.type = 'button';
   btn.className = muted
-    ? 'w-full text-left px-4 py-3 rounded-xl border border-gray-100 bg-gray-50 text-gray-400 flex items-center gap-3'
-    : 'w-full text-left px-4 py-3 rounded-xl border border-gray-200 hover:bg-gray-50 flex items-center gap-3 transition shadow-sm bg-white';
+    ? 'flex-1 text-left px-4 py-3 rounded-xl border border-gray-100 bg-gray-50 text-gray-400 flex items-center gap-3'
+    : 'flex-1 text-left px-4 py-3 rounded-xl border border-gray-200 hover:bg-gray-50 flex items-center gap-3 transition shadow-sm bg-white';
   btn.innerHTML = `<i class="${icon} text-brand-red w-4"></i><span class="text-xs font-bold">${label}</span>`;
   if (!muted) btn.addEventListener('click', action);
-  container.appendChild(btn);
+  wrapper.appendChild(btn);
+  container.appendChild(wrapper);
 }
 
 
@@ -312,11 +349,13 @@ async function openClientQuoteDocs(quoteId) {
     const divider = document.createElement('div');
     divider.className = 'text-[10px] font-black uppercase text-gray-400 px-1 pt-2';
     divider.innerText = 'Recibos';
-    list.appendChild(divider);
-    pagos.forEach((p, i) => {
-      const pth = p?.file_path || p?.path || '';
+      list.appendChild(divider);
+      pagos.forEach((p, i) => {
+        const pth = p?.file_path || p?.path || '';
       if (pth) createQuoteDocButton(list, `Recibo #${i + 1}`, 'fa-solid fa-receipt', () => openClientStoredDocument(pth));
     });
+  } else {
+    createQuoteDocButton(list, 'Recibos no disponibles', 'fa-solid fa-receipt', () => {}, true);
   }
 
   createQuoteDocButton(list, 'Abrir en módulo de cotizaciones', 'fa-solid fa-arrow-up-right-from-square', () => {
@@ -327,6 +366,7 @@ async function openClientQuoteDocs(quoteId) {
 }
 
 async function openClientHistory(client) {
+  activeHistoryClient = client;
   const nameEl = document.getElementById('history-client-name');
   const phoneEl = document.getElementById('history-client-phone');
   const emailEl = document.getElementById('history-client-email');

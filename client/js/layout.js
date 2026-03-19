@@ -52,6 +52,93 @@
         link.href = iconPath;
     })();
 
+    function ensureResponsiveLayoutStyles() {
+        if (document.getElementById('hub-responsive-style')) return;
+        const style = document.createElement('style');
+        style.id = 'hub-responsive-style';
+        style.textContent = `
+            :root{
+                --hub-shell-pad:clamp(14px,1.8vw,28px);
+                --hub-preview-pad:clamp(12px,1.8vw,28px);
+                --hub-preview-modal-width:1280px;
+                --hub-dialog-width:560px;
+            }
+            header .container{
+                max-width:min(1680px,calc(100vw - (var(--hub-shell-pad) * 2)));
+                padding-inline:var(--hub-shell-pad)!important;
+            }
+            nav[data-master-nav="1"]{
+                padding-inline:var(--hub-shell-pad);
+            }
+            #main-container{
+                padding:var(--hub-shell-pad)!important;
+            }
+            #view-dashboard{
+                max-width:min(1680px,100%)!important;
+            }
+            #apps-grid{
+                grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));
+            }
+            #preview-modal > div{
+                width:min(96vw,var(--hub-preview-modal-width))!important;
+                max-width:none!important;
+                height:min(92vh,calc(100vh - 24px))!important;
+            }
+            #docs-modal > div,
+            #generic-confirm-modal > div,
+            #generic-input-modal > div{
+                width:min(96vw,var(--hub-dialog-width))!important;
+            }
+            #preview-container,
+            #receipt-preview-container,
+            #contract-preview-container{
+                padding:var(--hub-preview-pad)!important;
+            }
+            #pdf-content,
+            #receipt-preview-box,
+            #contract-preview-box{
+                margin-inline:auto;
+            }
+            #receipt-preview-box,
+            #contract-preview-box{
+                max-width:min(100%,816px)!important;
+            }
+            @media (max-width: 1279px){
+                #sidebar-container{
+                    width:100%!important;
+                    min-width:0!important;
+                    max-height:42vh;
+                }
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    function syncResponsiveViewport() {
+        const width = window.innerWidth || document.documentElement.clientWidth || 1280;
+        let tier = 'hd';
+        if (width >= 3200) tier = '4k';
+        else if (width >= 2560) tier = 'qhd';
+        else if (width >= 1920) tier = 'fhd';
+        document.documentElement.dataset.screenTier = tier;
+        const root = document.documentElement;
+        root.style.setProperty('--hub-shell-pad', width >= 2560 ? '32px' : (width >= 1920 ? '24px' : 'clamp(14px,1.8vw,24px)'));
+        root.style.setProperty('--hub-preview-pad', width >= 2560 ? '36px' : (width >= 1920 ? '24px' : 'clamp(12px,1.8vw,24px)'));
+        root.style.setProperty('--hub-preview-modal-width', width >= 3200 ? '1800px' : (width >= 2560 ? '1640px' : (width >= 1920 ? '1460px' : '1280px')));
+        root.style.setProperty('--hub-dialog-width', width >= 2560 ? '680px' : (width >= 1920 ? '620px' : '560px'));
+    }
+
+    ensureResponsiveLayoutStyles();
+    syncResponsiveViewport();
+    let responsiveRaf = 0;
+    window.addEventListener('resize', () => {
+        if (responsiveRaf) cancelAnimationFrame(responsiveRaf);
+        responsiveRaf = requestAnimationFrame(() => {
+            responsiveRaf = 0;
+            syncResponsiveViewport();
+        });
+    });
+
     // 1. INICIALIZACIÓN SINGLETON
     if (window.PB_CLIENT) {
         if (!window.globalPocketBase) {
@@ -174,36 +261,253 @@
         },
         deleteNotif: async (id) => {
             if (IS_LOCAL) return;
-            if (layoutClient) { await layoutClient.from('hub_notifications').delete().eq('id', id); loadHistory(); } 
-        },
-        
-        deleteAll: async () => {
-            if (IS_LOCAL) return;
-
-            if (!confirm('¿Estás seguro de que quieres borrar TODAS las notificaciones?')) return;
-            if (layoutClient && myId) {
-                const { error } = await layoutClient.from('hub_notifications').delete().eq('user_id', myId);
-                if (!error) {
-                    window.showToast('Notificaciones eliminadas', 'success');
-                    loadHistory();
-                } else {
-                    window.showToast('Error al eliminar', 'error');
-                }
+            if (layoutClient) {
+                await layoutClient.from('hub_notifications').delete().eq('id', id);
+                loadHistory();
             }
         },
-
-        logout: async () => { 
-            if (layoutClient) { 
+        deleteAll: async () => {
+            if (IS_LOCAL) return;
+            if (!confirm('¿Estás seguro de que quieres borrar TODAS las notificaciones?')) return;
+            if (!layoutClient || !myId) return;
+            const { error } = await layoutClient.from('hub_notifications').delete().eq('user_id', myId);
+            if (!error) {
+                window.showToast('Notificaciones eliminadas', 'success');
+                loadHistory();
+            } else {
+                window.showToast('Error al eliminar', 'error');
+            }
+        },
+        logout: async () => {
+            if (layoutClient) {
                 localStorage.removeItem('hub_user_cache_name');
                 localStorage.removeItem('hub_user_cache_email');
                 localStorage.removeItem('hub_user_cache_role');
-                await layoutClient.auth.signOut(); 
-                window.location.href = pathPrefix + 'index.html'; 
-            } 
+                await layoutClient.auth.signOut();
+                window.location.href = pathPrefix + 'index.html';
+            }
         }
     };
 
+    function installNavigationSafetyGuards() {
+        const path = String(window.location.pathname || '').toLowerCase();
+        const isCotizadorArea = /\/cotizador(cp)?\//.test(path);
+        if (!isCotizadorArea) return;
+        if (document.documentElement.dataset.hubNavSafetyBound === '1') return;
+        document.documentElement.dataset.hubNavSafetyBound = '1';
+        const DIAG_KEY = 'hub_nav_diag_log_v1';
+        const LAST_UNLOAD_KEY = 'hub_nav_diag_last_unload_v1';
+        const MAX_DIAG_ENTRIES = 250;
+        let lastInteraction = null;
+
+        const safeSlice = (value, max = 240) => String(value == null ? '' : value).slice(0, max);
+        const readDiag = () => {
+            try {
+                const raw = localStorage.getItem(DIAG_KEY);
+                if (!raw) return [];
+                const parsed = JSON.parse(raw);
+                return Array.isArray(parsed) ? parsed : [];
+            } catch (_) {
+                return [];
+            }
+        };
+        const pushDiag = (type, detail = {}) => {
+            try {
+                const list = readDiag();
+                list.push({
+                    ts: new Date().toISOString(),
+                    type: safeSlice(type, 80),
+                    path: safeSlice(window.location.pathname || '', 200),
+                    href: safeSlice(window.location.href || '', 320),
+                    detail: detail && typeof detail === 'object' ? detail : { value: safeSlice(detail, 240) }
+                });
+                localStorage.setItem(DIAG_KEY, JSON.stringify(list.slice(-MAX_DIAG_ENTRIES)));
+            } catch (_) {}
+        };
+
+        window.__HUB_NAV_DIAG_DUMP = function(limit = 60) {
+            const max = Math.max(1, parseInt(limit, 10) || 60);
+            const rows = readDiag().slice(-max);
+            try { console.table(rows); } catch (_) {}
+            return rows;
+        };
+        window.__HUB_NAV_DIAG_LAST = function() {
+            const rows = readDiag();
+            return rows.length ? rows[rows.length - 1] : null;
+        };
+        window.__HUB_NAV_DIAG_CLEAR = function() {
+            try { localStorage.removeItem(DIAG_KEY); } catch (_) {}
+            try { sessionStorage.removeItem(LAST_UNLOAD_KEY); } catch (_) {}
+            return true;
+        };
+        window.__HUB_ALLOW_NEXT_UNLOAD = function(reason = 'manual') {
+            try { window.__HUB_ALLOW_UNLOAD_ONCE = true; } catch (_) {}
+            pushDiag('allow_next_unload', { reason: safeSlice(reason, 120) });
+            return true;
+        };
+        const hasUnsavedChangesGuard = () => {
+            try {
+                const resolver = window.__HUB_HAS_UNSAVED_CHANGES;
+                if (typeof resolver === 'function') return !!resolver();
+                return resolver === true;
+            } catch (_) {
+                return false;
+            }
+        };
+
+        let lastUnload = null;
+        try {
+            const rawLastUnload = sessionStorage.getItem(LAST_UNLOAD_KEY);
+            if (rawLastUnload) {
+                lastUnload = JSON.parse(rawLastUnload);
+                sessionStorage.removeItem(LAST_UNLOAD_KEY);
+            }
+        } catch (_) {}
+        const navEntry = (typeof performance !== 'undefined' && typeof performance.getEntriesByType === 'function')
+            ? performance.getEntriesByType('navigation')[0]
+            : null;
+        pushDiag('nav_init', {
+            navigationType: safeSlice(navEntry?.type || 'unknown', 40),
+            referrer: safeSlice(document.referrer || '', 220)
+        });
+        if (lastUnload && typeof lastUnload === 'object') {
+            pushDiag('nav_after_unload', lastUnload);
+        }
+
+        document.addEventListener('pointerdown', (event) => {
+            const target = event.target instanceof Element
+                ? event.target.closest('button,a,input,select,textarea,[data-base-resource],[data-res-id],[data-receipt-inspector-field]')
+                : null;
+            if (!target) {
+                lastInteraction = null;
+                return;
+            }
+            lastInteraction = {
+                tag: safeSlice(String(target.tagName || '').toLowerCase(), 30),
+                id: safeSlice(target.id || '', 80),
+                cls: safeSlice(target.className || '', 120),
+                href: safeSlice(target.getAttribute?.('href') || '', 180),
+                text: safeSlice(target.textContent || '', 120)
+            };
+        }, true);
+
+        document.addEventListener('submit', (event) => {
+            const form = event.target;
+            if (!(form instanceof HTMLFormElement)) return;
+            if (form.id === 'login-form') return;
+            if (form.dataset.allowSubmit === '1') return;
+            event.preventDefault();
+            pushDiag('submit_blocked', {
+                formId: safeSlice(form.id || '', 120),
+                action: safeSlice(form.getAttribute('action') || '', 180),
+                interaction: lastInteraction
+            });
+            if (typeof window.showToast === 'function') {
+                window.showToast('Envio de formulario bloqueado para evitar recarga accidental.', 'info');
+            }
+        }, true);
+
+        document.addEventListener('keydown', (event) => {
+            const key = String(event.key || '').toLowerCase();
+            const wantsReload = key === 'f5' || ((event.ctrlKey || event.metaKey) && key === 'r');
+            if (!wantsReload) return;
+            if (window.__HUB_ALLOW_MANUAL_RELOAD === true) return;
+            event.preventDefault();
+            pushDiag('reload_key_blocked', {
+                key: safeSlice(key, 16),
+                ctrl: !!event.ctrlKey,
+                meta: !!event.metaKey,
+                interaction: lastInteraction
+            });
+            if (typeof window.showToast === 'function') {
+                window.showToast('Recarga bloqueada para evitar perder cambios en progreso.', 'info');
+            }
+        }, true);
+
+        document.addEventListener('click', (event) => {
+            const anchor = event.target instanceof Element ? event.target.closest('a[href]') : null;
+            if (!anchor) return;
+            const href = String(anchor.getAttribute('href') || '').trim().toLowerCase();
+            if (!href || href === '#' || href === 'javascript:void(0)' || href === 'javascript:;') {
+                event.preventDefault();
+                pushDiag('anchor_blocked', {
+                    href: safeSlice(href, 180),
+                    id: safeSlice(anchor.id || '', 120),
+                    text: safeSlice(anchor.textContent || '', 120),
+                    interaction: lastInteraction
+                });
+                return;
+            }
+            pushDiag('link_click', {
+                href: safeSlice(href, 220),
+                id: safeSlice(anchor.id || '', 120),
+                text: safeSlice(anchor.textContent || '', 120)
+            });
+        }, true);
+
+        window.addEventListener('beforeunload', (event) => {
+            const allowOnce = window.__HUB_ALLOW_UNLOAD_ONCE === true;
+            if (allowOnce) {
+                try { window.__HUB_ALLOW_UNLOAD_ONCE = false; } catch (_) {}
+            }
+            const blockedByUnsaved = !allowOnce && hasUnsavedChangesGuard();
+            if (blockedByUnsaved) {
+                try {
+                    event.preventDefault();
+                    event.returnValue = '';
+                } catch (_) {}
+            }
+            const payload = {
+                reason: 'beforeunload',
+                interaction: lastInteraction,
+                ts: Date.now(),
+                blockedByUnsaved,
+                allowOnce
+            };
+            try { sessionStorage.setItem(LAST_UNLOAD_KEY, JSON.stringify(payload)); } catch (_) {}
+            pushDiag('beforeunload', payload);
+        });
+        window.addEventListener('pagehide', (event) => {
+            pushDiag('pagehide', {
+                persisted: !!event.persisted,
+                interaction: lastInteraction
+            });
+        });
+        window.addEventListener('unload', () => {
+            pushDiag('unload', { interaction: lastInteraction });
+        });
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') {
+                pushDiag('visibility_hidden', { interaction: lastInteraction });
+            }
+        });
+        window.addEventListener('error', (event) => {
+            pushDiag('runtime_error', {
+                message: safeSlice(event?.message || 'unknown', 220),
+                source: safeSlice(event?.filename || '', 220),
+                line: Number(event?.lineno || 0) || 0,
+                column: Number(event?.colno || 0) || 0,
+                stack: safeSlice(event?.error?.stack || '', 800)
+            });
+        });
+        window.addEventListener('unhandledrejection', (event) => {
+            const reason = event?.reason;
+            pushDiag('unhandled_rejection', {
+                reason: safeSlice(reason?.message || reason || 'unknown', 260)
+            });
+        });
+        window.addEventListener('storage', (event) => {
+            const keyName = String(event?.key || '');
+            if (!keyName) return;
+            if (!/(auth|session|token|pocketbase|supabase)/i.test(keyName)) return;
+            pushDiag('storage_auth_change', {
+                key: safeSlice(keyName, 180)
+            });
+        });
+    }
+
     document.addEventListener('DOMContentLoaded', async () => {
+        installNavigationSafetyGuards();
         renderHeader('hidden');
         
         const nav = document.querySelector('nav[data-master-nav="1"]');
@@ -233,14 +537,38 @@
             myId = session.user.id;
             
             try {
-                const { data } = await layoutClient.from('profiles').select('role, username').eq('id', myId).single();
-                if (data?.role === 'admin') {
+                const normalizeRole = (value) => {
+                    const safe = String(value || '').trim().toLowerCase();
+                    if (!safe) return '';
+                    if (safe === 'administrador' || safe === 'superadmin' || safe === 'super_admin') return 'admin';
+                    return safe;
+                };
+                const userEmail = String(session?.user?.email || '').trim().toLowerCase();
+                const lookupOne = async (table, field, value) => {
+                    if (!value) return null;
+                    try {
+                        const { data } = await layoutClient.from(table).select('role, username, login_username, email').eq(field, value).maybeSingle();
+                        return data || null;
+                    } catch (_) {
+                        return null;
+                    }
+                };
+
+                let data = await lookupOne('app_users', 'id', myId);
+                if (!data) data = await lookupOne('app_users', 'email', userEmail);
+                if (!data) data = await lookupOne('profiles', 'id', myId);
+                if (!data) data = await lookupOne('profiles', 'email', userEmail);
+
+                const resolvedRole = normalizeRole(data?.role);
+                if (resolvedRole === 'admin') {
                     document.getElementById('layout-settings-btn')?.classList.replace('hidden', 'flex');
                     localStorage.setItem('hub_user_cache_role', 'admin');
+                } else {
+                    localStorage.removeItem('hub_user_cache_role');
                 }
                 
                 let displayName = session.user.email.split('@')[0];
-                if (data && data.username) displayName = data.username;
+                if (data && (data.username || data.login_username)) displayName = data.username || data.login_username;
                 else displayName = displayName.charAt(0).toUpperCase() + displayName.slice(1);
 
                 localStorage.setItem('hub_user_cache_name', displayName);
@@ -267,9 +595,6 @@
         const title = getCurrentModuleTitle();
         const cachedName = localStorage.getItem('hub_user_cache_name') || 'Cargando...';
         const cachedEmail = localStorage.getItem('hub_user_cache_email') || '...';
-        const cachedRole = localStorage.getItem('hub_user_cache_role');
-        
-        if (cachedRole === 'admin') settingsClass = settingsClass.replace('hidden', 'flex');
 
         const userInfoHTML = `
         <div class="flex items-center border-l border-gray-700 pl-4 ml-4 h-8 transition-opacity duration-500 animate-enter">

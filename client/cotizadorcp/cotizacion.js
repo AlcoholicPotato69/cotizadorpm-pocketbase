@@ -1589,7 +1589,9 @@ window.generatePDF = async function(){
     const maxGuests = Math.max(...spaces.map(s => parseInt(s.guests, 10) || 0), 0);
     const taxIdsUnion = Array.from(new Set(spaces.flatMap(s => s.taxIds || []).map(x => String(x))));
     const payload = { cliente_id: (document.getElementById('cli-id') ? (document.getElementById('cli-id').value || null) : null), nombre_cotizacion: quoteName, espacio_id: first.spaceId, espacio_nombre: spaces.length === 1 ? first.spaceName : `${first.spaceName} + ${spaces.length - 1} espacio(s)`, espacio_clave: spaces.length === 1 ? first.spaceKey : 'MULTI', cliente_nombre: cli.name, cliente_rfc: cli.rfc, cliente_contacto: cli.phone, cliente_email: cli.email, fecha_inicio: minStart, fecha_fin: maxEnd, precio_final: currentPricing.final, desglose_precios: { subtotal_antes_impuestos: currentPricing.subtotal, impuestos_detalle: taxIdsUnion, tax_total: currentPricing.taxes, espacios: espaciosDetalle }, detalles_evento: { multi_espacio: spaces.length > 1, total_espacios: spaces.length, nombre_cotizacion: quoteName }, espacios_detalle: espaciosDetalle, conceptos_adicionales: conceptosB2B, status: 'pendiente', creado_por: (await window.globalPocketBase.auth.getUser()).data.user.id, personas: maxGuests || 1 };
-    const { error } = await window.tenantPocketBase.from('cotizaciones').insert(payload);
+    const insertResult = await window.tenantPocketBase.from('cotizaciones').insert(payload);
+    const error = insertResult?.error || null;
+    const createdQuoteId = String(insertResult?.data?.id || insertResult?.data?._pb_id || '').trim();
     if(error){
         console.error(error);
         if (String(error.message || '').toLowerCase().includes('espacios_detalle')) {
@@ -1599,7 +1601,8 @@ window.generatePDF = async function(){
     }
     __cpReservationsCache = null; __cpReservationsAt = 0;
     window.showToast("Cotización Creada");
-    setTimeout(()=>window.location.href='orders.html', 1000);
+    const targetUrl = createdQuoteId ? `order_detail.html?quote=${encodeURIComponent(createdQuoteId)}` : 'orders.html';
+    setTimeout(() => { window.location.href = targetUrl; }, 900);
 }
 
 

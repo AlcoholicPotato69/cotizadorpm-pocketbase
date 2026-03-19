@@ -47,6 +47,7 @@
             <a href="cotizacion.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 flex items-center gap-2 transition whitespace-nowrap"><i class="fa-solid fa-calculator"></i> Cotización</a>
             <a href="orders.html" class="bg-white/20 shadow-inner px-4 py-1.5 rounded-full text-xs font-bold uppercase flex items-center gap-2 transition whitespace-nowrap"><i class="fa-solid fa-file-invoice-dollar"></i> Cotizaciones</a>
             <a href="contracts.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 flex items-center gap-2 transition whitespace-nowrap"><i class="fa-solid fa-file-signature"></i> Contratos</a>
+            <a href="receipts.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 flex items-center gap-2 transition whitespace-nowrap"><i class="fa-solid fa-receipt"></i> Recibos</a>
             <a href="invoices.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 flex items-center gap-2 transition whitespace-nowrap"><i class="fa-solid fa-file-invoice"></i> Facturas</a>
             <a href="agenda.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 flex items-center gap-2 transition whitespace-nowrap"><i class="fa-solid fa-calendar-days"></i> Agenda</a>
             <a href="clientes.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap flex items-center gap-2"><i class="fa-solid fa-users"></i> Clientes</a>
@@ -217,7 +218,7 @@
                     <h3 class="font-black text-xl text-gray-800" id="doc-client">Cliente</h3>
                     <p class="text-xs text-brand-red font-bold uppercase tracking-wider" id="doc-folio">Folio</p>
                 </div>
-                <button type="button" onclick="window.closeModal('docs-modal')" class="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500"><i class="fa-solid fa-times"></i></button>
+                <button onclick="window.closeModal('docs-modal')" class="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500"><i class="fa-solid fa-times"></i></button>
             </div>
             <div class="bg-gray-50 p-4 rounded-xl mb-6 border border-gray-100 flex justify-between items-center">
                 <div><p class="text-[10px] uppercase text-gray-400 font-bold">Espacio</p><p class="text-xs font-bold text-gray-700" id="doc-space">---</p></div>
@@ -235,8 +236,8 @@
                     <div id="pdf-admin-data" class="hidden text-xs bg-gray-800 px-3 py-1 rounded border border-gray-700"><span class="text-gray-400 mr-2">Folio:</span><span class="font-mono font-bold" id="prev-order-num">---</span></div>
                 </div>
                 <div class="flex gap-3">
-                    <button type="button" onclick="window.closeModal('preview-modal')" class="text-gray-400 hover:text-white text-xs uppercase font-bold px-3">Cerrar</button>
-                    <button type="button" id="btn-download-preview" class="bg-brand-red hover:bg-red-600 text-white px-5 py-2 rounded-full text-xs font-bold uppercase shadow-lg transition flex items-center gap-2"><i class="fa-solid fa-download"></i> <span class="hidden sm:inline">Descargar</span></button>
+                    <button onclick="window.closeModal('preview-modal')" class="text-gray-400 hover:text-white text-xs uppercase font-bold px-3">Cerrar</button>
+                    <button id="btn-download-preview" class="bg-brand-red hover:bg-red-600 text-white px-5 py-2 rounded-full text-xs font-bold uppercase shadow-lg transition flex items-center gap-2"><i class="fa-solid fa-download"></i> <span class="hidden sm:inline">Descargar</span></button>
                 </div>
             </div>
             <div id="pdf-style-editor" class="hidden bg-gray-800 border-t border-gray-700 text-[10px] text-gray-200 shrink-0">
@@ -290,9 +291,11 @@
                             <p class="text-[10px] font-black uppercase tracking-wider text-gray-300">Recursos Canva</p>
                             <div class="flex items-center gap-1">
                                 <button id="pdf-style-add-bar" type="button" class="bg-gray-700 hover:bg-gray-600 text-white px-2 py-0.5 rounded text-[10px] font-bold">+ Barra</button>
-                                <button id="pdf-style-add-logo" type="button" class="bg-gray-700 hover:bg-gray-600 text-white px-2 py-0.5 rounded text-[10px] font-bold">+ Logo</button>
                                 <button id="pdf-style-add-title" type="button" class="bg-gray-700 hover:bg-gray-600 text-white px-2 py-0.5 rounded text-[10px] font-bold">+ Título</button>
                                 <button id="pdf-style-add-text" type="button" class="bg-gray-700 hover:bg-gray-600 text-white px-2 py-0.5 rounded text-[10px] font-bold">+ Texto</button>
+                                <button id="pdf-style-add-logo" type="button" class="hidden"></button>
+                                <button id="pdf-style-add-sign-line" type="button" class="hidden"></button>
+                                <button id="pdf-style-add-sign-block" type="button" class="hidden"></button>
                             </div>
                         </div>
                         <p class="text-[9px] text-gray-400">Arrastra los recursos sobre el PDF. Para redimensionar usa esquina inferior derecha o mantén Shift.</p>
@@ -430,7 +433,42 @@
             </div>
         </div>
     </div>
-
+    <div id="pdf-resource-modal" class="fixed inset-0 z-[320] hidden bg-gray-900/80 backdrop-blur-sm items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col">
+            <div class="bg-gray-50 border-b border-gray-100 p-4 flex justify-between items-center">
+                <h2 class="text-lg font-black text-brand-dark uppercase tracking-tighter">Añadir Recurso</h2>
+                <button type="button" onclick="window.closeModal('pdf-resource-modal')" class="text-gray-400 hover:text-brand-red transition"><i class="fa-solid fa-xmark text-xl"></i></button>
+            </div>
+            <div class="p-6">
+                <div class="grid grid-cols-2 gap-4">
+                    <button type="button" onclick="document.getElementById('pdf-style-add-bar').click(); window.closeModal('pdf-resource-modal')" class="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-xl border border-gray-200 hover:border-brand-red hover:bg-red-50 hover:text-brand-red transition text-gray-700">
+                        <i class="fa-solid fa-minus text-2xl mb-2"></i>
+                        <span class="text-xs font-bold uppercase tracking-wider">Barra</span>
+                    </button>
+                    <button type="button" onclick="document.getElementById('pdf-style-add-logo').click(); window.closeModal('pdf-resource-modal')" class="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-xl border border-gray-200 hover:border-brand-red hover:bg-red-50 hover:text-brand-red transition text-gray-700">
+                        <i class="fa-solid fa-image text-2xl mb-2"></i>
+                        <span class="text-xs font-bold uppercase tracking-wider">Logo</span>
+                    </button>
+                    <button type="button" onclick="document.getElementById('pdf-style-add-title').click(); window.closeModal('pdf-resource-modal')" class="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-xl border border-gray-200 hover:border-brand-red hover:bg-red-50 hover:text-brand-red transition text-gray-700">
+                        <i class="fa-solid fa-heading text-2xl mb-2"></i>
+                        <span class="text-xs font-bold uppercase tracking-wider">Título</span>
+                    </button>
+                    <button type="button" onclick="document.getElementById('pdf-style-add-text').click(); window.closeModal('pdf-resource-modal')" class="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-xl border border-gray-200 hover:border-brand-red hover:bg-red-50 hover:text-brand-red transition text-gray-700">
+                        <i class="fa-solid fa-font text-2xl mb-2"></i>
+                        <span class="text-xs font-bold uppercase tracking-wider">Texto</span>
+                    </button>
+                    <button type="button" onclick="document.getElementById('pdf-style-add-sign-line').click(); window.closeModal('pdf-resource-modal')" class="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-xl border border-gray-200 hover:border-brand-red hover:bg-red-50 hover:text-brand-red transition text-gray-700">
+                        <i class="fa-solid fa-signature text-2xl mb-2"></i>
+                        <span class="text-xs font-bold uppercase tracking-wider">Línea Firma</span>
+                    </button>
+                    <button type="button" onclick="document.getElementById('pdf-style-add-sign-block').click(); window.closeModal('pdf-resource-modal')" class="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-xl border border-gray-200 hover:border-brand-red hover:bg-red-50 hover:text-brand-red transition text-gray-700">
+                        <i class="fa-solid fa-pen-nib text-2xl mb-2"></i>
+                        <span class="text-xs font-bold uppercase tracking-wider">Bloque Firma</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
     <div id="generic-confirm-modal" class="fixed inset-0 bg-black/80 z-[300] hidden flex items-center justify-center p-4">
         <div class="bg-white w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden p-6 text-center">
             <h3 class="font-bold text-lg mb-2 text-gray-800" id="confirm-title">¿Confirmar Acción?</h3>
@@ -441,7 +479,8 @@
         </div>
     </div>
     <div id="toast-container" class="fixed top-20 right-4 z-[310] flex flex-col items-end pointer-events-none"></div>
-    <script src="orders.js?v=20260302-pdf-fix3"></script>
+    <script src="../js/pdf-margin-guides.js"></script>
+    <script src="orders.js?v=20260318-pdf-editor7"></script>
 </body>
 </html>
 
