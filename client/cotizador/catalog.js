@@ -106,6 +106,62 @@ async function pmCreateQuoteRecord(payload) {
     return { error: result && result.error ? result.error : null, data, id: createdId };
 }
 
+async function pmResolveQuoteActorAudit() {
+    let actorId = '';
+    let actorName = '';
+    const looksLikeId = (value) => {
+        const safe = String(value || '').trim();
+        if (!safe) return false;
+        return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(safe)
+            || /^[a-z0-9]{15}$/i.test(safe)
+            || /^[a-f0-9]{24}$/i.test(safe)
+            || /^[a-z0-9_-]{12,}$/i.test(safe);
+    };
+    const sanitizeActorName = (value) => {
+        const safe = String(value || '').trim();
+        if (!safe) return '';
+        if (safe.includes('@')) return safe.split('@')[0];
+        if (looksLikeId(safe)) return '';
+        return safe;
+    };
+    try {
+        const auth = await window.globalPocketBase.auth.getUser();
+        actorId = String(auth?.data?.user?.id || '').trim();
+        const email = String(auth?.data?.user?.email || '').trim();
+        const candidates = [
+            auth?.data?.user?.login_username,
+            auth?.data?.user?.username,
+            email ? email.split('@')[0] : ''
+        ];
+        actorName = candidates.map(sanitizeActorName).find(Boolean) || '';
+    } catch (_) {}
+    const cachedName = sanitizeActorName(localStorage.getItem('hub_user_cache_name') || '');
+    if (cachedName) actorName = cachedName;
+    if (!actorName) actorName = 'Usuario';
+    return { actorId, actorName };
+}
+
+async function pmResolveCurrentUserProfile(sessionUser = {}) {
+    const pbClient = window.globalPocketBase || window.tenantPocketBase;
+    const fallback = sessionUser && typeof sessionUser === 'object' ? sessionUser : {};
+    if (!pbClient) return { ...fallback };
+    const id = String(fallback?.id || fallback?.record?.id || '').trim();
+    const email = String(fallback?.email || fallback?.record?.email || '').trim().toLowerCase();
+    const lookupOne = async (table, field, value) => {
+        if (!value) return null;
+        try {
+            const { data, error } = await pbClient.from(table).select('*').eq(field, value).maybeSingle();
+            if (!error && data) return data;
+        } catch (_) {}
+        return null;
+    };
+    let profile = await lookupOne('app_users', 'id', id);
+    if (!profile) profile = await lookupOne('app_users', 'email', email);
+    const merged = { ...fallback, ...(profile || {}) };
+    if (!merged.app_metadata && fallback?.app_metadata) merged.app_metadata = fallback.app_metadata;
+    return merged;
+}
+
 // --- HELPERS ---
 function parseIds(v){ if(!v) return []; if(Array.isArray(v)) return v; if(typeof v === 'string'){ try { const parsed = JSON.parse(v); return Array.isArray(parsed) ? parsed : []; } catch(e){ return v.split(',').map(x=>x.trim()).filter(Boolean); } } return []; }
 function formatMoney(v){ return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(v || 0); }
@@ -421,26 +477,35 @@ document.addEventListener('DOMContentLoaded', async () => {
         if(!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
     }
 
-    const { data: { session } } = await window.globalPocketBase.auth.getSession();
-    if (!session) return;
-    
-    const { data: profilesList, error: profileErr } = await window.globalPocketBase
-        .from('profiles')
-        .select('*')
-        .eq('id', session.user.id);
+    let session = null;
+    try {
+        const response = await window.globalPocketBase.auth.getSession();
+        session = response?.data?.session || null;
+    } catch (_) {
+        session = null;
+    }
+    if (!session?.user) return;
 
-    if (profileErr) return window.showToast?.('No se pudo cargar el perfil de usuario.', 'error');
-
-    const profile = (profilesList && profilesList.length) ? profilesList[0] : null;
-    if (!profile) return window.showToast?.('No se encontró tu perfil en la tabla profiles.', 'error');
-
-    const userRole = String(profile?.role || '').toLowerCase().trim();
+    const profile = await pmResolveCurrentUserProfile(session.user);
+    const cachedRole = String(localStorage.getItem('hub_user_cache_role') || '').trim().toLowerCase();
+    const userRole = String(profile?.role || profile?.rol || cachedRole).toLowerCase().trim();
     const roleHasAccess = (userRole === 'admin') || (userRole === 'plaza_mayor') || (userRole === 'ambos');
     const roleDefaultPerms = { access: true, orders_view: true, reports_view: true, clients_view: true, clients_manage: true };
 
     if (userRole === 'admin') myPermissions = { ...roleDefaultPerms, catalog_manage: true };
     else if (roleHasAccess) myPermissions = { ...roleDefaultPerms, catalog_manage: false };
-    else myPermissions = (profile.app_metadata?.finanzas?.permissions || { access: false });
+    else {
+        const profilePerms = profile?.app_metadata?.finanzas?.permissions;
+        if (profilePerms && typeof profilePerms === 'object') {
+            myPermissions = {
+                ...roleDefaultPerms,
+                ...profilePerms,
+                catalog_manage: !!profilePerms.catalog_manage
+            };
+        } else {
+            myPermissions = { ...roleDefaultPerms, catalog_manage: false };
+        }
+    }
 
     if (!myPermissions.access) return window.showToast?.('No tienes permisos para acceder al Catálogo.', 'error');
 
@@ -975,6 +1040,7 @@ window.generatePDF = async function() {
         impuestos_total: sp.taxTotal || 0,
         total_espacio: sp.total || 0
     }));
+    const audit = await pmResolveQuoteActorAudit();
     const payload = {
         cliente_id: (document.getElementById('cli-id') ? (document.getElementById('cli-id').value || null) : null),
         nombre_cotizacion: quoteName,
@@ -998,7 +1064,10 @@ window.generatePDF = async function() {
         espacios_detalle: espaciosDetalle,
         conceptos_adicionales: [],
         status: 'pendiente',
-        creado_por: (await window.globalPocketBase.auth.getUser()).data.user.id
+        creado_por: audit.actorId || null,
+        creado_por_nombre: audit.actorName,
+        modificado_por_legacy: audit.actorId || null,
+        modificado_por_nombre: audit.actorName
     };
     const { error, id: createdQuoteId } = await pmCreateQuoteRecord(payload);
     if(error){

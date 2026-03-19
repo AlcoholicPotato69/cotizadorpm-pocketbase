@@ -46,7 +46,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if(!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
     }
     const { data: { session } } = await window.globalPocketBase.auth.getSession();
-    if (!session) window.location.href = 'index.html';
+    if (!session) {
+        window.location.href = 'index.html';
+        return;
+    }
 
     loadOrders();
 

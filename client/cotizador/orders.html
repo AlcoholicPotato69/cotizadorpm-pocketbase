@@ -74,6 +74,8 @@
                             <th class="p-4">Espacio / Fecha</th>
                             <th class="p-4 text-right">Total</th>
                             <th class="p-4 text-center">Estatus</th>
+                            <th class="p-4 text-center">Creó</th>
+                            <th class="p-4 text-center">Últ. edición</th>
                             <th class="p-4 text-center">Documentos</th>
                             <th class="p-4 text-center rounded-tr-xl">Acciones</th>
                         </tr>
@@ -242,7 +244,7 @@
             </div>
             <div id="pdf-style-editor" class="hidden bg-gray-800 border-t border-gray-700 text-[10px] text-gray-200 shrink-0">
                 <div class="px-3 py-2 flex flex-wrap items-center gap-2 border-b border-gray-700">
-                    <p class="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Editor PDF por Secciones (solo admin, texto bloqueado)</p>
+                    <p data-pdf-admin-caption="1" class="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Editor PDF por Secciones</p>
                     <div class="ml-auto flex items-center gap-2">
                         <button id="btn-pdf-style-pin" type="button" class="bg-gray-700 hover:bg-gray-600 text-white px-2.5 py-1 rounded text-[10px] font-bold uppercase transition">Fijar</button>
                         <button id="btn-pdf-style-toggle" type="button" class="bg-gray-700 hover:bg-gray-600 text-white px-2.5 py-1 rounded text-[10px] font-bold uppercase transition">Ocultar</button>
@@ -480,7 +482,7 @@
     </div>
     <div id="toast-container" class="fixed top-20 right-4 z-[310] flex flex-col items-end pointer-events-none"></div>
     <script src="../js/pdf-margin-guides.js"></script>
-    <script src="orders.js?v=20260318-pdf-editor7"></script>
+    <script src="orders.js?v=20260319-nonadmin-fixes3"></script>
 </body>
 </html>
 

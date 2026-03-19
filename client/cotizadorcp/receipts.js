@@ -1255,11 +1255,11 @@ function __contractsRenderPdfResources(style, pageIndex, context = {}) {
                 const content = __contractsSafeHtml(__contractsResolveResourceTemplate(resource.text, context));
                 const placeholder = isAdmin && !content ? (resource.type === 'title' ? 'TÍTULO VACÍO' : 'Texto vacío') : '';
                 return `
-                <div class="cpc-pdf-resource ${isAdmin ? 'cpc-pdf-editable' : ''}" data-res-id="${__contractsSafeHtml(resource.id)}" data-res-page="${resource.page}" data-res-type="${resource.type}" style="${common}">
+                <div class="cpc-pdf-resource ${isAdmin ? 'cpc-pdf-editable' : ''}" data-res-id="${__contractsSafeHtml(resource.id)}" data-res-page="${resource.page}" data-res-type="${resource.type}" data-res-font-size="${resource.fontSize}" style="${common}">
                     <div style="width:100%;height:100%;padding:4px;overflow:hidden;font-family:${fontStack};font-size:${resource.fontSize}px;font-weight:${fw};font-style:${fs};text-decoration:${td};text-align:${ta};color:${tColor};white-space:pre-wrap;pointer-events:none;user-select:none;display:flex;flex-direction:column;justify-content:flex-start;">
                         ${content || `<span style="opacity:0.3;">${placeholder}</span>`}
                     </div>
-                
+                 
                     ${deleteBtnHtml}
                 </div>
                 `;
@@ -1268,6 +1268,45 @@ function __contractsRenderPdfResources(style, pageIndex, context = {}) {
             return `<div class="cpc-pdf-resource ${isAdmin ? 'cpc-pdf-editable' : ''}" data-res-id="${__contractsSafeHtml(resource.id)}" data-res-page="${resource.page}" data-res-type="${resource.type}" style="${common}background:${resource.type === 'bar' ? resource.bgColor : 'transparent'};border-radius:2px;">${deleteBtnHtml}</div>`;
         })
         .join('');
+}
+
+function __contractsAutoFitPdfTextNode(node) {
+    if (!(node instanceof HTMLElement)) return;
+    const type = String(node.getAttribute('data-res-type') || '').trim();
+    if (type !== 'text' && type !== 'title') return;
+    const textNode = node.firstElementChild instanceof HTMLElement ? node.firstElementChild : node;
+    if (!(textNode instanceof HTMLElement)) return;
+    const baseFont = __contractsClampStyleNumber(
+        node.getAttribute('data-res-font-size')
+        || textNode.style.fontSize
+        || window.getComputedStyle(textNode).fontSize,
+        8,
+        72,
+        14
+    );
+    textNode.style.fontSize = `${baseFont}px`;
+    textNode.style.lineHeight = '1.2';
+    if ((textNode.scrollWidth <= textNode.clientWidth + 1) && (textNode.scrollHeight <= textNode.clientHeight + 1)) return;
+    let low = 8;
+    let high = baseFont;
+    let best = 8;
+    while (low <= high) {
+        const mid = Math.floor((low + high) / 2);
+        textNode.style.fontSize = `${mid}px`;
+        if ((textNode.scrollWidth <= textNode.clientWidth + 1) && (textNode.scrollHeight <= textNode.clientHeight + 1)) {
+            best = mid;
+            low = mid + 1;
+        } else {
+            high = mid - 1;
+        }
+    }
+    textNode.style.fontSize = `${best}px`;
+}
+
+function __contractsAutoFitPdfTextResources() {
+    document.querySelectorAll('#receipt-preview-box .cpc-pdf-resource[data-res-type="text"], #receipt-preview-box .cpc-pdf-resource[data-res-type="title"]').forEach((node) => {
+        __contractsAutoFitPdfTextNode(node);
+    });
 }
 
 function __contractsInjectResourcesIntoPage(rawHtml, resourcesHtml) {
@@ -1577,6 +1616,7 @@ function __contractsApplyPdfStyleToLivePreview() {
     });
     __contractsApplyPdfBaseLayouts();
     __contractsSyncLiveReceiptResources();
+    __contractsAutoFitPdfTextResources();
     __contractsEnsureReceiptEditingChrome();
     __contractsSyncReceiptEditMode();
     __contractsHighlightSelectedResource();
@@ -1749,6 +1789,7 @@ function __contractsSyncLiveReceiptResources() {
             const content = __contractsSafeHtml(__contractsResolveResourceTemplate(resource.text, context));
             const placeholder = isAdmin && !content ? (safeType === 'title' ? 'TÍTULO VACÍO' : 'Texto vacío') : '';
             node.style.background = 'transparent';
+            node.setAttribute('data-res-font-size', String(resource.fontSize || 14));
             if (textWrap) {
                 textWrap.style.fontFamily = fontStack;
                 textWrap.style.fontSize = `${resource.fontSize}px`;
@@ -1968,10 +2009,11 @@ function __contractsRenderReceiptToolbar() {
     if (!showToolbar) {
         document.getElementById('cpc-receipt-inspector')?.classList.add('hidden');
         document.getElementById('cpc-receipt-inspector-backdrop')?.classList.add('hidden');
+        document.getElementById('cpc-receipt-edit-button')?.classList.add('hidden');
         return;
     }
     const adminTools = document.getElementById('cpc-receipt-admin-tools');
-    if (adminTools) adminTools.classList.toggle('hidden', !isAdmin);
+    if (adminTools) adminTools.classList.toggle('hidden', false);
     const editingEnabled = !__contractsReceiptEditLocked;
     const headerToggleBtn = document.getElementById('cpc-receipt-edit-button');
     if (headerToggleBtn) {
@@ -1982,12 +2024,15 @@ function __contractsRenderReceiptToolbar() {
         headerToggleBtn.classList.toggle('bg-gray-950', !editingEnabled);
         headerToggleBtn.classList.toggle('hover:bg-gray-900', !editingEnabled);
         headerToggleBtn.classList.toggle('border-gray-700', !editingEnabled);
-        headerToggleBtn.classList.toggle('hidden', !isAdmin);
+        headerToggleBtn.classList.remove('opacity-60', 'cursor-not-allowed');
+        headerToggleBtn.disabled = false;
+        headerToggleBtn.classList.remove('hidden');
     }
     const addButton = document.getElementById('cpc-receipt-add-button');
     if (addButton) {
-        addButton.classList.toggle('pointer-events-none', __contractsReceiptEditLocked);
-        addButton.classList.toggle('opacity-60', __contractsReceiptEditLocked);
+        const disableAdd = __contractsReceiptEditLocked;
+        addButton.classList.toggle('pointer-events-none', disableAdd);
+        addButton.classList.toggle('opacity-60', disableAdd);
     }
 }
 
@@ -2099,9 +2144,15 @@ function __contractsSyncReceiptEditMode() {
 }
 
 function __contractsSetReceiptEditLocked(locked) {
+    const wasLocked = __contractsReceiptEditLocked;
     __contractsReceiptEditLocked = locked !== false;
     if (__contractsReceiptEditLocked) __contractsCloseReceiptInspector();
     __contractsSyncReceiptEditMode();
+    if (!wasLocked && __contractsReceiptEditLocked && __contractsIsAdminProfile()) {
+        Promise.resolve()
+            .then(() => __contractsPersistSharedPdfStyleConfig(__contractsGetPdfStyleConfig(), { force: true }))
+            .catch(() => {});
+    }
 }
 
 function __contractsOverlayDocumentType(generatorType) {
@@ -2777,6 +2828,10 @@ function __contractsResolveCurrentUserRole() {
         window.currentUserProfile?.app_user?.role,
         window.currentUserProfile?.user_metadata?.role,
         window.currentUserProfile?.app_metadata?.role,
+        window.globalPocketBase?.authStore?.model?.role,
+        window.globalPocketBase?.authStore?.model?.rol,
+        window.tenantPocketBase?.authStore?.model?.role,
+        window.tenantPocketBase?.authStore?.model?.rol,
         window.currentUser?.role,
         window.userProfile?.role,
         Array.isArray(window.currentUserProfile?.roles) ? window.currentUserProfile.roles[0] : ''
@@ -2795,12 +2850,31 @@ function __contractsResolveCurrentUserRole() {
         };
         const compatAuth = parseAuthState('pb_compat_auth_v1');
         const nativeAuth = parseAuthState('pb_native_auth_v1');
+        const legacyAuth = parseAuthState('pb_auth');
         candidates.push(
             compatAuth?.user?.role,
             compatAuth?.record?.role,
             nativeAuth?.user?.role,
-            nativeAuth?.record?.role
+            nativeAuth?.record?.role,
+            legacyAuth?.user?.role,
+            legacyAuth?.record?.role
         );
+        for (let i = 0; i < localStorage.length; i += 1) {
+            const key = String(localStorage.key(i) || '');
+            if (!/(pocketbase|pb).*(auth|session)|auth.*(pocketbase|pb)/i.test(key)) continue;
+            const parsed = parseAuthState(key);
+            if (!parsed) continue;
+            candidates.push(
+                parsed?.role,
+                parsed?.rol,
+                parsed?.model?.role,
+                parsed?.model?.rol,
+                parsed?.record?.role,
+                parsed?.record?.rol,
+                parsed?.user?.role,
+                parsed?.user?.rol
+            );
+        }
     } catch (_) {}
     for (const candidate of candidates) {
         const safe = __contractsNormalizeRoleValue(candidate);
@@ -2815,16 +2889,19 @@ function __contractsIsAdminProfile() {
 
 function __contractsResolveReceiptActorName() {
     const candidates = [
-        window.currentUserProfile?.full_name,
-        window.currentUserProfile?.name,
+        window.currentUserProfile?.login_username,
+        window.currentUserProfile?.record?.login_username,
+        window.currentUserProfile?.profile?.login_username,
         window.currentUserProfile?.Usernames,
         window.currentUserProfile?.username,
+        window.currentUserProfile?.record?.username,
+        window.currentUserProfile?.profile?.username,
+        window.currentUserProfile?.full_name,
+        window.currentUserProfile?.name,
         window.currentUserProfile?.record?.full_name,
         window.currentUserProfile?.record?.name,
-        window.currentUserProfile?.record?.username,
         window.currentUserProfile?.profile?.full_name,
         window.currentUserProfile?.profile?.name,
-        window.currentUserProfile?.profile?.username,
         window.currentUserProfile?.email ? String(window.currentUserProfile.email).split('@')[0] : '',
         window.currentUserProfile?.record?.email ? String(window.currentUserProfile.record.email).split('@')[0] : ''
     ];
@@ -2875,10 +2952,16 @@ async function __contractsLoadCurrentUserProfile(user) {
         String(nativeAuth?.record?.email || '').trim().toLowerCase()
     ].filter(Boolean))];
     const usernameCandidates = [...new Set([
+        String(fallback?.login_username || '').trim(),
+        String(fallback?.record?.login_username || '').trim(),
         String(fallback?.username || '').trim(),
         String(fallback?.record?.username || '').trim(),
+        String(compatAuth?.user?.login_username || '').trim(),
+        String(compatAuth?.record?.login_username || '').trim(),
         String(compatAuth?.user?.username || '').trim(),
         String(compatAuth?.record?.username || '').trim(),
+        String(nativeAuth?.user?.login_username || '').trim(),
+        String(nativeAuth?.record?.login_username || '').trim(),
         String(nativeAuth?.user?.username || '').trim(),
         String(nativeAuth?.record?.username || '').trim()
     ].filter(Boolean))];
@@ -2893,11 +2976,13 @@ async function __contractsLoadCurrentUserProfile(user) {
     };
     let appUser = await lookupByField('app_users', 'id', idCandidates);
     if (!appUser) appUser = await lookupByField('app_users', 'email', emailCandidates);
+    if (!appUser) appUser = await lookupByField('app_users', 'login_username', usernameCandidates);
     if (!appUser) appUser = await lookupByField('app_users', 'username', usernameCandidates);
     let profile = null;
     if (!appUser) {
         profile = await lookupByField('profiles', 'id', idCandidates);
         if (!profile) profile = await lookupByField('profiles', 'email', emailCandidates);
+        if (!profile) profile = await lookupByField('profiles', 'login_username', usernameCandidates);
         if (!profile) profile = await lookupByField('profiles', 'username', usernameCandidates);
     }
     const merged = {
@@ -2919,15 +3004,28 @@ async function __contractsLoadCurrentUserProfile(user) {
         merged.role = role;
         localStorage.setItem('hub_user_cache_role', role);
     }
-    if (!merged.username) merged.username = appUser?.username || appUser?.login_username || profile?.username || profile?.login_username || fallback?.username || fallback?.email?.split('@')[0] || '';
+    if (!merged.username) merged.username = appUser?.login_username || appUser?.username || profile?.login_username || profile?.username || fallback?.login_username || fallback?.username || fallback?.email?.split('@')[0] || '';
     return merged;
 }
 
 function __contractsResolvePdfOverlayConfigPayload(record = {}) {
     const rawRecord = record && typeof record === 'object' ? record : {};
-    if (rawRecord.config_json && typeof rawRecord.config_json === 'object') return rawRecord.config_json;
-    const elements = rawRecord.elements && typeof rawRecord.elements === 'object' ? rawRecord.elements : {};
-    if (elements.config_json && typeof elements.config_json === 'object') return elements.config_json;
+    const parseObjectLike = (value) => {
+        if (value && typeof value === 'object') return value;
+        const raw = String(value || '').trim();
+        if (!raw) return null;
+        try {
+            const parsed = JSON.parse(raw);
+            return parsed && typeof parsed === 'object' ? parsed : null;
+        } catch (_) {
+            return null;
+        }
+    };
+    const configJson = parseObjectLike(rawRecord.config_json);
+    if (configJson) return configJson;
+    const elements = parseObjectLike(rawRecord.elements) || {};
+    const elementConfig = parseObjectLike(elements.config_json);
+    if (elementConfig) return elementConfig;
     if (elements.profiles && typeof elements.profiles === 'object') {
         return {
             tenant: rawRecord.tenant || elements.tenant || __CP_CONTRACTS_PDF_STYLE_TENANT,
@@ -2982,61 +3080,98 @@ function __contractsBuildPdfOverlayElementsPayload(configJson) {
     };
 }
 
-async function __contractsLoadModernPdfStyleRecord(generatorType) {
-    const pbClient = window.tenantPocketBase || window.globalPocketBase;
-    if (!pbClient) return null;
-    const overlayDocumentType = __contractsOverlayDocumentType(generatorType);
-    try {
-        const { data, error } = await pbClient
-            .from(__CP_CONTRACTS_PDF_OVERLAYS_COLLECTION)
-            .select('id,config_json,elements')
-            .eq('tenant', __CP_CONTRACTS_PDF_STYLE_TENANT)
-            .eq('document_type', overlayDocumentType)
-            .maybeSingle();
-        if (!error && data) {
-            return {
-                source: 'pdf_overlays',
-                id: String(data.id || ''),
-                config: __contractsResolvePdfOverlayConfigPayload(data),
-                raw: data.config_json || data.elements || {}
-            };
-        }
-    } catch (_) {
-        // fall through to compatibility storage
-    }
-    try {
-        const { data, error } = await pbClient
-            .from(__CP_CONTRACTS_PDF_SETTINGS_COLLECTION)
-            .select('id,config_json')
-            .eq('tenant', __CP_CONTRACTS_PDF_STYLE_TENANT)
-            .eq('generator_type', generatorType)
-            .maybeSingle();
-        if (error || !data) return null;
-        return { source: 'pdf_generator_settings', id: String(data.id || ''), config: data.config_json || {} };
-    } catch (_) {
-        return null;
-    }
+function __contractsPickLatestRecord(records) {
+    const list = Array.isArray(records) ? records.filter((row) => row && typeof row === 'object') : [];
+    if (!list.length) return null;
+    list.sort((a, b) => {
+        const aTs = Date.parse(String(a.updated_at || a.updated || a.created_at || a.created || '')) || 0;
+        const bTs = Date.parse(String(b.updated_at || b.updated || b.created_at || b.created || '')) || 0;
+        return bTs - aTs;
+    });
+    return list[0] || null;
 }
 
-async function __contractsLoadLegacyPdfStyleRecord() {
-    const pbClient = window.tenantPocketBase || window.globalPocketBase;
-    if (!pbClient) return null;
-    try {
-        const { data, error } = await pbClient
-            .from('configuracion')
-            .select('id,valor_json')
-            .eq('clave', __CP_CONTRACTS_PDF_STYLE_CONFIG_KEY)
-            .maybeSingle();
-        if (error || !data) return null;
-        return { source: 'legacy', id: String(data.id || ''), config: data.valor_json || {} };
-    } catch (_) {
-        return null;
+async function __contractsLoadModernPdfStyleRecord(generatorType) {
+    const clients = [];
+    if (window.tenantPocketBase) clients.push(window.tenantPocketBase);
+    if (window.globalPocketBase && window.globalPocketBase !== window.tenantPocketBase) clients.push(window.globalPocketBase);
+    if (!clients.length) return null;
+    const overlayDocumentType = __contractsOverlayDocumentType(generatorType);
+    for (const pbClient of clients) {
+        try {
+            const { data, error } = await pbClient
+                .from(__CP_CONTRACTS_PDF_OVERLAYS_COLLECTION)
+                .select('id,config_json,elements,updated,created,updated_at,created_at')
+                .eq('tenant', __CP_CONTRACTS_PDF_STYLE_TENANT)
+                .eq('document_type', overlayDocumentType);
+            const row = __contractsPickLatestRecord(Array.isArray(data) ? data : (data ? [data] : []));
+            if (!error && row) {
+                return {
+                    source: 'pdf_overlays',
+                    id: String(row.id || ''),
+                    config: __contractsResolvePdfOverlayConfigPayload(row),
+                    raw: row.config_json || row.elements || {}
+                };
+            }
+        } catch (_) {}
     }
+    for (const pbClient of clients) {
+        try {
+            const { data, error } = await pbClient
+                .from(__CP_CONTRACTS_PDF_SETTINGS_COLLECTION)
+                .select('id,config_json,updated,created,updated_at,created_at')
+                .eq('tenant', __CP_CONTRACTS_PDF_STYLE_TENANT)
+                .eq('generator_type', generatorType);
+            const row = __contractsPickLatestRecord(Array.isArray(data) ? data : (data ? [data] : []));
+            if (!error && row) return { source: 'pdf_generator_settings', id: String(row.id || ''), config: row.config_json || {}, raw: row.config_json || {} };
+        } catch (_) {}
+    }
+    return null;
+}
+
+async function __contractsLoadLegacyPdfStyleRecord(generatorType) {
+    const clients = [];
+    if (window.tenantPocketBase) clients.push(window.tenantPocketBase);
+    if (window.globalPocketBase && window.globalPocketBase !== window.tenantPocketBase) clients.push(window.globalPocketBase);
+    if (!clients.length) return null;
+    for (const pbClient of clients) {
+        try {
+            const { data, error } = await pbClient
+                .from('configuracion')
+                .select('id,valor_json,updated,created,updated_at,created_at')
+                .eq('clave', __CP_CONTRACTS_PDF_STYLE_CONFIG_KEY);
+            const row = __contractsPickLatestRecord(Array.isArray(data) ? data : (data ? [data] : []));
+            if (error || !row) continue;
+            const baseConfig = (() => {
+                if (row.valor_json && typeof row.valor_json === 'object') return row.valor_json;
+                const raw = String(row.valor_json || '').trim();
+                if (!raw) return {};
+                try {
+                    const parsed = JSON.parse(raw);
+                    return parsed && typeof parsed === 'object' ? parsed : {};
+                } catch (_) {
+                    return {};
+                }
+            })();
+            return {
+                source: 'legacy',
+                id: String(row.id || ''),
+                raw: baseConfig,
+                config: {
+                    ...__CP_CONTRACTS_PDF_STYLE_DEFAULTS,
+                    ...baseConfig
+                }
+            };
+        } catch (_) {}
+    }
+    return null;
 }
 
 async function __contractsUpsertModernPdfStyleRecord(generatorType, configJson) {
-    const pbClient = window.tenantPocketBase || window.globalPocketBase;
-    if (!pbClient) return { id: '', config: configJson || {} };
+    const clients = [];
+    if (window.tenantPocketBase) clients.push(window.tenantPocketBase);
+    if (window.globalPocketBase && window.globalPocketBase !== window.tenantPocketBase) clients.push(window.globalPocketBase);
+    if (!clients.length) return { id: '', config: configJson || {} };
     const overlayDocumentType = __contractsOverlayDocumentType(generatorType);
     const safeConfig = __contractsResolvePdfOverlayConfigPayload({ config_json: configJson || {} });
     const payload = {
@@ -3045,44 +3180,148 @@ async function __contractsUpsertModernPdfStyleRecord(generatorType, configJson) 
         config_json: safeConfig,
         elements: __contractsBuildPdfOverlayElementsPayload(safeConfig)
     };
-    const { data: existingModern, error: modernLookupError } = await pbClient
-        .from(__CP_CONTRACTS_PDF_OVERLAYS_COLLECTION)
-        .select('id')
-        .eq('tenant', __CP_CONTRACTS_PDF_STYLE_TENANT)
-        .eq('document_type', overlayDocumentType)
-        .maybeSingle();
-    if (modernLookupError) throw modernLookupError;
-    if (existingModern?.id) {
-        const { error: updateError } = await pbClient
-            .from(__CP_CONTRACTS_PDF_OVERLAYS_COLLECTION)
-            .update(payload)
-            .eq('id', existingModern.id);
-        if (updateError) throw updateError;
-        return { id: String(existingModern.id || ''), config: payload.config_json };
+    let lastError = null;
+    for (const pbClient of clients) {
+        try {
+            const { data: existingModern, error: modernLookupError } = await pbClient
+                .from(__CP_CONTRACTS_PDF_OVERLAYS_COLLECTION)
+                .select('id,updated,created,updated_at,created_at')
+                .eq('tenant', __CP_CONTRACTS_PDF_STYLE_TENANT)
+                .eq('document_type', overlayDocumentType);
+            if (modernLookupError) throw modernLookupError;
+            const existingRow = __contractsPickLatestRecord(Array.isArray(existingModern) ? existingModern : (existingModern ? [existingModern] : []));
+            if (existingRow?.id) {
+                const { error: updateError } = await pbClient
+                    .from(__CP_CONTRACTS_PDF_OVERLAYS_COLLECTION)
+                    .update(payload)
+                    .eq('tenant', __CP_CONTRACTS_PDF_STYLE_TENANT)
+                    .eq('document_type', overlayDocumentType);
+                if (updateError) throw updateError;
+                return { id: String(existingRow.id || ''), config: payload.config_json };
+            }
+            const { data: inserted, error: insertError } = await pbClient
+                .from(__CP_CONTRACTS_PDF_OVERLAYS_COLLECTION)
+                .insert(payload)
+                .select('id')
+                .single();
+            if (insertError) throw insertError;
+            return { id: String(inserted?.id || ''), config: payload.config_json };
+        } catch (e) {
+            lastError = e;
+        }
     }
-    const { data: inserted, error: insertError } = await pbClient
-        .from(__CP_CONTRACTS_PDF_OVERLAYS_COLLECTION)
-        .insert(payload)
-        .select('id')
-        .single();
-    if (insertError) throw insertError;
-    return { id: String(inserted?.id || ''), config: payload.config_json };
+    if (lastError) throw lastError;
+    return { id: '', config: payload.config_json };
 }
 
-async function __contractsSyncLegacyPdfStyleRecordsToModern() {
+async function __contractsUpsertLegacyPdfStyleRecord(configJson) {
+    const clients = [];
+    if (window.tenantPocketBase) clients.push(window.tenantPocketBase);
+    if (window.globalPocketBase && window.globalPocketBase !== window.tenantPocketBase) clients.push(window.globalPocketBase);
+    if (!clients.length) return null;
+    let lastError = null;
+    for (const pbClient of clients) {
+        try {
+            const { data: existing, error: lookupError } = await pbClient
+                .from('configuracion')
+                .select('id,updated,created,updated_at,created_at')
+                .eq('clave', __CP_CONTRACTS_PDF_STYLE_CONFIG_KEY);
+            if (lookupError) throw lookupError;
+            const existingRow = __contractsPickLatestRecord(Array.isArray(existing) ? existing : (existing ? [existing] : []));
+            if (existingRow?.id) {
+                const { error: updError } = await pbClient
+                    .from('configuracion')
+                    .update({ valor_json: configJson || {} })
+                    .eq('clave', __CP_CONTRACTS_PDF_STYLE_CONFIG_KEY);
+                if (updError) throw updError;
+                return { id: String(existingRow.id || '') };
+            }
+            const { data: inserted, error: insError } = await pbClient
+                .from('configuracion')
+                .insert({ clave: __CP_CONTRACTS_PDF_STYLE_CONFIG_KEY, valor_json: configJson || {} })
+                .select('id')
+                .single();
+            if (insError) throw insError;
+            return { id: String(inserted?.id || '') };
+        } catch (e) {
+            lastError = e;
+        }
+    }
+    if (lastError) throw lastError;
+    return null;
+}
+
+async function __contractsUpsertCompatPdfSettingsRecord(generatorType, configJson) {
+    const clients = [];
+    if (window.tenantPocketBase) clients.push(window.tenantPocketBase);
+    if (window.globalPocketBase && window.globalPocketBase !== window.tenantPocketBase) clients.push(window.globalPocketBase);
+    if (!clients.length) return null;
+    const payload = {
+        tenant: __CP_CONTRACTS_PDF_STYLE_TENANT,
+        generator_type: generatorType,
+        config_json: configJson || {}
+    };
+    let lastError = null;
+    for (const pbClient of clients) {
+        try {
+            const { data: existing, error: lookupError } = await pbClient
+                .from(__CP_CONTRACTS_PDF_SETTINGS_COLLECTION)
+                .select('id,updated,created,updated_at,created_at')
+                .eq('tenant', __CP_CONTRACTS_PDF_STYLE_TENANT)
+                .eq('generator_type', generatorType);
+            if (lookupError) throw lookupError;
+            const existingRow = __contractsPickLatestRecord(Array.isArray(existing) ? existing : (existing ? [existing] : []));
+            if (existingRow?.id) {
+                const { error: updError } = await pbClient
+                    .from(__CP_CONTRACTS_PDF_SETTINGS_COLLECTION)
+                    .update(payload)
+                    .eq('tenant', __CP_CONTRACTS_PDF_STYLE_TENANT)
+                    .eq('generator_type', generatorType);
+                if (updError) throw updError;
+                return { id: String(existingRow.id || '') };
+            }
+            const { data: inserted, error: insError } = await pbClient
+                .from(__CP_CONTRACTS_PDF_SETTINGS_COLLECTION)
+                .insert(payload)
+                .select('id')
+                .single();
+            if (insError) throw insError;
+            return { id: String(inserted?.id || '') };
+        } catch (e) {
+            lastError = e;
+        }
+    }
+    if (lastError) throw lastError;
+    return null;
+}
+
+async function __contractsSyncLegacyPdfStyleRecordsToModern(options = {}) {
+    const opts = options && typeof options === 'object' ? options : {};
+    const migrate = opts.migrate === true;
     const mappings = ['receipts', 'contracts'];
     const records = {};
-    let legacyRecord = null;
     for (const generatorType of mappings) {
         let modernRecord = await __contractsLoadModernPdfStyleRecord(generatorType);
         if (modernRecord?.source !== 'pdf_overlays' && modernRecord?.config) {
-            const saved = await __contractsUpsertModernPdfStyleRecord(generatorType, modernRecord.config);
-            modernRecord = { source: 'pdf_overlays', id: saved.id, config: saved.config, raw: saved.config };
+            if (migrate) {
+                try {
+                    const saved = await __contractsUpsertModernPdfStyleRecord(generatorType, modernRecord.config);
+                    modernRecord = { source: 'pdf_overlays', id: saved.id, config: saved.config, raw: saved.config };
+                } catch (_) {}
+            }
         } else if (!modernRecord) {
-            if (legacyRecord === null) legacyRecord = await __contractsLoadLegacyPdfStyleRecord();
+            const legacyRecord = await __contractsLoadLegacyPdfStyleRecord(generatorType);
             if (legacyRecord?.config) {
-                const saved = await __contractsUpsertModernPdfStyleRecord(generatorType, legacyRecord.config);
-                modernRecord = { source: 'pdf_overlays', id: saved.id, config: saved.config, raw: saved.config };
+                if (migrate) {
+                    try {
+                        const saved = await __contractsUpsertModernPdfStyleRecord(generatorType, legacyRecord.config);
+                        modernRecord = { source: 'pdf_overlays', id: saved.id, config: saved.config, raw: saved.config };
+                    } catch (_) {
+                        modernRecord = legacyRecord;
+                    }
+                } else {
+                    modernRecord = legacyRecord;
+                }
             }
         }
         if (modernRecord) records[generatorType] = modernRecord;
@@ -3095,7 +3334,7 @@ async function __contractsLoadSharedPdfStyleConfig(profile = 'receipt') {
     const profileKey = __contractsNormalizeProfileKey(profile);
     try {
         const generatorType = profileKey === 'contract' ? 'contracts' : 'receipts';
-        const syncedRecords = await __contractsSyncLegacyPdfStyleRecordsToModern();
+        const syncedRecords = await __contractsSyncLegacyPdfStyleRecordsToModern({ migrate: __contractsIsAdminProfile() });
         const record = syncedRecords[generatorType] || null;
         if (!record) {
             __contractsPdfStyleActiveProfile = profileKey;
@@ -3108,7 +3347,7 @@ async function __contractsLoadSharedPdfStyleConfig(profile = 'receipt') {
         }
         __contractsPdfStyleConfigRecordId = record.id;
         __contractsPdfStyleConfigStore = record.source;
-        __contractsPdfStyleRawPayload = record.config || {};
+        __contractsPdfStyleRawPayload = record.raw || record.config || {};
         __contractsSharedTemplateTextLayouts = __contractsPdfStyleRawPayload?.templateTextLayouts && typeof __contractsPdfStyleRawPayload.templateTextLayouts === 'object'
             ? __contractsPdfStyleRawPayload.templateTextLayouts
             : {};
@@ -3122,21 +3361,25 @@ async function __contractsLoadSharedPdfStyleConfig(profile = 'receipt') {
 
 async function __contractsPersistSharedPdfStyleConfig(style, options = {}) {
     const opts = options && typeof options === 'object' ? options : {};
-    if ((!__contractsIsAdminProfile() && opts.force !== true) || (!window.tenantPocketBase && !window.globalPocketBase)) return;
-    const normalized = __contractsNormalizePdfStyle(style);
+    if (!__contractsIsAdminProfile() && opts.force !== true) return;
+    if (!window.tenantPocketBase && !window.globalPocketBase) return;
+    const profileKey = __contractsNormalizeProfileKey(__contractsPdfStyleActiveProfile);
+    const generatorType = profileKey === 'contract' ? 'contracts' : 'receipts';
+    const safeStyle = __contractsNormalizePdfStyle(style || __contractsPdfStyleState || {});
+    const existingPayload = __contractsPdfStyleRawPayload && typeof __contractsPdfStyleRawPayload === 'object'
+        ? __contractsPdfStyleRawPayload
+        : {};
+    const configJson = __contractsBuildPdfStyleConfigPayload(existingPayload, safeStyle, profileKey);
+    configJson.templateTextLayouts = __contractsSharedTemplateTextLayouts && typeof __contractsSharedTemplateTextLayouts === 'object'
+        ? __contractsSharedTemplateTextLayouts
+        : {};
     try {
-        let existingPayload = __contractsPdfStyleRawPayload && typeof __contractsPdfStyleRawPayload === 'object'
-            ? __contractsPdfStyleRawPayload
-            : {};
-        const payload = __contractsBuildPdfStyleConfigPayload(existingPayload, normalized, __contractsPdfStyleActiveProfile);
-        payload.templateTextLayouts = __contractsSharedTemplateTextLayouts && typeof __contractsSharedTemplateTextLayouts === 'object'
-            ? __contractsSharedTemplateTextLayouts
-            : {};
-        const generatorType = __contractsPdfStyleActiveProfile === 'contract' ? 'contracts' : 'receipts';
-        const saved = await __contractsUpsertModernPdfStyleRecord(generatorType, payload);
+        const saved = await __contractsUpsertModernPdfStyleRecord(generatorType, configJson);
         __contractsPdfStyleConfigRecordId = saved.id;
         __contractsPdfStyleConfigStore = 'pdf_overlays';
-        __contractsPdfStyleRawPayload = payload;
+        __contractsPdfStyleRawPayload = configJson;
+        try { await __contractsUpsertCompatPdfSettingsRecord(generatorType, configJson); } catch (_) {}
+        try { await __contractsUpsertLegacyPdfStyleRecord(configJson); } catch (_) {}
     } catch (e) {
         console.warn('No se pudo guardar estilo PDF compartido en pdf_overlays (CP contracts):', e);
     }
@@ -3920,8 +4163,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     if(!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
 
     // 3. Verificar Sesión
-    const { data: { session } } = await window.globalPocketBase.auth.getSession();
-    if (!session) window.location.href = 'index.html';
+    let session = null;
+    try {
+        const response = await window.globalPocketBase.auth.getSession();
+        session = response?.data?.session || null;
+    } catch (_) {
+        session = null;
+    }
+    if (!session) {
+        const fallbackUser = window.globalPocketBase?.authStore?.model
+            || window.tenantPocketBase?.authStore?.model
+            || null;
+        if (fallbackUser) session = { user: fallbackUser };
+    }
+    if (!session || !session.user) {
+        window.showToast('No se encontró una sesión válida. Inicia sesión de nuevo.', 'error');
+        return;
+    }
     try {
         window.currentUserProfile = await __contractsLoadCurrentUserProfile(session.user);
     } catch (_) {
@@ -4333,15 +4591,18 @@ function __contractsApplyPdfBaseLayoutsToScope(scopeRoot, isAdmin = false) {
 }
 
 async function __contractsPrepareReceiptExportRoot() {
-    if (selectedOrder && typeof window.updateReceiptPreview === 'function') {
-        try { await window.updateReceiptPreview(); } catch (_) {}
-    }
     if (!__contractsIsAdminProfile()) {
         try {
             await __contractsLoadSharedPdfStyleConfig(__contractsResolveReceiptPreviewProfile());
         } catch (_) {}
     }
-    const markup = String(getReceiptHTML(false) || '').trim();
+    if (selectedOrder && typeof window.updateReceiptPreview === 'function') {
+        try { await window.updateReceiptPreview(); } catch (_) {}
+    }
+    const previewRoot = document.querySelector('#receipt-preview-box .cpc-pdf-root');
+    const previewMarkup = previewRoot instanceof HTMLElement ? String(previewRoot.outerHTML || '').trim() : '';
+    const fallbackMarkup = String(getReceiptHTML(false) || '').trim();
+    const markup = previewMarkup || fallbackMarkup;
     if (!markup) return null;
     const host = __contractsGetPdfRenderHost();
     host.innerHTML = markup;
@@ -4350,10 +4611,51 @@ async function __contractsPrepareReceiptExportRoot() {
         host.innerHTML = '';
         return null;
     }
-    __contractsApplyPdfBaseLayoutsToScope(exportRoot, false);
+    if (!previewMarkup) {
+        __contractsApplyPdfBaseLayoutsToScope(exportRoot, false);
+    }
     __contractsStripReceiptEditingChrome(exportRoot);
+    exportRoot.querySelectorAll('.cpc-pdf-resource[data-res-type="text"], .cpc-pdf-resource[data-res-type="title"]').forEach((node) => {
+        __contractsAutoFitPdfTextNode(node);
+    });
     await __contractsWaitForPdfAssets(exportRoot, 7000);
     return { host, exportRoot };
+}
+
+async function __contractsRenderReceiptPdfBlob(exportRoot, filename, extraOptions = {}) {
+    if (!(exportRoot instanceof HTMLElement)) throw new Error('No se pudo preparar el contenido PDF.');
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await __contractsWaitForPdfAssets(exportRoot, 7000);
+    const baseOptions = {
+        margin: 0,
+        filename: filename || 'Documento.pdf',
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: {
+            scale: 2,
+            useCORS: true,
+            letterRendering: true,
+            scrollY: 0,
+            backgroundColor: '#ffffff'
+        },
+        jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' }
+    };
+    const options = {
+        ...baseOptions,
+        ...extraOptions,
+        image: { ...baseOptions.image, ...(extraOptions.image || {}) },
+        html2canvas: { ...baseOptions.html2canvas, ...(extraOptions.html2canvas || {}) },
+        jsPDF: { ...baseOptions.jsPDF, ...(extraOptions.jsPDF || {}) }
+    };
+    let blob = await html2pdf().set(options).from(exportRoot).output('blob');
+    if (!blob || blob.size < 4096) {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        blob = await html2pdf().set({
+            ...options,
+            html2canvas: { ...(options.html2canvas || {}), scale: 2.5 }
+        }).from(exportRoot).output('blob');
+    }
+    if (!blob || blob.size < 4096) throw new Error('No se pudo generar el PDF correctamente.');
+    return blob;
 }
 
 window.downloadReceiptPDF = async function() { 
@@ -4363,9 +4665,17 @@ window.downloadReceiptPDF = async function() {
         return;
     }
     const { host, exportRoot } = exportCtx;
-    const opt = { margin: 0, filename: currentRemainingBalance <= 0.01 ? `Constancia_Liquidacion_${selectedOrder.numero_orden}.pdf` : `Recibo_${selectedOrder.numero_orden}.pdf`, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2, useCORS: true, letterRendering: true, scrollY: 0 }, jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' } };
+    const fileName = currentRemainingBalance <= 0.01
+        ? `Constancia_Liquidacion_${selectedOrder.numero_orden}.pdf`
+        : `Recibo_${selectedOrder.numero_orden}.pdf`;
     try {
-        await html2pdf().set(opt).from(exportRoot).save();
+        const pdfBlob = await __contractsRenderReceiptPdfBlob(exportRoot, fileName);
+        const url = URL.createObjectURL(pdfBlob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = fileName;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1200);
     } finally {
         host.innerHTML = '';
     }
@@ -4383,7 +4693,7 @@ window.generateAndSaveLiquidationCertificate = async function() {
         const fileName = `Constancia_Liquidacion_${selectedOrder.numero_orden || selectedOrder.id.slice(0, 6)}_${Date.now()}.pdf`;
         let pdfBlob = null;
         try {
-            pdfBlob = await html2pdf().set({ margin: 0, filename: fileName, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2, useCORS: true }, jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' } }).from(exportRoot).output('blob');
+            pdfBlob = await __contractsRenderReceiptPdfBlob(exportRoot, fileName);
         } finally {
             host.innerHTML = '';
         }
@@ -4438,7 +4748,7 @@ window.generateAndSaveReceipt = async function() {
         const fileName = `Recibo_${selectedOrder.numero_orden}_${Date.now()}.pdf`;
         let pdfBlob = null;
         try {
-            pdfBlob = await html2pdf().set({ margin: 0, filename: fileName, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2, useCORS: true }, jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' } }).from(exportRoot).output('blob');
+            pdfBlob = await __contractsRenderReceiptPdfBlob(exportRoot, fileName);
         } finally {
             host.innerHTML = '';
         }
@@ -4797,7 +5107,7 @@ function getReceiptHTML(isVisual = false) {
         signLabels
     });
     const pdfStyleInlineVars = __contractsPdfStyleVarsInline(pdfStyle);
-    const pdfStyleTag = `<style>.cpc-pdf-root{font-family:var(--cp-font-family)!important;}.cpc-pdf-root .cpc-pdf-shift{transform:translate(var(--cp-offset-x),var(--cp-offset-y));}.cpc-pdf-root .cpc-pdf-header{border-bottom-width:var(--cp-header-line)!important;justify-content:var(--cp-header-justify)!important;}.cpc-pdf-root .cpc-pdf-sign-line{width:100%;height:var(--cp-sign-line)!important;background:#111827!important;border-radius:999px;}.cpc-pdf-root .cpc-pdf-title{font-size:var(--cp-title-size)!important;line-height:1.05!important;text-align:var(--cp-header-align)!important;}.cpc-pdf-root .cpc-pdf-meta,.cpc-pdf-root .cpc-pdf-meta *{font-size:var(--cp-meta-size)!important;text-align:var(--cp-meta-align)!important;}.cpc-pdf-root .cpc-pdf-table-head th{font-size:var(--cp-table-head-size)!important;}.cpc-pdf-root .cpc-pdf-table-body td,.cpc-pdf-root .cpc-pdf-table-body p,.cpc-pdf-root .cpc-pdf-table-body span{font-size:var(--cp-table-body-size)!important;line-height:var(--cp-line-height)!important;}.cpc-pdf-root .cpc-pdf-table-body td:first-child,.cpc-pdf-root .cpc-pdf-table-body td:first-child *{text-align:var(--cp-table-align)!important;}.cpc-pdf-root .cpc-pdf-summary,.cpc-pdf-root .cpc-pdf-summary *{text-align:var(--cp-summary-align)!important;}.cpc-pdf-root .cpc-pdf-quick,.cpc-pdf-root .cpc-pdf-quick *{font-size:var(--cp-quick-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-quick-align)!important;}.cpc-pdf-root .cpc-pdf-general-conditions,.cpc-pdf-root .cpc-pdf-general-conditions *{font-size:var(--cp-conditions-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-conditions-align)!important;}.cpc-pdf-root .cpc-pdf-sign,.cpc-pdf-root .cpc-pdf-sign *{font-size:var(--cp-sign-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-sign-align)!important;}.cpc-pdf-root .cpc-pdf-footer-text{font-size:var(--cp-footer-size)!important;text-align:var(--cp-footer-align)!important;}.cpc-pdf-root [data-base-resource]{position:relative;transform-origin:top left;}.cpc-pdf-root .cpc-pdf-resource,.cpc-pdf-root .cpc-pdf-editable{cursor:default;box-sizing:border-box;outline:none;outline-offset:1px;}.cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-resource,.cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-editable{outline:1px dashed rgba(193,98,30,.45);}.cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-resource{cursor:move;}.cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-editable{cursor:pointer;}.cpc-pdf-root .cpc-pdf-edit-selected{outline:2px solid #c1621e!important;} .cpc-pdf-delete-btn { position:absolute; top:-8px; right:-8px; width:22px; height:22px; border-radius:50%; background:#c1621e; color:#fff; display:none; align-items:center; justify-content:center; cursor:pointer; font-size:11px; z-index:80; box-shadow:0 0 0 2px #fff; pointer-events:auto; } .cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-resource.cpc-pdf-edit-selected .cpc-pdf-delete-btn { display:flex; } .cpc-pdf-delete-btn:hover { background:#a85519; transform:scale(1.08); transition:all .2s; }</style>`;
+    const pdfStyleTag = `<style>.cpc-pdf-root{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;font-family:var(--cp-font-family)!important;}.cpc-pdf-root .cpc-pdf-shift{transform:translate(var(--cp-offset-x),var(--cp-offset-y));}.cpc-pdf-root .cpc-pdf-header{border-bottom-width:var(--cp-header-line)!important;justify-content:var(--cp-header-justify)!important;}.cpc-pdf-root .cpc-pdf-sign-line{width:100%;height:var(--cp-sign-line)!important;background:#111827!important;border-radius:999px;}.cpc-pdf-root .cpc-pdf-title{font-size:var(--cp-title-size)!important;line-height:1.05!important;text-align:var(--cp-header-align)!important;}.cpc-pdf-root .cpc-pdf-meta,.cpc-pdf-root .cpc-pdf-meta *{font-size:var(--cp-meta-size)!important;text-align:var(--cp-meta-align)!important;}.cpc-pdf-root .cpc-pdf-table-head th{font-size:var(--cp-table-head-size)!important;}.cpc-pdf-root .cpc-pdf-table-body td,.cpc-pdf-root .cpc-pdf-table-body p,.cpc-pdf-root .cpc-pdf-table-body span{font-size:var(--cp-table-body-size)!important;line-height:var(--cp-line-height)!important;}.cpc-pdf-root .cpc-pdf-table-body td:first-child,.cpc-pdf-root .cpc-pdf-table-body td:first-child *{text-align:var(--cp-table-align)!important;}.cpc-pdf-root .cpc-pdf-summary,.cpc-pdf-root .cpc-pdf-summary *{text-align:var(--cp-summary-align)!important;}.cpc-pdf-root .cpc-pdf-quick,.cpc-pdf-root .cpc-pdf-quick *{font-size:var(--cp-quick-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-quick-align)!important;}.cpc-pdf-root .cpc-pdf-general-conditions,.cpc-pdf-root .cpc-pdf-general-conditions *{font-size:var(--cp-conditions-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-conditions-align)!important;}.cpc-pdf-root .cpc-pdf-sign,.cpc-pdf-root .cpc-pdf-sign *{font-size:var(--cp-sign-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-sign-align)!important;}.cpc-pdf-root .cpc-pdf-footer-text{font-size:var(--cp-footer-size)!important;text-align:var(--cp-footer-align)!important;}.cpc-pdf-root [data-base-resource]{position:relative;transform-origin:top left;}.cpc-pdf-root .cpc-pdf-resource,.cpc-pdf-root .cpc-pdf-editable{cursor:default;box-sizing:border-box;outline:none;outline-offset:1px;}.cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-resource,.cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-editable{outline:1px dashed rgba(193,98,30,.45);}.cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-resource{cursor:move;}.cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-editable{cursor:pointer;}.cpc-pdf-root .cpc-pdf-edit-selected{outline:2px solid #c1621e!important;} .cpc-pdf-delete-btn { position:absolute; top:-8px; right:-8px; width:22px; height:22px; border-radius:50%; background:#c1621e; color:#fff; display:none; align-items:center; justify-content:center; cursor:pointer; font-size:11px; z-index:80; box-shadow:0 0 0 2px #fff; pointer-events:auto; } .cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-resource.cpc-pdf-edit-selected .cpc-pdf-delete-btn { display:flex; } .cpc-pdf-delete-btn:hover { background:#a85519; transform:scale(1.08); transition:all .2s; }</style>`;
     const wrapStyledReceipt = (rawHtml, extraPages = 0) => {
         const pageOneRaw = __contractsInjectResourcesIntoPage(rawHtml, __contractsRenderPdfResources(pdfStyle, 1, resourceContext));
         const pages = [

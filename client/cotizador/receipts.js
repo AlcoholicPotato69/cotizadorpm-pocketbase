@@ -2014,10 +2014,11 @@ function __pmContractsRenderReceiptToolbar() {
     if (!showToolbar) {
         document.getElementById('pmc-receipt-inspector')?.classList.add('hidden');
         document.getElementById('pmc-receipt-inspector-backdrop')?.classList.add('hidden');
+        document.getElementById('pmc-receipt-edit-button')?.classList.add('hidden');
         return;
     }
     const adminTools = document.getElementById('pmc-receipt-admin-tools');
-    if (adminTools) adminTools.classList.toggle('hidden', !isAdmin);
+    if (adminTools) adminTools.classList.toggle('hidden', false);
     const headerToggleBtn = document.getElementById('pmc-receipt-edit-button');
     const editingEnabled = !__pmContractsReceiptEditLocked;
     if (headerToggleBtn) {
@@ -2028,12 +2029,15 @@ function __pmContractsRenderReceiptToolbar() {
         headerToggleBtn.classList.toggle('bg-gray-950', !editingEnabled);
         headerToggleBtn.classList.toggle('hover:bg-gray-900', !editingEnabled);
         headerToggleBtn.classList.toggle('border-gray-700', !editingEnabled);
-        headerToggleBtn.classList.toggle('hidden', !isAdmin);
+        headerToggleBtn.classList.remove('opacity-60', 'cursor-not-allowed');
+        headerToggleBtn.disabled = false;
+        headerToggleBtn.classList.remove('hidden');
     }
     const addButton = document.getElementById('pmc-receipt-add-button');
     if (addButton) {
-        addButton.classList.toggle('pointer-events-none', __pmContractsReceiptEditLocked);
-        addButton.classList.toggle('opacity-60', __pmContractsReceiptEditLocked);
+        const disableAdd = __pmContractsReceiptEditLocked;
+        addButton.classList.toggle('pointer-events-none', disableAdd);
+        addButton.classList.toggle('opacity-60', disableAdd);
     }
 }
 
@@ -2143,9 +2147,15 @@ function __pmContractsSyncReceiptEditMode() {
 }
 
 function __pmContractsSetReceiptEditLocked(locked) {
+    const wasLocked = __pmContractsReceiptEditLocked;
     __pmContractsReceiptEditLocked = locked !== false;
     if (__pmContractsReceiptEditLocked) __pmContractsCloseReceiptInspector();
     __pmContractsSyncReceiptEditMode();
+    if (!wasLocked && __pmContractsReceiptEditLocked && __pmContractsIsAdminProfile()) {
+        Promise.resolve()
+            .then(() => __pmContractsPersistSharedPdfStyleConfig(__pmContractsGetPdfStyleConfig(), { force: true }))
+            .catch(() => {});
+    }
 }
 
 function __pmContractsOverlayDocumentType(generatorType) {
@@ -2835,6 +2845,10 @@ function __pmContractsResolveCurrentUserRole() {
         window.currentUserProfile?.app_user?.role,
         window.currentUserProfile?.user_metadata?.role,
         window.currentUserProfile?.app_metadata?.role,
+        window.globalPocketBase?.authStore?.model?.role,
+        window.globalPocketBase?.authStore?.model?.rol,
+        window.tenantPocketBase?.authStore?.model?.role,
+        window.tenantPocketBase?.authStore?.model?.rol,
         window.currentUser?.role,
         window.userProfile?.role,
         Array.isArray(window.currentUserProfile?.roles) ? window.currentUserProfile.roles[0] : ''
@@ -2853,12 +2867,31 @@ function __pmContractsResolveCurrentUserRole() {
         };
         const compatAuth = parseAuthState('pb_compat_auth_v1');
         const nativeAuth = parseAuthState('pb_native_auth_v1');
+        const legacyAuth = parseAuthState('pb_auth');
         candidates.push(
             compatAuth?.user?.role,
             compatAuth?.record?.role,
             nativeAuth?.user?.role,
-            nativeAuth?.record?.role
+            nativeAuth?.record?.role,
+            legacyAuth?.user?.role,
+            legacyAuth?.record?.role
         );
+        for (let i = 0; i < localStorage.length; i += 1) {
+            const key = String(localStorage.key(i) || '');
+            if (!/(pocketbase|pb).*(auth|session)|auth.*(pocketbase|pb)/i.test(key)) continue;
+            const parsed = parseAuthState(key);
+            if (!parsed) continue;
+            candidates.push(
+                parsed?.role,
+                parsed?.rol,
+                parsed?.model?.role,
+                parsed?.model?.rol,
+                parsed?.record?.role,
+                parsed?.record?.rol,
+                parsed?.user?.role,
+                parsed?.user?.rol
+            );
+        }
     } catch (_) {}
     for (const candidate of candidates) {
         const safe = __pmContractsNormalizeRoleValue(candidate);
@@ -2873,16 +2906,19 @@ function __pmContractsIsAdminProfile() {
 
 function __pmContractsResolveReceiptActorName() {
     const candidates = [
-        window.currentUserProfile?.full_name,
-        window.currentUserProfile?.name,
+        window.currentUserProfile?.login_username,
+        window.currentUserProfile?.record?.login_username,
+        window.currentUserProfile?.profile?.login_username,
         window.currentUserProfile?.Usernames,
         window.currentUserProfile?.username,
+        window.currentUserProfile?.record?.username,
+        window.currentUserProfile?.profile?.username,
+        window.currentUserProfile?.full_name,
+        window.currentUserProfile?.name,
         window.currentUserProfile?.record?.full_name,
         window.currentUserProfile?.record?.name,
-        window.currentUserProfile?.record?.username,
         window.currentUserProfile?.profile?.full_name,
         window.currentUserProfile?.profile?.name,
-        window.currentUserProfile?.profile?.username,
         window.currentUserProfile?.email ? String(window.currentUserProfile.email).split('@')[0] : '',
         window.currentUserProfile?.record?.email ? String(window.currentUserProfile.record.email).split('@')[0] : ''
     ];
@@ -2933,10 +2969,16 @@ async function __pmContractsLoadCurrentUserProfile(user) {
         String(nativeAuth?.record?.email || '').trim().toLowerCase()
     ].filter(Boolean))];
     const usernameCandidates = [...new Set([
+        String(fallback?.login_username || '').trim(),
+        String(fallback?.record?.login_username || '').trim(),
         String(fallback?.username || '').trim(),
         String(fallback?.record?.username || '').trim(),
+        String(compatAuth?.user?.login_username || '').trim(),
+        String(compatAuth?.record?.login_username || '').trim(),
         String(compatAuth?.user?.username || '').trim(),
         String(compatAuth?.record?.username || '').trim(),
+        String(nativeAuth?.user?.login_username || '').trim(),
+        String(nativeAuth?.record?.login_username || '').trim(),
         String(nativeAuth?.user?.username || '').trim(),
         String(nativeAuth?.record?.username || '').trim()
     ].filter(Boolean))];
@@ -2951,11 +2993,13 @@ async function __pmContractsLoadCurrentUserProfile(user) {
     };
     let appUser = await lookupByField('app_users', 'id', idCandidates);
     if (!appUser) appUser = await lookupByField('app_users', 'email', emailCandidates);
+    if (!appUser) appUser = await lookupByField('app_users', 'login_username', usernameCandidates);
     if (!appUser) appUser = await lookupByField('app_users', 'username', usernameCandidates);
     let profile = null;
     if (!appUser) {
         profile = await lookupByField('profiles', 'id', idCandidates);
         if (!profile) profile = await lookupByField('profiles', 'email', emailCandidates);
+        if (!profile) profile = await lookupByField('profiles', 'login_username', usernameCandidates);
         if (!profile) profile = await lookupByField('profiles', 'username', usernameCandidates);
     }
     const merged = {
@@ -2977,15 +3021,28 @@ async function __pmContractsLoadCurrentUserProfile(user) {
         merged.role = role;
         localStorage.setItem('hub_user_cache_role', role);
     }
-    if (!merged.username) merged.username = appUser?.username || appUser?.login_username || profile?.username || profile?.login_username || fallback?.username || fallback?.email?.split('@')[0] || '';
+    if (!merged.username) merged.username = appUser?.login_username || appUser?.username || profile?.login_username || profile?.username || fallback?.login_username || fallback?.username || fallback?.email?.split('@')[0] || '';
     return merged;
 }
 
 function __pmContractsResolvePdfOverlayConfigPayload(record = {}) {
     const rawRecord = record && typeof record === 'object' ? record : {};
-    if (rawRecord.config_json && typeof rawRecord.config_json === 'object') return rawRecord.config_json;
-    const elements = rawRecord.elements && typeof rawRecord.elements === 'object' ? rawRecord.elements : {};
-    if (elements.config_json && typeof elements.config_json === 'object') return elements.config_json;
+    const parseObjectLike = (value) => {
+        if (value && typeof value === 'object') return value;
+        const raw = String(value || '').trim();
+        if (!raw) return null;
+        try {
+            const parsed = JSON.parse(raw);
+            return parsed && typeof parsed === 'object' ? parsed : null;
+        } catch (_) {
+            return null;
+        }
+    };
+    const configJson = parseObjectLike(rawRecord.config_json);
+    if (configJson) return configJson;
+    const elements = parseObjectLike(rawRecord.elements) || {};
+    const elementConfig = parseObjectLike(elements.config_json);
+    if (elementConfig) return elementConfig;
     if (elements.profiles && typeof elements.profiles === 'object') {
         return {
             tenant: rawRecord.tenant || elements.tenant || __PM_CONTRACTS_PDF_STYLE_TENANT,
@@ -3040,70 +3097,98 @@ function __pmContractsBuildPdfOverlayElementsPayload(configJson) {
     };
 }
 
+function __pmContractsPickLatestRecord(records) {
+    const list = Array.isArray(records) ? records.filter((row) => row && typeof row === 'object') : [];
+    if (!list.length) return null;
+    list.sort((a, b) => {
+        const aTs = Date.parse(String(a.updated_at || a.updated || a.created_at || a.created || '')) || 0;
+        const bTs = Date.parse(String(b.updated_at || b.updated || b.created_at || b.created || '')) || 0;
+        return bTs - aTs;
+    });
+    return list[0] || null;
+}
+
 async function __pmContractsLoadModernPdfStyleRecord(generatorType) {
-    const pbClient = window.tenantPocketBase || window.globalPocketBase;
-    if (!pbClient) return null;
+    const clients = [];
+    if (window.tenantPocketBase) clients.push(window.tenantPocketBase);
+    if (window.globalPocketBase && window.globalPocketBase !== window.tenantPocketBase) clients.push(window.globalPocketBase);
+    if (!clients.length) return null;
     const overlayDocumentType = __pmContractsOverlayDocumentType(generatorType);
-    try {
-        const { data, error } = await pbClient
-            .from(__PM_CONTRACTS_PDF_OVERLAYS_COLLECTION)
-            .select('id,config_json,elements')
-            .eq('tenant', __PM_CONTRACTS_PDF_STYLE_TENANT)
-            .eq('document_type', overlayDocumentType)
-            .maybeSingle();
-        if (!error && data) {
-            return {
-                source: 'pdf_overlays',
-                id: String(data.id || ''),
-                config: __pmContractsResolvePdfOverlayConfigPayload(data),
-                raw: data.config_json || data.elements || {}
-            };
-        }
-    } catch (_) {
-        // fall through to compatibility storage
+    for (const pbClient of clients) {
+        try {
+            const { data, error } = await pbClient
+                .from(__PM_CONTRACTS_PDF_OVERLAYS_COLLECTION)
+                .select('id,config_json,elements,updated,created,updated_at,created_at')
+                .eq('tenant', __PM_CONTRACTS_PDF_STYLE_TENANT)
+                .eq('document_type', overlayDocumentType);
+            const row = __pmContractsPickLatestRecord(Array.isArray(data) ? data : (data ? [data] : []));
+            if (!error && row) {
+                return {
+                    source: 'pdf_overlays',
+                    id: String(row.id || ''),
+                    config: __pmContractsResolvePdfOverlayConfigPayload(row),
+                    raw: row.config_json || row.elements || {}
+                };
+            }
+        } catch (_) {}
     }
-    try {
-        const { data, error } = await pbClient
-            .from(__PM_CONTRACTS_PDF_SETTINGS_COLLECTION)
-            .select('id,config_json')
-            .eq('tenant', __PM_CONTRACTS_PDF_STYLE_TENANT)
-            .eq('generator_type', generatorType)
-            .maybeSingle();
-        if (error || !data) return null;
-        return { source: 'pdf_generator_settings', id: String(data.id || ''), config: data.config_json || {} };
-    } catch (_) {
-        return null;
+    for (const pbClient of clients) {
+        try {
+            const { data, error } = await pbClient
+                .from(__PM_CONTRACTS_PDF_SETTINGS_COLLECTION)
+                .select('id,config_json,updated,created,updated_at,created_at')
+                .eq('tenant', __PM_CONTRACTS_PDF_STYLE_TENANT)
+                .eq('generator_type', generatorType);
+            const row = __pmContractsPickLatestRecord(Array.isArray(data) ? data : (data ? [data] : []));
+            if (!error && row) return { source: 'pdf_generator_settings', id: String(row.id || ''), config: row.config_json || {}, raw: row.config_json || {} };
+        } catch (_) {}
     }
+    return null;
 }
 
 async function __pmContractsLoadLegacyPdfStyleRecord(generatorType) {
-    const pbClient = window.tenantPocketBase || window.globalPocketBase;
-    if (!pbClient) return null;
-    try {
-        const { data, error } = await pbClient
-            .from('configuracion')
-            .select('id,valor_json')
-            .eq('clave', __PM_CONTRACTS_PDF_STYLE_CONFIG_KEY)
-            .maybeSingle();
-        if (error || !data) return null;
-        const baseConfig = (data.valor_json && typeof data.valor_json === 'object') ? data.valor_json : {};
-        return {
-            source: 'legacy',
-            id: String(data.id || ''),
-            raw: baseConfig,
-            config: {
-                ...__PM_CONTRACTS_PDF_STYLE_DEFAULTS,
-                ...baseConfig
-            }
-        };
-    } catch (_) {
-        return null;
+    const clients = [];
+    if (window.tenantPocketBase) clients.push(window.tenantPocketBase);
+    if (window.globalPocketBase && window.globalPocketBase !== window.tenantPocketBase) clients.push(window.globalPocketBase);
+    if (!clients.length) return null;
+    for (const pbClient of clients) {
+        try {
+            const { data, error } = await pbClient
+                .from('configuracion')
+                .select('id,valor_json,updated,created,updated_at,created_at')
+                .eq('clave', __PM_CONTRACTS_PDF_STYLE_CONFIG_KEY);
+            const row = __pmContractsPickLatestRecord(Array.isArray(data) ? data : (data ? [data] : []));
+            if (error || !row) continue;
+            const baseConfig = (() => {
+                if (row.valor_json && typeof row.valor_json === 'object') return row.valor_json;
+                const raw = String(row.valor_json || '').trim();
+                if (!raw) return {};
+                try {
+                    const parsed = JSON.parse(raw);
+                    return parsed && typeof parsed === 'object' ? parsed : {};
+                } catch (_) {
+                    return {};
+                }
+            })();
+            return {
+                source: 'legacy',
+                id: String(row.id || ''),
+                raw: baseConfig,
+                config: {
+                    ...__PM_CONTRACTS_PDF_STYLE_DEFAULTS,
+                    ...baseConfig
+                }
+            };
+        } catch (_) {}
     }
+    return null;
 }
 
 async function __pmContractsUpsertModernPdfStyleRecord(generatorType, configJson) {
-    const pbClient = window.tenantPocketBase || window.globalPocketBase;
-    if (!pbClient) return { id: '', config: configJson || {} };
+    const clients = [];
+    if (window.tenantPocketBase) clients.push(window.tenantPocketBase);
+    if (window.globalPocketBase && window.globalPocketBase !== window.tenantPocketBase) clients.push(window.globalPocketBase);
+    if (!clients.length) return { id: '', config: configJson || {} };
     const overlayDocumentType = __pmContractsOverlayDocumentType(generatorType);
     const safeConfig = __pmContractsResolvePdfOverlayConfigPayload({ config_json: configJson || {} });
     const payload = {
@@ -3112,40 +3197,148 @@ async function __pmContractsUpsertModernPdfStyleRecord(generatorType, configJson
         config_json: safeConfig,
         elements: __pmContractsBuildPdfOverlayElementsPayload(safeConfig)
     };
-    const { data: existingModern, error: modernLookupError } = await pbClient
-        .from(__PM_CONTRACTS_PDF_OVERLAYS_COLLECTION)
-        .select('id')
-        .eq('tenant', __PM_CONTRACTS_PDF_STYLE_TENANT)
-        .eq('document_type', overlayDocumentType)
-        .maybeSingle();
-    if (modernLookupError) throw modernLookupError;
-    if (existingModern?.id) {
-        const { error: updError } = await pbClient.from(__PM_CONTRACTS_PDF_OVERLAYS_COLLECTION).update(payload).eq('id', existingModern.id);
-        if (updError) throw updError;
-        return { id: String(existingModern.id), config: payload.config_json };
+    let lastError = null;
+    for (const pbClient of clients) {
+        try {
+            const { data: existingModern, error: modernLookupError } = await pbClient
+                .from(__PM_CONTRACTS_PDF_OVERLAYS_COLLECTION)
+                .select('id,updated,created,updated_at,created_at')
+                .eq('tenant', __PM_CONTRACTS_PDF_STYLE_TENANT)
+                .eq('document_type', overlayDocumentType);
+            if (modernLookupError) throw modernLookupError;
+            const existingRow = __pmContractsPickLatestRecord(Array.isArray(existingModern) ? existingModern : (existingModern ? [existingModern] : []));
+            if (existingRow?.id) {
+                const { error: updError } = await pbClient
+                    .from(__PM_CONTRACTS_PDF_OVERLAYS_COLLECTION)
+                    .update(payload)
+                    .eq('tenant', __PM_CONTRACTS_PDF_STYLE_TENANT)
+                    .eq('document_type', overlayDocumentType);
+                if (updError) throw updError;
+                return { id: String(existingRow.id), config: payload.config_json };
+            }
+            const { data: inserted, error: insError } = await pbClient
+                .from(__PM_CONTRACTS_PDF_OVERLAYS_COLLECTION)
+                .insert(payload)
+                .select('id')
+                .single();
+            if (insError) throw insError;
+            return { id: String(inserted?.id || ''), config: payload.config_json };
+        } catch (e) {
+            lastError = e;
+        }
     }
-    const { data: inserted, error: insError } = await pbClient
-        .from(__PM_CONTRACTS_PDF_OVERLAYS_COLLECTION)
-        .insert(payload)
-        .select('id')
-        .single();
-    if (insError) throw insError;
-    return { id: String(inserted?.id || ''), config: payload.config_json };
+    if (lastError) throw lastError;
+    return { id: '', config: payload.config_json };
 }
 
-async function __pmContractsSyncLegacyPdfStyleRecordsToModern() {
+async function __pmContractsUpsertLegacyPdfStyleRecord(configJson) {
+    const clients = [];
+    if (window.tenantPocketBase) clients.push(window.tenantPocketBase);
+    if (window.globalPocketBase && window.globalPocketBase !== window.tenantPocketBase) clients.push(window.globalPocketBase);
+    if (!clients.length) return null;
+    let lastError = null;
+    for (const pbClient of clients) {
+        try {
+            const { data: existing, error: lookupError } = await pbClient
+                .from('configuracion')
+                .select('id,updated,created,updated_at,created_at')
+                .eq('clave', __PM_CONTRACTS_PDF_STYLE_CONFIG_KEY);
+            if (lookupError) throw lookupError;
+            const existingRow = __pmContractsPickLatestRecord(Array.isArray(existing) ? existing : (existing ? [existing] : []));
+            if (existingRow?.id) {
+                const { error: updError } = await pbClient
+                    .from('configuracion')
+                    .update({ valor_json: configJson || {} })
+                    .eq('clave', __PM_CONTRACTS_PDF_STYLE_CONFIG_KEY);
+                if (updError) throw updError;
+                return { id: String(existingRow.id || '') };
+            }
+            const { data: inserted, error: insError } = await pbClient
+                .from('configuracion')
+                .insert({ clave: __PM_CONTRACTS_PDF_STYLE_CONFIG_KEY, valor_json: configJson || {} })
+                .select('id')
+                .single();
+            if (insError) throw insError;
+            return { id: String(inserted?.id || '') };
+        } catch (e) {
+            lastError = e;
+        }
+    }
+    if (lastError) throw lastError;
+    return null;
+}
+
+async function __pmContractsUpsertCompatPdfSettingsRecord(generatorType, configJson) {
+    const clients = [];
+    if (window.tenantPocketBase) clients.push(window.tenantPocketBase);
+    if (window.globalPocketBase && window.globalPocketBase !== window.tenantPocketBase) clients.push(window.globalPocketBase);
+    if (!clients.length) return null;
+    const payload = {
+        tenant: __PM_CONTRACTS_PDF_STYLE_TENANT,
+        generator_type: generatorType,
+        config_json: configJson || {}
+    };
+    let lastError = null;
+    for (const pbClient of clients) {
+        try {
+            const { data: existing, error: lookupError } = await pbClient
+                .from(__PM_CONTRACTS_PDF_SETTINGS_COLLECTION)
+                .select('id,updated,created,updated_at,created_at')
+                .eq('tenant', __PM_CONTRACTS_PDF_STYLE_TENANT)
+                .eq('generator_type', generatorType);
+            if (lookupError) throw lookupError;
+            const existingRow = __pmContractsPickLatestRecord(Array.isArray(existing) ? existing : (existing ? [existing] : []));
+            if (existingRow?.id) {
+                const { error: updError } = await pbClient
+                    .from(__PM_CONTRACTS_PDF_SETTINGS_COLLECTION)
+                    .update(payload)
+                    .eq('tenant', __PM_CONTRACTS_PDF_STYLE_TENANT)
+                    .eq('generator_type', generatorType);
+                if (updError) throw updError;
+                return { id: String(existingRow.id || '') };
+            }
+            const { data: inserted, error: insError } = await pbClient
+                .from(__PM_CONTRACTS_PDF_SETTINGS_COLLECTION)
+                .insert(payload)
+                .select('id')
+                .single();
+            if (insError) throw insError;
+            return { id: String(inserted?.id || '') };
+        } catch (e) {
+            lastError = e;
+        }
+    }
+    if (lastError) throw lastError;
+    return null;
+}
+
+async function __pmContractsSyncLegacyPdfStyleRecordsToModern(options = {}) {
+    const opts = options && typeof options === 'object' ? options : {};
+    const migrate = opts.migrate === true;
     const mappings = ['receipts', 'contracts'];
     const records = {};
     for (const generatorType of mappings) {
         let modernRecord = await __pmContractsLoadModernPdfStyleRecord(generatorType);
         if (modernRecord?.source !== 'pdf_overlays' && modernRecord?.config) {
-            const saved = await __pmContractsUpsertModernPdfStyleRecord(generatorType, modernRecord.config);
-            modernRecord = { source: 'pdf_overlays', id: saved.id, config: saved.config, raw: saved.config };
+            if (migrate) {
+                try {
+                    const saved = await __pmContractsUpsertModernPdfStyleRecord(generatorType, modernRecord.config);
+                    modernRecord = { source: 'pdf_overlays', id: saved.id, config: saved.config, raw: saved.config };
+                } catch (_) {}
+            }
         } else if (!modernRecord) {
             const legacyRecord = await __pmContractsLoadLegacyPdfStyleRecord(generatorType);
             if (legacyRecord?.config) {
-                const saved = await __pmContractsUpsertModernPdfStyleRecord(generatorType, legacyRecord.config);
-                modernRecord = { source: 'pdf_overlays', id: saved.id, config: saved.config, raw: saved.config };
+                if (migrate) {
+                    try {
+                        const saved = await __pmContractsUpsertModernPdfStyleRecord(generatorType, legacyRecord.config);
+                        modernRecord = { source: 'pdf_overlays', id: saved.id, config: saved.config, raw: saved.config };
+                    } catch (_) {
+                        modernRecord = legacyRecord;
+                    }
+                } else {
+                    modernRecord = legacyRecord;
+                }
             }
         }
         if (modernRecord) records[generatorType] = modernRecord;
@@ -3158,7 +3351,7 @@ async function __pmContractsLoadSharedPdfStyleConfig(profile = 'receipt') {
     const profileKey = __pmContractsNormalizeProfileKey(profile);
     try {
         const generatorType = profileKey === 'contract' ? 'contracts' : 'receipts';
-        const syncedRecords = await __pmContractsSyncLegacyPdfStyleRecordsToModern();
+        const syncedRecords = await __pmContractsSyncLegacyPdfStyleRecordsToModern({ migrate: __pmContractsIsAdminProfile() });
         const record = syncedRecords[generatorType] || null;
 
         if (!record) {
@@ -3205,6 +3398,8 @@ async function __pmContractsPersistSharedPdfStyleConfig(style, options = {}) {
         __pmContractsPdfStyleConfigRecordId = saved.id;
         __pmContractsPdfStyleConfigStore = 'pdf_overlays';
         __pmContractsPdfStyleRawPayload = configJson;
+        try { await __pmContractsUpsertCompatPdfSettingsRecord(generatorType, configJson); } catch (_) {}
+        try { await __pmContractsUpsertLegacyPdfStyleRecord(configJson); } catch (_) {}
     } catch (e) {
         console.warn('No se pudo guardar estilo PDF compartido en pdf_overlays (PM contracts):', e);
     }
@@ -4127,8 +4322,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     if(!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
 
     // 3. Verificar Sesión
-    const { data: { session } } = await window.globalPocketBase.auth.getSession();
-    if (!session) window.location.href = 'index.html';
+    let session = null;
+    try {
+        const response = await window.globalPocketBase.auth.getSession();
+        session = response?.data?.session || null;
+    } catch (_) {
+        session = null;
+    }
+    if (!session) {
+        const fallbackUser = window.globalPocketBase?.authStore?.model
+            || window.tenantPocketBase?.authStore?.model
+            || null;
+        if (fallbackUser) session = { user: fallbackUser };
+    }
+    if (!session || !session.user) {
+        window.showToast('No se encontró una sesión válida. Inicia sesión de nuevo.', 'error');
+        return;
+    }
     try {
         window.currentUserProfile = await __pmContractsLoadCurrentUserProfile(session.user);
     } catch (_) {
@@ -4539,15 +4749,18 @@ function __pmContractsApplyPdfBaseLayoutsToScope(scopeRoot, isAdmin = false) {
 }
 
 async function __pmContractsPrepareReceiptExportRoot() {
-    if (selectedOrder && typeof window.updateReceiptPreview === 'function') {
-        try { await window.updateReceiptPreview(); } catch (_) {}
-    }
     if (!__pmContractsIsAdminProfile()) {
         try {
             await __pmContractsLoadSharedPdfStyleConfig(__pmContractsResolveReceiptPreviewProfile());
         } catch (_) {}
     }
-    const markup = String(getReceiptHTML(false) || '').trim();
+    if (selectedOrder && typeof window.updateReceiptPreview === 'function') {
+        try { await window.updateReceiptPreview(); } catch (_) {}
+    }
+    const previewRoot = document.querySelector('#receipt-preview-box .pmc-pdf-root');
+    const previewMarkup = previewRoot instanceof HTMLElement ? String(previewRoot.outerHTML || '').trim() : '';
+    const fallbackMarkup = String(getReceiptHTML(false) || '').trim();
+    const markup = previewMarkup || fallbackMarkup;
     if (!markup) return null;
     const host = __pmContractsGetPdfRenderHost();
     host.innerHTML = markup;
@@ -4556,10 +4769,51 @@ async function __pmContractsPrepareReceiptExportRoot() {
         host.innerHTML = '';
         return null;
     }
-    __pmContractsApplyPdfBaseLayoutsToScope(exportRoot, false);
+    if (!previewMarkup) {
+        __pmContractsApplyPdfBaseLayoutsToScope(exportRoot, false);
+    }
     __pmContractsStripReceiptEditingChrome(exportRoot);
+    exportRoot.querySelectorAll('.pmc-pdf-resource[data-res-type="text"], .pmc-pdf-resource[data-res-type="title"]').forEach((node) => {
+        __pmContractsAutoFitPdfTextNode(node);
+    });
     await __pmContractsWaitForPdfAssets(exportRoot, 7000);
     return { host, exportRoot };
+}
+
+async function __pmContractsRenderReceiptPdfBlob(exportRoot, filename, extraOptions = {}) {
+    if (!(exportRoot instanceof HTMLElement)) throw new Error('No se pudo preparar el contenido PDF.');
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await __pmContractsWaitForPdfAssets(exportRoot, 7000);
+    const baseOptions = {
+        margin: 0,
+        filename: filename || 'Documento.pdf',
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: {
+            scale: 2,
+            useCORS: true,
+            letterRendering: true,
+            scrollY: 0,
+            backgroundColor: '#ffffff'
+        },
+        jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' }
+    };
+    const options = {
+        ...baseOptions,
+        ...extraOptions,
+        image: { ...baseOptions.image, ...(extraOptions.image || {}) },
+        html2canvas: { ...baseOptions.html2canvas, ...(extraOptions.html2canvas || {}) },
+        jsPDF: { ...baseOptions.jsPDF, ...(extraOptions.jsPDF || {}) }
+    };
+    let blob = await html2pdf().set(options).from(exportRoot).output('blob');
+    if (!blob || blob.size < 4096) {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        blob = await html2pdf().set({
+            ...options,
+            html2canvas: { ...(options.html2canvas || {}), scale: 2.5 }
+        }).from(exportRoot).output('blob');
+    }
+    if (!blob || blob.size < 4096) throw new Error('No se pudo generar el PDF correctamente.');
+    return blob;
 }
 
 window.downloadReceiptPDF = async function() { 
@@ -4569,9 +4823,17 @@ window.downloadReceiptPDF = async function() {
         return;
     }
     const { host, exportRoot } = exportCtx;
-    const opt = { margin: 0, filename: currentRemainingBalance <= 0.01 ? `Constancia_Liquidacion_${selectedOrder.numero_orden}.pdf` : `Recibo_${selectedOrder.numero_orden}.pdf`, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2, useCORS: true, letterRendering: true, scrollY: 0 }, jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' } };
+    const fileName = currentRemainingBalance <= 0.01
+        ? `Constancia_Liquidacion_${selectedOrder.numero_orden}.pdf`
+        : `Recibo_${selectedOrder.numero_orden}.pdf`;
     try {
-        await html2pdf().set(opt).from(exportRoot).save();
+        const pdfBlob = await __pmContractsRenderReceiptPdfBlob(exportRoot, fileName);
+        const url = URL.createObjectURL(pdfBlob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = fileName;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1200);
     } finally {
         host.innerHTML = '';
     }
@@ -4589,7 +4851,7 @@ window.generateAndSaveLiquidationCertificate = async function() {
         const fileName = `Constancia_Liquidacion_${selectedOrder.numero_orden || selectedOrder.id.slice(0, 6)}_${Date.now()}.pdf`;
         let pdfBlob = null;
         try {
-            pdfBlob = await html2pdf().set({ margin: 0, filename: fileName, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2, useCORS: true }, jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' } }).from(exportRoot).output('blob');
+            pdfBlob = await __pmContractsRenderReceiptPdfBlob(exportRoot, fileName);
         } finally {
             host.innerHTML = '';
         }
@@ -4644,7 +4906,7 @@ window.generateAndSaveReceipt = async function() {
         const fileName = `Recibo_${selectedOrder.numero_orden}_${Date.now()}.pdf`;
         let pdfBlob = null;
         try {
-            pdfBlob = await html2pdf().set({ margin: 0, filename: fileName, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2, useCORS: true }, jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' } }).from(exportRoot).output('blob');
+            pdfBlob = await __pmContractsRenderReceiptPdfBlob(exportRoot, fileName);
         } finally {
             host.innerHTML = '';
         }

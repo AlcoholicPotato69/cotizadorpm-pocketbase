@@ -200,6 +200,7 @@ let currentConcepts = [];
 let myPermissions = { access: false, orders_edit: false };
 let currentUserProfile = null;
 let __orderDetailDirty = false;
+let __orderUsersById = Object.create(null);
 let __orderAutoSaveTimer = null;
 let __orderAutoSaveBound = false;
 let __orderPendingApprovalSnapshot = null;
@@ -248,16 +249,17 @@ async function __cpQuoteGetById(id) {
 }
 
 async function __cpQuotesUpdate(id, payload) {
+    const safePayload = __orderBuildQuoteAuditPayload(payload || {});
     const svc = __cpNativeCotizaciones();
     if (svc) {
         try {
-            await svc.update(id, payload || {}, { schema: FIN_SCHEMA });
+            await svc.update(id, safePayload, { schema: FIN_SCHEMA });
             return { error: null };
         } catch (error) {
             return { error };
         }
     }
-    const result = await window.tenantPocketBase.from('cotizaciones').update(payload || {}).eq('id', id);
+    const result = await window.tenantPocketBase.from('cotizaciones').update(safePayload).eq('id', id);
     return { error: result && result.error ? result.error : null };
 }
 
@@ -362,11 +364,81 @@ function __orderHasPendingSnapshot() {
 
 window.__HUB_HAS_UNSAVED_CHANGES = function() {
     try {
-        if (IS_ORDER_DETAIL_PAGE) return true;
-        if (IS_ORDER_PREVIEW_PAGE || __cpIsPreviewOnlyQueryMode()) return __orderHasPendingSnapshot();
+        if (IS_ORDER_DETAIL_PAGE) return __orderDetailDirty === true;
     } catch (_) {}
     return false;
 };
+
+function __orderReadAuthState(key) {
+    try {
+        const raw = localStorage.getItem(key);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch (_) {
+        return null;
+    }
+}
+
+function __orderResolveCurrentActorId() {
+    const compatAuth = __orderReadAuthState('pb_compat_auth_v1');
+    const nativeAuth = __orderReadAuthState('pb_native_auth_v1');
+    const candidates = [
+        currentUserProfile?.id,
+        currentUserProfile?.record?.id,
+        currentUserProfile?.user?.id,
+        compatAuth?.user?.id,
+        compatAuth?.record?.id,
+        nativeAuth?.user?.id,
+        nativeAuth?.record?.id
+    ];
+    return candidates.map((v) => String(v || '').trim()).find(Boolean) || '';
+}
+
+function __orderResolveCurrentActorName() {
+    const fromProfile = __orderSanitizeActorName(__cpResolvePdfActorName?.());
+    if (fromProfile) return fromProfile;
+    const cachedName = __orderSanitizeActorName(localStorage.getItem('hub_user_cache_name') || '');
+    if (cachedName) return cachedName;
+    const compatAuth = __orderReadAuthState('pb_compat_auth_v1');
+    const nativeAuth = __orderReadAuthState('pb_native_auth_v1');
+    const username = [
+        currentUserProfile?.login_username,
+        currentUserProfile?.record?.login_username,
+        currentUserProfile?.username,
+        currentUserProfile?.record?.username,
+        compatAuth?.user?.login_username,
+        compatAuth?.record?.login_username,
+        compatAuth?.user?.username,
+        compatAuth?.record?.username,
+        nativeAuth?.user?.login_username,
+        nativeAuth?.record?.login_username,
+        nativeAuth?.user?.username,
+        nativeAuth?.record?.username
+    ]
+        .map((value) => __orderSanitizeActorName(value))
+        .find(Boolean);
+    if (username) return username;
+    const email = [
+        currentUserProfile?.email,
+        currentUserProfile?.record?.email,
+        compatAuth?.user?.email,
+        compatAuth?.record?.email,
+        nativeAuth?.user?.email,
+        nativeAuth?.record?.email
+    ].map((v) => String(v || '').trim()).find(Boolean) || '';
+    const emailUser = __orderSanitizeActorName(email ? email.split('@')[0] : '');
+    return emailUser || 'Usuario';
+}
+
+function __orderBuildQuoteAuditPayload(payload = {}) {
+    const next = payload && typeof payload === 'object' ? { ...payload } : {};
+    const actorId = __orderResolveCurrentActorId();
+    const actorName = __orderResolveCurrentActorName();
+    if (actorId) next.modificado_por_legacy = actorId;
+    if (actorName) next.modificado_por_nombre = actorName;
+    return next;
+}
 
 window.toggleCustomHorario = function(prefix) {
     const sel = document.getElementById(`${prefix}-horario`);
@@ -501,6 +573,10 @@ window.askCloseEditModal = function() {
 
 window.askDeleteOrder = function(id, e) {
     if (e) e.stopPropagation();
+    if (!__cpIsAdminProfile()) {
+        window.showToast("Solo administradores pueden eliminar cotizaciones.", "error");
+        return;
+    }
     window.openConfirm("¿Eliminar cotización y TODOS sus archivos? Esta acción es irreversible.", async () => {
         try {
             window.showToast("Eliminando archivos...", "info");
@@ -536,7 +612,7 @@ window.addEventListener('click', function(e) {
         return; 
     }
 
-    if (editModal && e.target === editModal) window.askCloseEditModal();
+    if (editModal && e.target === editModal && !IS_ORDER_DETAIL_PAGE) window.askCloseEditModal();
     if (docsModal && e.target === docsModal) window.closeModal('docs-modal');
     if (previewModal && e.target === previewModal) {
         if (IS_ORDER_PREVIEW_PAGE || __cpIsPreviewOnlyQueryMode()) return;
@@ -631,6 +707,288 @@ async function loadTaxes() { const { data } = await window.tenantPocketBase.from
 async function loadSpaces() { const { data } = await window.tenantPocketBase.from('espacios').select('*'); allSpaces = data || []; }
 async function loadConcepts() { const { data } = await window.tenantPocketBase.from('conceptos_catalogo').select('*').eq('activo', true); catalogConcepts = data || []; }
 
+function __orderFormatUserNameFromRecord(record) {
+    if (!record || typeof record !== 'object') return '';
+    const candidates = [
+        record.login_username,
+        record.user_name,
+        record.username,
+        record.Usernames,
+        record.full_name,
+        record.nombre,
+        record.name,
+        record.display_name
+    ];
+    const resolved = candidates.map((v) => String(v || '').trim()).find(Boolean);
+    if (resolved) return resolved;
+    const email = String(record.email || record.correo || '').trim();
+    return email ? email.split('@')[0] : '';
+}
+
+function __orderLooksLikeUuid(value) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || '').trim());
+}
+
+function __orderIsNumericLike(value) {
+    return /^[0-9]+$/.test(String(value || '').trim());
+}
+
+function __orderLooksLikePbRecordId(value) {
+    return /^[a-z0-9]{15}$/i.test(String(value || '').trim());
+}
+
+function __orderLooksLikeMongoObjectId(value) {
+    return /^[a-f0-9]{24}$/i.test(String(value || '').trim());
+}
+
+function __orderLooksLikeOpaqueActorId(value) {
+    const safe = String(value || '').trim();
+    if (!safe || safe.includes('@')) return false;
+    if (!/^[a-z0-9_-]+$/i.test(safe)) return false;
+    if (safe.length < 12) return false;
+    if (/\d/.test(safe) || safe.includes('-') || safe.includes('_')) return true;
+    return /^[a-z0-9]{12,}$/i.test(safe);
+}
+
+function __orderIsIdentifierLike(value) {
+    const safe = String(value || '').trim();
+    if (!safe) return false;
+    return __orderLooksLikeUuid(safe)
+        || __orderIsNumericLike(safe)
+        || __orderLooksLikePbRecordId(safe)
+        || __orderLooksLikeMongoObjectId(safe)
+        || __orderLooksLikeOpaqueActorId(safe);
+}
+
+function __orderSanitizeActorName(value) {
+    const safe = String(value || '').trim();
+    if (!safe) return '';
+    if (safe.includes('@')) return safe.split('@')[0];
+    if (__orderIsIdentifierLike(safe)) return '';
+    return safe;
+}
+
+function __orderRegisterUserRecord(record) {
+    if (!record || typeof record !== 'object') return;
+    const name = __orderFormatUserNameFromRecord(record);
+    if (!name) return;
+    const aliases = [
+        record?.id,
+        record?.legacy_id,
+        record?.legacyId,
+        record?.user_id,
+        record?.userId,
+        record?.login_username,
+        record?.user_name,
+        record?.username,
+        record?.email ? String(record.email).split('@')[0] : ''
+    ];
+    aliases
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+        .forEach((alias) => {
+            __orderUsersById[alias] = name;
+        });
+}
+
+function __orderResolveOrderActorId(order, mode = 'created') {
+    if (!order || typeof order !== 'object') return '';
+    const candidates = mode === 'updated'
+        ? [
+            order.modificado_por_legacy,
+            order.modificado_por,
+            order.updated_by,
+            order.updated_by_id,
+            order.modificado_por_id,
+            order.last_modified_by,
+            order.last_editor_id,
+            order.editor_id
+        ]
+        : [
+            order.creado_por_legacy,
+            order.creado_por,
+            order.created_by,
+            order.created_by_id,
+            order.creado_por_id,
+            order.user_id,
+            order.userId,
+            order.creator_id,
+            order.autor_id
+        ];
+    return candidates.map((value) => String(value || '').trim()).find(Boolean) || '';
+}
+
+function __orderResolveOrderActorName(order, mode = 'created') {
+    if (!order || typeof order !== 'object') return '---';
+    const actorId = __orderResolveOrderActorId(order, mode);
+    if (actorId && __orderUsersById[actorId]) return __orderUsersById[actorId];
+    const direct = mode === 'updated'
+        ? [
+            order.modificado_por_nombre,
+            order.ultimo_editor_nombre,
+            order.updated_by_name,
+            order.last_modified_name,
+            order.modificado_por_username,
+            order.ultimo_editor_username,
+            order.updated_by_username,
+            order.edited_by_username,
+            order.modificado_por_login
+        ]
+        : [
+            order.creado_por_nombre,
+            order.creador_nombre,
+            order.created_by_name,
+            order.creado_por_username,
+            order.creador_username,
+            order.created_by_username,
+            order.creado_por_login,
+            order.created_by_login
+        ];
+    const directName = direct
+        .map((value) => __orderSanitizeActorName(value))
+        .find((value) => value && (!actorId || value !== actorId));
+    if (directName) return directName;
+    if (actorId) {
+        if (actorId.includes('@')) return actorId.split('@')[0];
+        if (!__orderIsIdentifierLike(actorId)) return actorId;
+    }
+    if (mode === 'updated') return __orderResolveOrderActorName(order, 'created') || 'Usuario';
+    return 'Usuario';
+}
+
+function __orderRegisterActorAliasFromOrder(order, mode = 'created') {
+    if (!order || typeof order !== 'object') return;
+    const actorId = __orderResolveOrderActorId(order, mode);
+    if (!actorId) return;
+    const directCandidates = mode === 'updated'
+        ? [
+            order.modificado_por_nombre,
+            order.ultimo_editor_nombre,
+            order.updated_by_name,
+            order.last_modified_name,
+            order.modificado_por_username,
+            order.ultimo_editor_username,
+            order.updated_by_username,
+            order.edited_by_username,
+            order.modificado_por_login
+        ]
+        : [
+            order.creado_por_nombre,
+            order.creador_nombre,
+            order.created_by_name,
+            order.creado_por_username,
+            order.creador_username,
+            order.created_by_username,
+            order.creado_por_login,
+            order.created_by_login
+        ];
+    const directName = directCandidates
+        .map((value) => __orderSanitizeActorName(value))
+        .find(Boolean);
+    if (directName) __orderUsersById[actorId] = directName;
+}
+
+function __orderResolveAuditTimestamp(order, mode = 'created') {
+    if (!order || typeof order !== 'object') return '';
+    const candidates = mode === 'updated'
+        ? [order.updated_at, order.updated, order.modificado_en, order.last_modified_at, order.last_update]
+        : [order.created_at, order.created, order.fecha_creacion, order.creado_en];
+    return candidates.map((value) => String(value || '').trim()).find(Boolean) || '';
+}
+
+function __orderFormatAuditTooltipDateTime(rawValue) {
+    const safe = String(rawValue || '').trim();
+    if (!safe) return '';
+    const parsed = new Date(safe);
+    if (Number.isNaN(parsed.getTime())) return '';
+    try {
+        return new Intl.DateTimeFormat('es-MX', {
+            dateStyle: 'medium',
+            timeStyle: 'short',
+            timeZone: 'America/Mexico_City'
+        }).format(parsed);
+    } catch (_) {
+        return parsed.toLocaleString('es-MX');
+    }
+}
+
+function __orderEscapeHtmlAttr(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+function __orderBuildAuditTooltip(order, mode = 'created') {
+    const label = mode === 'updated' ? 'Última edición' : 'Creada';
+    const formatted = __orderFormatAuditTooltipDateTime(__orderResolveAuditTimestamp(order, mode));
+    return formatted ? `${label}: ${formatted}` : '';
+}
+
+async function __orderPrimeOrderUsers(orders = []) {
+    const list = Array.isArray(orders) ? orders : [];
+    const ids = new Set();
+    __orderUsersById = Object.create(null);
+    const currentActorId = __orderResolveCurrentActorId();
+    const currentActorName = __orderSanitizeActorName(__orderResolveCurrentActorName());
+    if (currentActorId && currentActorName) __orderUsersById[currentActorId] = currentActorName;
+    list.forEach((order) => {
+        const createdId = __orderResolveOrderActorId(order, 'created');
+        const updatedId = __orderResolveOrderActorId(order, 'updated');
+        __orderRegisterActorAliasFromOrder(order, 'created');
+        __orderRegisterActorAliasFromOrder(order, 'updated');
+        if (createdId) ids.add(createdId);
+        if (updatedId) ids.add(updatedId);
+    });
+    const missing = Array.from(ids).filter((id) => id && !__orderUsersById[id]);
+    if (!missing.length) return;
+    const sources = [window.globalPocketBase, window.tenantPocketBase].filter(Boolean);
+    for (let i = 0; i < missing.length; i += 20) {
+        const chunk = missing.slice(i, i + 20);
+        const numericChunk = chunk.filter((value) => __orderIsNumericLike(value));
+        const textChunk = chunk.filter((value) => !__orderIsNumericLike(value) && !__orderLooksLikeUuid(value));
+        if (!chunk.length) continue;
+        for (const source of sources) {
+            try {
+                const { data } = await source.from('app_users').select('*').in('id', chunk);
+                (data || []).forEach(__orderRegisterUserRecord);
+            } catch (_) {}
+            try {
+                const { data } = await source.from('app_users').select('*').in('legacy_id', chunk);
+                (data || []).forEach(__orderRegisterUserRecord);
+            } catch (_) {
+                if (numericChunk.length) {
+                    try {
+                        const { data } = await source.from('app_users').select('*').in('legacy_id', numericChunk);
+                        (data || []).forEach(__orderRegisterUserRecord);
+                    } catch (_) {}
+                }
+            }
+            if (textChunk.length) {
+                try {
+                    const { data } = await source.from('app_users').select('*').in('login_username', textChunk);
+                    (data || []).forEach(__orderRegisterUserRecord);
+                } catch (_) {}
+                try {
+                    const { data } = await source.from('app_users').select('*').in('username', textChunk);
+                    (data || []).forEach(__orderRegisterUserRecord);
+                } catch (_) {}
+            }
+        }
+    }
+    const unresolved = missing.filter((id) => id && !__orderUsersById[id]);
+    if (!unresolved.length) return;
+    for (const source of sources) {
+        try {
+            const { data } = await source
+                .from('app_users')
+                .select('id,legacy_id,legacyId,user_id,userId,login_username,user_name,username,full_name,name,email');
+            (data || []).forEach(__orderRegisterUserRecord);
+        } catch (_) {}
+    }
+}
+
 window.loadOrders = async function() {
     const { data, error } = await __cpQuotesList({ sort: '-created_at' });
     if (error) {
@@ -639,12 +997,14 @@ window.loadOrders = async function() {
     } else {
         allOrders = data || [];
     }
+    await __orderPrimeOrderUsers(allOrders);
     renderOrdersTable(allOrders);
 };
 
 function renderOrdersTable(data) {
     const t = document.getElementById('orders-table'); if(!t) return; t.innerHTML = ''; 
-    if(!data.length) { t.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-gray-400">Sin registros.</td></tr>'; return; }
+    if(!data.length) { t.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-gray-400">Sin registros.</td></tr>'; return; }
+    const canDelete = __cpIsAdminProfile();
     data.forEach(o => {
         let sColor = 'bg-gray-100 text-gray-600', sText = 'Pendiente', missingIcons = []; 
         if(o.status === 'aprobada') { sColor = 'bg-blue-100 text-blue-700'; sText = 'Aprobada'; if (!o.contrato_url && !o.numero_contrato) missingIcons.push('<i class="fa-solid fa-file-signature" title="Falta Contrato"></i>'); if (!o.factura_xml_url) missingIcons.push('<i class="fa-solid fa-file-invoice" title="Falta Factura"></i>'); if (!o.historial_pagos || o.historial_pagos.length === 0) missingIcons.push('<i class="fa-solid fa-money-bill-wave" title="Falta Pago"></i>'); }
@@ -665,7 +1025,16 @@ function renderOrdersTable(data) {
             : '--';
         
         const quoteName = (o.nombre_cotizacion || o.detalles_evento?.nombre_cotizacion || '').trim();
-        tr.innerHTML = `<td class="p-4 font-black text-brand-dark">${folioUnificado}</td><td class="p-4 font-bold text-xs text-gray-700">${quoteName ? `<span class="text-brand-dark block">${quoteName}</span><span class="text-[10px] text-gray-500 font-semibold">${o.cliente_nombre}</span>` : o.cliente_nombre}</td><td class="p-4 text-xs"><span class="font-bold block">${spaceLabel}</span><span class="text-gray-500 font-mono">${dateLabel}</span></td><td class="p-4 text-right font-mono font-bold text-xs">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(o.precio_final)}</td><td class="p-4 text-center"><span class="${sColor} px-2 py-1 rounded text-[9px] font-black uppercase tracking-wider">${sText}</span>${alertsHTML}</td><td class="p-4 text-center"><button type="button" onclick="event.stopPropagation(); window.openDocsModal('${o.id}')" class="bg-white border border-gray-300 text-gray-600 hover:bg-gray-50 hover:text-brand-dark px-3 py-1.5 rounded-lg text-xs font-bold transition shadow-sm flex items-center gap-2 mx-auto"><i class="fa-solid fa-folder-open text-brand-red"></i> Expediente</button></td><td class="p-4 text-center"><button type="button" onclick="window.askDeleteOrder('${o.id}', event)" class="text-gray-400 hover:text-red-600"><i class="fa-solid fa-trash"></i></button></td>`;
+        const createdBy = __orderResolveOrderActorName(o, 'created');
+        const updatedBy = __orderResolveOrderActorName(o, 'updated');
+        const createdTooltip = __orderBuildAuditTooltip(o, 'created');
+        const updatedTooltip = __orderBuildAuditTooltip(o, 'updated');
+        const createdTooltipAttr = createdTooltip ? ` title="${__orderEscapeHtmlAttr(createdTooltip)}"` : '';
+        const updatedTooltipAttr = updatedTooltip ? ` title="${__orderEscapeHtmlAttr(updatedTooltip)}"` : '';
+        const deleteCell = canDelete
+            ? `<button type="button" onclick="window.askDeleteOrder('${o.id}', event)" class="text-gray-400 hover:text-red-600"><i class="fa-solid fa-trash"></i></button>`
+            : `<span class="text-[10px] text-gray-300">—</span>`;
+        tr.innerHTML = `<td class="p-4 font-black text-brand-dark">${folioUnificado}</td><td class="p-4 font-bold text-xs text-gray-700">${quoteName ? `<span class="text-brand-dark block">${quoteName}</span><span class="text-[10px] text-gray-500 font-semibold">${o.cliente_nombre}</span>` : o.cliente_nombre}</td><td class="p-4 text-xs"><span class="font-bold block">${spaceLabel}</span><span class="text-gray-500 font-mono">${dateLabel}</span></td><td class="p-4 text-right font-mono font-bold text-xs">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(o.precio_final)}</td><td class="p-4 text-center"><span class="${sColor} px-2 py-1 rounded text-[9px] font-black uppercase tracking-wider">${sText}</span>${alertsHTML}</td><td class="p-4 text-[10px] font-bold text-gray-600 text-center"${createdTooltipAttr}>${createdBy}</td><td class="p-4 text-[10px] font-bold text-gray-600 text-center"${updatedTooltipAttr}>${updatedBy}</td><td class="p-4 text-center"><button type="button" onclick="event.stopPropagation(); window.openDocsModal('${o.id}')" class="bg-white border border-gray-300 text-gray-600 hover:bg-gray-50 hover:text-brand-dark px-3 py-1.5 rounded-lg text-xs font-bold transition shadow-sm flex items-center gap-2 mx-auto"><i class="fa-solid fa-folder-open text-brand-red"></i> Expediente</button></td><td class="p-4 text-center">${deleteCell}</td>`;
         t.appendChild(tr);
     });
 }
@@ -918,8 +1287,15 @@ window.openOrderEditModal = async function(id) {
 
 window.renderTaxesForSpace = function(spaceObj, activeTaxIds = null) {
     const container = document.getElementById('oed-taxes-list'); if(!container) return; container.innerHTML = '';
-    const defaultTaxIds = window.parseIds(spaceObj.impuestos_ids || spaceObj.impuestos); const isLocked = currentPreviewOrder && ['aprobada', 'finalizada'].includes(currentPreviewOrder.status);
-    dbTaxes.forEach(t => { let isChecked = activeTaxIds ? activeTaxIds.includes(t.id) : defaultTaxIds.includes(t.id); container.innerHTML += `<label class="flex items-center gap-1.5 cursor-pointer ${isLocked ? 'opacity-70' : ''}"><input type="checkbox" value="${t.id}" class="oed-tax-check accent-brand-red w-3 h-3" ${isChecked ? 'checked' : ''} ${isLocked ? 'disabled' : ''} onchange="window.recalcTotal()"><span class="text-[10px] font-bold uppercase text-gray-700">${t.nombre}</span></label>`; });
+    const defaultTaxIds = window.parseIds(spaceObj.impuestos_ids || spaceObj.impuestos).map((v) => String(v));
+    const mandatory = new Set(defaultTaxIds);
+    const isLocked = currentPreviewOrder && ['aprobada', 'finalizada'].includes(currentPreviewOrder.status);
+    dbTaxes.forEach(t => {
+        const tid = String(t.id);
+        const isChecked = mandatory.has(tid) || (activeTaxIds ? activeTaxIds.map((v) => String(v)).includes(tid) : false);
+        const isDisabled = isLocked || mandatory.has(tid);
+        container.innerHTML += `<label class="flex items-center gap-1.5 ${isDisabled ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'}"><input type="checkbox" value="${t.id}" class="oed-tax-check accent-brand-red w-3 h-3" ${isChecked ? 'checked' : ''} ${isDisabled ? 'disabled' : ''} onchange="window.recalcTotal()"><span class="text-[10px] font-bold uppercase text-gray-700">${t.nombre}</span></label>`;
+    });
 };
 
 window.updateConceptAmount = function(index, newVal) { currentConcepts[index].amount = parseFloat(newVal) || 0; currentConcepts[index].value = parseFloat(newVal) || 0; window.recalcTotal(); };
@@ -1036,6 +1412,8 @@ function __orderPrepareApprovalPreview(formData = {}, options = {}) {
     const baseData = opts.skipModalData ? {} : (typeof window.getFormDataFromModal === 'function' ? window.getFormDataFromModal() : {});
     const merged = { ...baseData, ...(formData || {}) };
     if (!merged.numero_orden) merged.numero_orden = (currentPreviewOrder?.numero_orden || currentPreviewOrder?.id?.split('-')?.[0] || '').toUpperCase();
+    const snapshotMeta = __orderBuildApprovalSnapshotMeta(currentPreviewOrder?.id || document.getElementById('oed-id')?.value, merged);
+    if (snapshotMeta?.path && !merged.url_cotizacion_final) merged.url_cotizacion_final = snapshotMeta.path;
     merged.status = 'aprobada';
     const previewPayload = { ...currentPreviewOrder, ...merged, status: 'aprobada' };
     const content = window.getOrderHTML(previewPayload, 'quote');
@@ -1197,19 +1575,46 @@ async function __orderRenderPdfBlob(element, filename) {
     }
 }
 
-async function __orderUploadApprovalSnapshotBlob(orderId, blob, formData = {}) {
+function __orderBuildApprovalSnapshotMeta(orderId, formData = {}) {
+    const id = String(orderId || '').trim();
+    const folioUnificado = formData?.numero_orden
+        || currentPreviewOrder?.numero_orden
+        || id.split('-')[0].toUpperCase();
+    return {
+        folioUnificado,
+        path: id ? `${id}/cotizacion_aprobada_${folioUnificado}.pdf` : ''
+    };
+}
+
+async function __orderUploadApprovalSnapshotBlob(orderId, blob, formData = {}, options = {}) {
     const id = String(orderId || '').trim();
     if (!id) throw new Error('Cotización inválida para snapshot.');
     if (!blob || !(blob.size > 0)) throw new Error('Snapshot vacío.');
-    const folioUnificado = formData.numero_orden
-        || currentPreviewOrder?.numero_orden
-        || id.split('-')[0].toUpperCase();
-    const path = `${id}/cotizacion_aprobada_${folioUnificado}.pdf`;
+    const opts = options && typeof options === 'object' ? options : {};
+    const resolved = __orderBuildApprovalSnapshotMeta(id, formData);
+    const folioUnificado = String(opts.folioUnificado || resolved.folioUnificado).trim();
+    const path = String(opts.path || resolved.path || `${id}/cotizacion_aprobada_${folioUnificado}.pdf`).trim();
     const { error: upErr } = await window.globalPocketBase.storage.from('documentos-cp').upload(path, blob, { upsert: true });
     if (upErr) throw upErr;
-    const { error: updErr } = await __cpQuotesUpdate(id, { status: 'aprobada', url_cotizacion_final: path });
-    if (updErr) throw updErr;
+    if (opts.persistQuote !== false) {
+        const { error: updErr } = await __cpQuotesUpdate(id, { status: 'aprobada', url_cotizacion_final: path });
+        if (updErr) throw updErr;
+    }
     return { path, folioUnificado };
+}
+
+function __orderDownloadBlob(blob, fileName = 'Documento.pdf') {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = String(fileName || 'Documento.pdf');
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => {
+        try { URL.revokeObjectURL(url); } catch (_) {}
+    }, 1500);
 }
 
 // Cierra el flujo de aprobación: genera PDF final y guarda snapshot en storage + DB.
@@ -1233,9 +1638,11 @@ async function __orderFinalizePendingSnapshot(options = {}) {
         if (__cpIsAdminProfile()) {
             await __cpPersistSharedPdfStyleConfig(__cpGetPdfStyleConfig(), { force: true });
         }
+        await __cpEnsurePdfStyleProfile('quote', { forceReload: !__cpIsAdminProfile() });
         __orderPrepareApprovalPreview(pending.formData || {}, { skipModalData: true });
         const blob = opts.prebuiltBlob || await __orderRenderPdfBlob(element);
-        await __orderUploadApprovalSnapshotBlob(orderId, blob, pending.formData || {});
+        const shouldPersistQuote = !String((pending.formData || {}).url_cotizacion_final || order?.url_cotizacion_final || '').trim();
+        await __orderUploadApprovalSnapshotBlob(orderId, blob, pending.formData || {}, { persistQuote: shouldPersistQuote });
         __orderPendingApprovalSnapshot = null;
         __orderDequeueSnapshot(orderId);
         if (!opts.silent) window.showToast('Snapshot guardada correctamente', 'success');
@@ -1268,10 +1675,11 @@ async function __orderProcessSnapshotQueue() {
                 currentPreviewOrder = { ...(currentPreviewOrder || {}), ...order, status: 'aprobada' };
                 const element = document.getElementById('pdf-content');
                 if (!element) throw new Error('Contenedor PDF no disponible.');
-                await __cpEnsurePdfStyleProfile('quote');
+                await __cpEnsurePdfStyleProfile('quote', { forceReload: !__cpIsAdminProfile() });
                 __orderPrepareApprovalPreview(order || {}, { skipModalData: true });
                 const blob = await __orderRenderPdfBlob(element);
-                await __orderUploadApprovalSnapshotBlob(orderId, blob, order);
+                const shouldPersistQuote = !String(order?.url_cotizacion_final || '').trim();
+                await __orderUploadApprovalSnapshotBlob(orderId, blob, order, { persistQuote: shouldPersistQuote });
                 __orderDequeueSnapshot(orderId);
             } catch (e) {
                 // Keep queue entry for next retry.
@@ -1284,7 +1692,7 @@ async function __orderProcessSnapshotQueue() {
 
 window.initiateApprovalSnapshot = async function(options = {}) {
     const opts = (options && typeof options === 'object') ? options : {};
-    await __cpEnsurePdfStyleProfile('quote');
+    await __cpEnsurePdfStyleProfile('quote', { forceReload: !__cpIsAdminProfile() });
     const prepared = __orderPrepareApprovalPreview(opts.formData || {}, { skipModalData: true });
     currentPreviewOrder = { ...currentPreviewOrder, ...prepared };
     if (opts.markPending !== false) {
@@ -1436,6 +1844,8 @@ window.processSaveOrder = async function(options = {}) {
             const sourceId = String(currentPreviewOrder?.id || orderId);
             formData.numero_orden = sourceId.split('-')[0].toUpperCase();
         }
+        const approvalSnapshotMeta = approvalTransition ? __orderBuildApprovalSnapshotMeta(orderId, formData) : null;
+        if (approvalSnapshotMeta?.path) formData.url_cotizacion_final = approvalSnapshotMeta.path;
 
         const { error } = await __cpQuotesUpdate(orderId, formData);
         if (error) throw error;
@@ -1461,13 +1871,46 @@ window.processSaveOrder = async function(options = {}) {
                 formData: { ...formData, status: 'aprobada' },
                 createdAt: Date.now()
             };
+            let snapshotGeneratedNow = false;
             if (!silent && openApprovalPreview) {
-                if (btn) btn.innerText = "Abriendo PDF...";
-                await window.initiateApprovalSnapshot({ openModal: true, markPending: true, formData });
-                if (!silent) window.showToast("Cambios guardados. Cierra o descarga el PDF para generar la snapshot.", "success");
-            } else {
+                if (btn) btn.innerText = "Generando PDF...";
+                try {
+                    await window.initiateApprovalSnapshot({ openModal: true, markPending: true, formData });
+                    const previewNode = document.getElementById('pdf-content');
+                    if (!previewNode) throw new Error('No se encontró vista previa para generar snapshot.');
+                    const folioUnificado = String(
+                        approvalSnapshotMeta?.folioUnificado
+                        || formData.numero_orden
+                        || currentPreviewOrder?.numero_orden
+                        || orderId.split('-')[0].toUpperCase()
+                    ).trim();
+                    const quoteFileName = `COTIZACION_${folioUnificado}.pdf`;
+                    const snapshotBlob = await __orderRenderPdfBlob(previewNode, quoteFileName);
+                    await __orderUploadApprovalSnapshotBlob(orderId, snapshotBlob, formData, {
+                        path: approvalSnapshotMeta?.path,
+                        folioUnificado,
+                        persistQuote: false
+                    });
+                    __orderPendingApprovalSnapshot = null;
+                    __orderDequeueSnapshot(orderId);
+                    __orderDownloadBlob(snapshotBlob, quoteFileName);
+                    snapshotGeneratedNow = true;
+                    if (!silent) window.showToast("Cotización aprobada y snapshot generada correctamente.", "success");
+                } catch (snapshotError) {
+                    __orderQueueSnapshot(orderId);
+                    if (!silent) {
+                        window.showToast(
+                            `Cotización aprobada. Snapshot pendiente: ${snapshotError?.message || snapshotError}`,
+                            "error"
+                        );
+                    }
+                }
+            }
+            if (!snapshotGeneratedNow) {
                 __orderQueueSnapshot(orderId);
-                if (!silent) window.showToast("Cotización aprobada. Snapshot pendiente de generación.", "success");
+                if (!silent && !openApprovalPreview) {
+                    window.showToast("Cotización aprobada. Snapshot pendiente de generación.", "success");
+                }
             }
         } else if (!silent) {
             window.showToast("Cambios guardados", "success");
@@ -1514,28 +1957,6 @@ function __orderBindDetailAutoSave() {
         el.addEventListener('input', __orderScheduleAutoSave);
         el.addEventListener('change', __orderScheduleAutoSave);
     });
-    window.addEventListener('pagehide', () => {
-        if (__orderDetailDirty) {
-            __orderBroadcastRefresh('autosave_pagehide');
-            window.processSaveOrder({ silent: true, relaxed: true, keepOpen: true, skipReload: true });
-        }
-        if (__orderHasPendingSnapshot()) {
-            const orderId = __orderCurrentOrderId();
-            if (orderId) __orderQueueSnapshot(orderId);
-            __orderFinalizePendingSnapshot({ trigger: 'pagehide', silent: true, enqueueOnFail: true });
-        }
-    });
-    window.addEventListener('beforeunload', () => {
-        if (__orderDetailDirty) {
-            __orderBroadcastRefresh('autosave_beforeunload');
-            window.processSaveOrder({ silent: true, relaxed: true, keepOpen: true, skipReload: true });
-        }
-        if (__orderHasPendingSnapshot()) {
-            const orderId = __orderCurrentOrderId();
-            if (orderId) __orderQueueSnapshot(orderId);
-            __orderFinalizePendingSnapshot({ trigger: 'beforeunload', silent: true, enqueueOnFail: true });
-        }
-    });
     __orderAutoSaveBound = true;
 }
 
@@ -1568,7 +1989,7 @@ window.closeOrderEditorPage = async function() {
 };
 
 window.previewOrderForGeneration = async function(id) {
-    await __cpEnsurePdfStyleProfile('order');
+    await __cpEnsurePdfStyleProfile('order', { forceReload: !__cpIsAdminProfile() });
     const order = allOrders.find(o => o.id === id);
     if (!order) return;
     currentPreviewOrder = { ...order, docType: 'order' };
@@ -1597,7 +2018,7 @@ window.confirmAndGeneratePurchaseOrder = async function() {
         try {
             const element = document.getElementById('pdf-content');
             if (!__cpIsAdminProfile() && element && currentPreviewOrder) {
-                await __cpEnsurePdfStyleProfile('order');
+                await __cpEnsurePdfStyleProfile('order', { forceReload: true });
                 element.innerHTML = window.getOrderHTML(currentPreviewOrder, 'order');
                 __cpApplyPdfStyleToLivePreview();
             }
@@ -1683,26 +2104,38 @@ window.openDocsModal = function(id) {
 };
 
 window.openPDFPreview = async function(id, type) {
-    await __cpEnsurePdfStyleProfile(type);
-    const o = allOrders.find(x => x.id === id);
-    if (!o) return;
-    currentPreviewOrder = { ...o, docType: type };
-    const content = window.getOrderHTML(o, type);
-    const pdfContainer = document.getElementById('pdf-content');
-    const embedViewer = document.getElementById('doc-preview');
-    const btnDownload = document.getElementById('btn-download-preview');
-    if (pdfContainer) {
-        pdfContainer.classList.remove('hidden');
-        pdfContainer.innerHTML = content;
-        __cpApplyPdfStyleToLivePreview();
+    const safeId = String(id || '').trim();
+    if (!safeId) return;
+    try {
+        await __cpEnsurePdfStyleProfile(type, { forceReload: !__cpIsAdminProfile() });
+        let order = allOrders.find((row) => String(row.id || '') === safeId) || null;
+        if (!order) {
+            const { data, error } = await __cpQuoteGetById(safeId);
+            if (error || !data) throw (error || new Error('No se encontró la cotización.'));
+            order = data;
+            if (!allOrders.some((row) => String(row.id || '') === safeId)) allOrders.push(order);
+        }
+        currentPreviewOrder = { ...order, docType: type };
+        const content = window.getOrderHTML(order, type);
+        const pdfContainer = document.getElementById('pdf-content');
+        const embedViewer = document.getElementById('doc-preview');
+        const btnDownload = document.getElementById('btn-download-preview');
+        if (pdfContainer) {
+            pdfContainer.classList.remove('hidden');
+            pdfContainer.innerHTML = content;
+            __cpApplyPdfStyleToLivePreview();
+        }
+        if (embedViewer) embedViewer.classList.add('hidden');
+        if (btnDownload) {
+            btnDownload.innerHTML = '<i class="fa-solid fa-download"></i> Descargar';
+            btnDownload.className = "bg-brand-red hover:bg-red-600 text-white px-5 py-2 rounded-full text-xs font-bold uppercase shadow-lg transition flex items-center gap-2";
+            btnDownload.onclick = window.downloadPDFFromPreview;
+        }
+        window.openModal('preview-modal');
+    } catch (e) {
+        console.error('openPDFPreview(cp) failed', e);
+        window.showToast(`No se pudo abrir la vista previa: ${e?.message || e}`, 'error');
     }
-    if (embedViewer) embedViewer.classList.add('hidden');
-    if (btnDownload) {
-        btnDownload.innerHTML = '<i class="fa-solid fa-download"></i> Descargar';
-        btnDownload.className = "bg-brand-red hover:bg-red-600 text-white px-5 py-2 rounded-full text-xs font-bold uppercase shadow-lg transition flex items-center gap-2";
-        btnDownload.onclick = window.downloadPDFFromPreview;
-    }
-    window.openModal('preview-modal');
 };
 window.downloadPDFFromPreview = async function() {
     const element = document.getElementById('pdf-content');
@@ -1710,6 +2143,12 @@ window.downloadPDFFromPreview = async function() {
     if (!orderId) return window.showToast("No se pudo identificar la cotización.", "error");
     const folioUnificado = currentPreviewOrder.numero_orden || orderId.split('-')[0].toUpperCase();
     try {
+        if (!__cpIsAdminProfile() && element && currentPreviewOrder) {
+            const docType = String(currentPreviewOrder.docType || 'quote').toLowerCase() === 'order' ? 'order' : 'quote';
+            await __cpEnsurePdfStyleProfile(docType, { forceReload: true });
+            element.innerHTML = window.getOrderHTML(currentPreviewOrder, docType);
+            __cpApplyPdfStyleToLivePreview();
+        }
         const pdfBlob = await __orderRenderPdfBlob(element, `Documento_${folioUnificado}.pdf`);
         const link = document.createElement('a');
         link.href = URL.createObjectURL(pdfBlob);
@@ -2534,8 +2973,12 @@ function __cpBindFloatingPanelDrag(panel, host) {
 
 function __cpRenderPdfToolbar() {
     const buttonBar = document.getElementById('cp-pdf-edit-button-bar');
+    const isAdmin = __cpIsAdminProfile();
+    document.querySelectorAll('[data-pdf-admin-caption="1"]').forEach((node) => {
+        node.classList.toggle('hidden', !isAdmin);
+    });
     if (!buttonBar) return;
-    const showToolbar = __cpIsPdfPreviewVisible() && __cpIsAdminProfile();
+    const showToolbar = __cpIsPdfPreviewVisible() && isAdmin;
     buttonBar.classList.toggle('hidden', !showToolbar);
     if (!showToolbar) {
         document.getElementById('cp-pdf-inspector')?.classList.add('hidden');
@@ -2543,13 +2986,13 @@ function __cpRenderPdfToolbar() {
         return;
     }
     const adminTools = document.getElementById('cp-pdf-admin-tools');
-    if (adminTools) adminTools.classList.toggle('hidden', !__cpIsAdminProfile());
+    if (adminTools) adminTools.classList.toggle('hidden', !isAdmin);
     const button = document.getElementById('cp-pdf-edit-button');
     if (button) {
         const editingEnabled = !__cpPdfEditLocked;
         button.innerHTML = `<i class="fa-solid ${editingEnabled ? 'fa-lock-open' : 'fa-lock'}"></i><span>${editingEnabled ? 'Edicion activa' : 'Editar PDF'}</span>`;
         button.className = `inline-flex items-center gap-2 rounded-full border px-4 py-2 text-[11px] font-black uppercase tracking-wide text-white shadow-lg transition ${editingEnabled ? 'bg-emerald-600 border-emerald-400/50 hover:bg-emerald-500' : 'bg-gray-950 border-gray-700 hover:bg-gray-900'}`;
-        button.classList.toggle('hidden', !__cpIsAdminProfile());
+        button.classList.toggle('hidden', !isAdmin);
     }
     const addButton = document.getElementById('cp-pdf-add-button');
     if (addButton) {
@@ -2654,9 +3097,15 @@ function __cpSyncPdfEditMode() {
 }
 
 function __cpSetPdfEditLocked(locked) {
+    const wasLocked = __cpPdfEditLocked;
     __cpPdfEditLocked = locked !== false;
     if (__cpPdfEditLocked) __cpClosePdfInspector();
     __cpSyncPdfEditMode();
+    if (!wasLocked && __cpPdfEditLocked && __cpIsAdminProfile()) {
+        Promise.resolve()
+            .then(() => __cpPersistSharedPdfStyleConfig(__cpGetPdfStyleConfig(), { force: true }))
+            .catch(() => {});
+    }
 }
 
 function __cpGetPdfInspectorTarget() {
@@ -3218,20 +3667,23 @@ function __cpIsAdminProfile() {
 
 function __cpResolvePdfActorName() {
     const candidates = [
-        window.currentUserProfile?.full_name,
-        window.currentUserProfile?.name,
+        window.currentUserProfile?.login_username,
+        window.currentUserProfile?.record?.login_username,
+        window.currentUserProfile?.profile?.login_username,
         window.currentUserProfile?.Usernames,
         window.currentUserProfile?.username,
+        window.currentUserProfile?.record?.username,
+        window.currentUserProfile?.profile?.username,
+        window.currentUserProfile?.full_name,
+        window.currentUserProfile?.name,
         window.currentUserProfile?.record?.full_name,
         window.currentUserProfile?.record?.name,
-        window.currentUserProfile?.record?.username,
         window.currentUserProfile?.profile?.full_name,
         window.currentUserProfile?.profile?.name,
-        window.currentUserProfile?.profile?.username,
         window.currentUserProfile?.email ? String(window.currentUserProfile.email).split('@')[0] : '',
         window.currentUserProfile?.record?.email ? String(window.currentUserProfile.record.email).split('@')[0] : ''
     ];
-    const resolved = candidates.map((value) => String(value || '').trim()).find(Boolean);
+    const resolved = candidates.map((value) => __orderSanitizeActorName(value)).find(Boolean);
     return resolved || 'Usuario';
 }
 
@@ -3272,10 +3724,16 @@ async function __cpLoadCurrentUserProfile(user) {
         String(nativeAuth?.record?.email || '').trim().toLowerCase()
     ].filter(Boolean))];
     const usernameCandidates = [...new Set([
+        String(fallback?.login_username || '').trim(),
+        String(fallback?.record?.login_username || '').trim(),
         String(fallback?.username || '').trim(),
         String(fallback?.record?.username || '').trim(),
+        String(compatAuth?.user?.login_username || '').trim(),
+        String(compatAuth?.record?.login_username || '').trim(),
         String(compatAuth?.user?.username || '').trim(),
         String(compatAuth?.record?.username || '').trim(),
+        String(nativeAuth?.user?.login_username || '').trim(),
+        String(nativeAuth?.record?.login_username || '').trim(),
         String(nativeAuth?.user?.username || '').trim(),
         String(nativeAuth?.record?.username || '').trim()
     ].filter(Boolean))];
@@ -3290,19 +3748,12 @@ async function __cpLoadCurrentUserProfile(user) {
     };
     let appUser = await lookupByField('app_users', 'id', idCandidates);
     if (!appUser) appUser = await lookupByField('app_users', 'email', emailCandidates);
+    if (!appUser) appUser = await lookupByField('app_users', 'login_username', usernameCandidates);
     if (!appUser) appUser = await lookupByField('app_users', 'username', usernameCandidates);
-    let profile = null;
-    if (!appUser) {
-        profile = await lookupByField('profiles', 'id', idCandidates);
-        if (!profile) profile = await lookupByField('profiles', 'email', emailCandidates);
-        if (!profile) profile = await lookupByField('profiles', 'username', usernameCandidates);
-    }
-    const merged = { ...(profile || {}), ...(appUser || {}), ...fallback };
+    const merged = { ...(appUser || {}), ...fallback };
     const role = __cpNormalizeUserRole(
         appUser?.role
         || appUser?.rol
-        || profile?.role
-        || profile?.rol
         || fallback?.role
         || fallback?.rol
         || fallback?.record?.role
@@ -3312,7 +3763,7 @@ async function __cpLoadCurrentUserProfile(user) {
         merged.role = role;
         localStorage.setItem('hub_user_cache_role', role);
     }
-    if (!merged.username) merged.username = appUser?.username || appUser?.login_username || profile?.username || fallback?.username || fallback?.email?.split('@')[0] || '';
+    if (!merged.username) merged.username = appUser?.login_username || appUser?.username || fallback?.login_username || fallback?.username || fallback?.email?.split('@')[0] || '';
     return merged;
 }
 
@@ -3321,11 +3772,25 @@ function __cpOverlayDocumentType(profile) {
     return __CP_PDF_OVERLAY_TYPES[safeProfile] || __CP_PDF_OVERLAY_TYPES.quote;
 }
 
+function __cpParseJsonObjectLike(value) {
+    if (value && typeof value === 'object') return value;
+    const raw = String(value || '').trim();
+    if (!raw) return null;
+    try {
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch (_) {
+        return null;
+    }
+}
+
 function __cpResolvePdfOverlayConfigPayload(record = {}) {
     const rawRecord = record && typeof record === 'object' ? record : {};
-    if (rawRecord.config_json && typeof rawRecord.config_json === 'object') return rawRecord.config_json;
-    const elements = rawRecord.elements && typeof rawRecord.elements === 'object' ? rawRecord.elements : {};
-    if (elements.config_json && typeof elements.config_json === 'object') return elements.config_json;
+    const configJson = __cpParseJsonObjectLike(rawRecord.config_json);
+    if (configJson) return configJson;
+    const elements = __cpParseJsonObjectLike(rawRecord.elements) || {};
+    const elementConfig = __cpParseJsonObjectLike(elements.config_json);
+    if (elementConfig) return elementConfig;
     if (elements.profiles && typeof elements.profiles === 'object') {
         return {
             tenant: rawRecord.tenant || elements.tenant || __CP_PDF_STYLE_TENANT,
@@ -3392,59 +3857,83 @@ function __cpBuildPdfOverlayElementsPayload(configJson) {
     };
 }
 
+function __cpPickLatestRecord(records) {
+    const list = Array.isArray(records) ? records.filter((row) => row && typeof row === 'object') : [];
+    if (!list.length) return null;
+    list.sort((a, b) => {
+        const aTs = Date.parse(String(a.updated_at || a.updated || a.created_at || a.created || '')) || 0;
+        const bTs = Date.parse(String(b.updated_at || b.updated || b.created_at || b.created || '')) || 0;
+        return bTs - aTs;
+    });
+    return list[0] || null;
+}
+
 async function __cpLoadModernPdfStyleRecord(profileKey) {
-    const pbClient = window.tenantPocketBase || window.globalPocketBase;
-    if (!pbClient) return null;
+    const clients = [];
+    if (window.tenantPocketBase) clients.push(window.tenantPocketBase);
+    if (window.globalPocketBase && window.globalPocketBase !== window.tenantPocketBase) clients.push(window.globalPocketBase);
+    if (!clients.length) return null;
     const overlayDocumentType = __cpOverlayDocumentType(profileKey);
-    try {
-        const { data, error } = await pbClient
-            .from(__CP_PDF_OVERLAYS_COLLECTION)
-            .select('id,config_json,elements')
-            .eq('tenant', __CP_PDF_STYLE_TENANT)
-            .eq('document_type', overlayDocumentType)
-            .maybeSingle();
-        if (!error && data) {
-            return {
-                source: 'pdf_overlays',
-                id: String(data.id || ''),
-                config: __cpResolvePdfOverlayConfigPayload(data),
-                raw: data.config_json || data.elements || {}
-            };
-        }
-    } catch (_) {}
-    try {
-        const { data, error } = await pbClient
-            .from(__CP_PDF_SETTINGS_COLLECTION)
-            .select('id,config_json')
-            .eq('tenant', __CP_PDF_STYLE_TENANT)
-            .eq('generator_type', profileKey === 'order' ? 'orders' : 'quotes')
-            .maybeSingle();
-        if (error || !data) return null;
-        return { source: 'pdf_generator_settings', id: String(data.id || ''), config: data.config_json || {}, raw: data.config_json || {} };
-    } catch (_) {
-        return null;
+    for (const pbClient of clients) {
+        try {
+            const { data, error } = await pbClient
+                .from(__CP_PDF_OVERLAYS_COLLECTION)
+                .select('id,config_json,elements,updated,created,updated_at,created_at')
+                .eq('tenant', __CP_PDF_STYLE_TENANT)
+                .eq('document_type', overlayDocumentType);
+            const row = __cpPickLatestRecord(Array.isArray(data) ? data : (data ? [data] : []));
+            if (!error && row) {
+                return {
+                    source: 'pdf_overlays',
+                    id: String(row.id || ''),
+                    config: __cpResolvePdfOverlayConfigPayload(row),
+                    raw: row.config_json || row.elements || {}
+                };
+            }
+        } catch (_) {}
     }
+    for (const pbClient of clients) {
+        try {
+            const { data, error } = await pbClient
+                .from(__CP_PDF_SETTINGS_COLLECTION)
+                .select('id,config_json,updated,created,updated_at,created_at')
+                .eq('tenant', __CP_PDF_STYLE_TENANT)
+                .eq('generator_type', profileKey === 'order' ? 'orders' : 'quotes');
+            const row = __cpPickLatestRecord(Array.isArray(data) ? data : (data ? [data] : []));
+            if (!error && row) {
+                return { source: 'pdf_generator_settings', id: String(row.id || ''), config: row.config_json || {}, raw: row.config_json || {} };
+            }
+        } catch (_) {}
+    }
+    return null;
 }
 
 async function __cpLoadLegacyPdfStyleRecord() {
-    const pbClient = window.tenantPocketBase || window.globalPocketBase;
-    if (!pbClient) return null;
-    try {
-        const { data, error } = await pbClient
-            .from('configuracion')
-            .select('id,valor_json')
-            .eq('clave', __CP_PDF_STYLE_CONFIG_KEY)
-            .maybeSingle();
-        if (error || !data) return null;
-        return { source: 'legacy', id: String(data.id || ''), raw: data.valor_json || {}, config: data.valor_json || {} };
-    } catch (_) {
-        return null;
+    const clients = [];
+    if (window.tenantPocketBase) clients.push(window.tenantPocketBase);
+    if (window.globalPocketBase && window.globalPocketBase !== window.tenantPocketBase) clients.push(window.globalPocketBase);
+    if (!clients.length) return null;
+    for (const pbClient of clients) {
+        try {
+            const { data, error } = await pbClient
+                .from('configuracion')
+                .select('id,valor_json,updated,created,updated_at,created_at')
+                .eq('clave', __CP_PDF_STYLE_CONFIG_KEY);
+            const row = __cpPickLatestRecord(Array.isArray(data) ? data : (data ? [data] : []));
+            if (!error && row) {
+                const parsed = __cpParseJsonObjectLike(row.valor_json) || {};
+                return { source: 'legacy', id: String(row.id || ''), raw: parsed, config: parsed };
+            }
+        } catch (_) {}
     }
+    return null;
 }
 
 async function __cpUpsertModernPdfStyleRecord(profileKey, configJson) {
-    const pbClient = window.tenantPocketBase || window.globalPocketBase;
-    if (!pbClient) return { id: '', config: configJson || {} };
+    const clients = [];
+    if (window.tenantPocketBase) clients.push(window.tenantPocketBase);
+    if (window.globalPocketBase && window.globalPocketBase !== window.tenantPocketBase) clients.push(window.globalPocketBase);
+    if (!clients.length) return { id: '', config: configJson || {} };
     const overlayDocumentType = __cpOverlayDocumentType(profileKey);
     const safeConfig = __cpResolvePdfOverlayConfigPayload({ config_json: configJson || {} });
     const payload = {
@@ -3453,40 +3942,151 @@ async function __cpUpsertModernPdfStyleRecord(profileKey, configJson) {
         config_json: safeConfig,
         elements: __cpBuildPdfOverlayElementsPayload(safeConfig)
     };
-    const { data: existing, error: lookupError } = await pbClient
-        .from(__CP_PDF_OVERLAYS_COLLECTION)
-        .select('id')
-        .eq('tenant', __CP_PDF_STYLE_TENANT)
-        .eq('document_type', overlayDocumentType)
-        .maybeSingle();
-    if (lookupError) throw lookupError;
-    if (existing?.id) {
-        const { error: updError } = await pbClient.from(__CP_PDF_OVERLAYS_COLLECTION).update(payload).eq('id', existing.id);
-        if (updError) throw updError;
-        return { id: String(existing.id), config: payload.config_json };
+    let lastError = null;
+    for (const pbClient of clients) {
+        try {
+            const { data: existing, error: lookupError } = await pbClient
+                .from(__CP_PDF_OVERLAYS_COLLECTION)
+                .select('id,updated,created,updated_at,created_at')
+                .eq('tenant', __CP_PDF_STYLE_TENANT)
+                .eq('document_type', overlayDocumentType);
+            if (lookupError) throw lookupError;
+            const existingRow = __cpPickLatestRecord(Array.isArray(existing) ? existing : (existing ? [existing] : []));
+            if (existingRow?.id) {
+                const { error: updError } = await pbClient
+                    .from(__CP_PDF_OVERLAYS_COLLECTION)
+                    .update(payload)
+                    .eq('tenant', __CP_PDF_STYLE_TENANT)
+                    .eq('document_type', overlayDocumentType);
+                if (updError) throw updError;
+                return { id: String(existingRow.id), config: payload.config_json };
+            }
+            const { data: inserted, error: insError } = await pbClient
+                .from(__CP_PDF_OVERLAYS_COLLECTION)
+                .insert(payload)
+                .select('id')
+                .single();
+            if (insError) throw insError;
+            return { id: String(inserted?.id || ''), config: payload.config_json };
+        } catch (e) {
+            lastError = e;
+        }
     }
-    const { data: inserted, error: insError } = await pbClient
-        .from(__CP_PDF_OVERLAYS_COLLECTION)
-        .insert(payload)
-        .select('id')
-        .single();
-    if (insError) throw insError;
-    return { id: String(inserted?.id || ''), config: payload.config_json };
+    if (lastError) throw lastError;
+    return { id: '', config: payload.config_json };
+}
+
+async function __cpUpsertLegacyPdfStyleRecord(configJson) {
+    const clients = [];
+    if (window.tenantPocketBase) clients.push(window.tenantPocketBase);
+    if (window.globalPocketBase && window.globalPocketBase !== window.tenantPocketBase) clients.push(window.globalPocketBase);
+    if (!clients.length) return null;
+    let lastError = null;
+    for (const pbClient of clients) {
+        try {
+            const { data: existing, error: lookupError } = await pbClient
+                .from('configuracion')
+                .select('id,updated,created,updated_at,created_at')
+                .eq('clave', __CP_PDF_STYLE_CONFIG_KEY);
+            if (lookupError) throw lookupError;
+            const existingRow = __cpPickLatestRecord(Array.isArray(existing) ? existing : (existing ? [existing] : []));
+            if (existingRow?.id) {
+                const { error: updError } = await pbClient
+                    .from('configuracion')
+                    .update({ valor_json: configJson || {} })
+                    .eq('clave', __CP_PDF_STYLE_CONFIG_KEY);
+                if (updError) throw updError;
+                return { id: String(existingRow.id || '') };
+            }
+            const { data: inserted, error: insError } = await pbClient
+                .from('configuracion')
+                .insert({ clave: __CP_PDF_STYLE_CONFIG_KEY, valor_json: configJson || {} })
+                .select('id')
+                .single();
+            if (insError) throw insError;
+            return { id: String(inserted?.id || '') };
+        } catch (e) {
+            lastError = e;
+        }
+    }
+    if (lastError) throw lastError;
+    return null;
+}
+
+async function __cpUpsertCompatPdfSettingsRecord(profileKey, configJson) {
+    const clients = [];
+    if (window.tenantPocketBase) clients.push(window.tenantPocketBase);
+    if (window.globalPocketBase && window.globalPocketBase !== window.tenantPocketBase) clients.push(window.globalPocketBase);
+    if (!clients.length) return null;
+    const generatorType = profileKey === 'order' ? 'orders' : 'quotes';
+    const payload = {
+        tenant: __CP_PDF_STYLE_TENANT,
+        generator_type: generatorType,
+        config_json: configJson || {}
+    };
+    let lastError = null;
+    for (const pbClient of clients) {
+        try {
+            const { data: existing, error: lookupError } = await pbClient
+                .from(__CP_PDF_SETTINGS_COLLECTION)
+                .select('id,updated,created,updated_at,created_at')
+                .eq('tenant', __CP_PDF_STYLE_TENANT)
+                .eq('generator_type', generatorType);
+            if (lookupError) throw lookupError;
+            const existingRow = __cpPickLatestRecord(Array.isArray(existing) ? existing : (existing ? [existing] : []));
+            if (existingRow?.id) {
+                const { error: updError } = await pbClient
+                    .from(__CP_PDF_SETTINGS_COLLECTION)
+                    .update(payload)
+                    .eq('tenant', __CP_PDF_STYLE_TENANT)
+                    .eq('generator_type', generatorType);
+                if (updError) throw updError;
+                return { id: String(existingRow.id || '') };
+            }
+            const { data: inserted, error: insError } = await pbClient
+                .from(__CP_PDF_SETTINGS_COLLECTION)
+                .insert(payload)
+                .select('id')
+                .single();
+            if (insError) throw insError;
+            return { id: String(inserted?.id || '') };
+        } catch (e) {
+            lastError = e;
+        }
+    }
+    if (lastError) throw lastError;
+    return null;
 }
 
 async function __cpLoadSharedPdfStyleConfig(profile = 'quote') {
     const profileKey = __cpNormalizePdfStyleProfileKey(profile);
     try {
+        const canMigrate = __cpIsAdminProfile();
         let record = await __cpLoadModernPdfStyleRecord(profileKey);
         if (!record) {
             const legacyRecord = await __cpLoadLegacyPdfStyleRecord();
             if (legacyRecord?.config) {
-                const saved = await __cpUpsertModernPdfStyleRecord(profileKey, __cpBuildPdfStyleConfigPayload(legacyRecord.raw || {}, __cpExtractPdfStyleProfile(legacyRecord.config, profileKey), profileKey));
-                record = { source: 'pdf_overlays', id: saved.id, config: saved.config, raw: saved.config };
+                const legacyPayload = __cpBuildPdfStyleConfigPayload(
+                    legacyRecord.raw || {},
+                    __cpExtractPdfStyleProfile(legacyRecord.config, profileKey),
+                    profileKey
+                );
+                if (canMigrate) {
+                    try {
+                        const saved = await __cpUpsertModernPdfStyleRecord(profileKey, legacyPayload);
+                        record = { source: 'pdf_overlays', id: saved.id, config: saved.config, raw: saved.config };
+                    } catch (_) {
+                        record = { source: 'legacy', id: legacyRecord.id || '', config: legacyPayload, raw: legacyPayload };
+                    }
+                } else {
+                    record = { source: 'legacy', id: legacyRecord.id || '', config: legacyPayload, raw: legacyPayload };
+                }
             }
-        } else if (record.source !== 'pdf_overlays' && record.config) {
-            const saved = await __cpUpsertModernPdfStyleRecord(profileKey, record.config);
-            record = { source: 'pdf_overlays', id: saved.id, config: saved.config, raw: saved.config };
+        } else if (record.source !== 'pdf_overlays' && record.config && canMigrate) {
+            try {
+                const saved = await __cpUpsertModernPdfStyleRecord(profileKey, record.config);
+                record = { source: 'pdf_overlays', id: saved.id, config: saved.config, raw: saved.config };
+            } catch (_) {}
         }
         __cpPdfStyleActiveProfile = profileKey;
         __cpPdfStyleConfigRecordId = record?.id || '';
@@ -3501,9 +4101,10 @@ async function __cpLoadSharedPdfStyleConfig(profile = 'quote') {
     }
 }
 
-async function __cpEnsurePdfStyleProfile(docType) {
+async function __cpEnsurePdfStyleProfile(docType, options = {}) {
     const wanted = __cpNormalizePdfStyleProfileKey(docType === 'order' ? 'order' : 'quote');
-    if (__cpPdfStyleActiveProfile === wanted && __cpPdfStyleState) return;
+    const forceReload = !!(options && options.forceReload);
+    if (!forceReload && __cpPdfStyleActiveProfile === wanted && __cpPdfStyleState) return;
     await __cpLoadSharedPdfStyleConfig(wanted);
 }
 
@@ -3517,6 +4118,8 @@ async function __cpPersistSharedPdfStyleConfig(style, options = {}) {
         __cpPdfStyleConfigRecordId = saved.id;
         __cpPdfStyleConfigStore = 'pdf_overlays';
         __cpPdfStyleRawPayload = saved.config;
+        try { await __cpUpsertCompatPdfSettingsRecord(__cpPdfStyleActiveProfile, configJson); } catch (_) {}
+        try { await __cpUpsertLegacyPdfStyleRecord(configJson); } catch (_) {}
     } catch (e) {
         console.warn('No se pudo guardar la configuracion PDF compartida (CP):', e);
     }
@@ -4734,22 +5337,35 @@ function __orderRenderTaxesForActive() {
     const container = document.getElementById('oed-taxes-list');
     if (!cfg || !container) return;
     const space = __orderGetSpaceById(cfg.spaceId);
-    const defaultTaxIds = __orderDefaultTaxIds(space);
-    const activeTaxIds = (cfg.taxIds && cfg.taxIds.length) ? cfg.taxIds : defaultTaxIds;
+    const defaultTaxIds = __orderDefaultTaxIds(space).map((id) => parseInt(id, 10)).filter(Number.isFinite);
+    const mandatoryTaxIds = new Set(defaultTaxIds.map((id) => String(id)));
+    const activeTaxIdsRaw = (cfg.taxIds && cfg.taxIds.length) ? cfg.taxIds : defaultTaxIds;
+    const selectedTaxIds = Array.from(new Set([
+        ...defaultTaxIds,
+        ...activeTaxIdsRaw.map((id) => parseInt(id, 10)).filter(Number.isFinite)
+    ]));
+    const locked = ['aprobada', 'finalizada'].includes(String(currentPreviewOrder?.status || '').toLowerCase());
     container.innerHTML = '';
     dbTaxes.forEach(t => {
-        const checked = activeTaxIds.includes(parseInt(t.id, 10)) ? 'checked' : '';
-        container.innerHTML += `<label class="flex items-center gap-1.5 cursor-pointer">
-            <input type="checkbox" value="${t.id}" class="oed-tax-check accent-brand-red w-3 h-3" ${checked} onchange="window.onActiveOrderTaxesChanged()">
+        const taxId = parseInt(t.id, 10);
+        const tid = String(t.id);
+        const checked = selectedTaxIds.includes(taxId) || mandatoryTaxIds.has(tid) ? 'checked' : '';
+        const disabled = locked || mandatoryTaxIds.has(tid);
+        container.innerHTML += `<label class="flex items-center gap-1.5 ${disabled ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'}">
+            <input type="checkbox" value="${t.id}" class="oed-tax-check accent-brand-red w-3 h-3" ${checked} ${disabled ? 'disabled' : ''} onchange="window.onActiveOrderTaxesChanged()">
             <span class="text-[10px] font-bold uppercase text-gray-700">${t.nombre}</span>
         </label>`;
     });
+    cfg.taxIds = selectedTaxIds.slice();
 }
 
 window.onActiveOrderTaxesChanged = function() {
     const cfg = __orderGetActiveCfg();
     if (!cfg) return;
-    cfg.taxIds = Array.from(document.querySelectorAll('.oed-tax-check:checked')).map(cb => parseInt(cb.value, 10)).filter(Number.isFinite);
+    const space = __orderGetSpaceById(cfg.spaceId);
+    const mandatory = __orderDefaultTaxIds(space).map((id) => parseInt(id, 10)).filter(Number.isFinite);
+    const selected = Array.from(document.querySelectorAll('.oed-tax-check:checked')).map(cb => parseInt(cb.value, 10)).filter(Number.isFinite);
+    cfg.taxIds = Array.from(new Set([...mandatory, ...selected]));
     window.recalcTotal();
 };
 

@@ -227,14 +227,116 @@ let myPermissions = { access: false, orders_edit: false };
 let currentUserProfile = null;
 let pmSpaceCardOrder = [];
 let __pmLastRefreshSignalTs = 0;
+let __pmOrderDetailDirty = false;
+let __pmOrderDetailDirtyBound = false;
+let __pmOrderUsersById = Object.create(null);
 
 window.__HUB_HAS_UNSAVED_CHANGES = function() {
     try {
-        return IS_PM_ORDER_DETAIL_PAGE === true;
+        return IS_PM_ORDER_DETAIL_PAGE === true && __pmOrderDetailDirty === true;
     } catch (_) {
         return false;
     }
 };
+
+function __pmReadAuthState(key) {
+    try {
+        const raw = localStorage.getItem(key);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch (_) {
+        return null;
+    }
+}
+
+function __pmResolveCurrentActorId() {
+    const compatAuth = __pmReadAuthState('pb_compat_auth_v1');
+    const nativeAuth = __pmReadAuthState('pb_native_auth_v1');
+    const candidates = [
+        currentUserProfile?.id,
+        currentUserProfile?.record?.id,
+        currentUserProfile?.user?.id,
+        compatAuth?.user?.id,
+        compatAuth?.record?.id,
+        nativeAuth?.user?.id,
+        nativeAuth?.record?.id
+    ];
+    return candidates.map((v) => String(v || '').trim()).find(Boolean) || '';
+}
+
+function __pmResolveCurrentActorName() {
+    const fromProfile = __pmSanitizeActorName(__pmResolvePdfActorName?.());
+    if (fromProfile) return fromProfile;
+    const cachedName = __pmSanitizeActorName(localStorage.getItem('hub_user_cache_name') || '');
+    if (cachedName) return cachedName;
+    const compatAuth = __pmReadAuthState('pb_compat_auth_v1');
+    const nativeAuth = __pmReadAuthState('pb_native_auth_v1');
+    const username = [
+        currentUserProfile?.login_username,
+        currentUserProfile?.record?.login_username,
+        currentUserProfile?.username,
+        currentUserProfile?.record?.username,
+        compatAuth?.user?.login_username,
+        compatAuth?.record?.login_username,
+        compatAuth?.user?.username,
+        compatAuth?.record?.username,
+        nativeAuth?.user?.login_username,
+        nativeAuth?.record?.login_username,
+        nativeAuth?.user?.username,
+        nativeAuth?.record?.username
+    ]
+        .map((value) => __pmSanitizeActorName(value))
+        .find(Boolean);
+    if (username) return username;
+    const email = [
+        currentUserProfile?.email,
+        currentUserProfile?.record?.email,
+        compatAuth?.user?.email,
+        compatAuth?.record?.email,
+        nativeAuth?.user?.email,
+        nativeAuth?.record?.email
+    ].map((v) => String(v || '').trim()).find(Boolean) || '';
+    const emailUser = __pmSanitizeActorName(email ? email.split('@')[0] : '');
+    return emailUser || 'Usuario';
+}
+
+function __pmBuildQuoteAuditPayload(payload = {}) {
+    const next = payload && typeof payload === 'object' ? { ...payload } : {};
+    const actorId = __pmResolveCurrentActorId();
+    const actorName = __pmResolveCurrentActorName();
+    if (actorId) next.modificado_por_legacy = actorId;
+    if (actorName) next.modificado_por_nombre = actorName;
+    return next;
+}
+
+function __pmMarkOrderDetailDirty() {
+    if (!IS_PM_ORDER_DETAIL_PAGE) return;
+    __pmOrderDetailDirty = true;
+}
+
+function __pmClearOrderDetailDirty() {
+    __pmOrderDetailDirty = false;
+}
+
+function __pmBindOrderDetailDirtyTracking() {
+    if (!IS_PM_ORDER_DETAIL_PAGE || __pmOrderDetailDirtyBound) return;
+    const shouldTrack = (target) => {
+        if (!(target instanceof Element)) return false;
+        if (!target.closest('#order-edit-modal')) return false;
+        if (target.closest('#generic-confirm-modal')) return false;
+        return true;
+    };
+    const onInputOrChange = (event) => {
+        if (!shouldTrack(event.target)) return;
+        const target = event.target;
+        if (target instanceof HTMLInputElement && target.type === 'hidden') return;
+        __pmMarkOrderDetailDirty();
+    };
+    document.addEventListener('input', onInputOrChange, true);
+    document.addEventListener('change', onInputOrChange, true);
+    __pmOrderDetailDirtyBound = true;
+}
 
 function __pmNativeCotizaciones() {
     return window.PB_SERVICES && window.PB_SERVICES.cotizaciones ? window.PB_SERVICES.cotizaciones : null;
@@ -258,16 +360,17 @@ async function __pmQuotesList(params) {
 }
 
 async function __pmQuotesUpdate(id, payload) {
+    const safePayload = __pmBuildQuoteAuditPayload(payload || {});
     const svc = __pmNativeCotizaciones();
     if (svc) {
         try {
-            await svc.update(id, payload || {}, { schema: FIN_SCHEMA });
+            await svc.update(id, safePayload, { schema: FIN_SCHEMA });
             return { error: null };
         } catch (error) {
             return { error };
         }
     }
-    const result = await window.tenantPocketBase.from('cotizaciones').update(payload || {}).eq('id', id);
+    const result = await window.tenantPocketBase.from('cotizaciones').update(safePayload).eq('id', id);
     return { error: result && result.error ? result.error : null };
 }
 
@@ -446,6 +549,32 @@ async function __pmUploadApprovalSnapshotBlob(orderId, blob, formData = {}) {
     return { path, folio };
 }
 
+function __pmBuildApprovalSnapshotMeta(orderId, formData = {}) {
+    const safeOrderId = String(orderId || '').trim();
+    const folio = String(formData?.numero_orden || currentPreviewOrder?.numero_orden || safeOrderId.split('-')[0].toUpperCase()).trim();
+    return {
+        folio,
+        path: safeOrderId ? `${safeOrderId}/cotizacion_aprobada_${folio}.pdf` : ''
+    };
+}
+
+async function __pmUploadApprovalSnapshotBlob(orderId, blob, formData = {}, options = {}) {
+    const safeOrderId = String(orderId || '').trim();
+    if (!safeOrderId) throw new Error('CotizaciÃ³n invÃ¡lida para snapshot.');
+    if (!blob || !(blob.size > 0)) throw new Error('Snapshot PDF vacÃ­o.');
+    const opts = options && typeof options === 'object' ? options : {};
+    const resolved = __pmBuildApprovalSnapshotMeta(safeOrderId, formData);
+    const folio = String(opts.folio || resolved.folio).trim();
+    const path = String(opts.path || resolved.path || `${safeOrderId}/cotizacion_aprobada_${folio}.pdf`).trim();
+    const { error: uploadErr } = await window.globalPocketBase.storage.from('documentos').upload(path, blob, { upsert: true });
+    if (uploadErr) throw uploadErr;
+    if (opts.persistQuote !== false) {
+        const { error: dbErr } = await __pmQuotesUpdate(safeOrderId, { status: 'aprobada', url_cotizacion_final: path });
+        if (dbErr) throw dbErr;
+    }
+    return { path, folio };
+}
+
 function __pmIsLockedOrder() {
     return ['aprobada', 'finalizada'].includes(String(currentPreviewOrder?.status || '').toLowerCase());
 }
@@ -590,6 +719,10 @@ window.askCloseEditModal = function() {
 
 window.askDeleteOrder = function(id, e) {
     if (e) e.stopPropagation();
+    if (!__pmIsAdminProfile()) {
+        window.showToast("Solo administradores pueden eliminar cotizaciones.", "error");
+        return;
+    }
     window.openConfirm("¿Eliminar cotización y TODOS sus archivos? Esta acción es irreversible.", async () => {
         try {
             window.showToast("Eliminando archivos...", "info");
@@ -616,7 +749,7 @@ window.addEventListener('click', function(e) {
         return; 
     }
 
-    if (e.target === editModal) window.askCloseEditModal();
+    if (e.target === editModal && !IS_PM_ORDER_DETAIL_PAGE) window.askCloseEditModal();
     if (e.target === docsModal) window.closeModal('docs-modal');
     if (e.target === previewModal) {
         if (IS_PM_ORDER_PREVIEW_PAGE || __pmIsPreviewOnlyQueryMode()) return;
@@ -650,8 +783,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if(s) window.renderTaxesForSpace(s); 
         window.renderOrderSpaceCards();
         window.recalcTotal(); 
+        __pmMarkOrderDetailDirty();
     });
     document.getElementById('new-concept-select')?.addEventListener('change', function() { const c = catalogConcepts.find(x => x.id == this.value); if(c) document.getElementById('new-concept-amount').value = c.precio_sugerido; });
+    __pmBindOrderDetailDirtyTracking();
     
     await Promise.all([loadTaxes(), loadSpaces(), loadConcepts()]); await window.loadOrders();
     if (!IS_PM_ORDER_DETAIL_PAGE && !IS_PM_ORDER_PREVIEW_PAGE) {
@@ -692,12 +827,288 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
         await window.openOrderEditModal(quoteId);
+        __pmClearOrderDetailDirty();
     }
 });
 
 async function loadTaxes() { const { data } = await window.tenantPocketBase.from('impuestos').select('*'); dbTaxes = data || []; }
 async function loadSpaces() { const { data } = await window.tenantPocketBase.from('espacios').select('*'); allSpaces = data || []; __pmEnsureSpaceCardOrder(); window.renderOrderSpaceCards(); }
 async function loadConcepts() { const { data } = await window.tenantPocketBase.from('conceptos_catalogo').select('*').eq('activo', true); catalogConcepts = data || []; }
+
+function __pmFormatUserNameFromRecord(record) {
+    const candidates = [
+        record?.login_username,
+        record?.user_name,
+        record?.username,
+        record?.full_name,
+        record?.name,
+        record?.nombre_completo,
+        record?.email ? String(record.email).split('@')[0] : ''
+    ];
+    return candidates.map((value) => String(value || '').trim()).find(Boolean) || '';
+}
+
+function __pmLooksLikeUuid(value) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || '').trim());
+}
+
+function __pmIsNumericLike(value) {
+    return /^[0-9]+$/.test(String(value || '').trim());
+}
+
+function __pmLooksLikePbRecordId(value) {
+    return /^[a-z0-9]{15}$/i.test(String(value || '').trim());
+}
+
+function __pmLooksLikeMongoObjectId(value) {
+    return /^[a-f0-9]{24}$/i.test(String(value || '').trim());
+}
+
+function __pmLooksLikeOpaqueActorId(value) {
+    const safe = String(value || '').trim();
+    if (!safe || safe.includes('@')) return false;
+    if (!/^[a-z0-9_-]+$/i.test(safe)) return false;
+    if (safe.length < 12) return false;
+    if (/\d/.test(safe) || safe.includes('-') || safe.includes('_')) return true;
+    return /^[a-z0-9]{12,}$/i.test(safe);
+}
+
+function __pmIsIdentifierLike(value) {
+    const safe = String(value || '').trim();
+    if (!safe) return false;
+    return __pmLooksLikeUuid(safe)
+        || __pmIsNumericLike(safe)
+        || __pmLooksLikePbRecordId(safe)
+        || __pmLooksLikeMongoObjectId(safe)
+        || __pmLooksLikeOpaqueActorId(safe);
+}
+
+function __pmSanitizeActorName(value) {
+    const safe = String(value || '').trim();
+    if (!safe) return '';
+    if (safe.includes('@')) return safe.split('@')[0];
+    if (__pmIsIdentifierLike(safe)) return '';
+    return safe;
+}
+
+function __pmRegisterOrderUserRecord(record) {
+    if (!record || typeof record !== 'object') return;
+    const name = __pmFormatUserNameFromRecord(record);
+    if (!name) return;
+    const aliases = [
+        record?.id,
+        record?.legacy_id,
+        record?.legacyId,
+        record?.user_id,
+        record?.userId,
+        record?.login_username,
+        record?.user_name,
+        record?.username,
+        record?.email ? String(record.email).split('@')[0] : ''
+    ];
+    aliases
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+        .forEach((alias) => {
+            __pmOrderUsersById[alias] = name;
+        });
+}
+
+function __pmResolveOrderActorId(order, kind = 'created') {
+    if (!order || typeof order !== 'object') return '';
+    const createdCandidates = [
+        order.creado_por_legacy,
+        order.creado_por,
+        order.created_by,
+        order.created_by_id,
+        order.creado_por_id,
+        order.user_id,
+        order.userId,
+        order.creator_id,
+        order.autor_id
+    ];
+    const updatedCandidates = [
+        order.modificado_por_legacy,
+        order.modificado_por,
+        order.updated_by,
+        order.updated_by_id,
+        order.modificado_por_id,
+        order.last_modified_by,
+        order.last_editor_id,
+        order.editor_id
+    ];
+    const base = kind === 'updated' ? updatedCandidates : createdCandidates;
+    return base.map((value) => String(value || '').trim()).find(Boolean) || '';
+}
+
+function __pmResolveOrderActorName(order, kind = 'created') {
+    const actorId = __pmResolveOrderActorId(order, kind);
+    if (actorId && __pmOrderUsersById[actorId]) return __pmOrderUsersById[actorId];
+    const directCandidates = kind === 'updated'
+        ? [
+            order?.modificado_por_nombre,
+            order?.ultimo_editor_nombre,
+            order?.updated_by_name,
+            order?.last_modified_name,
+            order?.modificado_por_username,
+            order?.ultimo_editor_username,
+            order?.updated_by_username,
+            order?.edited_by_username,
+            order?.modificado_por_login
+        ]
+        : [
+            order?.creado_por_nombre,
+            order?.creador_nombre,
+            order?.created_by_name,
+            order?.creado_por_username,
+            order?.creador_username,
+            order?.created_by_username,
+            order?.creado_por_login,
+            order?.created_by_login
+        ];
+    const direct = directCandidates
+        .map((value) => __pmSanitizeActorName(value))
+        .find((value) => value && (!actorId || value !== actorId));
+    if (direct) return direct;
+    if (actorId) {
+        if (actorId.includes('@')) return actorId.split('@')[0];
+        if (!__pmIsIdentifierLike(actorId)) return actorId;
+    }
+    if (kind === 'updated') return __pmResolveOrderActorName(order, 'created') || 'Usuario';
+    return 'Usuario';
+}
+
+function __pmRegisterActorAliasFromOrder(order, kind = 'created') {
+    if (!order || typeof order !== 'object') return;
+    const actorId = __pmResolveOrderActorId(order, kind);
+    if (!actorId) return;
+    const directCandidates = kind === 'updated'
+        ? [
+            order?.modificado_por_nombre,
+            order?.ultimo_editor_nombre,
+            order?.updated_by_name,
+            order?.last_modified_name,
+            order?.modificado_por_username,
+            order?.ultimo_editor_username,
+            order?.updated_by_username,
+            order?.edited_by_username,
+            order?.modificado_por_login
+        ]
+        : [
+            order?.creado_por_nombre,
+            order?.creador_nombre,
+            order?.created_by_name,
+            order?.creado_por_username,
+            order?.creador_username,
+            order?.created_by_username,
+            order?.creado_por_login,
+            order?.created_by_login
+        ];
+    const direct = directCandidates
+        .map((value) => __pmSanitizeActorName(value))
+        .find(Boolean);
+    if (direct) __pmOrderUsersById[actorId] = direct;
+}
+
+function __pmResolveOrderAuditTimestamp(order, kind = 'created') {
+    if (!order || typeof order !== 'object') return '';
+    const candidates = kind === 'updated'
+        ? [order.updated_at, order.updated, order.modificado_en, order.last_modified_at, order.last_update]
+        : [order.created_at, order.created, order.fecha_creacion, order.creado_en];
+    return candidates.map((value) => String(value || '').trim()).find(Boolean) || '';
+}
+
+function __pmFormatAuditTooltipDateTime(rawValue) {
+    const safe = String(rawValue || '').trim();
+    if (!safe) return '';
+    const parsed = new Date(safe);
+    if (Number.isNaN(parsed.getTime())) return '';
+    try {
+        return new Intl.DateTimeFormat('es-MX', {
+            dateStyle: 'medium',
+            timeStyle: 'short',
+            timeZone: 'America/Mexico_City'
+        }).format(parsed);
+    } catch (_) {
+        return parsed.toLocaleString('es-MX');
+    }
+}
+
+function __pmEscapeHtmlAttr(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+function __pmBuildOrderAuditTooltip(order, kind = 'created') {
+    const label = kind === 'updated' ? 'Última edición' : 'Creada';
+    const formatted = __pmFormatAuditTooltipDateTime(__pmResolveOrderAuditTimestamp(order, kind));
+    return formatted ? `${label}: ${formatted}` : '';
+}
+
+async function __pmPrimeOrderUsers(rows = []) {
+    const ids = new Set();
+    __pmOrderUsersById = Object.create(null);
+    const currentActorId = __pmResolveCurrentActorId();
+    const currentActorName = __pmSanitizeActorName(__pmResolveCurrentActorName());
+    if (currentActorId && currentActorName) __pmOrderUsersById[currentActorId] = currentActorName;
+    rows.forEach((row) => {
+        const createdId = __pmResolveOrderActorId(row, 'created');
+        const updatedId = __pmResolveOrderActorId(row, 'updated');
+        __pmRegisterActorAliasFromOrder(row, 'created');
+        __pmRegisterActorAliasFromOrder(row, 'updated');
+        if (createdId) ids.add(createdId);
+        if (updatedId) ids.add(updatedId);
+    });
+    const idList = Array.from(ids);
+    if (!idList.length) return;
+    const chunkSize = 50;
+    const sources = [window.globalPocketBase, window.tenantPocketBase].filter(Boolean);
+    for (let i = 0; i < idList.length; i += chunkSize) {
+        const chunk = idList.slice(i, i + chunkSize);
+        const numericChunk = chunk.filter((value) => __pmIsNumericLike(value));
+        const textChunk = chunk.filter((value) => !__pmIsNumericLike(value) && !__pmLooksLikeUuid(value));
+        for (const source of sources) {
+            try {
+                const { data } = await source.from('app_users').select('*').in('id', chunk);
+                (data || []).forEach(__pmRegisterOrderUserRecord);
+            } catch (_) {}
+            try {
+                const { data } = await source.from('app_users').select('*').in('legacy_id', chunk);
+                (data || []).forEach(__pmRegisterOrderUserRecord);
+            } catch (_) {
+                if (numericChunk.length) {
+                    try {
+                        const { data } = await source.from('app_users').select('*').in('legacy_id', numericChunk);
+                        (data || []).forEach(__pmRegisterOrderUserRecord);
+                    } catch (_) {}
+                }
+            }
+            if (textChunk.length) {
+                try {
+                    const { data } = await source.from('app_users').select('*').in('login_username', textChunk);
+                    (data || []).forEach(__pmRegisterOrderUserRecord);
+                } catch (_) {}
+                try {
+                    const { data } = await source.from('app_users').select('*').in('username', textChunk);
+                    (data || []).forEach(__pmRegisterOrderUserRecord);
+                } catch (_) {}
+            }
+        }
+    }
+    const unresolved = idList.filter((id) => id && !__pmOrderUsersById[id]);
+    if (!unresolved.length) return;
+    for (const source of sources) {
+        try {
+            const { data } = await source
+                .from('app_users')
+                .select('id,legacy_id,legacyId,user_id,userId,login_username,user_name,username,full_name,name,email');
+            (data || []).forEach(__pmRegisterOrderUserRecord);
+        } catch (_) {}
+    }
+}
 
 window.loadOrders = async function() {
     const { data, error } = await __pmQuotesList({ sort: '-created_at' });
@@ -707,12 +1118,14 @@ window.loadOrders = async function() {
     } else {
         allOrders = data || [];
     }
+    await __pmPrimeOrderUsers(allOrders);
     renderOrdersTable(allOrders);
 };
 
 function renderOrdersTable(data) {
     const t = document.getElementById('orders-table'); if(!t) return; t.innerHTML = ''; 
-    if(!data.length) { t.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-gray-400">Sin registros.</td></tr>'; return; }
+    if(!data.length) { t.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-gray-400">Sin registros.</td></tr>'; return; }
+    const canDelete = __pmIsAdminProfile();
     data.forEach(o => {
         let sColor = 'bg-gray-100 text-gray-600', sText = 'Pendiente', missingIcons = []; 
         if(o.status === 'aprobada') { sColor = 'bg-blue-100 text-blue-700'; sText = 'Aprobada'; if (!o.contrato_url && !o.numero_contrato) missingIcons.push('<i class="fa-solid fa-file-signature" title="Falta Contrato"></i>'); if (!o.factura_xml_url) missingIcons.push('<i class="fa-solid fa-file-invoice" title="Falta Factura"></i>'); if (!o.historial_pagos || o.historial_pagos.length === 0) missingIcons.push('<i class="fa-solid fa-money-bill-wave" title="Falta Pago"></i>'); }
@@ -724,8 +1137,17 @@ function renderOrdersTable(data) {
         tr.onclick = (e) => { if(!e.target.closest('button')) window.openOrderEditorPage(o.id); };
         
         const folioUnificado = o.numero_orden || o.id.split('-')[0].toUpperCase();
+        const createdBy = __pmResolveOrderActorName(o, 'created');
+        const updatedBy = __pmResolveOrderActorName(o, 'updated');
+        const createdTooltip = __pmBuildOrderAuditTooltip(o, 'created');
+        const updatedTooltip = __pmBuildOrderAuditTooltip(o, 'updated');
+        const createdTooltipAttr = createdTooltip ? ` title="${__pmEscapeHtmlAttr(createdTooltip)}"` : '';
+        const updatedTooltipAttr = updatedTooltip ? ` title="${__pmEscapeHtmlAttr(updatedTooltip)}"` : '';
+        const deleteCell = canDelete
+            ? `<button type="button" onclick="window.askDeleteOrder('${o.id}', event)" class="text-gray-400 hover:text-red-600"><i class="fa-solid fa-trash"></i></button>`
+            : `<span class="text-[10px] text-gray-300">—</span>`;
         
-        tr.innerHTML = `<td class="p-4 font-black text-brand-dark">${folioUnificado}</td><td class="p-4 font-bold text-xs text-gray-700">${o.cliente_nombre}</td><td class="p-4 text-xs"><span class="font-bold block">${o.espacio_nombre}</span><span class="text-gray-500 font-mono">${window.safeFormatDate(o.fecha_inicio)}</span></td><td class="p-4 text-right font-mono font-bold text-xs">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(o.precio_final)}</td><td class="p-4 text-center"><span class="${sColor} px-2 py-1 rounded text-[9px] font-black uppercase tracking-wider">${sText}</span>${alertsHTML}</td><td class="p-4 text-center"><button type="button" onclick="event.stopPropagation(); window.openDocsModal('${o.id}')" class="bg-white border border-gray-300 text-gray-600 hover:bg-gray-50 hover:text-brand-dark px-3 py-1.5 rounded-lg text-xs font-bold transition shadow-sm flex items-center gap-2 mx-auto"><i class="fa-solid fa-folder-open text-brand-red"></i> Expediente</button></td><td class="p-4 text-center"><button type="button" onclick="window.askDeleteOrder('${o.id}', event)" class="text-gray-400 hover:text-red-600"><i class="fa-solid fa-trash"></i></button></td>`;
+        tr.innerHTML = `<td class="p-4 font-black text-brand-dark">${folioUnificado}</td><td class="p-4 font-bold text-xs text-gray-700">${o.cliente_nombre}</td><td class="p-4 text-xs"><span class="font-bold block">${o.espacio_nombre}</span><span class="text-gray-500 font-mono">${window.safeFormatDate(o.fecha_inicio)}</span></td><td class="p-4 text-right font-mono font-bold text-xs">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(o.precio_final)}</td><td class="p-4 text-center"><span class="${sColor} px-2 py-1 rounded text-[9px] font-black uppercase tracking-wider">${sText}</span>${alertsHTML}</td><td class="p-4 text-[10px] font-bold text-gray-600 text-center"${createdTooltipAttr}>${createdBy}</td><td class="p-4 text-[10px] font-bold text-gray-600 text-center"${updatedTooltipAttr}>${updatedBy}</td><td class="p-4 text-center"><button type="button" onclick="event.stopPropagation(); window.openDocsModal('${o.id}')" class="bg-white border border-gray-300 text-gray-600 hover:bg-gray-50 hover:text-brand-dark px-3 py-1.5 rounded-lg text-xs font-bold transition shadow-sm flex items-center gap-2 mx-auto"><i class="fa-solid fa-folder-open text-brand-red"></i> Expediente</button></td><td class="p-4 text-center">${deleteCell}</td>`;
         t.appendChild(tr);
     });
 }
@@ -838,6 +1260,7 @@ window.openOrderEditModal = async function(id) {
     window.renderConceptsList(); 
     window.recalcTotal(); 
     window.openModal('order-edit-modal');
+    __pmClearOrderDetailDirty();
 };
 
 // IMPUESTOS BLINDADOS (Si son del espacio, se bloquean activados)
@@ -1011,7 +1434,7 @@ window.attemptSaveOrder = function() {
 };
 
 window.initiateApprovalSnapshot = async function() {
-    await __pmEnsurePdfStyleProfile('quote');
+    await __pmEnsurePdfStyleProfile('quote', { forceReload: !__pmIsAdminProfile() });
     const formData = window.getFormDataFromModal();
     if (!formData.numero_orden) { formData.numero_orden = currentPreviewOrder.id.split('-')[0].toUpperCase(); }
 
@@ -1041,10 +1464,15 @@ window.executeApprovalTransaction = async function(formData) {
     btn.disabled = true; btn.innerText = "Generando Snapshot...";
     
     try {
+        const element = document.getElementById('pdf-content');
+        if (!__pmIsAdminProfile() && element && currentPreviewOrder) {
+            await __pmEnsurePdfStyleProfile('quote', { forceReload: true });
+            element.innerHTML = await window.getOrderHTML({ ...currentPreviewOrder, ...formData, status: 'aprobada' }, 'quote');
+            __pmApplyPdfStyleToLivePreview();
+        }
         if (__pmIsAdminProfile()) {
             await __pmPersistSharedPdfStyleConfig(__pmGetPdfStyleConfig(), { force: true });
         }
-        const element = document.getElementById('pdf-content');
         const pdfBlob = await window.generatePdfBlobFromNode(element);
         const { path, folio } = await __pmUploadApprovalSnapshotBlob(currentPreviewOrder.id, pdfBlob, formData);
         const payload = { ...formData, status: 'aprobada', url_cotizacion_final: path };
@@ -1055,6 +1483,7 @@ window.executeApprovalTransaction = async function(formData) {
         window.downloadBlobAsFile(pdfBlob, `Cotizacion_Aprobada_${folio}.pdf`);
 
         window.showToast("¡Cotización Aprobada y Archivada!", "success");
+        __pmClearOrderDetailDirty();
         window.closeModal('preview-modal');
         window.closeModal('order-edit-modal');
         await window.loadOrders();
@@ -1119,13 +1548,14 @@ window.processSaveOrder = async function() {
         window.__pmBroadcastOrdersRefresh(formData.status === 'aprobada' ? 'approved_saved' : 'saved');
 
         window.showToast("Cambios guardados", "success");
+        __pmClearOrderDetailDirty();
         window.closeModal('order-edit-modal');
         await window.loadOrders(); 
     } catch(e) { window.showToast("Error: " + e.message, "error"); } finally { btn.disabled = false; btn.innerText = "Guardar Directamente"; }
 };
 
 window.previewOrderForGeneration = async function(id) {
-    await __pmEnsurePdfStyleProfile('order');
+    await __pmEnsurePdfStyleProfile('order', { forceReload: !__pmIsAdminProfile() });
     const order = allOrders.find(o => o.id === id);
     if(!order) return;
     currentPreviewOrder = { ...order, docType: 'order' }; 
@@ -1157,7 +1587,7 @@ window.confirmAndGeneratePurchaseOrder = async function() {
         try {
             const element = document.getElementById('pdf-content');
             if (!__pmIsAdminProfile() && element && currentPreviewOrder) {
-                await __pmEnsurePdfStyleProfile('order');
+                await __pmEnsurePdfStyleProfile('order', { forceReload: true });
                 element.innerHTML = window.getOrderHTML(currentPreviewOrder, 'order');
                 __pmApplyPdfStyleToLivePreview();
             }
@@ -1243,24 +1673,50 @@ window.openDocsModal = function(id) {
 };
 
 window.openPDFPreview = async function(id, type) { 
-    await __pmEnsurePdfStyleProfile(type);
-    const o = allOrders.find(x => x.id === id); if(!o) return; 
-    currentPreviewOrder = { ...o, docType: type }; 
-    const content = await window.getOrderHTML(o, type); 
-    const pdfContainer = document.getElementById('pdf-content'); 
-    const embedViewer = document.getElementById('doc-preview'); 
-    const btnDownload = document.getElementById('btn-download-preview'); 
-    pdfContainer.classList.remove('hidden'); embedViewer.classList.add('hidden'); pdfContainer.innerHTML = content; __pmApplyPdfStyleToLivePreview();
-    btnDownload.innerHTML = '<i class="fa-solid fa-download"></i> Descargar';
-    btnDownload.className = "bg-brand-red hover:bg-red-600 text-white px-5 py-2 rounded-full text-xs font-bold uppercase shadow-lg transition flex items-center gap-2";
-    btnDownload.onclick = window.downloadPDFFromPreview; 
-    window.openModal('preview-modal'); 
+    const safeId = String(id || '').trim();
+    if (!safeId) return;
+    try {
+        await __pmEnsurePdfStyleProfile(type, { forceReload: !__pmIsAdminProfile() });
+        let order = allOrders.find((x) => String(x.id || '') === safeId) || null;
+        if (!order) {
+            const { data, error } = await window.tenantPocketBase.from('cotizaciones').select('*').eq('id', safeId).maybeSingle();
+            if (error || !data) throw (error || new Error('No se encontró la cotización.'));
+            order = data;
+            if (!allOrders.some((row) => String(row.id || '') === safeId)) allOrders.push(order);
+        }
+        currentPreviewOrder = { ...order, docType: type }; 
+        const content = await window.getOrderHTML(order, type); 
+        const pdfContainer = document.getElementById('pdf-content'); 
+        const embedViewer = document.getElementById('doc-preview'); 
+        const btnDownload = document.getElementById('btn-download-preview'); 
+        if (pdfContainer) {
+            pdfContainer.classList.remove('hidden');
+            pdfContainer.innerHTML = content;
+            __pmApplyPdfStyleToLivePreview();
+        }
+        if (embedViewer) embedViewer.classList.add('hidden');
+        if (btnDownload) {
+            btnDownload.innerHTML = '<i class="fa-solid fa-download"></i> Descargar';
+            btnDownload.className = "bg-brand-red hover:bg-red-600 text-white px-5 py-2 rounded-full text-xs font-bold uppercase shadow-lg transition flex items-center gap-2";
+            btnDownload.onclick = window.downloadPDFFromPreview;
+        }
+        window.openModal('preview-modal');
+    } catch (e) {
+        console.error('openPDFPreview(pm) failed', e);
+        window.showToast(`No se pudo abrir la vista previa: ${e?.message || e}`, 'error');
+    }
 };
 
 window.downloadPDFFromPreview = async function() { 
     const element = document.getElementById('pdf-content'); 
     const folioUnificado = currentPreviewOrder.numero_orden || currentPreviewOrder.id.split('-')[0].toUpperCase();
     try {
+        if (!__pmIsAdminProfile() && element && currentPreviewOrder) {
+            const docType = String(currentPreviewOrder.docType || 'quote').toLowerCase() === 'order' ? 'order' : 'quote';
+            await __pmEnsurePdfStyleProfile(docType, { forceReload: true });
+            element.innerHTML = window.getOrderHTML(currentPreviewOrder, docType);
+            __pmApplyPdfStyleToLivePreview();
+        }
         const pdfBlob = await window.generatePdfBlobFromNode(element);
         window.downloadBlobAsFile(pdfBlob, `Documento_${folioUnificado}.pdf`);
     } catch (e) {
@@ -2075,8 +2531,12 @@ function __pmBindFloatingPanelDrag(panel, host) {
 
 function __pmRenderPdfToolbar() {
     const buttonBar = document.getElementById('pm-pdf-edit-button-bar');
+    const isAdmin = __pmIsAdminProfile();
+    document.querySelectorAll('[data-pdf-admin-caption="1"]').forEach((node) => {
+        node.classList.toggle('hidden', !isAdmin);
+    });
     if (!buttonBar) return;
-    const showToolbar = __pmIsPdfPreviewVisible() && __pmIsAdminProfile();
+    const showToolbar = __pmIsPdfPreviewVisible() && isAdmin;
     buttonBar.classList.toggle('hidden', !showToolbar);
     if (!showToolbar) {
         document.getElementById('pm-pdf-inspector')?.classList.add('hidden');
@@ -2084,13 +2544,13 @@ function __pmRenderPdfToolbar() {
         return;
     }
     const adminTools = document.getElementById('pm-pdf-admin-tools');
-    if (adminTools) adminTools.classList.toggle('hidden', !__pmIsAdminProfile());
+    if (adminTools) adminTools.classList.toggle('hidden', !isAdmin);
     const button = document.getElementById('pm-pdf-edit-button');
     if (button) {
         const editingEnabled = !__pmPdfEditLocked;
         button.innerHTML = `<i class="fa-solid ${editingEnabled ? 'fa-lock-open' : 'fa-lock'}"></i><span>${editingEnabled ? 'Edicion activa' : 'Editar PDF'}</span>`;
         button.className = `inline-flex items-center gap-2 rounded-full border px-4 py-2 text-[11px] font-black uppercase tracking-wide text-white shadow-lg transition ${editingEnabled ? 'bg-emerald-600 border-emerald-400/50 hover:bg-emerald-500' : 'bg-gray-950 border-gray-700 hover:bg-gray-900'}`;
-        button.classList.toggle('hidden', !__pmIsAdminProfile());
+        button.classList.toggle('hidden', !isAdmin);
     }
     const addButton = document.getElementById('pm-pdf-add-button');
     if (addButton) {
@@ -2198,9 +2658,15 @@ function __pmSyncPdfEditMode() {
 }
 
 function __pmSetPdfEditLocked(locked) {
+    const wasLocked = __pmPdfEditLocked;
     __pmPdfEditLocked = locked !== false;
     if (__pmPdfEditLocked) __pmClosePdfInspector();
     __pmSyncPdfEditMode();
+    if (!wasLocked && __pmPdfEditLocked && __pmIsAdminProfile()) {
+        Promise.resolve()
+            .then(() => __pmPersistSharedPdfStyleConfig(__pmGetPdfStyleConfig(), { force: true }))
+            .catch(() => {});
+    }
 }
 
 function __pmGetPdfInspectorTarget() {
@@ -2765,20 +3231,23 @@ function __pmIsAdminProfile() {
 
 function __pmResolvePdfActorName() {
     const candidates = [
-        window.currentUserProfile?.full_name,
-        window.currentUserProfile?.name,
+        window.currentUserProfile?.login_username,
+        window.currentUserProfile?.record?.login_username,
+        window.currentUserProfile?.profile?.login_username,
         window.currentUserProfile?.Usernames,
         window.currentUserProfile?.username,
+        window.currentUserProfile?.record?.username,
+        window.currentUserProfile?.profile?.username,
+        window.currentUserProfile?.full_name,
+        window.currentUserProfile?.name,
         window.currentUserProfile?.record?.full_name,
         window.currentUserProfile?.record?.name,
-        window.currentUserProfile?.record?.username,
         window.currentUserProfile?.profile?.full_name,
         window.currentUserProfile?.profile?.name,
-        window.currentUserProfile?.profile?.username,
         window.currentUserProfile?.email ? String(window.currentUserProfile.email).split('@')[0] : '',
         window.currentUserProfile?.record?.email ? String(window.currentUserProfile.record.email).split('@')[0] : ''
     ];
-    const resolved = candidates.map((value) => String(value || '').trim()).find(Boolean);
+    const resolved = candidates.map((value) => __pmSanitizeActorName(value)).find(Boolean);
     return resolved || 'Usuario';
 }
 
@@ -2819,10 +3288,16 @@ async function __pmLoadCurrentUserProfile(user) {
         String(nativeAuth?.record?.email || '').trim().toLowerCase()
     ].filter(Boolean))];
     const usernameCandidates = [...new Set([
+        String(fallback?.login_username || '').trim(),
+        String(fallback?.record?.login_username || '').trim(),
         String(fallback?.username || '').trim(),
         String(fallback?.record?.username || '').trim(),
+        String(compatAuth?.user?.login_username || '').trim(),
+        String(compatAuth?.record?.login_username || '').trim(),
         String(compatAuth?.user?.username || '').trim(),
         String(compatAuth?.record?.username || '').trim(),
+        String(nativeAuth?.user?.login_username || '').trim(),
+        String(nativeAuth?.record?.login_username || '').trim(),
         String(nativeAuth?.user?.username || '').trim(),
         String(nativeAuth?.record?.username || '').trim()
     ].filter(Boolean))];
@@ -2837,19 +3312,12 @@ async function __pmLoadCurrentUserProfile(user) {
     };
     let appUser = await lookupByField('app_users', 'id', idCandidates);
     if (!appUser) appUser = await lookupByField('app_users', 'email', emailCandidates);
+    if (!appUser) appUser = await lookupByField('app_users', 'login_username', usernameCandidates);
     if (!appUser) appUser = await lookupByField('app_users', 'username', usernameCandidates);
-    let profile = null;
-    if (!appUser) {
-        profile = await lookupByField('profiles', 'id', idCandidates);
-        if (!profile) profile = await lookupByField('profiles', 'email', emailCandidates);
-        if (!profile) profile = await lookupByField('profiles', 'username', usernameCandidates);
-    }
-    const merged = { ...(profile || {}), ...(appUser || {}), ...fallback };
+    const merged = { ...(appUser || {}), ...fallback };
     const role = __pmNormalizeUserRole(
         appUser?.role
         || appUser?.rol
-        || profile?.role
-        || profile?.rol
         || fallback?.role
         || fallback?.rol
         || fallback?.record?.role
@@ -2859,7 +3327,7 @@ async function __pmLoadCurrentUserProfile(user) {
         merged.role = role;
         localStorage.setItem('hub_user_cache_role', role);
     }
-    if (!merged.username) merged.username = appUser?.username || appUser?.login_username || profile?.username || fallback?.username || fallback?.email?.split('@')[0] || '';
+    if (!merged.username) merged.username = appUser?.login_username || appUser?.username || fallback?.login_username || fallback?.username || fallback?.email?.split('@')[0] || '';
     return merged;
 }
 
@@ -2868,11 +3336,25 @@ function __pmOverlayDocumentType(profile) {
     return __PM_PDF_OVERLAY_TYPES[safeProfile] || __PM_PDF_OVERLAY_TYPES.quote;
 }
 
+function __pmParseJsonObjectLike(value) {
+    if (value && typeof value === 'object') return value;
+    const raw = String(value || '').trim();
+    if (!raw) return null;
+    try {
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch (_) {
+        return null;
+    }
+}
+
 function __pmResolvePdfOverlayConfigPayload(record = {}) {
     const rawRecord = record && typeof record === 'object' ? record : {};
-    if (rawRecord.config_json && typeof rawRecord.config_json === 'object') return rawRecord.config_json;
-    const elements = rawRecord.elements && typeof rawRecord.elements === 'object' ? rawRecord.elements : {};
-    if (elements.config_json && typeof elements.config_json === 'object') return elements.config_json;
+    const configJson = __pmParseJsonObjectLike(rawRecord.config_json);
+    if (configJson) return configJson;
+    const elements = __pmParseJsonObjectLike(rawRecord.elements) || {};
+    const elementConfig = __pmParseJsonObjectLike(elements.config_json);
+    if (elementConfig) return elementConfig;
     if (elements.profiles && typeof elements.profiles === 'object') {
         return {
             tenant: rawRecord.tenant || elements.tenant || __PM_PDF_STYLE_TENANT,
@@ -2939,59 +3421,83 @@ function __pmBuildPdfOverlayElementsPayload(configJson) {
     };
 }
 
+function __pmPickLatestRecord(records) {
+    const list = Array.isArray(records) ? records.filter((row) => row && typeof row === 'object') : [];
+    if (!list.length) return null;
+    list.sort((a, b) => {
+        const aTs = Date.parse(String(a.updated_at || a.updated || a.created_at || a.created || '')) || 0;
+        const bTs = Date.parse(String(b.updated_at || b.updated || b.created_at || b.created || '')) || 0;
+        return bTs - aTs;
+    });
+    return list[0] || null;
+}
+
 async function __pmLoadModernPdfStyleRecord(profileKey) {
-    const pbClient = window.tenantPocketBase || window.globalPocketBase;
-    if (!pbClient) return null;
+    const clients = [];
+    if (window.tenantPocketBase) clients.push(window.tenantPocketBase);
+    if (window.globalPocketBase && window.globalPocketBase !== window.tenantPocketBase) clients.push(window.globalPocketBase);
+    if (!clients.length) return null;
     const overlayDocumentType = __pmOverlayDocumentType(profileKey);
-    try {
-        const { data, error } = await pbClient
-            .from(__PM_PDF_OVERLAYS_COLLECTION)
-            .select('id,config_json,elements')
-            .eq('tenant', __PM_PDF_STYLE_TENANT)
-            .eq('document_type', overlayDocumentType)
-            .maybeSingle();
-        if (!error && data) {
-            return {
-                source: 'pdf_overlays',
-                id: String(data.id || ''),
-                config: __pmResolvePdfOverlayConfigPayload(data),
-                raw: data.config_json || data.elements || {}
-            };
-        }
-    } catch (_) {}
-    try {
-        const { data, error } = await pbClient
-            .from(__PM_PDF_SETTINGS_COLLECTION)
-            .select('id,config_json')
-            .eq('tenant', __PM_PDF_STYLE_TENANT)
-            .eq('generator_type', profileKey === 'order' ? 'orders' : 'quotes')
-            .maybeSingle();
-        if (error || !data) return null;
-        return { source: 'pdf_generator_settings', id: String(data.id || ''), config: data.config_json || {}, raw: data.config_json || {} };
-    } catch (_) {
-        return null;
+    for (const pbClient of clients) {
+        try {
+            const { data, error } = await pbClient
+                .from(__PM_PDF_OVERLAYS_COLLECTION)
+                .select('id,config_json,elements,updated,created,updated_at,created_at')
+                .eq('tenant', __PM_PDF_STYLE_TENANT)
+                .eq('document_type', overlayDocumentType);
+            const row = __pmPickLatestRecord(Array.isArray(data) ? data : (data ? [data] : []));
+            if (!error && row) {
+                return {
+                    source: 'pdf_overlays',
+                    id: String(row.id || ''),
+                    config: __pmResolvePdfOverlayConfigPayload(row),
+                    raw: row.config_json || row.elements || {}
+                };
+            }
+        } catch (_) {}
     }
+    for (const pbClient of clients) {
+        try {
+            const { data, error } = await pbClient
+                .from(__PM_PDF_SETTINGS_COLLECTION)
+                .select('id,config_json,updated,created,updated_at,created_at')
+                .eq('tenant', __PM_PDF_STYLE_TENANT)
+                .eq('generator_type', profileKey === 'order' ? 'orders' : 'quotes');
+            const row = __pmPickLatestRecord(Array.isArray(data) ? data : (data ? [data] : []));
+            if (!error && row) {
+                return { source: 'pdf_generator_settings', id: String(row.id || ''), config: row.config_json || {}, raw: row.config_json || {} };
+            }
+        } catch (_) {}
+    }
+    return null;
 }
 
 async function __pmLoadLegacyPdfStyleRecord() {
-    const pbClient = window.tenantPocketBase || window.globalPocketBase;
-    if (!pbClient) return null;
-    try {
-        const { data, error } = await pbClient
-            .from('configuracion')
-            .select('id,valor_json')
-            .eq('clave', __PM_PDF_STYLE_CONFIG_KEY)
-            .maybeSingle();
-        if (error || !data) return null;
-        return { source: 'legacy', id: String(data.id || ''), raw: data.valor_json || {}, config: data.valor_json || {} };
-    } catch (_) {
-        return null;
+    const clients = [];
+    if (window.tenantPocketBase) clients.push(window.tenantPocketBase);
+    if (window.globalPocketBase && window.globalPocketBase !== window.tenantPocketBase) clients.push(window.globalPocketBase);
+    if (!clients.length) return null;
+    for (const pbClient of clients) {
+        try {
+            const { data, error } = await pbClient
+                .from('configuracion')
+                .select('id,valor_json,updated,created,updated_at,created_at')
+                .eq('clave', __PM_PDF_STYLE_CONFIG_KEY);
+            const row = __pmPickLatestRecord(Array.isArray(data) ? data : (data ? [data] : []));
+            if (!error && row) {
+                const parsed = __pmParseJsonObjectLike(row.valor_json) || {};
+                return { source: 'legacy', id: String(row.id || ''), raw: parsed, config: parsed };
+            }
+        } catch (_) {}
     }
+    return null;
 }
 
 async function __pmUpsertModernPdfStyleRecord(profileKey, configJson) {
-    const pbClient = window.tenantPocketBase || window.globalPocketBase;
-    if (!pbClient) return { id: '', config: configJson || {} };
+    const clients = [];
+    if (window.tenantPocketBase) clients.push(window.tenantPocketBase);
+    if (window.globalPocketBase && window.globalPocketBase !== window.tenantPocketBase) clients.push(window.globalPocketBase);
+    if (!clients.length) return { id: '', config: configJson || {} };
     const overlayDocumentType = __pmOverlayDocumentType(profileKey);
     const safeConfig = __pmResolvePdfOverlayConfigPayload({ config_json: configJson || {} });
     const payload = {
@@ -3000,40 +3506,151 @@ async function __pmUpsertModernPdfStyleRecord(profileKey, configJson) {
         config_json: safeConfig,
         elements: __pmBuildPdfOverlayElementsPayload(safeConfig)
     };
-    const { data: existing, error: lookupError } = await pbClient
-        .from(__PM_PDF_OVERLAYS_COLLECTION)
-        .select('id')
-        .eq('tenant', __PM_PDF_STYLE_TENANT)
-        .eq('document_type', overlayDocumentType)
-        .maybeSingle();
-    if (lookupError) throw lookupError;
-    if (existing?.id) {
-        const { error: updError } = await pbClient.from(__PM_PDF_OVERLAYS_COLLECTION).update(payload).eq('id', existing.id);
-        if (updError) throw updError;
-        return { id: String(existing.id), config: payload.config_json };
+    let lastError = null;
+    for (const pbClient of clients) {
+        try {
+            const { data: existing, error: lookupError } = await pbClient
+                .from(__PM_PDF_OVERLAYS_COLLECTION)
+                .select('id,updated,created,updated_at,created_at')
+                .eq('tenant', __PM_PDF_STYLE_TENANT)
+                .eq('document_type', overlayDocumentType);
+            if (lookupError) throw lookupError;
+            const existingRow = __pmPickLatestRecord(Array.isArray(existing) ? existing : (existing ? [existing] : []));
+            if (existingRow?.id) {
+                const { error: updError } = await pbClient
+                    .from(__PM_PDF_OVERLAYS_COLLECTION)
+                    .update(payload)
+                    .eq('tenant', __PM_PDF_STYLE_TENANT)
+                    .eq('document_type', overlayDocumentType);
+                if (updError) throw updError;
+                return { id: String(existingRow.id), config: payload.config_json };
+            }
+            const { data: inserted, error: insError } = await pbClient
+                .from(__PM_PDF_OVERLAYS_COLLECTION)
+                .insert(payload)
+                .select('id')
+                .single();
+            if (insError) throw insError;
+            return { id: String(inserted?.id || ''), config: payload.config_json };
+        } catch (e) {
+            lastError = e;
+        }
     }
-    const { data: inserted, error: insError } = await pbClient
-        .from(__PM_PDF_OVERLAYS_COLLECTION)
-        .insert(payload)
-        .select('id')
-        .single();
-    if (insError) throw insError;
-    return { id: String(inserted?.id || ''), config: payload.config_json };
+    if (lastError) throw lastError;
+    return { id: '', config: payload.config_json };
+}
+
+async function __pmUpsertLegacyPdfStyleRecord(configJson) {
+    const clients = [];
+    if (window.tenantPocketBase) clients.push(window.tenantPocketBase);
+    if (window.globalPocketBase && window.globalPocketBase !== window.tenantPocketBase) clients.push(window.globalPocketBase);
+    if (!clients.length) return null;
+    let lastError = null;
+    for (const pbClient of clients) {
+        try {
+            const { data: existing, error: lookupError } = await pbClient
+                .from('configuracion')
+                .select('id,updated,created,updated_at,created_at')
+                .eq('clave', __PM_PDF_STYLE_CONFIG_KEY);
+            if (lookupError) throw lookupError;
+            const existingRow = __pmPickLatestRecord(Array.isArray(existing) ? existing : (existing ? [existing] : []));
+            if (existingRow?.id) {
+                const { error: updError } = await pbClient
+                    .from('configuracion')
+                    .update({ valor_json: configJson || {} })
+                    .eq('clave', __PM_PDF_STYLE_CONFIG_KEY);
+                if (updError) throw updError;
+                return { id: String(existingRow.id || '') };
+            }
+            const { data: inserted, error: insError } = await pbClient
+                .from('configuracion')
+                .insert({ clave: __PM_PDF_STYLE_CONFIG_KEY, valor_json: configJson || {} })
+                .select('id')
+                .single();
+            if (insError) throw insError;
+            return { id: String(inserted?.id || '') };
+        } catch (e) {
+            lastError = e;
+        }
+    }
+    if (lastError) throw lastError;
+    return null;
+}
+
+async function __pmUpsertCompatPdfSettingsRecord(profileKey, configJson) {
+    const clients = [];
+    if (window.tenantPocketBase) clients.push(window.tenantPocketBase);
+    if (window.globalPocketBase && window.globalPocketBase !== window.tenantPocketBase) clients.push(window.globalPocketBase);
+    if (!clients.length) return null;
+    const generatorType = profileKey === 'order' ? 'orders' : 'quotes';
+    const payload = {
+        tenant: __PM_PDF_STYLE_TENANT,
+        generator_type: generatorType,
+        config_json: configJson || {}
+    };
+    let lastError = null;
+    for (const pbClient of clients) {
+        try {
+            const { data: existing, error: lookupError } = await pbClient
+                .from(__PM_PDF_SETTINGS_COLLECTION)
+                .select('id,updated,created,updated_at,created_at')
+                .eq('tenant', __PM_PDF_STYLE_TENANT)
+                .eq('generator_type', generatorType);
+            if (lookupError) throw lookupError;
+            const existingRow = __pmPickLatestRecord(Array.isArray(existing) ? existing : (existing ? [existing] : []));
+            if (existingRow?.id) {
+                const { error: updError } = await pbClient
+                    .from(__PM_PDF_SETTINGS_COLLECTION)
+                    .update(payload)
+                    .eq('tenant', __PM_PDF_STYLE_TENANT)
+                    .eq('generator_type', generatorType);
+                if (updError) throw updError;
+                return { id: String(existingRow.id || '') };
+            }
+            const { data: inserted, error: insError } = await pbClient
+                .from(__PM_PDF_SETTINGS_COLLECTION)
+                .insert(payload)
+                .select('id')
+                .single();
+            if (insError) throw insError;
+            return { id: String(inserted?.id || '') };
+        } catch (e) {
+            lastError = e;
+        }
+    }
+    if (lastError) throw lastError;
+    return null;
 }
 
 async function __pmLoadSharedPdfStyleConfig(profile = 'quote') {
     const profileKey = __pmNormalizePdfStyleProfileKey(profile);
     try {
+        const canMigrate = __pmIsAdminProfile();
         let record = await __pmLoadModernPdfStyleRecord(profileKey);
         if (!record) {
             const legacyRecord = await __pmLoadLegacyPdfStyleRecord();
             if (legacyRecord?.config) {
-                const saved = await __pmUpsertModernPdfStyleRecord(profileKey, __pmBuildPdfStyleConfigPayload(legacyRecord.raw || {}, __pmExtractPdfStyleProfile(legacyRecord.config, profileKey), profileKey));
-                record = { source: 'pdf_overlays', id: saved.id, config: saved.config, raw: saved.config };
+                const legacyPayload = __pmBuildPdfStyleConfigPayload(
+                    legacyRecord.raw || {},
+                    __pmExtractPdfStyleProfile(legacyRecord.config, profileKey),
+                    profileKey
+                );
+                if (canMigrate) {
+                    try {
+                        const saved = await __pmUpsertModernPdfStyleRecord(profileKey, legacyPayload);
+                        record = { source: 'pdf_overlays', id: saved.id, config: saved.config, raw: saved.config };
+                    } catch (_) {
+                        record = { source: 'legacy', id: legacyRecord.id || '', config: legacyPayload, raw: legacyPayload };
+                    }
+                } else {
+                    record = { source: 'legacy', id: legacyRecord.id || '', config: legacyPayload, raw: legacyPayload };
+                }
             }
-        } else if (record.source !== 'pdf_overlays' && record.config) {
-            const saved = await __pmUpsertModernPdfStyleRecord(profileKey, record.config);
-            record = { source: 'pdf_overlays', id: saved.id, config: saved.config, raw: saved.config };
+        } else if (record.source !== 'pdf_overlays' && record.config && canMigrate) {
+            try {
+                const saved = await __pmUpsertModernPdfStyleRecord(profileKey, record.config);
+                record = { source: 'pdf_overlays', id: saved.id, config: saved.config, raw: saved.config };
+            } catch (_) {}
         }
         __pmPdfStyleActiveProfile = profileKey;
         __pmPdfStyleConfigRecordId = record?.id || '';
@@ -3048,9 +3665,10 @@ async function __pmLoadSharedPdfStyleConfig(profile = 'quote') {
     }
 }
 
-async function __pmEnsurePdfStyleProfile(docType) {
+async function __pmEnsurePdfStyleProfile(docType, options = {}) {
     const wanted = __pmNormalizePdfStyleProfileKey(docType === 'order' ? 'order' : 'quote');
-    if (__pmPdfStyleActiveProfile === wanted && __pmPdfStyleState) return;
+    const forceReload = !!(options && options.forceReload);
+    if (!forceReload && __pmPdfStyleActiveProfile === wanted && __pmPdfStyleState) return;
     await __pmLoadSharedPdfStyleConfig(wanted);
 }
 
@@ -3064,6 +3682,8 @@ async function __pmPersistSharedPdfStyleConfig(style, options = {}) {
         __pmPdfStyleConfigRecordId = saved.id;
         __pmPdfStyleConfigStore = 'pdf_overlays';
         __pmPdfStyleRawPayload = saved.config;
+        try { await __pmUpsertCompatPdfSettingsRecord(__pmPdfStyleActiveProfile, configJson); } catch (_) {}
+        try { await __pmUpsertLegacyPdfStyleRecord(configJson); } catch (_) {}
     } catch (e) {
         console.warn('No se pudo guardar la configuracion PDF compartida (PM):', e);
     }
@@ -4505,7 +5125,11 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       const prevStatus = String(currentPreviewOrder?.status || "").toLowerCase();
       const approvalTransition = nextStatus === "aprobada" && !["aprobada", "finalizada"].includes(prevStatus);
       formData.status = nextStatus;
-      if (!formData.numero_orden) formData.numero_orden = currentPreviewOrder?.numero_orden || String(currentPreviewOrder?.id || "").split("-")[0].toUpperCase();
+      const saveOrderId = String(document.getElementById("oed-id")?.value || currentPreviewOrder?.id || "").trim();
+      if (!saveOrderId) throw new Error("Cotización inválida.");
+      if (!formData.numero_orden) formData.numero_orden = currentPreviewOrder?.numero_orden || saveOrderId.split("-")[0].toUpperCase();
+      const approvalSnapshotMeta = approvalTransition ? __pmBuildApprovalSnapshotMeta(saveOrderId, formData) : null;
+      if (approvalSnapshotMeta?.path) formData.url_cotizacion_final = approvalSnapshotMeta.path;
       if (approvalTransition) {
         const missing = [];
         if (!document.getElementById("oed-client")?.value) missing.push("Nombre Cliente");
@@ -4516,12 +5140,12 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
         const c = await findConflict(currentPreviewOrder?.id);
         if (c) throw new Error(`${c.space} ocupado (${window.safeFormatDate(c.fi)}${c.fi !== c.ff ? " a " + window.safeFormatDate(c.ff) : ""}).`);
       }
-      const { error } = await __pmQuotesUpdate(document.getElementById("oed-id")?.value || currentPreviewOrder?.id, formData);
+      const { error } = await __pmQuotesUpdate(saveOrderId, formData);
       if (error) throw error;
       currentPreviewOrder = { ...currentPreviewOrder, ...formData };
       signalOrdersRefresh(nextStatus === "aprobada" ? "approved_saved" : "saved");
       if (approvalTransition) {
-        await __pmEnsurePdfStyleProfile('quote');
+        await __pmEnsurePdfStyleProfile('quote', { forceReload: !__pmIsAdminProfile() });
         const content = await window.getOrderHTML({ ...currentPreviewOrder, ...formData }, "quote");
         const pdfContainer = document.getElementById("pdf-content");
         const embedViewer = document.getElementById("doc-preview");
@@ -4539,7 +5163,11 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
         const pdfBlob = (typeof window.generatePdfBlobFromNode === "function")
           ? await window.generatePdfBlobFromNode(pdfContainer)
           : await renderPdfBlobFallback(pdfContainer);
-        const { path, folio } = await __pmUploadApprovalSnapshotBlob(currentPreviewOrder.id, pdfBlob, formData);
+        const { path, folio } = await __pmUploadApprovalSnapshotBlob(saveOrderId, pdfBlob, formData, {
+          persistQuote: false,
+          path: approvalSnapshotMeta?.path,
+          folio: approvalSnapshotMeta?.folio
+        });
         currentPreviewOrder = { ...currentPreviewOrder, url_cotizacion_final: path, status: "aprobada" };
         signalOrdersRefresh("approved_snapshot");
         if (btnDownload) {
@@ -4561,6 +5189,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       } else {
         window.showToast("Cambios guardados", "success");
       }
+      __pmClearOrderDetailDirty();
       if (!IS_PM_ORDER_DETAIL_PAGE) window.closeModal("order-edit-modal");
       await window.loadOrders();
       if (approvalTransition && IS_PM_ORDER_DETAIL_PAGE) {
@@ -4574,14 +5203,24 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     const btn = document.getElementById("btn-download-preview");
     if (btn) { btn.disabled = true; btn.innerText = "Generando Snapshot..."; }
     try {
+      const element = document.getElementById("pdf-content");
+      if (!__pmIsAdminProfile() && element && currentPreviewOrder) {
+        await __pmEnsurePdfStyleProfile("quote", { forceReload: true });
+        element.innerHTML = await window.getOrderHTML({ ...currentPreviewOrder, ...formData, status: "aprobada" }, "quote");
+        __pmApplyPdfStyleToLivePreview();
+      }
       if (__pmIsAdminProfile()) {
         await __pmPersistSharedPdfStyleConfig(__pmGetPdfStyleConfig(), { force: true });
       }
-      const element = document.getElementById("pdf-content");
       const pdfBlob = (typeof window.generatePdfBlobFromNode === "function")
         ? await window.generatePdfBlobFromNode(element)
         : await renderPdfBlobFallback(element);
-      const { path, folio } = await __pmUploadApprovalSnapshotBlob(currentPreviewOrder.id, pdfBlob, formData);
+      const snapshotMeta = __pmBuildApprovalSnapshotMeta(currentPreviewOrder.id, formData);
+      const { path, folio } = await __pmUploadApprovalSnapshotBlob(currentPreviewOrder.id, pdfBlob, formData, {
+        persistQuote: false,
+        path: snapshotMeta.path,
+        folio: snapshotMeta.folio
+      });
       const payload = { ...formData, status: "aprobada", url_cotizacion_final: path };
       const { error: dbErr } = await __pmQuotesUpdate(currentPreviewOrder.id, payload);
       if (dbErr) throw dbErr;
@@ -4688,6 +5327,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     window.renderConceptsList();
     window.recalcTotal();
     window.openModal("order-edit-modal");
+    __pmClearOrderDetailDirty();
     const loading = document.getElementById("editor-loading");
     if (loading) loading.classList.add("hidden");
   };

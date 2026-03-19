@@ -56,6 +56,62 @@ async function cpCreateQuoteRecord(payload) {
     return { error: result && result.error ? result.error : null, data, id: createdId };
 }
 
+async function cpResolveQuoteActorAudit() {
+    let actorId = '';
+    let actorName = '';
+    const looksLikeId = (value) => {
+        const safe = String(value || '').trim();
+        if (!safe) return false;
+        return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(safe)
+            || /^[a-z0-9]{15}$/i.test(safe)
+            || /^[a-f0-9]{24}$/i.test(safe)
+            || /^[a-z0-9_-]{12,}$/i.test(safe);
+    };
+    const sanitizeActorName = (value) => {
+        const safe = String(value || '').trim();
+        if (!safe) return '';
+        if (safe.includes('@')) return safe.split('@')[0];
+        if (looksLikeId(safe)) return '';
+        return safe;
+    };
+    try {
+        const auth = await window.globalPocketBase.auth.getUser();
+        actorId = String(auth?.data?.user?.id || '').trim();
+        const email = String(auth?.data?.user?.email || '').trim();
+        const candidates = [
+            auth?.data?.user?.login_username,
+            auth?.data?.user?.username,
+            email ? email.split('@')[0] : ''
+        ];
+        actorName = candidates.map(sanitizeActorName).find(Boolean) || '';
+    } catch (_) {}
+    const cachedName = sanitizeActorName(localStorage.getItem('hub_user_cache_name') || '');
+    if (cachedName) actorName = cachedName;
+    if (!actorName) actorName = 'Usuario';
+    return { actorId, actorName };
+}
+
+async function cpResolveCurrentUserProfile(sessionUser = {}) {
+    const pbClient = window.globalPocketBase || window.tenantPocketBase;
+    const fallback = sessionUser && typeof sessionUser === 'object' ? sessionUser : {};
+    if (!pbClient) return { ...fallback };
+    const id = String(fallback?.id || fallback?.record?.id || '').trim();
+    const email = String(fallback?.email || fallback?.record?.email || '').trim().toLowerCase();
+    const lookupOne = async (table, field, value) => {
+        if (!value) return null;
+        try {
+            const { data, error } = await pbClient.from(table).select('*').eq(field, value).maybeSingle();
+            if (!error && data) return data;
+        } catch (_) {}
+        return null;
+    };
+    let profile = await lookupOne('app_users', 'id', id);
+    if (!profile) profile = await lookupOne('app_users', 'email', email);
+    const merged = { ...fallback, ...(profile || {}) };
+    if (!merged.app_metadata && fallback?.app_metadata) merged.app_metadata = fallback.app_metadata;
+    return merged;
+}
+
 function parseIds(v){ if(!v) return []; if(Array.isArray(v)) return v; if(typeof v === 'string'){ try { const parsed = JSON.parse(v); return Array.isArray(parsed) ? parsed : []; } catch(e){ return v.split(',').map(x=>x.trim()).filter(Boolean); } } return []; }
 function formatMoney(v){ return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(v || 0); }
 window.safeFormatDate = function(dateStr) { if (!dateStr) return '--'; const parts = dateStr.split('-'); if (parts.length !== 3) return dateStr; return `${parts[2]}/${parts[1]}/${parts[0]}`; };
@@ -115,10 +171,28 @@ window.addEventListener('click', function(e) {
 
 document.addEventListener('DOMContentLoaded', async () => {
     if (window.PB_CLIENT) { if(!window.tenantPocketBase) window.tenantPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY, { db: { schema: FIN_SCHEMA } }); if(!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY); }
-    const { data: { session } } = await window.globalPocketBase.auth.getSession(); if (!session) return;
-    const { data: profile } = await window.globalPocketBase.from('profiles').select('*').eq('id', session.user.id).single();
-    const userRole = String(profile?.role || '').toLowerCase().trim(); const roleHasAccess = (userRole === 'admin') || (userRole === 'casa_de_piedra') || (userRole === 'ambos');
-    if (userRole === 'admin') myPermissions = { access: true, catalog_manage: true }; else if (roleHasAccess) myPermissions = { access: true, catalog_manage: false }; else myPermissions = profile.app_metadata?.finanzas?.permissions || { access: false };
+    let session = null;
+    try {
+        const response = await window.globalPocketBase.auth.getSession();
+        session = response?.data?.session || null;
+    } catch (_) {
+        session = null;
+    }
+    if (!session?.user) return;
+    const profile = await cpResolveCurrentUserProfile(session.user);
+    const cachedRole = String(localStorage.getItem('hub_user_cache_role') || '').trim().toLowerCase();
+    const userRole = String(profile?.role || profile?.rol || cachedRole).toLowerCase().trim();
+    const roleHasAccess = (userRole === 'admin') || (userRole === 'casa_de_piedra') || (userRole === 'ambos');
+    if (userRole === 'admin') myPermissions = { access: true, catalog_manage: true };
+    else if (roleHasAccess) myPermissions = { access: true, catalog_manage: false };
+    else {
+        const profilePerms = profile?.app_metadata?.finanzas?.permissions;
+        if (profilePerms && typeof profilePerms === 'object') {
+            myPermissions = { access: true, catalog_manage: false, ...profilePerms, catalog_manage: !!profilePerms.catalog_manage };
+        } else {
+            myPermissions = { access: true, catalog_manage: false };
+        }
+    }
     if (!myPermissions.access) return window.showToast?.('No tienes permisos.', 'error');
     if (myPermissions.catalog_manage && IS_CATALOG_ADMIN_PAGE) { const btn = document.getElementById('btn-new-space'); if(btn) btn.classList.remove('hidden'); }
     await loadTaxes();
@@ -401,7 +475,8 @@ window.generatePDF = async function() {
     if(hrsE > 0) conceptosB2B.push({ description: `Horas Extras (${hrsE} hrs)`, amount: (hrsE * pHora), value: (hrsE * pHora), unit: 'fixed', type: 'b2b_horas', meta: { hours: hrsE, unit_price: pHora } });
     adminSelectedConcepts.forEach(c => conceptosB2B.push(c));
 
-    const payload = { cliente_id: (document.getElementById('cli-id') ? (document.getElementById('cli-id').value || null) : null), espacio_id: currentSpace.id, espacio_nombre: currentSpace.nombre, espacio_clave: currentSpace.clave, cliente_nombre: cli.name, cliente_rfc: cli.rfc, cliente_contacto: cli.phone, cliente_email: cli.email, fecha_inicio: document.getElementById('date-start').value, fecha_fin: document.getElementById('date-end').value, precio_final: currentPricing.final, desglose_precios: { subtotal_antes_impuestos: currentPricing.subtotal, impuestos_detalle: parseIds(currentSpace.impuestos_ids || currentSpace.impuestos), tax_total: currentPricing.taxes }, conceptos_adicionales: conceptosB2B, status: 'pendiente', creado_por: (await window.globalPocketBase.auth.getUser()).data.user.id, personas: guests };
+    const auditSingle = await cpResolveQuoteActorAudit();
+    const payload = { cliente_id: (document.getElementById('cli-id') ? (document.getElementById('cli-id').value || null) : null), espacio_id: currentSpace.id, espacio_nombre: currentSpace.nombre, espacio_clave: currentSpace.clave, cliente_nombre: cli.name, cliente_rfc: cli.rfc, cliente_contacto: cli.phone, cliente_email: cli.email, fecha_inicio: document.getElementById('date-start').value, fecha_fin: document.getElementById('date-end').value, precio_final: currentPricing.final, desglose_precios: { subtotal_antes_impuestos: currentPricing.subtotal, impuestos_detalle: parseIds(currentSpace.impuestos_ids || currentSpace.impuestos), tax_total: currentPricing.taxes }, conceptos_adicionales: conceptosB2B, status: 'pendiente', creado_por: auditSingle.actorId || null, creado_por_nombre: auditSingle.actorName, modificado_por_legacy: auditSingle.actorId || null, modificado_por_nombre: auditSingle.actorName, personas: guests };
     
     const { error, id: createdQuoteId } = await cpCreateQuoteRecord(payload);
     if (error) {
@@ -895,7 +970,8 @@ window.generatePDF = async function(){
     const maxEnd = endDates[endDates.length - 1] || '';
     const maxGuests = Math.max(...spaces.map(s => parseInt(s.guests, 10) || 0), 0);
     const taxIdsUnion = Array.from(new Set(spaces.flatMap(s => s.taxIds || []).map(x => String(x))));
-    const payload = { cliente_id: (document.getElementById('cli-id') ? (document.getElementById('cli-id').value || null) : null), nombre_cotizacion: quoteName, espacio_id: first.spaceId, espacio_nombre: spaces.length === 1 ? first.spaceName : `${first.spaceName} + ${spaces.length - 1} espacio(s)`, espacio_clave: spaces.length === 1 ? first.spaceKey : 'MULTI', cliente_nombre: cli.name, cliente_rfc: cli.rfc, cliente_contacto: cli.phone, cliente_email: cli.email, fecha_inicio: minStart, fecha_fin: maxEnd, precio_final: currentPricing.final, desglose_precios: { subtotal_antes_impuestos: currentPricing.subtotal, impuestos_detalle: taxIdsUnion, tax_total: currentPricing.taxes, espacios: espaciosDetalle }, detalles_evento: { multi_espacio: spaces.length > 1, total_espacios: spaces.length, nombre_cotizacion: quoteName }, espacios_detalle: espaciosDetalle, conceptos_adicionales: conceptosB2B, status: 'pendiente', creado_por: (await window.globalPocketBase.auth.getUser()).data.user.id, personas: maxGuests || 1 };
+    const auditMulti = await cpResolveQuoteActorAudit();
+    const payload = { cliente_id: (document.getElementById('cli-id') ? (document.getElementById('cli-id').value || null) : null), nombre_cotizacion: quoteName, espacio_id: first.spaceId, espacio_nombre: spaces.length === 1 ? first.spaceName : `${first.spaceName} + ${spaces.length - 1} espacio(s)`, espacio_clave: spaces.length === 1 ? first.spaceKey : 'MULTI', cliente_nombre: cli.name, cliente_rfc: cli.rfc, cliente_contacto: cli.phone, cliente_email: cli.email, fecha_inicio: minStart, fecha_fin: maxEnd, precio_final: currentPricing.final, desglose_precios: { subtotal_antes_impuestos: currentPricing.subtotal, impuestos_detalle: taxIdsUnion, tax_total: currentPricing.taxes, espacios: espaciosDetalle }, detalles_evento: { multi_espacio: spaces.length > 1, total_espacios: spaces.length, nombre_cotizacion: quoteName }, espacios_detalle: espaciosDetalle, conceptos_adicionales: conceptosB2B, status: 'pendiente', creado_por: auditMulti.actorId || null, creado_por_nombre: auditMulti.actorName, modificado_por_legacy: auditMulti.actorId || null, modificado_por_nombre: auditMulti.actorName, personas: maxGuests || 1 };
     const { error, id: createdQuoteId } = await cpCreateQuoteRecord(payload);
     if(error){
         console.error(error);

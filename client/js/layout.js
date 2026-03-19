@@ -299,8 +299,25 @@
         const LAST_UNLOAD_KEY = 'hub_nav_diag_last_unload_v1';
         const MAX_DIAG_ENTRIES = 250;
         let lastInteraction = null;
+        let lastBlockedNavToastTs = 0;
 
         const safeSlice = (value, max = 240) => String(value == null ? '' : value).slice(0, max);
+        const normalizeUrl = (value) => {
+            try {
+                const parsed = new URL(String(value || ''), window.location.href);
+                parsed.hash = '';
+                return parsed.toString();
+            } catch (_) {
+                return String(value || '').trim();
+            }
+        };
+        const isSamePageUrl = (target) => normalizeUrl(target) === normalizeUrl(window.location.href || '');
+        const showBlockedNavToast = (message) => {
+            const now = Date.now();
+            if ((now - lastBlockedNavToastTs) < 1400) return;
+            lastBlockedNavToastTs = now;
+            if (typeof window.showToast === 'function') window.showToast(message, 'info');
+        };
         const readDiag = () => {
             try {
                 const raw = localStorage.getItem(DIAG_KEY);
@@ -345,6 +362,92 @@
             pushDiag('allow_next_unload', { reason: safeSlice(reason, 120) });
             return true;
         };
+        const canUseProgrammaticNav = () => {
+            return window.__HUB_ALLOW_UNLOAD_ONCE === true
+                || window.__HUB_ALLOW_MANUAL_RELOAD === true
+                || window.__HUB_ALLOW_PROGRAMMATIC_NAV === true;
+        };
+        if (!window.__HUB_SAFE_NAVIGATE) {
+            window.__HUB_SAFE_NAVIGATE = function(targetUrl, options = {}) {
+                const target = String(targetUrl || '').trim();
+                if (!target) return false;
+                const opts = (options && typeof options === 'object') ? options : {};
+                const allowSamePage = opts.allowSamePage === true;
+                if (!allowSamePage && isSamePageUrl(target)) {
+                    pushDiag('safe_navigate_same_page_blocked', { target: safeSlice(target, 260), interaction: lastInteraction });
+                    showBlockedNavToast('Recarga automática bloqueada para evitar pérdida de avance.');
+                    return false;
+                }
+                try { window.__HUB_ALLOW_UNLOAD_ONCE = true; } catch (_) {}
+                pushDiag('safe_navigate', { target: safeSlice(target, 260), interaction: lastInteraction });
+                window.location.href = target;
+                return true;
+            };
+        }
+        if (!window.__HUB_ORIGINAL_LOCATION_RELOAD) {
+            try {
+                window.__HUB_ORIGINAL_LOCATION_RELOAD = window.location.reload.bind(window.location);
+            } catch (_) {
+                window.__HUB_ORIGINAL_LOCATION_RELOAD = null;
+            }
+        }
+        if (!window.__HUB_LOCATION_RELOAD_PATCHED && window.__HUB_ORIGINAL_LOCATION_RELOAD) {
+            try {
+                window.location.reload = function(forceReload) {
+                    if (canUseProgrammaticNav()) return window.__HUB_ORIGINAL_LOCATION_RELOAD(forceReload);
+                    pushDiag('reload_api_blocked', { force: !!forceReload, interaction: lastInteraction });
+                    showBlockedNavToast('Recarga automática bloqueada para evitar pérdida de avance.');
+                    return false;
+                };
+                window.__HUB_LOCATION_RELOAD_PATCHED = true;
+            } catch (_) {}
+        }
+        if (!window.__HUB_ORIGINAL_LOCATION_ASSIGN) {
+            try {
+                window.__HUB_ORIGINAL_LOCATION_ASSIGN = window.location.assign.bind(window.location);
+            } catch (_) {
+                window.__HUB_ORIGINAL_LOCATION_ASSIGN = null;
+            }
+        }
+        if (!window.__HUB_LOCATION_ASSIGN_PATCHED && window.__HUB_ORIGINAL_LOCATION_ASSIGN) {
+            try {
+                window.location.assign = function(nextUrl) {
+                    const target = String(nextUrl || '').trim();
+                    if (!target) return;
+                    if (!canUseProgrammaticNav() && isSamePageUrl(target)) {
+                        pushDiag('assign_same_page_blocked', { target: safeSlice(target, 260), interaction: lastInteraction });
+                        showBlockedNavToast('Recarga automática bloqueada para evitar pérdida de avance.');
+                        return;
+                    }
+                    try { window.__HUB_ALLOW_UNLOAD_ONCE = true; } catch (_) {}
+                    return window.__HUB_ORIGINAL_LOCATION_ASSIGN(target);
+                };
+                window.__HUB_LOCATION_ASSIGN_PATCHED = true;
+            } catch (_) {}
+        }
+        if (!window.__HUB_ORIGINAL_LOCATION_REPLACE) {
+            try {
+                window.__HUB_ORIGINAL_LOCATION_REPLACE = window.location.replace.bind(window.location);
+            } catch (_) {
+                window.__HUB_ORIGINAL_LOCATION_REPLACE = null;
+            }
+        }
+        if (!window.__HUB_LOCATION_REPLACE_PATCHED && window.__HUB_ORIGINAL_LOCATION_REPLACE) {
+            try {
+                window.location.replace = function(nextUrl) {
+                    const target = String(nextUrl || '').trim();
+                    if (!target) return;
+                    if (!canUseProgrammaticNav() && isSamePageUrl(target)) {
+                        pushDiag('replace_same_page_blocked', { target: safeSlice(target, 260), interaction: lastInteraction });
+                        showBlockedNavToast('Recarga automática bloqueada para evitar pérdida de avance.');
+                        return;
+                    }
+                    try { window.__HUB_ALLOW_UNLOAD_ONCE = true; } catch (_) {}
+                    return window.__HUB_ORIGINAL_LOCATION_REPLACE(target);
+                };
+                window.__HUB_LOCATION_REPLACE_PATCHED = true;
+            } catch (_) {}
+        }
         const hasUnsavedChangesGuard = () => {
             try {
                 const resolver = window.__HUB_HAS_UNSAVED_CHANGES;
@@ -506,6 +609,41 @@
         });
     }
 
+    function readAuthLikeStorageEntry(key) {
+        try {
+            const raw = localStorage.getItem(key);
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            return parsed && typeof parsed === 'object' ? parsed : null;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    function resolveFallbackSessionUser() {
+        const pool = [];
+        try {
+            pool.push(
+                layoutClient?.authStore?.model || null,
+                window.globalPocketBase?.authStore?.model || null,
+                window.tenantPocketBase?.authStore?.model || null
+            );
+            ['pb_compat_auth_v1', 'pb_native_auth_v1', 'pb_auth'].forEach((key) => {
+                const parsed = readAuthLikeStorageEntry(key);
+                if (!parsed) return;
+                pool.push(parsed.user || null, parsed.record || null, parsed.model || null);
+            });
+            for (let i = 0; i < localStorage.length; i += 1) {
+                const key = String(localStorage.key(i) || '');
+                if (!/(pocketbase|pb).*(auth|session)|auth.*(pocketbase|pb)/i.test(key)) continue;
+                const parsed = readAuthLikeStorageEntry(key);
+                if (!parsed) continue;
+                pool.push(parsed.user || null, parsed.record || null, parsed.model || null);
+            }
+        } catch (_) {}
+        return pool.find((candidate) => candidate && typeof candidate === 'object' && (candidate.id || candidate.email)) || null;
+    }
+
     document.addEventListener('DOMContentLoaded', async () => {
         installNavigationSafetyGuards();
         renderHeader('hidden');
@@ -526,11 +664,36 @@
         }
 
         if (layoutClient) {
-            const { data: { session } } = await layoutClient.auth.getSession();
+            let session = null;
+            try {
+                const response = await layoutClient.auth.getSession();
+                session = response?.data?.session || null;
+            } catch (_) {
+                session = null;
+            }
+            if (!session) {
+                const fallbackUser = resolveFallbackSessionUser();
+                if (fallbackUser) session = { user: fallbackUser, __fallback: true };
+            }
             
             if (!session) {
                 const isLoginPage = window.location.pathname.endsWith('index.html') && !window.location.pathname.includes('/calendar/');
-                if (!isLoginPage && pathPrefix !== '') window.location.href = pathPrefix + 'index.html';
+                if (!isLoginPage && pathPrefix !== '') {
+                    const isCotizadorArea = /\/cotizador(cp)?\//.test(window.location.pathname || '');
+                    const redirectGuardKey = 'hub_session_redirect_guard_v1';
+                    const now = Date.now();
+                    const last = Number(sessionStorage.getItem(redirectGuardKey) || 0);
+                    if (isCotizadorArea) {
+                        if (typeof window.showToast === 'function') {
+                            window.showToast('Sesión no disponible temporalmente. Evitando redirección automática.', 'warning');
+                        }
+                    } else if (!Number.isFinite(last) || (now - last) > 8000) {
+                        try { sessionStorage.setItem(redirectGuardKey, String(now)); } catch (_) {}
+                        window.location.href = pathPrefix + 'index.html';
+                    } else if (typeof window.showToast === 'function') {
+                        window.showToast('Sesión no disponible temporalmente. Evitando redirección repetitiva.', 'warning');
+                    }
+                }
                 return;
             }
             

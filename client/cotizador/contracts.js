@@ -3560,7 +3560,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 3. Verificar Sesión
     const { data: { session } } = await window.globalPocketBase.auth.getSession();
-    if (!session) window.location.href = 'index.html';
+    if (!session) {
+        window.location.href = 'index.html';
+        return;
+    }
     try {
         window.currentUserProfile = await __pmContractsLoadCurrentUserProfile(session.user);
     } catch (_) {
