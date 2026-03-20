@@ -27,7 +27,8 @@ const PB_KEY = window.HUB_CONFIG?.pocketbaseAnonKey || window.ENV?.POCKETBASE_AN
 const __cpPath = window.location.pathname || '';
 const __cpIsCP = /\/cotizadorcp(\/|$)/.test(__cpPath) || (window.location.href || '').includes('cotizadorcp');
 const FIN_SCHEMA = __cpIsCP ? 'finanzas_casadepiedra' : (window.HUB_CONFIG?.finanzasSchema || window.ENV?.SCHEMA_CASA_PIEDRA || 'finanzas');
-const CP_PAGE_MODE = window.__CP_PAGE_MODE || 'catalog_admin';
+// Fallback por pathname: si falta __CP_PAGE_MODE, la vista de cotizacion no debe degradar a modo catalogo.
+const CP_PAGE_MODE = window.__CP_PAGE_MODE || ((String(window.location.pathname || '').toLowerCase().includes('cotizacion.html')) ? 'cotizacion' : 'catalog_admin');
 const IS_QUOTE_PAGE = CP_PAGE_MODE === 'cotizacion';
 const IS_CATALOG_ADMIN_PAGE = CP_PAGE_MODE === 'catalog_admin';
 
@@ -35,6 +36,32 @@ let allSpaces = [], catalogConcepts = [], dbTaxes = [], currentSpace = null, cur
 let adminSelectedConcepts = []; let myPermissions = { access:false, catalog_manage:false };
 let __cpPremontajePct = 25;
 let __cpHoraExtraCfg = { mode: 'percent', value: 100, allowCustom: true };
+
+// Bloquea recargas involuntarias cuando el destino coincide con la URL actual.
+function __cpNormalizeUrlForNav(value) {
+    try {
+        const parsed = new URL(String(value || ''), window.location.href);
+        parsed.hash = '';
+        return parsed.toString();
+    } catch (_) {
+        return String(value || '').trim();
+    }
+}
+
+function __cpNavigateSafely(targetUrl, options = {}) {
+    const target = String(targetUrl || '').trim();
+    if (!target) return false;
+    const allowSamePage = options.allowSamePage === true;
+    if (!allowSamePage && __cpNormalizeUrlForNav(target) === __cpNormalizeUrlForNav(window.location.href || '')) {
+        window.showToast?.('Recarga bloqueada para proteger tus cambios.', 'info');
+        return false;
+    }
+    if (typeof window.__HUB_SAFE_NAVIGATE === 'function') {
+        return window.__HUB_SAFE_NAVIGATE(target, { allowSamePage });
+    }
+    window.location.href = target;
+    return true;
+}
 
 function parseIds(v){ if(!v) return []; if(Array.isArray(v)) return v; if(typeof v === 'string'){ try { const parsed = JSON.parse(v); return Array.isArray(parsed) ? parsed : []; } catch(e){ return v.split(',').map(x=>x.trim()).filter(Boolean); } } return []; }
 function formatMoney(v){ return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(v || 0); }
@@ -542,7 +569,8 @@ window.generatePDF = async function() {
     const payload = { cliente_id: (document.getElementById('cli-id') ? (document.getElementById('cli-id').value || null) : null), espacio_id: currentSpace.id, espacio_nombre: currentSpace.nombre, espacio_clave: currentSpace.clave, cliente_nombre: cli.name, cliente_rfc: cli.rfc, cliente_contacto: cli.phone, cliente_email: cli.email, fecha_inicio: document.getElementById('date-start').value, fecha_fin: document.getElementById('date-end').value, precio_final: currentPricing.final, desglose_precios: { subtotal_antes_impuestos: currentPricing.subtotal, impuestos_detalle: parseIds(currentSpace.impuestos_ids || currentSpace.impuestos), tax_total: currentPricing.taxes }, conceptos_adicionales: conceptosB2B, status: 'pendiente', creado_por: auditSingle.actorId || null, creado_por_nombre: auditSingle.actorName, modificado_por_legacy: auditSingle.actorId || null, modificado_por_nombre: auditSingle.actorName, personas: guests };
     
     await window.tenantPocketBase.from('cotizaciones').insert(payload);
-    window.showToast("Cotización Creada"); setTimeout(()=>window.location.href='orders.html', 1000); 
+    window.showToast("Cotización Creada");
+    setTimeout(() => { __cpNavigateSafely('orders.html'); }, 1000);
 }
 
 window.filterCatalogLogic = function() { const term = document.getElementById('cat-search').value.toLowerCase(); const type = document.getElementById('cat-filter-type').value; const sort = document.getElementById('cat-sort').value; let filtered = allSpaces.filter(s => (s.nombre.toLowerCase().includes(term) || s.clave.toLowerCase().includes(term)) && (type === 'all' || s.tipo === type)); if (sort === 'price_asc') filtered.sort((a,b) => a.precio_base - b.precio_base); if (sort === 'price_desc') filtered.sort((a,b) => b.precio_base - a.precio_base); renderSpaces(filtered); }
@@ -1445,7 +1473,7 @@ function __cpSyncQuoteWorkspaceUI(){
 
 window.toggleQuoteSpaceCard = function(spaceId){
     if (!IS_QUOTE_PAGE) {
-        window.location.href = `cotizacion.html?space=${encodeURIComponent(spaceId)}`;
+        __cpNavigateSafely(`cotizacion.html?space=${encodeURIComponent(spaceId)}`);
         return;
     }
     const sid = String(spaceId);
@@ -1679,7 +1707,7 @@ window.generatePDF = async function(){
     __cpReservationsCache = null; __cpReservationsAt = 0;
     window.showToast("Cotización Creada");
     const targetUrl = createdQuoteId ? `order_detail.html?quote=${encodeURIComponent(createdQuoteId)}` : 'orders.html';
-    setTimeout(() => { window.location.href = targetUrl; }, 900);
+    setTimeout(() => { __cpNavigateSafely(targetUrl); }, 900);
 }
 
 

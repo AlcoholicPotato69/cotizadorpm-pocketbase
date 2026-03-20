@@ -1940,7 +1940,7 @@ function __pmCommitPdfContentField(field, rawValue, options = {}) {
         [key]: String(rawValue ?? '').slice(0, max)
     });
     const next = __pmNormalizePdfStyle({ ...cfg, content });
-    __pmSetPdfStyleConfig(next, { applyToDom: true });
+    __pmSetPdfStyleConfig(next, { applyToDom: true, skipEditorUiRefresh: opts.skipEditorUiRefresh === true });
     __pmScheduleSharedPdfStyleSync(next);
     if (opts.refreshPreview !== false) __pmRefreshPreviewFromStyleState();
 }
@@ -2827,7 +2827,8 @@ function __pmClosePdfInspector() {
     __pmRenderPdfInspector();
 }
 
-function __pmCommitResourceInspectorField(resourceId, field, rawValue) {
+function __pmCommitResourceInspectorField(resourceId, field, rawValue, options = {}) {
+    const opts = options && typeof options === 'object' ? options : {};
     const resources = __pmGetPdfResourcesFromState();
     const idx = resources.findIndex((resource) => resource.id === resourceId);
     if (idx < 0) return;
@@ -2879,7 +2880,10 @@ function __pmCommitResourceInspectorField(resourceId, field, rawValue) {
     }
     else return;
     resources[idx] = { ...current };
-    __pmCommitPdfResources(resources, { refreshPreview: field === 'page' || field === 'enabled' });
+    __pmCommitPdfResources(resources, {
+        refreshPreview: true,
+        skipEditorUiRefresh: opts.skipEditorUiRefresh === true
+    });
 }
 
 function __pmHandlePdfInspectorInput(event) {
@@ -2903,14 +2907,21 @@ function __pmHandlePdfInspectorInput(event) {
         if (['x', 'y', 'scalePct', 'angle', 'visible'].includes(field)) {
             __pmCommitBaseLayoutField(`base:${id}`, field, rawValue);
         } else if (__pmCanEditPdfBaseBlock(baseKey)) {
-            __pmCommitPdfContentField(field, rawValue, { refreshPreview: !isContinuousInput });
+            __pmCommitPdfContentField(field, rawValue, {
+                refreshPreview: !isContinuousInput,
+                skipEditorUiRefresh: isContinuousInput
+            });
         } else {
             return;
         }
     }
-    else __pmCommitResourceInspectorField(id, field, rawValue);
+    else __pmCommitResourceInspectorField(id, field, rawValue, { skipEditorUiRefresh: isContinuousInput });
     if (isContinuousInput) {
-        requestAnimationFrame(__pmPositionPdfInspector);
+        // En escritura continua no re-renderizamos el inspector para evitar perdida de foco por tecla.
+        requestAnimationFrame(() => {
+            const panel = document.getElementById('pm-pdf-inspector');
+            if (panel && typeof panel.__ensureFloatingPosition === 'function') panel.__ensureFloatingPosition();
+        });
         return;
     }
     __pmRenderPdfInspector();
@@ -2954,7 +2965,9 @@ function __pmHandlePdfInspectorClick(event) {
     __pmRenderPdfInspector();
 }
 
-function __pmEnsurePdfEditingChrome() {
+function __pmEnsurePdfEditingChrome(options = {}) {
+    const opts = options && typeof options === 'object' ? options : {};
+    const skipEditorUiRefresh = opts.skipEditorUiRefresh === true;
     const container = document.getElementById('preview-container');
     if (!(container instanceof HTMLElement)) return;
     if (window.getComputedStyle(container).position === 'static') container.style.position = 'relative';
@@ -3068,10 +3081,12 @@ function __pmEnsurePdfEditingChrome() {
         });
     }
     __pmSyncPdfEditMode();
-    __pmRenderPdfInspector();
+    if (!skipEditorUiRefresh) __pmRenderPdfInspector();
 }
 
-function __pmApplyPdfStyleToLivePreview() {
+function __pmApplyPdfStyleToLivePreview(options = {}) {
+    const opts = options && typeof options === 'object' ? options : {};
+    const skipEditorUiRefresh = opts.skipEditorUiRefresh === true;
     const rootNodes = document.querySelectorAll('#pdf-content .pm-pdf-root');
     if (!rootNodes.length) return;
     const vars = __pmPdfStyleVars(__pmGetPdfStyleConfig());
@@ -3081,12 +3096,12 @@ function __pmApplyPdfStyleToLivePreview() {
     __pmApplyMarginVarsToLivePreview(__pmGetPdfStyleConfig());
     __pmApplyPdfBaseLayouts();
     __pmAutoFitPdfTextResources();
-    __pmEnsurePdfEditingChrome();
+    __pmEnsurePdfEditingChrome(opts);
     __pmBindPdfResourceDrag();
     __pmHighlightSelectedBaseTextBlock();
-    __pmRenderPdfInspector();
+    if (!skipEditorUiRefresh) __pmRenderPdfInspector();
     __pmSyncPdfEditMode();
-    if (__pmIsAdminProfile()) __pmRenderPdfResourcesEditorList();
+    if (!skipEditorUiRefresh && __pmIsAdminProfile()) __pmRenderPdfResourcesEditorList();
 }
 
 function __pmSyncPdfStyleValueLabels(style) {
@@ -3175,7 +3190,7 @@ function __pmReadPdfStyleControls() {
 function __pmSetPdfStyleConfig(style, options = {}) {
     const opts = options && typeof options === 'object' ? options : {};
     __pmPdfStyleState = __pmNormalizePdfStyle(style);
-    if (opts.applyToDom !== false) __pmApplyPdfStyleToLivePreview();
+    if (opts.applyToDom !== false) __pmApplyPdfStyleToLivePreview(opts);
 }
 
 function __pmNormalizeUserRole(value) {
@@ -3706,23 +3721,28 @@ function __pmHandlePdfStyleControlChange() {
     __pmScheduleSharedPdfStyleSync(next);
 }
 
-function __pmRefreshPreviewFromStyleState() {
+function __pmRefreshPreviewFromStyleState(options = {}) {
+    const opts = options && typeof options === 'object' ? options : {};
     if (!currentPreviewOrder) return;
     const pdfContainer = document.getElementById('pdf-content');
     if (!pdfContainer || pdfContainer.classList.contains('hidden')) return;
     const docType = currentPreviewOrder.docType || 'quote';
     pdfContainer.innerHTML = window.getOrderHTML(currentPreviewOrder, docType);
-    __pmApplyPdfStyleToLivePreview();
+    __pmApplyPdfStyleToLivePreview(opts);
 }
 
 function __pmCommitPdfResources(resources, options = {}) {
     const cfg = __pmGetPdfStyleConfig();
     const next = __pmNormalizePdfStyle({ ...cfg, resources: __pmNormalizePdfResources(resources) });
-    __pmSetPdfStyleConfig(next, { applyToDom: true });
+    // Permite actualizar preview sin reconstruir paneles de edicion (evita blur al escribir).
+    const skipEditorUiRefresh = options && options.skipEditorUiRefresh === true;
+    __pmSetPdfStyleConfig(next, { applyToDom: true, skipEditorUiRefresh });
     __pmScheduleSharedPdfStyleSync(next, { force: options.forcePersist === true });
-    if (options.refreshPreview !== false) __pmRefreshPreviewFromStyleState();
-    __pmRenderPdfResourcesEditorList();
-    __pmRenderPdfInspector();
+    if (options.refreshPreview !== false) __pmRefreshPreviewFromStyleState({ skipEditorUiRefresh });
+    if (!skipEditorUiRefresh) {
+        __pmRenderPdfResourcesEditorList();
+        __pmRenderPdfInspector();
+    }
 }
 
 function __pmGetPdfResourcesFromState() {
@@ -4061,7 +4081,16 @@ function __pmHandleResourceListEvent(event) {
     if (field === 'color' || field === 'bgColor') nextValue = __pmNormalizeHexColor(nextValue, resources[idx][field]);
     resources[idx] = { ...resources[idx], [field]: nextValue };
     __pmPdfResourceEditorSelectedId = id;
-    __pmCommitPdfResources(resources);
+    const isContinuousInput = event.type === 'input'
+        && (
+            trigger instanceof HTMLTextAreaElement
+            || (trigger instanceof HTMLInputElement
+                && !['checkbox', 'radio', 'color', 'range', 'file', 'button', 'submit', 'reset'].includes(String(trigger.type || '').toLowerCase()))
+        );
+    __pmCommitPdfResources(resources, {
+        refreshPreview: true,
+        skipEditorUiRefresh: isContinuousInput
+    });
 }
 
 function __pmBindPdfResourceEditor() {
@@ -4280,6 +4309,26 @@ window.getOrderHTML = function(o, type) {
     if (Array.isArray(o.espacios_detalle)) detailSpaces = o.espacios_detalle;
     else if (typeof o.espacios_detalle === 'string') { try { detailSpaces = JSON.parse(o.espacios_detalle); } catch(e){} }
     detailSpaces = Array.isArray(detailSpaces) ? detailSpaces.filter(Boolean) : [];
+    // Resuelve personas por concepto usando (1) el propio concepto, (2) el espacio ligado o (3) el fallback global.
+    const __pmParsePeople = (value) => {
+        const parsed = parseInt(value, 10);
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+    };
+    const __pmGlobalPeople = __pmParsePeople(o?.personas);
+    const __pmPeopleBySpace = {};
+    detailSpaces.forEach((sp) => {
+        const sid = String(sp?.espacio_id || sp?.space_id || '').trim();
+        const people = __pmParsePeople(sp?.personas ?? sp?.guests ?? sp?.people);
+        if (sid && people > 0) __pmPeopleBySpace[sid] = people;
+    });
+    const __pmResolveConceptPeople = (concept) => {
+        const meta = concept && typeof concept.meta === 'object' ? concept.meta : {};
+        const sid = String(meta.space_id || meta.spaceId || '').trim();
+        const direct = __pmParsePeople(concept?.personas ?? concept?.guests ?? meta.personas ?? meta.guests);
+        if (direct > 0) return direct;
+        if (sid && __pmPeopleBySpace[sid] > 0) return __pmPeopleBySpace[sid];
+        return __pmGlobalPeople;
+    };
 
     let rentalTotal = calculateSpaceTotal(space, o.fecha_inicio, o.fecha_fin);
     let runningSubtotal = 0;
@@ -4305,9 +4354,12 @@ window.getOrderHTML = function(o, type) {
         
         if(c.type === 'descuento') runningSubtotal -= amount; else runningSubtotal += amount; 
         const sign = (c.type === 'descuento') ? '-' : '+'; 
-        const sid = String(c?.meta?.space_id || '');
+        const meta = c && typeof c.meta === 'object' ? c.meta : {};
+        const sid = String(meta.space_id || meta.spaceId || '');
         const spName = sid ? (detailSpaces.find(sp => String(sp.espacio_id || sp.space_id || '') === sid)?.espacio_nombre || '') : '';
-        const label = `${spName ? `${spName} - ` : ''}${c.description || c.nombre || 'Adicional'}`;
+        const conceptPeople = __pmResolveConceptPeople(c);
+        const peopleSuffix = conceptPeople > 0 ? ` (${conceptPeople} persona${conceptPeople === 1 ? '' : 's'})` : '';
+        const label = `${spName ? `${spName} - ` : ''}${c.description || c.nombre || 'Adicional'}${peopleSuffix}`;
         rowsHtml += `<tr><td class="py-2 px-3 text-[13px] font-medium text-gray-600 break-words leading-snug">${label}</td><td class="py-2 px-3"></td><td class="py-2 px-3 text-right text-[13px] font-medium text-gray-600">${sign} ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(amount)}</td></tr>`; 
     }); 
     

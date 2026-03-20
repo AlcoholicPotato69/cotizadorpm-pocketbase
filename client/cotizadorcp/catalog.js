@@ -27,13 +27,40 @@ const PB_KEY = window.HUB_CONFIG?.pocketbaseAnonKey || window.ENV?.POCKETBASE_AN
 const __cpPath = window.location.pathname || '';
 const __cpIsCP = /\/cotizadorcp(\/|$)/.test(__cpPath) || (window.location.href || '').includes('cotizadorcp');
 const FIN_SCHEMA = __cpIsCP ? 'finanzas_casadepiedra' : (window.HUB_CONFIG?.finanzasSchema || window.ENV?.SCHEMA_CASA_PIEDRA || 'finanzas');
-const CP_PAGE_MODE = window.__CP_PAGE_MODE || 'catalog_admin';
+// Fallback por pathname: si falta __CP_PAGE_MODE, la vista de cotizacion no debe degradar a modo catalogo.
+const CP_PAGE_MODE = window.__CP_PAGE_MODE || ((String(window.location.pathname || '').toLowerCase().includes('cotizacion.html')) ? 'cotizacion' : 'catalog_admin');
 const IS_QUOTE_PAGE = CP_PAGE_MODE === 'cotizacion';
 const IS_CATALOG_ADMIN_PAGE = CP_PAGE_MODE === 'catalog_admin';
 
 let allSpaces = [], catalogConcepts = [], dbTaxes = [], currentSpace = null, currentPricing = { base:0, final:0 };
 let adminSelectedConcepts = []; let myPermissions = { access:false, catalog_manage:false };
 let __cpPremontajePct = 25;
+
+// Evita recargar el mismo documento por una navegación accidental.
+function cpNormalizeUrlForNav(value) {
+    try {
+        const parsed = new URL(String(value || ''), window.location.href);
+        parsed.hash = '';
+        return parsed.toString();
+    } catch (_) {
+        return String(value || '').trim();
+    }
+}
+
+function cpNavigateSafely(targetUrl, options = {}) {
+    const target = String(targetUrl || '').trim();
+    if (!target) return false;
+    const allowSamePage = options.allowSamePage === true;
+    if (!allowSamePage && cpNormalizeUrlForNav(target) === cpNormalizeUrlForNav(window.location.href || '')) {
+        window.showToast?.('Recarga bloqueada para proteger tus cambios.', 'info');
+        return false;
+    }
+    if (typeof window.__HUB_SAFE_NAVIGATE === 'function') {
+        return window.__HUB_SAFE_NAVIGATE(target, { allowSamePage });
+    }
+    window.location.href = target;
+    return true;
+}
 
 function cpNativeCotizacionesService() {
     return window.PB_SERVICES && window.PB_SERVICES.cotizaciones ? window.PB_SERVICES.cotizaciones : null;
@@ -483,7 +510,8 @@ window.generatePDF = async function() {
         return window.showToast(`Error al guardar: ${error.message || error}`, "error");
     }
     const targetUrl = createdQuoteId ? `order_detail.html?quote=${encodeURIComponent(createdQuoteId)}` : 'orders.html';
-    window.showToast("Cotización Creada"); setTimeout(() => { window.location.href = targetUrl; }, 900); 
+    window.showToast("Cotización Creada");
+    setTimeout(() => { cpNavigateSafely(targetUrl); }, 900);
 }
 
 window.filterCatalogLogic = function() { const term = document.getElementById('cat-search').value.toLowerCase(); const type = document.getElementById('cat-filter-type').value; const sort = document.getElementById('cat-sort').value; let filtered = allSpaces.filter(s => (s.nombre.toLowerCase().includes(term) || s.clave.toLowerCase().includes(term)) && (type === 'all' || s.tipo === type)); if (sort === 'price_asc') filtered.sort((a,b) => a.precio_base - b.precio_base); if (sort === 'price_desc') filtered.sort((a,b) => b.precio_base - a.precio_base); renderSpaces(filtered); }
@@ -824,7 +852,7 @@ loadCatalog = async function(){
 
 window.openQuoteModal = function(id){
     if (!IS_QUOTE_PAGE) {
-        window.location.href = `cotizacion.html?space=${encodeURIComponent(id)}`;
+        cpNavigateSafely(`cotizacion.html?space=${encodeURIComponent(id)}`);
         return;
     }
     const space = __cpGetSpaceById(id);
@@ -983,7 +1011,7 @@ window.generatePDF = async function(){
     __cpReservationsCache = null; __cpReservationsAt = 0;
     window.showToast("Cotización Creada");
     const targetUrl = createdQuoteId ? `order_detail.html?quote=${encodeURIComponent(createdQuoteId)}` : 'orders.html';
-    setTimeout(() => { window.location.href = targetUrl; }, 900);
+    setTimeout(() => { cpNavigateSafely(targetUrl); }, 900);
 }
 
 

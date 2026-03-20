@@ -442,3 +442,232 @@ Mejoras del payload ICS:
 - En `client/index.html` se agrego el modulo tarjeta `Recibos` dentro de `buildModules(prefix, colorKey)`.
   - Esto aplica cuando el usuario tiene acceso a un solo tenant (PM o CP), mostrando el modulo junto al resto de herramientas.
 - Se agrego fallback de notificaciones para abrir `cotizador/receipts.html` cuando el tipo de notificacion contiene `recibo` o `receipt`.
+
+## 18. Hardening de estabilidad anti-recarga (2026-03-19)
+
+Objetivo:
+- Reducir recargas inesperadas en los flujos de:
+  - Creacion de cotizacion (PM/CP).
+  - Edicion de layout PDF (contratos/recibos).
+
+Analisis realizado sobre frontend:
+- Barrido de triggers de recarga/navegacion en `client/`:
+  - `window.location.*`, `beforeunload`, `submit`, `type="submit"`, `F5/Ctrl+R`, `Enter`.
+- Verificacion de que casi no existen `<form>` en las vistas operativas (el caso principal es login).
+- Revision de scripts criticos:
+  - `client/cotizador/catalog.js`
+  - `client/cotizadorcp/cotizacion.js`
+  - `client/cotizadorcp/catalog.js`
+  - `client/cotizador/contracts.js`
+  - `client/cotizadorcp/contracts.js`
+  - `client/js/layout.js`
+
+Vectores de inestabilidad detectados:
+1. Navegaciones directas con `window.location.href` en flujo de cotizacion:
+   - Si el destino coincide con la misma URL (mismo path/query), el navegador recarga completo.
+   - Ese caso no siempre queda cubierto por parches de `location.reload/assign/replace`.
+2. Fallback de modo de pagina en CP demasiado estricto:
+   - `CP_PAGE_MODE` caia a `catalog_admin` cuando faltaba `window.__CP_PAGE_MODE`.
+   - En esa condicion, acciones de cotizacion podian redirigir a `cotizacion.html?...` estando ya en cotizacion (recarga).
+3. Guard de sesion en contratos con redireccion dura:
+   - En `contracts.js` PM/CP, un `getSession()` transitoriamente nulo podia forzar `window.location.href = 'index.html'`.
+   - Esto produce perdida de contexto y sensacion de refresco abrupto.
+
+Cambios aplicados:
+- `client/cotizador/catalog.js`
+  - Se agrego `pmNavigateSafely(...)` con normalizacion de URL y bloqueo de same-page reload.
+  - Se reemplazaron navegaciones sensibles por helper seguro:
+    - salto a `cotizacion.html?space=...`
+    - salto post-creacion a `order_detail.html`/`orders.html`
+- `client/cotizadorcp/cotizacion.js`
+  - `CP_PAGE_MODE` ahora tiene fallback por pathname (`cotizacion.html`) para no degradar a modo catalogo.
+  - Se agrego `__cpNavigateSafely(...)` y se reemplazaron redirecciones directas.
+- `client/cotizadorcp/catalog.js`
+  - Mismo hardening de `CP_PAGE_MODE` por pathname.
+  - Se agrego `cpNavigateSafely(...)` y se reemplazaron redirecciones directas.
+- `client/cotizador/contracts.js`
+  - Se elimino redireccion dura a `index.html` por sesion nula transitoria.
+  - Se implemento resolucion de sesion tolerante (`getSession()` + fallback `authStore.model`).
+  - Si no hay sesion valida: toast de error y salida segura (sin navegacion forzada).
+  - Guardado de draft en `beforeunload` solo para admin (reduce escrituras innecesarias).
+  - Limpieza de draft local para no-admin al cargar configuracion.
+- `client/cotizadorcp/contracts.js`
+  - Mismos ajustes de tolerancia de sesion, no-redireccion forzada y control de drafts.
+
+Comentarios de codigo agregados:
+- Se documentaron secciones clave nuevas:
+  - helpers de navegacion segura.
+  - fallback de modo de pagina en CP.
+  - guard de sesion tolerante en contratos.
+
+Validacion tecnica ejecutada:
+- Revision de rutas de navegacion directas en archivos intervenidos.
+- Verificacion sintactica JS:
+  - `node --check client/cotizador/catalog.js`
+  - `node --check client/cotizadorcp/cotizacion.js`
+  - `node --check client/cotizadorcp/catalog.js`
+  - `node --check client/cotizador/contracts.js`
+  - `node --check client/cotizadorcp/contracts.js`
+  - Resultado: sin errores de sintaxis.
+
+## 19. Personas por concepto en PDF + toggle de membrete en contratos (2026-03-19)
+
+Objetivo:
+- Mostrar el numero de personas dentro del texto de cada concepto en PDF (cotizacion y orden de compra).
+- Exponer en la UI de contratos el checkbox para activar/desactivar membrete en ambos cotizadores.
+
+Cambios aplicados:
+- `client/cotizador/orders.js`
+  - En `getOrderHTML(...)` se agrego resolucion de personas por concepto con prioridad:
+    1. Campo directo del concepto (`personas/guests` o `meta.personas/meta.guests`).
+    2. Personas por espacio en `espacios_detalle` cuando el concepto trae `meta.space_id/meta.spaceId`.
+    3. Fallback global de la orden (`o.personas`) si existe.
+  - Se actualizo la etiqueta de cada concepto para incluir sufijo:
+    - `(... persona)` o `(... personas)`.
+  - Se dejaron comentarios de codigo en la seccion de resolucion para mantenimiento.
+
+- `client/cotizadorcp/orders.js`
+  - En `getOrderHTML(...)` se agrego la misma logica de resolucion de personas por concepto.
+  - Se anexa el sufijo de personas al texto del concepto antes del formateo HTML.
+  - Se documenta con comentario breve la prioridad de resolucion aplicada.
+
+- `client/cotizador/contracts.html`
+  - Se inserto el bloque UI `2. Membrete` con:
+    - Checkbox `id=\"contract-letterhead-toggle\"`.
+    - Texto de ayuda para activar/desactivar membrete al imprimir.
+  - Se recorrio el bloque de folio a `3. Folio Asignado`.
+
+- `client/cotizadorcp/contracts.html`
+  - Se inserto el mismo bloque UI `2. Membrete` con `contract-letterhead-toggle`.
+  - Se recorrio el bloque de folio a `3. Folio Asignado`.
+
+Compatibilidad:
+- No se modificaron endpoints ni estructura de guardado.
+- El checkbox agregado reutiliza la logica existente en:
+  - `client/cotizador/contracts.js`
+  - `client/cotizadorcp/contracts.js`
+  que ya manejaba persistencia/lectura del toggle.
+
+## 20. Fix de modal de recursos PDF (texto) que perdia foco por tecla (2026-03-19)
+
+Problema reportado:
+- Al agregar recurso tipo `text` y editarlo en el inspector/listado:
+  - despues de una letra se perdia seleccion/foco.
+  - habia que volver a dar click para seguir escribiendo.
+  - la experiencia se sentia como si el cambio no entrara al primer intento.
+
+Causa tecnica:
+- En cada evento `input` se reconstruia UI de edicion (`inspector` y lista de recursos), lo que recreaba nodos y forzaba blur del campo activo.
+- Existia llamada a callbacks de reposicion no definidos (`__pmPositionPdfInspector` / `__cpPositionPdfInspector`).
+
+Cambios aplicados:
+- `client/cotizador/orders.js`
+  - Se agrego bandera `skipEditorUiRefresh` en:
+    - `__pmSetPdfStyleConfig(...)`
+    - `__pmApplyPdfStyleToLivePreview(...)`
+    - `__pmCommitPdfResources(...)`
+    - `__pmCommitPdfContentField(...)`
+    - `__pmCommitResourceInspectorField(...)`
+  - En escritura continua (`input` de texto/textarea/number) se evita reconstruir inspector/lista para conservar foco.
+  - Se reemplazo la llamada de reposicion por uso seguro de `panel.__ensureFloatingPosition()` cuando existe.
+  - Se ajusto `__pmHandleResourceListEvent(...)` para evitar refresh completo en cada tecla y refrescar preview completo solo en campos que lo requieren (`page`/`enabled`).
+
+- `client/cotizadorcp/orders.js`
+  - Mismo ajuste espejo:
+    - `skipEditorUiRefresh` en set/apply/commit.
+    - escritura continua sin re-render agresivo.
+    - reposicion segura con `panel.__ensureFloatingPosition()`.
+    - optimizacion de `__cpHandleResourceListEvent(...)` en campos continuos.
+
+Comentarios de codigo:
+- Se agregaron comentarios puntuales en secciones criticas para explicar:
+  - por que se evita el re-render durante escritura continua.
+  - por que se usa `skipEditorUiRefresh` en commits de recursos.
+
+Validacion tecnica:
+- `node --check client/cotizador/orders.js`
+- `node --check client/cotizadorcp/orders.js`
+- Resultado: sin errores de sintaxis.
+
+## 21. Estabilizacion global en editores de contratos y recibos (2026-03-19)
+
+Problema observado:
+- El bug de "una letra y se pierde el foco" seguia presente en otros editores (no solo ordenes), especialmente en:
+  - inspector flotante de recursos.
+  - lista de recursos adicionales.
+  - campos de contenido/base dentro del editor PDF.
+
+Causa raiz:
+- En eventos `input` continuos se seguia reconstruyendo UI de edicion (inspector/lista/toolbar) en cada tecla.
+- Esa reconstruccion recreaba nodos y disparaba blur del control activo.
+
+Archivos corregidos en esta fase:
+- `client/cotizador/contracts.js`
+- `client/cotizadorcp/contracts.js`
+- `client/cotizador/receipts.js`
+- `client/cotizadorcp/receipts.js`
+
+Ajustes tecnicos aplicados:
+- Se estandarizo la bandera `skipEditorUiRefresh` en el flujo completo:
+  - `CommitPdfContentField(...)`
+  - `CommitPdfSignLabelField(...)`
+  - `CommitResourceInspectorField(...)`
+  - `CommitPdfResources(...)`
+  - `SetPdfStyleConfig(...)`
+  - `ApplyPdfStyleToLivePreview(...)`
+- En handlers de inspector/lista se detecta `isContinuousInput` y:
+  - se evita re-render agresivo de inspector/lista durante escritura.
+  - solo se mantiene refresh completo cuando no es input continuo.
+- Se agrego criterio de refresh de preview para campos que realmente lo requieren (`page`/`enabled`) en contratos.
+- En recibos se propagaron opciones de skip tambien para campos base (`x`, `y`, `scalePct`, `angle`, `visible`) para mejorar fluidez en edicion fina de layout.
+
+Comentarios de codigo:
+- Se agregaron comentarios puntuales en secciones criticas para dejar claro:
+  - por que se omite el refresh de UI durante input continuo.
+  - como evitar perdida de foco en recursos tipo `text` y campos similares.
+
+Validacion tecnica:
+- `node --check client/cotizador/contracts.js`
+- `node --check client/cotizadorcp/contracts.js`
+- `node --check client/cotizador/receipts.js`
+- `node --check client/cotizadorcp/receipts.js`
+- Resultado: sin errores de sintaxis.
+
+## 22. Correccion definitiva de foco + refresco de recursos en todos los editores (2026-03-19)
+
+Nuevo hallazgo:
+- Persistia el sintoma de "solo permite una letra" en el modal/inspector de recursos.
+- En varios casos el recurso no reflejaba cambios (texto, tamano, color, etc.).
+
+Causa raiz final detectada:
+1. Aunque existia `skipEditorUiRefresh`, funciones `Ensure...EditingChrome()` seguian llamando render del inspector al final en cada ciclo de apply, provocando blur.
+2. En ordenes/contratos, algunos commits de recurso solo refrescaban preview para `page/enabled`, por lo que cambios de texto/estilo no se materializaban visualmente.
+3. Los `RefreshPreviewFromStyleState()` y `updateReceiptPreview()` no propagaban opciones para respetar `skipEditorUiRefresh` al rearmar preview.
+
+Archivos ajustados:
+- `client/cotizador/orders.js`
+- `client/cotizadorcp/orders.js`
+- `client/cotizador/contracts.js`
+- `client/cotizadorcp/contracts.js`
+- `client/cotizador/receipts.js`
+- `client/cotizadorcp/receipts.js`
+
+Correcciones aplicadas:
+- `Ensure...EditingChrome(options)`:
+  - se agrego soporte de `skipEditorUiRefresh`.
+  - el render del inspector se omite durante escritura continua.
+- `Apply...ToLivePreview(options)`:
+  - ahora reenvia opciones a `Ensure...EditingChrome(options)`.
+- `RefreshPreviewFromStyleState(options)` y `window.updateReceiptPreview(options)`:
+  - ahora aceptan/propagan opciones para que el rebuild del preview no fuerce re-render del inspector.
+- En editores de ordenes/contratos:
+  - el commit de recursos vuelve a refrescar preview para todos los campos editables de recurso, evitando casos donde no se veian cambios.
+
+Validacion tecnica:
+- `node --check client/cotizador/orders.js`
+- `node --check client/cotizadorcp/orders.js`
+- `node --check client/cotizador/contracts.js`
+- `node --check client/cotizadorcp/contracts.js`
+- `node --check client/cotizador/receipts.js`
+- `node --check client/cotizadorcp/receipts.js`
+- Resultado: sin errores de sintaxis.

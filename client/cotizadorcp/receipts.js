@@ -1367,7 +1367,10 @@ function __contractsCommitPdfContentField(field, rawValue, options = {}) {
         [key]: String(rawValue ?? '').slice(0, max)
     });
     const next = __contractsNormalizePdfStyle({ ...cfg, content });
-    __contractsSetPdfStyleConfig(next, { applyToDom: true });
+    __contractsSetPdfStyleConfig(next, {
+        applyToDom: true,
+        skipEditorUiRefresh: opts.skipEditorUiRefresh === true
+    });
     __contractsScheduleSharedPdfStyleSync(next);
     if (opts.refreshPreview !== false) __contractsRefreshPreviewFromStyleState();
 }
@@ -1382,7 +1385,10 @@ function __contractsCommitPdfSignLabelField(field, rawValue, options = {}) {
         [key]: String(rawValue ?? '').slice(0, 80)
     });
     const next = __contractsNormalizePdfStyle({ ...cfg, signLabels: nextSignLabels });
-    __contractsSetPdfStyleConfig(next, { applyToDom: true });
+    __contractsSetPdfStyleConfig(next, {
+        applyToDom: true,
+        skipEditorUiRefresh: opts.skipEditorUiRefresh === true
+    });
     __contractsScheduleSharedPdfStyleSync(next);
     if (opts.refreshPreview !== false) __contractsRefreshPreviewFromStyleState();
 }
@@ -1607,7 +1613,9 @@ function __contractsBuildReceiptFrameStyle(baseHeightPx, extraStyle = '') {
     return `position:relative;left:var(--cp-margin-left);top:var(--cp-margin-top);width:max(48px,calc(100% - var(--cp-margin-left) - var(--cp-margin-right)));height:max(48px,calc(${baseHeightPx}px - var(--cp-margin-top) - var(--cp-margin-bottom)));min-height:max(48px,calc(${baseHeightPx}px - var(--cp-margin-top) - var(--cp-margin-bottom)));box-sizing:border-box;overflow:visible;${suffix}`;
 }
 
-function __contractsApplyPdfStyleToLivePreview() {
+function __contractsApplyPdfStyleToLivePreview(options = {}) {
+    const opts = options && typeof options === 'object' ? options : {};
+    const skipEditorUiRefresh = opts.skipEditorUiRefresh === true;
     const rootNodes = document.querySelectorAll('#receipt-preview-box .cpc-pdf-root');
     if (!rootNodes.length) return;
     const vars = __contractsPdfStyleVars(__contractsGetPdfStyleConfig());
@@ -1617,10 +1625,10 @@ function __contractsApplyPdfStyleToLivePreview() {
     __contractsApplyPdfBaseLayouts();
     __contractsSyncLiveReceiptResources();
     __contractsAutoFitPdfTextResources();
-    __contractsEnsureReceiptEditingChrome();
+    __contractsEnsureReceiptEditingChrome(opts);
     __contractsSyncReceiptEditMode();
     __contractsHighlightSelectedResource();
-    __contractsRenderReceiptToolbar();
+    if (!skipEditorUiRefresh) __contractsRenderReceiptToolbar();
     __contractsAttachPageControls();
     __contractsEnsureMarginGuideController()?.refresh();
 }
@@ -1686,7 +1694,8 @@ function __contractsCommitPdfBaseLayout(key, layout) {
     __contractsScheduleSharedPdfStyleSync(next);
 }
 
-function __contractsCommitBaseLayoutField(baseId, field, rawValue) {
+function __contractsCommitBaseLayoutField(baseId, field, rawValue, options = {}) {
+    const opts = options && typeof options === 'object' ? options : {};
     const key = String(baseId || '').replace(/^base:/, '').trim();
     const baseKey = key.split('__')[0];
     if (!__contractsGetPdfBaseBlockMeta(baseKey)) return;
@@ -1716,7 +1725,10 @@ function __contractsCommitBaseLayoutField(baseId, field, rawValue) {
             [key]: __contractsNormalizePdfBaseLayout(nextLayout)
         }
     });
-    __contractsSetPdfStyleConfig(next, { applyToDom: true });
+    __contractsSetPdfStyleConfig(next, {
+        applyToDom: true,
+        skipEditorUiRefresh: opts.skipEditorUiRefresh === true
+    });
     __contractsScheduleSharedPdfStyleSync(next);
 }
 
@@ -1853,7 +1865,8 @@ function __contractsEnsureMarginGuideController() {
     return __contractsPdfMarginGuideController;
 }
 
-function __contractsCommitResourceInspectorField(resourceId, field, rawValue) {
+function __contractsCommitResourceInspectorField(resourceId, field, rawValue, options = {}) {
+    const opts = options && typeof options === 'object' ? options : {};
     const resources = __contractsGetPdfResourcesFromState();
     const idx = resources.findIndex((resource) => resource.id === resourceId);
     if (idx < 0) return;
@@ -1910,7 +1923,11 @@ function __contractsCommitResourceInspectorField(resourceId, field, rawValue) {
         return;
     }
     resources[idx] = { ...current };
-    __contractsCommitPdfResources(resources, { refreshPreview: __contractsShouldRefreshResourcePreviewField(field) });
+    __contractsCommitPdfResources(resources, {
+        refreshPreview: __contractsShouldRefreshResourcePreviewField(field),
+        // Evita blur al no reconstruir inspector/lista durante escritura continua.
+        skipEditorUiRefresh: opts.skipEditorUiRefresh === true
+    });
 }
 
 function __contractsBindReceiptToolbarDrag(panel, host) {
@@ -2445,18 +2462,24 @@ function __contractsHandleReceiptInspectorInput(event) {
     if (kind === 'base') {
         const baseKey = String(id || '').split('__')[0].trim();
         if (['x', 'y', 'scalePct', 'angle', 'visible'].includes(field)) {
-            __contractsCommitBaseLayoutField(`base:${id}`, field, rawValue);
+            __contractsCommitBaseLayoutField(`base:${id}`, field, rawValue, { skipEditorUiRefresh: isContinuousInput });
         } else if (__contractsCanEditReceiptBaseBlock(baseKey)) {
             if (field.startsWith('signLabel:')) {
-                __contractsCommitPdfSignLabelField(field.slice('signLabel:'.length), rawValue, { refreshPreview: !isContinuousInput });
+                __contractsCommitPdfSignLabelField(field.slice('signLabel:'.length), rawValue, {
+                    refreshPreview: !isContinuousInput,
+                    skipEditorUiRefresh: isContinuousInput
+                });
             } else {
-                __contractsCommitPdfContentField(field, rawValue, { refreshPreview: !isContinuousInput });
+                __contractsCommitPdfContentField(field, rawValue, {
+                    refreshPreview: !isContinuousInput,
+                    skipEditorUiRefresh: isContinuousInput
+                });
             }
         } else {
             return;
         }
     }
-    if (kind === 'resource') __contractsCommitResourceInspectorField(id, field, rawValue);
+    if (kind === 'resource') __contractsCommitResourceInspectorField(id, field, rawValue, { skipEditorUiRefresh: isContinuousInput });
     if (isContinuousInput) {
         requestAnimationFrame(__contractsPositionReceiptInspector);
         return;
@@ -2534,7 +2557,9 @@ function __contractsHandleReceiptInspectorClick(event) {
     __contractsCloseReceiptInspector();
 }
 
-function __contractsEnsureReceiptEditingChrome() {
+function __contractsEnsureReceiptEditingChrome(options = {}) {
+    const opts = options && typeof options === 'object' ? options : {};
+    const skipEditorUiRefresh = opts.skipEditorUiRefresh === true;
     const container = document.getElementById('receipt-preview-container');
     const view = document.getElementById('view-receipt');
     if (!container) return;
@@ -2682,7 +2707,7 @@ function __contractsEnsureReceiptEditingChrome() {
         });
     }
     __contractsSyncReceiptEditMode();
-    __contractsRenderReceiptInspector();
+    if (!skipEditorUiRefresh) __contractsRenderReceiptInspector();
 }
 
 function __contractsSyncPdfStyleValueLabels(style) {
@@ -2806,7 +2831,7 @@ function __contractsSetPdfStyleConfig(style, options = {}) {
     const opts = options && typeof options === 'object' ? options : {};
     __contractsPdfStyleState = __contractsNormalizePdfStyle(style);
     if (__contractsIsAdminProfile()) __contractsSaveEditorDraft(__contractsPdfStyleState);
-    if (opts.applyToDom !== false) __contractsApplyPdfStyleToLivePreview();
+    if (opts.applyToDom !== false) __contractsApplyPdfStyleToLivePreview(opts);
 }
 
 function __contractsNormalizeRoleValue(value) {
@@ -3616,19 +3641,22 @@ function __contractsInitPdfStyleEditor() {
     __contractsEnsureMarginGuideController()?.refresh();
 }
 
-function __contractsRefreshPreviewFromStyleState() {
+function __contractsRefreshPreviewFromStyleState(options = {}) {
     if (!selectedOrder) return;
-    window.updateReceiptPreview();
+    window.updateReceiptPreview(options);
 }
 
 function __contractsCommitPdfResources(resources, options = {}) {
     const cfg = __contractsGetPdfStyleConfig();
     const next = __contractsNormalizePdfStyle({ ...cfg, resources: __contractsNormalizePdfResources(resources) });
-    __contractsSetPdfStyleConfig(next, { applyToDom: true });
+    const skipEditorUiRefresh = options && options.skipEditorUiRefresh === true;
+    __contractsSetPdfStyleConfig(next, { applyToDom: true, skipEditorUiRefresh });
     __contractsScheduleSharedPdfStyleSync(next, { force: options.forcePersist === true });
-    if (options.refreshPreview !== false) __contractsRefreshPreviewFromStyleState();
-    __contractsRenderPdfResourcesEditorList();
-    __contractsRenderReceiptInspector();
+    if (options.refreshPreview !== false) __contractsRefreshPreviewFromStyleState({ skipEditorUiRefresh });
+    if (!skipEditorUiRefresh) {
+        __contractsRenderPdfResourcesEditorList();
+        __contractsRenderReceiptInspector();
+    }
 }
 
 function __contractsGetPdfResourcesFromState() {
@@ -3858,6 +3886,12 @@ function __contractsHandleResourceListEvent(event) {
     const trigger = event.target.closest('[data-res-action], [data-res-field]');
     if (!trigger || !__contractsIsAdminProfile()) return;
     if (typeof event.preventDefault === 'function') event.preventDefault();
+    const isContinuousInput = event.type === 'input'
+        && (
+            trigger instanceof HTMLTextAreaElement
+            || (trigger instanceof HTMLInputElement
+                && !['checkbox', 'radio', 'color', 'range', 'file', 'button', 'submit', 'reset'].includes(String(trigger.type || '').toLowerCase()))
+        );
     const id = String(trigger.dataset.resId || '');
     const resources = __contractsGetPdfResourcesFromState();
     const idx = resources.findIndex((resource) => resource.id === id);
@@ -3888,7 +3922,10 @@ function __contractsHandleResourceListEvent(event) {
     if (field === 'bgColor' || field === 'color') nextValue = __contractsNormalizeHexColor(nextValue, resources[idx][field]);
     resources[idx] = { ...resources[idx], [field]: nextValue };
     __contractsPdfResourceSelectedId = id;
-    __contractsCommitPdfResources(resources, { refreshPreview: __contractsShouldRefreshResourcePreviewField(field) });
+    __contractsCommitPdfResources(resources, {
+        refreshPreview: __contractsShouldRefreshResourcePreviewField(field),
+        skipEditorUiRefresh: isContinuousInput
+    });
 }
 
 function __contractsBindPdfResourceEditor() {
@@ -4478,7 +4515,8 @@ window.saveMissingData = async function() {
     } catch(e) { window.showToast("Error al guardar: " + e.message, "error"); }
 }
 
-window.updateReceiptPreview = async function() {
+window.updateReceiptPreview = async function(options = {}) {
+    const opts = options && typeof options === 'object' ? options : {};
     if(!selectedOrder) return;
     try {
         await __contractsEnsureActiveReceiptProfile();
@@ -4498,7 +4536,7 @@ window.updateReceiptPreview = async function() {
         document.getElementById('rcp-amount').value = "0.00";
     }
     document.getElementById('receipt-preview-box').innerHTML = getReceiptHTML(true);
-    __contractsApplyPdfStyleToLivePreview();
+    __contractsApplyPdfStyleToLivePreview(opts);
     __contractsEnsureReceiptEditingChrome();
     __contractsSyncReceiptEditMode();
     __contractsHighlightSelectedResource();

@@ -386,7 +386,16 @@
                         </div>
 
                         <div class="bg-white p-3 rounded-xl border border-gray-200 shadow-sm">
-                            <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">2. Folio Asignado</label>
+                            <label class="block text-[10px] font-bold text-gray-400 uppercase mb-2">2. Membrete</label>
+                            <label class="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                                <span class="text-xs font-bold text-gray-700">Aplicar membrete al imprimir</span>
+                                <input id="contract-letterhead-toggle" type="checkbox" class="h-4 w-4 accent-brand-red">
+                            </label>
+                            <p class="text-[9px] text-gray-400 mt-1 italic leading-tight">Solo activa o desactiva el membrete al imprimir. La plantilla no se edita.</p>
+                        </div>
+
+                        <div class="bg-white p-3 rounded-xl border border-gray-200 shadow-sm">
+                            <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">3. Folio Asignado</label>
                             <div class="flex gap-2">
                                 <input id="contract-num-assign" placeholder="Ej: CON-2024-001" class="w-full border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none focus:border-brand-red uppercase">
                                 <button id="btn-save-contract-num" onclick="window.saveContractNumber()" class="bg-gray-800 text-white px-3 rounded-lg hover:bg-black transition shadow-sm" title="Guardar Folio"><i class="fa-solid fa-save"></i></button>

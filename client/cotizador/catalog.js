@@ -85,6 +85,32 @@ let pmQuoteTempStart = '';
 let pmQuoteTempEnd = '';
 let pmQuoteBlockedRanges = [];
 
+// Evita recargar la misma página por navegaciones accidentales.
+function pmNormalizeUrlForNav(value) {
+    try {
+        const parsed = new URL(String(value || ''), window.location.href);
+        parsed.hash = '';
+        return parsed.toString();
+    } catch (_) {
+        return String(value || '').trim();
+    }
+}
+
+function pmNavigateSafely(targetUrl, options = {}) {
+    const target = String(targetUrl || '').trim();
+    if (!target) return false;
+    const allowSamePage = options.allowSamePage === true;
+    if (!allowSamePage && pmNormalizeUrlForNav(target) === pmNormalizeUrlForNav(window.location.href || '')) {
+        window.showToast?.('Recarga bloqueada para proteger tus cambios.', 'info');
+        return false;
+    }
+    if (typeof window.__HUB_SAFE_NAVIGATE === 'function') {
+        return window.__HUB_SAFE_NAVIGATE(target, { allowSamePage });
+    }
+    window.location.href = target;
+    return true;
+}
+
 function pmNativeCotizacionesService() {
     return window.PB_SERVICES && window.PB_SERVICES.cotizaciones ? window.PB_SERVICES.cotizaciones : null;
 }
@@ -872,7 +898,7 @@ window.saveSpace = async function(){
 
 window.toggleQuoteSpaceCard = function(spaceId){
     if (!IS_PM_QUOTE_PAGE) {
-        window.location.href = `cotizacion.html?space=${encodeURIComponent(spaceId)}`;
+        pmNavigateSafely(`cotizacion.html?space=${encodeURIComponent(spaceId)}`);
         return;
     }
     const sid = String(spaceId);
@@ -1079,7 +1105,7 @@ window.generatePDF = async function() {
     }
     window.showToast("Cotización Creada");
     const targetUrl = createdQuoteId ? `order_detail.html?quote=${encodeURIComponent(createdQuoteId)}` : 'orders.html';
-    setTimeout(() => { window.location.href = targetUrl; }, 900);
+    setTimeout(() => { pmNavigateSafely(targetUrl); }, 900);
 }
 
 window.filterCatalogLogic = function() { const term = document.getElementById('cat-search').value.toLowerCase(); const type = document.getElementById('cat-filter-type').value; const sort = document.getElementById('cat-sort').value; let filtered = allSpaces.filter(s => (s.nombre.toLowerCase().includes(term) || s.clave.toLowerCase().includes(term)) && (type === 'all' || s.tipo === type)); if (sort === 'price_asc') filtered.sort((a,b) => a.precio_base - b.precio_base); if (sort === 'price_desc') filtered.sort((a,b) => b.precio_base - a.precio_base); renderSpaces(filtered); }
