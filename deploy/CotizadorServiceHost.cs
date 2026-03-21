@@ -55,6 +55,7 @@ namespace CotizadorPmServiceHost
         private readonly string _logFile;
         private readonly object _sync = new object();
         private Process _child;
+        private volatile bool _isStopping;
 
         public CotizadorService(string serviceName, string rootDir)
         {
@@ -68,18 +69,21 @@ namespace CotizadorPmServiceHost
 
         protected override void OnStart(string[] args)
         {
+            _isStopping = false;
             Log("OnStart llamado.");
             StartChildProcess();
         }
 
         protected override void OnStop()
         {
+            _isStopping = true;
             Log("OnStop llamado.");
             StopChildProcess();
         }
 
         protected override void OnShutdown()
         {
+            _isStopping = true;
             Log("OnShutdown llamado.");
             StopChildProcess();
             base.OnShutdown();
@@ -124,13 +128,26 @@ namespace CotizadorPmServiceHost
                 };
                 process.Exited += (_, __) =>
                 {
+                    int exitCode = 0;
                     try
                     {
-                        Log("Proceso hijo termino con codigo " + process.ExitCode + ".");
+                        exitCode = process.ExitCode;
+                        Log("Proceso hijo termino con codigo " + exitCode + ".");
+                        if (!_isStopping)
+                        {
+                            Log("Proceso hijo finalizo inesperadamente. El servicio host se cerrara para reflejar estado real.");
+                        }
                     }
                     catch
                     {
                         // ignore
+                    }
+                    finally
+                    {
+                        if (!_isStopping)
+                        {
+                            Environment.Exit(exitCode == 0 ? 1 : exitCode);
+                        }
                     }
                 };
 

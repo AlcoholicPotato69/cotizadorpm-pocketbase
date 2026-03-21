@@ -9,7 +9,7 @@ const __hubNested = /\/(cotizador|cotizadorcp|public|system)\//.test(__hubPath);
 const __hubAssetsBase = __hubNested ? '../../assets' : '../assets';
 const __hubPublicBase = __hubNested ? '../public' : './public';
 const __hubConfigBase = __hubNested ? '../config' : './config';
-const __HUB_RUNTIME_CONFIG_CACHE_KEY = 'hub_runtime_config_cache_v1';
+const __HUB_RUNTIME_CONFIG_CACHE_KEY = 'hub_runtime_config_cache_v2';
 
 function __hubNormalizeBackendUrl(raw) {
   let text = String(raw || '').trim();
@@ -95,8 +95,6 @@ function __hubToBoolean(value, fallback = null) {
 
 function __hubRuntimeConfigCandidates() {
   const raw = [
-    `${__hubConfigBase}/hub-runtime.override.json`,
-    '/config/hub-runtime.override.json',
     `${__hubConfigBase}/hub-runtime.json`,
     '/config/hub-runtime.json'
   ];
@@ -188,12 +186,8 @@ let __hubIcsUrlFromStorage = '';
 let __hubIcsUrlFromQuery = '';
 let __hubIcsTokenFromStorage = '';
 let __hubIcsTokenFromQuery = '';
-try {
-  __hubBackendFromStorage = localStorage.getItem('HUB_BACKEND_URL') || '';
-  __hubBackendStoragePinned = localStorage.getItem('HUB_BACKEND_URL_PIN') === '1';
-  __hubIcsUrlFromStorage = localStorage.getItem('HUB_CP_CALENDAR_ICS_URL') || '';
-  __hubIcsTokenFromStorage = localStorage.getItem('HUB_CP_CALENDAR_ICS_TOKEN') || '';
-} catch (_) {}
+// Simplificado: el backend e ICS activos salen del archivo runtime + query params.
+// No se aplican overrides persistidos desde localStorage para evitar configuraciones "fantasma".
 try {
   const params = new URLSearchParams(window.location.search || '');
   __hubBackendFromQuery = params.get('backend') || params.get('api') || '';
@@ -202,7 +196,7 @@ try {
 } catch (_) {}
 
 let __hubBackendBase = __hubResolveBackendForClient(
-  __hubBackendFromQuery || __hubBackendFromStorage || __hubBackendFromGlobal || __hubBackendFromRuntime || __hubBackendFromEnv || __hubDefaultBackendUrl
+  __hubBackendFromQuery || __hubBackendFromGlobal || __hubBackendFromRuntime || __hubBackendFromEnv || __hubDefaultBackendUrl
 ) || __hubDefaultBackendUrl;
 
 if (__hubBackendFromRuntime && __hubBackendFromStorage && !__hubBackendStoragePinned) {
@@ -254,8 +248,8 @@ const __hubIcsUrlFromGlobal = window.__CP_CALENDAR_ICS_URL || '';
 const __hubIcsUrlFromEnv = (window.ENV && window.ENV.CP_CALENDAR_ICS_URL) || '';
 const __hubIcsTokenFromGlobal = window.__CP_CALENDAR_ICS_TOKEN || '';
 const __hubIcsTokenFromEnv = (window.ENV && window.ENV.CP_CALENDAR_ICS_TOKEN) || '';
-let __hubCpCalendarIcsUrlRaw = String(__hubIcsUrlFromQuery || __hubIcsUrlFromStorage || __hubIcsUrlFromGlobal || __hubIcsUrlFromRuntime || __hubIcsUrlFromEnv || '').trim();
-let __hubCpCalendarIcsToken = String(__hubIcsTokenFromQuery || __hubIcsTokenFromStorage || __hubIcsTokenFromGlobal || __hubIcsTokenFromRuntime || __hubIcsTokenFromEnv || '').trim();
+let __hubCpCalendarIcsUrlRaw = String(__hubIcsUrlFromQuery || __hubIcsUrlFromGlobal || __hubIcsUrlFromRuntime || __hubIcsUrlFromEnv || '').trim();
+let __hubCpCalendarIcsToken = String(__hubIcsTokenFromQuery || __hubIcsTokenFromGlobal || __hubIcsTokenFromRuntime || __hubIcsTokenFromEnv || '').trim();
 
 window.getCpCalendarIcsUrl = function (options = {}) {
   const backendBase = __hubNormalizeBackendUrl(options.backendUrl || __hubBackendBase) || __hubBackendBase;
@@ -326,14 +320,14 @@ function __hubApplyResolvedConfig(runtimeConfig = {}) {
   }
 
   __hubBackendBase = __hubResolveBackendForClient(
-    __hubBackendFromQuery || __hubBackendFromStorage || __hubBackendFromGlobal || runtimeBackend || __hubBackendFromEnv || __hubDefaultBackendUrl
+    __hubBackendFromQuery || __hubBackendFromGlobal || runtimeBackend || __hubBackendFromEnv || __hubDefaultBackendUrl
   ) || __hubDefaultBackendUrl;
 
   __hubCpCalendarIcsUrlRaw = String(
-    __hubIcsUrlFromQuery || __hubIcsUrlFromStorage || __hubIcsUrlFromGlobal || runtimeIcsUrl || __hubIcsUrlFromEnv || ''
+    __hubIcsUrlFromQuery || __hubIcsUrlFromGlobal || runtimeIcsUrl || __hubIcsUrlFromEnv || ''
   ).trim();
   __hubCpCalendarIcsToken = String(
-    __hubIcsTokenFromQuery || __hubIcsTokenFromStorage || __hubIcsTokenFromGlobal || runtimeIcsToken || __hubIcsTokenFromEnv || ''
+    __hubIcsTokenFromQuery || __hubIcsTokenFromGlobal || runtimeIcsToken || __hubIcsTokenFromEnv || ''
   ).trim();
 
   const target = (window.HUB_CONFIG && typeof window.HUB_CONFIG === 'object') ? window.HUB_CONFIG : {};
@@ -352,7 +346,7 @@ function __hubApplyResolvedConfig(runtimeConfig = {}) {
 }
 
 window.HUB_CONFIG = {
-  // Backend API (usa override por query/localStorage/global/runtime/env y fallback automatico)
+  // Backend API (usa query/global/runtime/env y fallback automatico)
   pocketbaseUrl: __hubBackendBase,
   pocketbaseAnonKey: __hubAnonKeyFromRuntime || __hubAnonKeyFromEnv || '',
 
@@ -377,11 +371,10 @@ window.HUB_CONFIG = {
   // Feed ICS del calendario unificado de Casa de Piedra.
   // Prioridad:
   // 1) Query params: ?ics=...&icsToken=...
-  // 2) localStorage: HUB_CP_CALENDAR_ICS_URL / HUB_CP_CALENDAR_ICS_TOKEN
-  // 3) Globals: window.__CP_CALENDAR_ICS_URL / window.__CP_CALENDAR_ICS_TOKEN
-  // 4) Runtime file: client/config/hub-runtime.json
-  // 5) window.ENV.CP_CALENDAR_ICS_URL / window.ENV.CP_CALENDAR_ICS_TOKEN
-  // 6) Fallback automatico: {backend}/api/cotizador/cp-calendar-ics
+  // 2) Globals: window.__CP_CALENDAR_ICS_URL / window.__CP_CALENDAR_ICS_TOKEN
+  // 3) Runtime file: client/config/hub-runtime.json
+  // 4) window.ENV.CP_CALENDAR_ICS_URL / window.ENV.CP_CALENDAR_ICS_TOKEN
+  // 5) Fallback automatico: {backend}/api/cotizador/cp-calendar-ics
   // Helpers:
   // - window.getCpCalendarIcsUrl()
   // - window.setCpCalendarIcsConfig({ url: 'https://dominio/api/cotizador/cp-calendar-ics', token: 'TOKEN' })

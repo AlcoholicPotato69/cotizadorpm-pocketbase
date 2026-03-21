@@ -3,7 +3,6 @@ pb_data/
 __pycache__/
 *.pyc
 logs/
-client/config/hub-runtime.override.json
 deploy/backend-service.local.conf
 deploy/*.local.conf
 deploy/certs/

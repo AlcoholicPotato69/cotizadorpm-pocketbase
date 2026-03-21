@@ -7,6 +7,7 @@ set "DEPLOY_DIR=%ROOT_DIR%\deploy"
 set "CONF_FILE=%DEPLOY_DIR%\backend-service.local.conf"
 set "RUNNER_FILE=%DEPLOY_DIR%\run-pocketbase-service.bat"
 set "SERVICE_HOST_EXE=%DEPLOY_DIR%\CotizadorServiceHost.exe"
+set "SERVICE_HOST_SRC=%DEPLOY_DIR%\CotizadorServiceHost.cs"
 set "SERVICE_HOST_BUILD=%DEPLOY_DIR%\build-service-host.bat"
 set "HTTPS_SETUP_FILE=%DEPLOY_DIR%\configure-https-selfsigned.ps1"
 
@@ -22,6 +23,8 @@ if /I "%ACTION%"=="show" goto :show
 if /I "%ACTION%"=="set-url" goto :set_url
 if /I "%ACTION%"=="set-ip" goto :set_ip
 if /I "%ACTION%"=="set-bind" goto :set_bind
+if /I "%ACTION%"=="set-ics" goto :set_ics
+if /I "%ACTION%"=="cleanup-orphans" goto :cleanup_orphans_action
 if /I "%ACTION%"=="enable-https" goto :enable_https
 if /I "%ACTION%"=="disable-https" goto :disable_https
 if /I "%ACTION%"=="install" goto :install
@@ -50,17 +53,21 @@ echo   backend-service.bat show
 echo   backend-service.bat set-url ^<URL_BACKEND^>
 echo   backend-service.bat set-ip ^<IP_O_HOST^> [PUERTO]
 echo   backend-service.bat set-bind ^<BIND_IP:PUERTO^>
+echo   backend-service.bat set-ics [RUTA_O_URL_ICS] [TOKEN_ICS]
+echo   backend-service.bat cleanup-orphans
 echo   backend-service.bat enable-https ^<IP_O_HOST^> [PUERTO_HTTPS]
 echo   backend-service.bat disable-https
 echo.
 echo Ejemplos:
-echo   backend-service.bat set-ip 192.168.1.50 8090
-echo   backend-service.bat enable-https 192.168.1.50 9443
-echo   backend-service.bat set-url https://cotizador.interno.local:9443
+echo   backend-service.bat set-ip 127.0.0.1 8090
+echo   backend-service.bat set-ics /api/cotizador/cp-calendar-ics MiTokenSeguro123
+echo   backend-service.bat cleanup-orphans
+echo   backend-service.bat enable-https localhost 9443
+echo   backend-service.bat set-url http://127.0.0.1:8090
 echo   backend-service.bat install
 echo.
 echo Notas:
-echo   - set-url/set-ip actualizan client\config\hub-runtime.override.json (no versionado).
+echo   - set-url/set-ip actualizan client\config\hub-runtime.json.
 echo   - enable-https genera certificado autofirmado, lo vincula en Windows y activa proxy HTTPS local.
 echo   - install configura el servicio con deploy\CotizadorServiceHost.exe.
 echo.
@@ -73,6 +80,10 @@ echo   SERVICE_NAME=%SERVICE_NAME%
 echo   DISPLAY_NAME=%DISPLAY_NAME%
 echo   BIND_ADDR=%BIND_ADDR%
 echo   BACKEND_URL=%BACKEND_URL%
+echo   CP_CALENDAR_ICS_URL=%CP_CALENDAR_ICS_URL%
+set "ICS_TOKEN_STATUS=(vacio)"
+if defined CP_CALENDAR_ICS_TOKEN set "ICS_TOKEN_STATUS=(configurado)"
+echo   CP_CALENDAR_ICS_TOKEN=!ICS_TOKEN_STATUS!
 echo   HTTPS_ENABLED=%HTTPS_ENABLED%
 echo   HTTPS_HOST=%HTTPS_HOST%
 echo   HTTPS_PORT=%HTTPS_PORT%
@@ -126,7 +137,7 @@ exit /b 0
 
 :set_bind
 set "NEXT_BIND=%~2"
-if not defined NEXT_BIND set /p NEXT_BIND=Escribe bind de PocketBase ^(ej: 0.0.0.0:8090^): 
+if not defined NEXT_BIND set /p NEXT_BIND=Escribe bind de PocketBase ^(ej: 127.0.0.1:8090^): 
 if not defined NEXT_BIND (
   echo [ERROR] bind vacio.
   exit /b 1
@@ -138,6 +149,30 @@ if /I "%HTTPS_ENABLED%"=="1" (
   echo [WARN] HTTPS activo: si expones 0.0.0.0 en BIND_ADDR tambien expones HTTP sin TLS.
 )
 echo [INFO] Reinicia el servicio para aplicar el nuevo bind.
+exit /b 0
+
+:set_ics
+set "NEXT_ICS_URL=%~2"
+set "NEXT_ICS_TOKEN=%~3"
+if not defined NEXT_ICS_URL set /p NEXT_ICS_URL=Escribe ruta o URL ICS ^(default /api/cotizador/cp-calendar-ics^): 
+if not defined NEXT_ICS_URL set "NEXT_ICS_URL=/api/cotizador/cp-calendar-ics"
+if /I "%NEXT_ICS_URL%"=="default" set "NEXT_ICS_URL=/api/cotizador/cp-calendar-ics"
+if not defined NEXT_ICS_TOKEN set /p NEXT_ICS_TOKEN=Escribe token ICS ^(opcional, Enter para vacio^): 
+if "%NEXT_ICS_TOKEN%"=="-" set "NEXT_ICS_TOKEN="
+
+set "CP_CALENDAR_ICS_URL=%NEXT_ICS_URL%"
+set "CP_CALENDAR_ICS_TOKEN=%NEXT_ICS_TOKEN%"
+
+call :write_conf
+call :sync_runtime_override || exit /b 1
+echo [OK] ICS actualizado.
+echo      URL/Ruta: %CP_CALENDAR_ICS_URL%
+if defined CP_CALENDAR_ICS_TOKEN (
+  echo      Token: configurado.
+) else (
+  echo      Token: vacio.
+)
+echo [INFO] Reinicia el servicio para aplicar el token ICS: %~n0 restart
 exit /b 0
 
 :enable_https
@@ -213,7 +248,7 @@ set "HTTPS_HOST="
 set "HTTPS_PORT=9443"
 set "HTTPS_CERT_THUMBPRINT="
 set "HTTPS_CERT_FILE="
-if /I "%BIND_ADDR%"=="127.0.0.1:8090" set "BIND_ADDR=0.0.0.0:8090"
+if /I "%BIND_ADDR%"=="0.0.0.0:8090" set "BIND_ADDR=127.0.0.1:8090"
 set "BACKEND_URL=http://127.0.0.1:8090"
 
 call :write_conf
@@ -256,6 +291,7 @@ exit /b 0
 
 :start
 call :require_admin || exit /b 1
+call :cleanup_orphans
 sc.exe start "%SERVICE_NAME%"
 exit /b %ERRORLEVEL%
 
@@ -268,6 +304,7 @@ exit /b %ERRORLEVEL%
 call :require_admin || exit /b 1
 sc.exe stop "%SERVICE_NAME%" >nul 2>&1
 timeout /t 2 /nobreak >nul
+call :cleanup_orphans
 sc.exe start "%SERVICE_NAME%"
 exit /b %ERRORLEVEL%
 
@@ -282,11 +319,18 @@ timeout /t 2 /nobreak >nul
 sc.exe delete "%SERVICE_NAME%"
 exit /b %ERRORLEVEL%
 
+:cleanup_orphans_action
+call :require_admin || exit /b 1
+call :cleanup_orphans
+exit /b 0
+
 :write_default_conf
 > "%CONF_FILE%" echo SERVICE_NAME=CotizadorPocketBase
 >> "%CONF_FILE%" echo DISPLAY_NAME=Cotizador PocketBase
->> "%CONF_FILE%" echo BIND_ADDR=0.0.0.0:8090
+>> "%CONF_FILE%" echo BIND_ADDR=127.0.0.1:8090
 >> "%CONF_FILE%" echo BACKEND_URL=http://127.0.0.1:8090
+>> "%CONF_FILE%" echo CP_CALENDAR_ICS_URL=/api/cotizador/cp-calendar-ics
+>> "%CONF_FILE%" echo CP_CALENDAR_ICS_TOKEN=
 >> "%CONF_FILE%" echo HTTPS_ENABLED=0
 >> "%CONF_FILE%" echo HTTPS_HOST=
 >> "%CONF_FILE%" echo HTTPS_PORT=9443
@@ -299,6 +343,8 @@ exit /b 0
 >> "%CONF_FILE%" echo DISPLAY_NAME=%DISPLAY_NAME%
 >> "%CONF_FILE%" echo BIND_ADDR=%BIND_ADDR%
 >> "%CONF_FILE%" echo BACKEND_URL=%BACKEND_URL%
+>> "%CONF_FILE%" echo CP_CALENDAR_ICS_URL=%CP_CALENDAR_ICS_URL%
+>> "%CONF_FILE%" echo CP_CALENDAR_ICS_TOKEN=%CP_CALENDAR_ICS_TOKEN%
 >> "%CONF_FILE%" echo HTTPS_ENABLED=%HTTPS_ENABLED%
 >> "%CONF_FILE%" echo HTTPS_HOST=%HTTPS_HOST%
 >> "%CONF_FILE%" echo HTTPS_PORT=%HTTPS_PORT%
@@ -311,6 +357,8 @@ set "SERVICE_NAME="
 set "DISPLAY_NAME="
 set "BIND_ADDR="
 set "BACKEND_URL="
+set "CP_CALENDAR_ICS_URL="
+set "CP_CALENDAR_ICS_TOKEN="
 set "HTTPS_ENABLED="
 set "HTTPS_HOST="
 set "HTTPS_PORT="
@@ -321,6 +369,8 @@ for /f "usebackq tokens=1,* delims==" %%A in ("%CONF_FILE%") do (
   if /I "%%~A"=="DISPLAY_NAME" set "DISPLAY_NAME=%%~B"
   if /I "%%~A"=="BIND_ADDR" set "BIND_ADDR=%%~B"
   if /I "%%~A"=="BACKEND_URL" set "BACKEND_URL=%%~B"
+  if /I "%%~A"=="CP_CALENDAR_ICS_URL" set "CP_CALENDAR_ICS_URL=%%~B"
+  if /I "%%~A"=="CP_CALENDAR_ICS_TOKEN" set "CP_CALENDAR_ICS_TOKEN=%%~B"
   if /I "%%~A"=="HTTPS_ENABLED" set "HTTPS_ENABLED=%%~B"
   if /I "%%~A"=="HTTPS_HOST" set "HTTPS_HOST=%%~B"
   if /I "%%~A"=="HTTPS_PORT" set "HTTPS_PORT=%%~B"
@@ -329,8 +379,9 @@ for /f "usebackq tokens=1,* delims==" %%A in ("%CONF_FILE%") do (
 )
 if not defined SERVICE_NAME set "SERVICE_NAME=CotizadorPocketBase"
 if not defined DISPLAY_NAME set "DISPLAY_NAME=Cotizador PocketBase"
-if not defined BIND_ADDR set "BIND_ADDR=0.0.0.0:8090"
+if not defined BIND_ADDR set "BIND_ADDR=127.0.0.1:8090"
 if not defined BACKEND_URL set "BACKEND_URL=http://127.0.0.1:8090"
+if not defined CP_CALENDAR_ICS_URL set "CP_CALENDAR_ICS_URL=/api/cotizador/cp-calendar-ics"
 if not defined HTTPS_ENABLED set "HTTPS_ENABLED=0"
 if not defined HTTPS_PORT set "HTTPS_PORT=9443"
 exit /b 0
@@ -338,22 +389,33 @@ exit /b 0
 :sync_runtime_override
 set "PB_ROOT=%ROOT_DIR%"
 set "PB_BACKEND_URL=%BACKEND_URL%"
+set "PB_ICS_URL=%CP_CALENDAR_ICS_URL%"
+set "PB_ICS_TOKEN=%CP_CALENDAR_ICS_TOKEN%"
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$path = Join-Path $env:PB_ROOT 'client/config/hub-runtime.override.json';" ^
+  "$path = Join-Path $env:PB_ROOT 'client/config/hub-runtime.json';" ^
   "if (Test-Path $path) { try { $cfg = Get-Content $path -Raw | ConvertFrom-Json } catch { $cfg = [pscustomobject]@{} } } else { $cfg = [pscustomobject]@{} };" ^
   "if (-not $cfg.PSObject.Properties['BACKEND_URL']) { $cfg | Add-Member -NotePropertyName BACKEND_URL -NotePropertyValue $env:PB_BACKEND_URL } else { $cfg.BACKEND_URL = $env:PB_BACKEND_URL };" ^
-  "if (-not $cfg.PSObject.Properties['CP_CALENDAR_ICS_URL']) { $cfg | Add-Member -NotePropertyName CP_CALENDAR_ICS_URL -NotePropertyValue '/api/cotizador/cp-calendar-ics' };" ^
-  "if (-not $cfg.PSObject.Properties['CP_CALENDAR_ICS_TOKEN']) { $cfg | Add-Member -NotePropertyName CP_CALENDAR_ICS_TOKEN -NotePropertyValue '' };" ^
+  "$icsUrl = $env:PB_ICS_URL; if ([string]::IsNullOrWhiteSpace($icsUrl)) { $icsUrl = '/api/cotizador/cp-calendar-ics' };" ^
+  "$icsToken = [string]$env:PB_ICS_TOKEN; if ($null -eq $icsToken) { $icsToken = '' };" ^
+  "if (-not $cfg.PSObject.Properties['CP_CALENDAR_ICS_URL']) { $cfg | Add-Member -NotePropertyName CP_CALENDAR_ICS_URL -NotePropertyValue $icsUrl } else { $cfg.CP_CALENDAR_ICS_URL = $icsUrl };" ^
+  "if (-not $cfg.PSObject.Properties['CP_CALENDAR_ICS_TOKEN']) { $cfg | Add-Member -NotePropertyName CP_CALENDAR_ICS_TOKEN -NotePropertyValue $icsToken } else { $cfg.CP_CALENDAR_ICS_TOKEN = $icsToken };" ^
   "$cfg | ConvertTo-Json -Depth 20 | Set-Content -Encoding UTF8 $path;"
 if errorlevel 1 (
-  echo [ERROR] No se pudo actualizar client\config\hub-runtime.override.json
+  echo [ERROR] No se pudo actualizar client\config\hub-runtime.json
   exit /b 5
 )
-echo [OK] Archivo de override actualizado: client\config\hub-runtime.override.json
+echo [OK] Archivo de runtime actualizado: client\config\hub-runtime.json
 exit /b 0
 
 :ensure_service_host
-if exist "%SERVICE_HOST_EXE%" exit /b 0
+set "REBUILD_SERVICE_HOST=0"
+if not exist "%SERVICE_HOST_EXE%" set "REBUILD_SERVICE_HOST=1"
+if "%REBUILD_SERVICE_HOST%"=="0" if exist "%SERVICE_HOST_SRC%" (
+  powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "$src='%SERVICE_HOST_SRC%'; $exe='%SERVICE_HOST_EXE%'; if ((Test-Path $src) -and (Test-Path $exe) -and ((Get-Item $src).LastWriteTimeUtc -gt (Get-Item $exe).LastWriteTimeUtc)) { exit 0 } else { exit 1 }"
+  if not errorlevel 1 set "REBUILD_SERVICE_HOST=1"
+)
+if "%REBUILD_SERVICE_HOST%"=="0" exit /b 0
 if not exist "%SERVICE_HOST_BUILD%" (
   echo [ERROR] No existe compilador del ServiceHost: %SERVICE_HOST_BUILD%
   exit /b 6
@@ -379,5 +441,28 @@ if errorlevel 1 (
   echo [ERROR] Ejecuta este comando en una consola con privilegios de Administrador.
   echo [INFO] Tip: clic derecho sobre CMD/PowerShell -^> Ejecutar como administrador.
   exit /b 10
+)
+exit /b 0
+
+:cleanup_orphans
+set "PB_ROOT=%ROOT_DIR%"
+set "PB_BIND=%BIND_ADDR%"
+set "CLEANUP_OUT=%TEMP%\pb_cleanup_%RANDOM%%RANDOM%.tmp"
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$root = [string]$env:PB_ROOT; $killed = @();" ^
+  "$bind = [string]$env:PB_BIND; $bindPort = 8090; if ($bind -match ':(\d+)$') { $bindPort = [int]$matches[1] };" ^
+  "$targets = Get-CimInstance Win32_Process -Filter \"name='pocketbase.exe'\" -ErrorAction SilentlyContinue;" ^
+  "foreach ($p in $targets) { $cmd = [string]$p.CommandLine; $exe = [string]$p.ExecutablePath; if (($cmd -like ('*' + $root + '*')) -or ($exe -like ('*' + $root + '*'))) { try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop; $killed += ('pocketbase:' + $p.ProcessId) } catch {} } }" ^
+  "try { $listeners = Get-CimInstance Win32_Process -Filter \"name='pocketbase.exe'\" -ErrorAction SilentlyContinue; $allPids = @{}; foreach($l in (netstat -ano | Select-String (':'+$bindPort+' '))){ $parts = ($l.ToString() -replace '\s+',' ').Trim().Split(' '); if($parts.Length -ge 5 -and $parts[1] -like '*:'+$bindPort -and $parts[3] -eq 'LISTENING'){ $pid=[int]$parts[4]; if($pid -gt 0){ $allPids[$pid]=1 } } }; foreach($pid in $allPids.Keys){ try { Stop-Process -Id $pid -Force -ErrorAction Stop; $killed += ('port'+$bindPort+':' + $pid) } catch {} } } catch {}" ^
+  "$psTargets = Get-CimInstance Win32_Process -Filter \"name='powershell.exe' or name='pwsh.exe'\" -ErrorAction SilentlyContinue;" ^
+  "foreach ($p in $psTargets) { $cmd = [string]$p.CommandLine; if ($cmd -like '*https-reverse-proxy.ps1*' -and $cmd -like ('*' + $root + '*')) { try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop; $killed += ('proxy:' + $p.ProcessId) } catch {} } }" ^
+  "if ($killed.Count -gt 0) { 'KILLED=' + (($killed | Sort-Object -Unique) -join ',') }" > "%CLEANUP_OUT%"
+if exist "%CLEANUP_OUT%" (
+  for /f "usebackq tokens=1,* delims==" %%A in ("%CLEANUP_OUT%") do (
+    if /I "%%~A"=="KILLED" (
+      echo [INFO] Procesos huerfanos finalizados: %%~B
+    )
+  )
+  del /q "%CLEANUP_OUT%" >nul 2>&1
 )
 exit /b 0
