@@ -30,6 +30,23 @@ function __hubIsLocalHostname(hostname) {
   );
 }
 
+function __hubResolveBackendForClient(raw) {
+  const normalized = __hubNormalizeBackendUrl(raw);
+  if (!normalized) return '';
+  try {
+    const parsed = new URL(normalized);
+    const backendHost = String(parsed.hostname || '').trim();
+    const clientHost = String(window.location.hostname || '').trim();
+    if (!clientHost || __hubIsLocalHostname(clientHost)) return normalized;
+    if (!__hubIsLocalHostname(backendHost)) return normalized;
+    parsed.hostname = clientHost;
+    if (!parsed.port) parsed.port = '8090';
+    return parsed.toString().replace(/\/+$/, '');
+  } catch (_) {
+    return normalized;
+  }
+}
+
 function __hubGuessBackendUrl() {
   const protocol = /^https?:$/.test(window.location.protocol) ? window.location.protocol : 'http:';
   const host = String(window.location.host || '').trim();
@@ -78,6 +95,8 @@ function __hubToBoolean(value, fallback = null) {
 
 function __hubRuntimeConfigCandidates() {
   const raw = [
+    `${__hubConfigBase}/hub-runtime.override.json`,
+    '/config/hub-runtime.override.json',
     `${__hubConfigBase}/hub-runtime.json`,
     '/config/hub-runtime.json'
   ];
@@ -163,6 +182,7 @@ const __hubCompanyLogoCpFromEnv = (window.ENV && (window.ENV.COMPANY_LOGO_URL_CP
 const __hubPmPdfLetterheadFromEnv = (window.ENV && (window.ENV.PM_PDF_LETTERHEAD_URL || window.ENV.PDF_LETTERHEAD_PM_URL)) || '';
 const __hubCpPdfLetterheadFromEnv = (window.ENV && (window.ENV.CP_PDF_LETTERHEAD_URL || window.ENV.PDF_LETTERHEAD_CP_URL)) || '';
 let __hubBackendFromStorage = '';
+let __hubBackendStoragePinned = false;
 let __hubBackendFromQuery = '';
 let __hubIcsUrlFromStorage = '';
 let __hubIcsUrlFromQuery = '';
@@ -170,6 +190,7 @@ let __hubIcsTokenFromStorage = '';
 let __hubIcsTokenFromQuery = '';
 try {
   __hubBackendFromStorage = localStorage.getItem('HUB_BACKEND_URL') || '';
+  __hubBackendStoragePinned = localStorage.getItem('HUB_BACKEND_URL_PIN') === '1';
   __hubIcsUrlFromStorage = localStorage.getItem('HUB_CP_CALENDAR_ICS_URL') || '';
   __hubIcsTokenFromStorage = localStorage.getItem('HUB_CP_CALENDAR_ICS_TOKEN') || '';
 } catch (_) {}
@@ -180,9 +201,21 @@ try {
   __hubIcsTokenFromQuery = params.get('icsToken') || params.get('cpIcsToken') || '';
 } catch (_) {}
 
-let __hubBackendBase = __hubNormalizeBackendUrl(
+let __hubBackendBase = __hubResolveBackendForClient(
   __hubBackendFromQuery || __hubBackendFromStorage || __hubBackendFromGlobal || __hubBackendFromRuntime || __hubBackendFromEnv || __hubDefaultBackendUrl
 ) || __hubDefaultBackendUrl;
+
+if (__hubBackendFromRuntime && __hubBackendFromStorage && !__hubBackendStoragePinned) {
+  const normalizedRuntime = __hubNormalizeBackendUrl(__hubBackendFromRuntime);
+  const normalizedStorage = __hubNormalizeBackendUrl(__hubBackendFromStorage);
+  if (normalizedRuntime && normalizedStorage && normalizedRuntime !== normalizedStorage) {
+    __hubBackendFromStorage = '';
+    __hubBackendBase = __hubResolveBackendForClient(
+      __hubBackendFromQuery || __hubBackendFromGlobal || __hubBackendFromRuntime || __hubBackendFromEnv || __hubDefaultBackendUrl
+    ) || __hubDefaultBackendUrl;
+    try { localStorage.removeItem('HUB_BACKEND_URL'); } catch (_) {}
+  }
+}
 
 // Helpers de despliegue:
 // - window.setHubBackendUrl('http://IP_O_DOMINIO:8090')
@@ -195,6 +228,8 @@ window.setHubBackendUrl = function (nextUrl, options = {}) {
   const reload = options.reload !== false;
   __hubBackendBase = finalUrl;
   if (persist) __hubPersistStorageValue('HUB_BACKEND_URL', finalUrl);
+  if (persist) __hubPersistStorageValue('HUB_BACKEND_URL_PIN', '1');
+  if (persist) __hubBackendStoragePinned = true;
   if (window.HUB_CONFIG) {
     window.HUB_CONFIG.pocketbaseUrl = finalUrl;
     window.HUB_CONFIG.cpCalendarIcsUrl = window.getCpCalendarIcsUrl();
@@ -206,6 +241,8 @@ window.clearHubBackendUrl = function (options = {}) {
   const reload = options.reload !== false;
   __hubBackendBase = __hubDefaultBackendUrl;
   __hubPersistStorageValue('HUB_BACKEND_URL', '');
+  __hubPersistStorageValue('HUB_BACKEND_URL_PIN', '');
+  __hubBackendStoragePinned = false;
   if (window.HUB_CONFIG) {
     window.HUB_CONFIG.pocketbaseUrl = __hubBackendBase;
     window.HUB_CONFIG.cpCalendarIcsUrl = window.getCpCalendarIcsUrl();
@@ -218,7 +255,7 @@ const __hubIcsUrlFromEnv = (window.ENV && window.ENV.CP_CALENDAR_ICS_URL) || '';
 const __hubIcsTokenFromGlobal = window.__CP_CALENDAR_ICS_TOKEN || '';
 const __hubIcsTokenFromEnv = (window.ENV && window.ENV.CP_CALENDAR_ICS_TOKEN) || '';
 let __hubCpCalendarIcsUrlRaw = String(__hubIcsUrlFromQuery || __hubIcsUrlFromStorage || __hubIcsUrlFromGlobal || __hubIcsUrlFromRuntime || __hubIcsUrlFromEnv || '').trim();
-let __hubCpCalendarIcsToken = String(__hubIcsTokenFromQuery || __hubIcsTokenFromStorage || __hubIcsTokenFromGlobal || __hubIcsTokenFromRuntime || __hubIcsTokenFromEnv || 'b1a38ff792a127d89980285a05cc8525bdcc2195227ca8a4b7b51a56ae312aa5').trim();
+let __hubCpCalendarIcsToken = String(__hubIcsTokenFromQuery || __hubIcsTokenFromStorage || __hubIcsTokenFromGlobal || __hubIcsTokenFromRuntime || __hubIcsTokenFromEnv || '').trim();
 
 window.getCpCalendarIcsUrl = function (options = {}) {
   const backendBase = __hubNormalizeBackendUrl(options.backendUrl || __hubBackendBase) || __hubBackendBase;
@@ -279,7 +316,16 @@ function __hubApplyResolvedConfig(runtimeConfig = {}) {
   const runtimeIcsUrl = String(runtime.CP_CALENDAR_ICS_URL || '').trim();
   const runtimeIcsToken = String(runtime.CP_CALENDAR_ICS_TOKEN || '').trim();
 
-  __hubBackendBase = __hubNormalizeBackendUrl(
+  if (runtimeBackend && __hubBackendFromStorage && !__hubBackendStoragePinned) {
+    const normalizedRuntime = __hubNormalizeBackendUrl(runtimeBackend);
+    const normalizedStorage = __hubNormalizeBackendUrl(__hubBackendFromStorage);
+    if (normalizedRuntime && normalizedStorage && normalizedRuntime !== normalizedStorage) {
+      __hubBackendFromStorage = '';
+      try { localStorage.removeItem('HUB_BACKEND_URL'); } catch (_) {}
+    }
+  }
+
+  __hubBackendBase = __hubResolveBackendForClient(
     __hubBackendFromQuery || __hubBackendFromStorage || __hubBackendFromGlobal || runtimeBackend || __hubBackendFromEnv || __hubDefaultBackendUrl
   ) || __hubDefaultBackendUrl;
 
@@ -287,7 +333,7 @@ function __hubApplyResolvedConfig(runtimeConfig = {}) {
     __hubIcsUrlFromQuery || __hubIcsUrlFromStorage || __hubIcsUrlFromGlobal || runtimeIcsUrl || __hubIcsUrlFromEnv || ''
   ).trim();
   __hubCpCalendarIcsToken = String(
-    __hubIcsTokenFromQuery || __hubIcsTokenFromStorage || __hubIcsTokenFromGlobal || runtimeIcsToken || __hubIcsTokenFromEnv || 'b1a38ff792a127d89980285a05cc8525bdcc2195227ca8a4b7b51a56ae312aa5'
+    __hubIcsTokenFromQuery || __hubIcsTokenFromStorage || __hubIcsTokenFromGlobal || runtimeIcsToken || __hubIcsTokenFromEnv || ''
   ).trim();
 
   const target = (window.HUB_CONFIG && typeof window.HUB_CONFIG === 'object') ? window.HUB_CONFIG : {};

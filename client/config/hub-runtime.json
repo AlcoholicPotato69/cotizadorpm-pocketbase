@@ -7,6 +7,5 @@
   "PM_PDF_LETTERHEAD_URL": "",
   "CP_PDF_LETTERHEAD_URL": "",
   "CP_CALENDAR_ICS_URL": "/api/cotizador/cp-calendar-ics",
-  "CP_CALENDAR_ICS_TOKEN": "CAMBIAR_TOKEN_EN_PRODUCCION"
+  "CP_CALENDAR_ICS_TOKEN": ""
 }
-

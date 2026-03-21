@@ -2,6 +2,11 @@
 
 Fecha: 2026-03-11
 
+## Manual TI de despliegue
+
+Para instalacion en servidor y estrategia OAuth sin login de usuario final:
+- `MANUAL-IMPLEMENTACION-SERVIDOR-TI.md`
+
 ## 1. Objetivo del sistema
 
 Sistema de cotizacion multi-tenant para dos operaciones:
@@ -376,6 +381,78 @@ Checklist de produccion (lo que debes cambiar):
 6. Verificacion final:
    - `window.getCpCalendarIcsUrl()` debe devolver la URL final con `token=...`
    - Abrir esa URL en navegador debe mostrar texto ICS con `BEGIN:VCALENDAR`.
+
+### 14.1 Entorno LAN sin internet en el servidor (configuracion recomendada)
+
+Escenario: el servidor esta en red privada y no tiene salida a internet.
+
+1. Usar `backend-service.bat` para fijar IP/URL productiva:
+   - `backend-service.bat set-ip 192.168.1.50 8090`
+   - o `backend-service.bat set-url http://192.168.1.50:8090`
+2. El script actualiza automaticamente:
+   - `deploy/backend-service.local.conf`
+   - `client/config/hub-runtime.override.json` (prioridad sobre `hub-runtime.json`)
+3. Para despliegue automatizado un clic:
+   - `deploy-production.bat <IP_O_HOST> [PUERTO_BACKEND] [TIMEOUT_SEG]`
+   - Ejecuta: `set-ip -> install -> start -> health-check`
+4. Para pruebas locales sin servicio:
+   - `run-local-stack.bat [HOST] [BACKEND_PORT] [FRONT_PORT]`
+   - `stop-local-stack.bat`
+5. Mantener `CP_CALENDAR_ICS_URL` relativo:
+   - `"/api/cotizador/cp-calendar-ics"`
+6. Token ICS:
+   - Si no se usa token en LAN cerrada, dejar vacio.
+   - Si se usa, debe coincidir front/backend.
+7. Verificacion minima:
+   - `http://IP_DEL_SERVIDOR:8090/api/cotizador/cp-calendar-ics`
+   - Debe devolver `BEGIN:VCALENDAR`.
+
+### 14.2 HTTPS autofirmado en LAN (nuevo flujo)
+
+Problema detectado:
+1. En esta version de PocketBase, `serve --https` usa ACME/autocert.
+2. Ese modo falla en entornos cerrados o con IP privada sin dominio publico.
+
+Solucion aplicada en el proyecto:
+1. PocketBase queda en HTTP interno.
+2. Un proxy local PowerShell publica HTTPS con certificado autofirmado.
+3. La activacion se hace con:
+   - `backend-service.bat enable-https <IP_O_HOST> [PUERTO_HTTPS]`
+4. Para desactivar:
+   - `backend-service.bat disable-https`
+
+Cambios tecnicos clave:
+1. Script de certificado y binding:
+   - `deploy/configure-https-selfsigned.ps1`
+2. Proxy HTTPS local:
+   - `deploy/https-reverse-proxy.ps1`
+3. ServiceHost nativo Windows:
+   - `deploy/CotizadorServiceHost.cs`
+   - `deploy/build-service-host.bat`
+4. Runner de servicio:
+   - `deploy/run-pocketbase-service.ps1`
+
+Operacion:
+1. `enable-https` genera `.cer` en `deploy/certs/`.
+2. Ese certificado debe instalarse en los clientes (Trusted Root) para evitar advertencias.
+3. Si cambia IP/host, ejecutar `enable-https` de nuevo para regenerar certificado y URL.
+4. `deploy-production.bat` genera log para TI en `logs/deploy-production-*.log`.
+
+### 14.3 Modo simple recomendado (Outlook de escritorio en LAN)
+
+Sin Google, sin OAuth, sin servicios puente externos.
+
+1. En Agenda CP:
+   - `Copiar enlace Outlook` para copiar la URL ICS.
+   - `Abrir Outlook` para intento automatico por `webcal://`.
+2. En Outlook Desktop:
+   - `Calendar` -> `Add Calendar` -> `From Internet`.
+   - Pegar URL ICS local y confirmar.
+3. Actualizaciones:
+   - Al cambiar eventos en el cotizador, el feed ICS se actualiza.
+   - Outlook replica en su siguiente ciclo de sincronizacion.
+4. Fallback:
+   - `Descargar ICS` exporta archivo manual si el endpoint no responde.
 
 Campos que alimentan los eventos ICS:
 - Solo toma cotizaciones CP con `status` en `aprobada` o `finalizada`.

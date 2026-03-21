@@ -1,0 +1,5 @@
+{
+  "BACKEND_URL": "https://192.168.1.50:9443",
+  "CP_CALENDAR_ICS_URL": "/api/cotizador/cp-calendar-ics",
+  "CP_CALENDAR_ICS_TOKEN": ""
+}

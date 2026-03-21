@@ -15,8 +15,6 @@
 // - Respeta no empalme por espacio contra cotizaciones aprobadas/finalizadas.
 // ============================================================================
 
-const PB_URL = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseUrl) || 'http://127.0.0.1:8090';
-const PB_KEY = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseAnonKey) || '';
 const FIN_SCHEMA = 'finanzas_casadepiedra';
 
 const BLOCKING_STATUSES = ['aprobada', 'finalizada'];
@@ -271,12 +269,31 @@ function syncKindNav() {
     }
 }
 
+function resolvePbUrl() {
+    if (typeof window.getHubBackendUrl === 'function') {
+        const fromHelper = String(window.getHubBackendUrl() || '').trim();
+        if (fromHelper) return fromHelper;
+    }
+    return String(window.HUB_CONFIG?.pocketbaseUrl || 'http://127.0.0.1:8090').trim();
+}
+
+function resolvePbKey() {
+    return String(window.HUB_CONFIG?.pocketbaseAnonKey || '').trim();
+}
+
 // ----------------------------------------------------------------------------
 // Carga inicial y permisos
 // ----------------------------------------------------------------------------
 async function initClients() {
     if (!window.PB_CLIENT) return false;
-    if (!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
+    const pbUrl = resolvePbUrl();
+    const pbKey = resolvePbKey();
+    const normalized = String(pbUrl || '').replace(/\/+$/, '');
+    const currentBase = String(window.globalPocketBase?.baseUrl || '').replace(/\/+$/, '');
+    if (!window.globalPocketBase || (normalized && normalized !== currentBase)) {
+        window.globalPocketBase = window.PB_CLIENT.createClient(pbUrl, pbKey);
+        window.tenantPocketBase = null;
+    }
     if (!window.tenantPocketBase) window.tenantPocketBase = window.globalPocketBase.schema(FIN_SCHEMA);
     return true;
 }
@@ -734,7 +751,7 @@ window.saveAllColors = async function saveAllColors() {
 };
 
 // ----------------------------------------------------------------------------
-// ICS / Outlook
+// ICS / Outlook local
 // ----------------------------------------------------------------------------
 function resolveIcsFeedUrl() {
     if (typeof window.getCpCalendarIcsUrl === 'function') {
@@ -752,15 +769,179 @@ function resolveIcsFeedUrl() {
     return url;
 }
 
+function addDownloadParam(url) {
+    if (!url) return '';
+    try {
+        const parsed = new URL(url, window.location.origin);
+        parsed.searchParams.set('download', '1');
+        return parsed.toString();
+    } catch (_) {
+        if (/[?&]download=/.test(url)) return url;
+        return url + (url.includes('?') ? '&' : '?') + 'download=1';
+    }
+}
+
+function toIcsTimestampUtc(value) {
+    const d = value instanceof Date ? value : new Date(value || Date.now());
+    if (Number.isNaN(d.getTime())) return '';
+    const pad2 = (n) => String(n).padStart(2, '0');
+    return (
+        d.getUTCFullYear()
+        + pad2(d.getUTCMonth() + 1)
+        + pad2(d.getUTCDate())
+        + 'T'
+        + pad2(d.getUTCHours())
+        + pad2(d.getUTCMinutes())
+        + pad2(d.getUTCSeconds())
+        + 'Z'
+    );
+}
+
+function escapeIcsTextLocal(value) {
+    return String(value || '')
+        .replace(/\\/g, '\\\\')
+        .replace(/\n/g, '\\n')
+        .replace(/,/g, '\\,')
+        .replace(/;/g, '\\;');
+}
+
+function foldIcsLineLocal(line) {
+    const text = String(line || '');
+    if (text.length <= 74) return [text];
+    const out = [];
+    let rest = text;
+    while (rest.length > 74) {
+        out.push(rest.slice(0, 74));
+        rest = ` ${rest.slice(74)}`;
+    }
+    out.push(rest);
+    return out;
+}
+
+function pushIcsLineLocal(lines, line) {
+    foldIcsLineLocal(line).forEach((chunk) => lines.push(chunk));
+}
+
+function asYmd(value) {
+    if (!value) return '';
+    if (typeof value === 'string') {
+        const normalized = normalizeDate(value);
+        if (normalized) return normalized;
+    }
+    if (value instanceof Date) return ymd(value);
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? '' : ymd(parsed);
+}
+
+function toIcsDateLocal(value) {
+    return asYmd(value).replace(/-/g, '');
+}
+
+function downloadTextAsFile(filename, text, contentType) {
+    const blob = new Blob([String(text || '')], { type: contentType || 'text/plain;charset=utf-8' });
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = filename;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
+}
+
+function getExportEventsFromCalendar() {
+    if (calendarObj && typeof calendarObj.getEvents === 'function') {
+        const visible = calendarObj.getEvents() || [];
+        if (visible.length) return visible;
+    }
+    return safeArray(allCalendarEvents);
+}
+
+function buildLocalIcsExport() {
+    const events = getExportEventsFromCalendar();
+    if (!events.length) return '';
+
+    const nowStamp = toIcsTimestampUtc(new Date());
+    const lines = [];
+    pushIcsLineLocal(lines, 'BEGIN:VCALENDAR');
+    pushIcsLineLocal(lines, 'VERSION:2.0');
+    pushIcsLineLocal(lines, 'PRODID:-//Cotizador//Casa de Piedra Local Export//ES');
+    pushIcsLineLocal(lines, 'CALSCALE:GREGORIAN');
+    pushIcsLineLocal(lines, 'METHOD:PUBLISH');
+    pushIcsLineLocal(lines, 'X-WR-CALNAME:Casa de Piedra - Export local');
+
+    events.forEach((eventLike, idx) => {
+        const ext = eventLike.extendedProps || {};
+        const isPrem = String(ext.kind || '').toLowerCase() === KIND_PREMONTAJE;
+        const kindLabel = isPrem ? 'PREMONTAJE' : 'EVENTO';
+
+        const start = asYmd(ext.sourceStart || eventLike.startStr || eventLike.start);
+        if (!start) return;
+
+        let endInclusive = asYmd(ext.sourceEnd);
+        if (!endInclusive) {
+            const endExclusive = asYmd(eventLike.endStr || eventLike.end);
+            endInclusive = endExclusive ? addDays(endExclusive, -1) : start;
+        }
+        if (!endInclusive || endInclusive < start) endInclusive = start;
+        const endExclusive = addDays(endInclusive, 1);
+
+        const spaceName = getSpaceById(ext.spaceId)?.nombre || ext.entry?.detail?.espacio_nombre || ext.order?.espacio_nombre || '';
+        const client = String(ext.order?.cliente_nombre || '').trim();
+        const quote = String(ext.order?.nombre_cotizacion || '').trim();
+        const folio = String(ext.order?.numero_orden || ext.orderId || '').trim();
+        const status = String(ext.status || '').trim() || 'pendiente';
+        const summary = String(eventLike.title || `${kindLabel} ${idx + 1}`).trim();
+        const uidBase = String(eventLike.id || `${kindLabel}-${idx + 1}`).replace(/\s+/g, '-');
+        const uid = `${uidBase}@casadepiedra-local`;
+        const description = [
+            `Tipo: ${isPrem ? 'Premontaje' : 'Evento'}`,
+            `Estatus: ${status}`,
+            `Folio: ${folio || 'N/D'}`,
+            `Cliente: ${client || 'N/D'}`,
+            `Cotizacion: ${quote || 'Sin nombre'}`,
+            `Espacio: ${spaceName || 'N/D'}`
+        ].join('. ') + '.';
+
+        pushIcsLineLocal(lines, 'BEGIN:VEVENT');
+        pushIcsLineLocal(lines, `UID:${escapeIcsTextLocal(uid)}`);
+        pushIcsLineLocal(lines, `DTSTAMP:${nowStamp}`);
+        pushIcsLineLocal(lines, `DTSTART;VALUE=DATE:${toIcsDateLocal(start)}`);
+        pushIcsLineLocal(lines, `DTEND;VALUE=DATE:${toIcsDateLocal(endExclusive)}`);
+        pushIcsLineLocal(lines, `SUMMARY:${escapeIcsTextLocal(summary)}`);
+        pushIcsLineLocal(lines, `DESCRIPTION:${escapeIcsTextLocal(description)}`);
+        pushIcsLineLocal(lines, `LOCATION:${escapeIcsTextLocal(spaceName || 'Casa de Piedra')}`);
+        pushIcsLineLocal(lines, 'STATUS:CONFIRMED');
+        pushIcsLineLocal(lines, `CATEGORIES:${kindLabel}`);
+        pushIcsLineLocal(lines, 'END:VEVENT');
+    });
+
+    pushIcsLineLocal(lines, 'END:VCALENDAR');
+    return `${lines.join('\r\n')}\r\n`;
+}
+
+function downloadLocalIcsExport(message) {
+    const body = buildLocalIcsExport();
+    if (!body) {
+        window.showToast?.('No hay eventos para exportar en el calendario.', 'error');
+        return false;
+    }
+    const dateTag = asYmd(new Date()) || 'export';
+    downloadTextAsFile(`casa-de-piedra-calendario-${dateTag}.ics`, body, 'text/calendar;charset=utf-8');
+    if (message) window.showToast?.(message, 'success');
+    return true;
+}
+
 function hydrateIcsInput() {
+    const url = resolveIcsFeedUrl();
     const input = document.getElementById('ics-feed-url');
-    if (!input) return;
-    input.value = resolveIcsFeedUrl();
+    if (input) input.value = url;
 }
 
 window.copyCalendarFeedLink = async function copyCalendarFeedLink() {
     const url = resolveIcsFeedUrl();
-    if (!url) return window.showToast?.('No se pudo resolver la URL ICS. Revisa HUB_CONFIG o setCpCalendarIcsConfig().', 'error');
+    if (!url) return window.showToast?.('No se pudo resolver la URL ICS del calendario.', 'error');
     try {
         await navigator.clipboard.writeText(url);
         window.showToast?.('Enlace ICS copiado.', 'success');
@@ -769,24 +950,69 @@ window.copyCalendarFeedLink = async function copyCalendarFeedLink() {
     }
 };
 
-window.openOutlookSubscription = function openOutlookSubscription() {
+function toOutlookDesktopProtocolUrl(url) {
+    const text = String(url || '').trim();
+    if (!text) return '';
+    try {
+        const parsed = new URL(text, window.location.origin);
+        parsed.protocol = parsed.protocol === 'https:' ? 'webcals:' : 'webcal:';
+        return parsed.toString();
+    } catch (_) {
+        if (/^https:\/\//i.test(text)) return `webcals://${text.slice(8)}`;
+        if (/^http:\/\//i.test(text)) return `webcal://${text.slice(7)}`;
+        return '';
+    }
+}
+
+window.openOutlookDesktopSubscription = async function openOutlookDesktopSubscription() {
     const url = resolveIcsFeedUrl();
     if (!url) return window.showToast?.('No se pudo resolver la URL ICS del calendario.', 'error');
-    const outlook = `https://outlook.live.com/calendar/0/addcalendar?url=${encodeURIComponent(url)}&name=${encodeURIComponent('Casa de Piedra - Calendario')}`;
-    window.open(outlook, '_blank', 'noopener');
+    const protocolUrl = toOutlookDesktopProtocolUrl(url);
+    if (!protocolUrl) {
+        await window.copyCalendarFeedLink();
+        window.showToast?.('No se pudo abrir Outlook automaticamente. Enlace copiado.', 'error');
+        return;
+    }
+    try {
+        window.location.href = protocolUrl;
+        window.showToast?.('Intentando abrir Outlook para suscribir el calendario...', 'success');
+    } catch (_) {
+        await window.copyCalendarFeedLink();
+        window.showToast?.('No se pudo abrir Outlook automaticamente. Enlace copiado.', 'error');
+    }
 };
 
-window.openGoogleSubscription = function openGoogleSubscription() {
+window.downloadCalendarIcs = async function downloadCalendarIcs() {
     const url = resolveIcsFeedUrl();
-    if (!url) return window.showToast?.('No se pudo resolver la URL ICS del calendario.', 'error');
-    const google = `https://calendar.google.com/calendar/u/0/r?cid=${encodeURIComponent(url)}`;
-    window.open(google, '_blank', 'noopener');
+    if (!url) {
+        downloadLocalIcsExport('No se pudo resolver URL ICS del servidor. Se exporto version local.');
+        return;
+    }
+    const downloadUrl = addDownloadParam(url);
+    try {
+        const response = await fetch(downloadUrl, {
+            method: 'GET',
+            cache: 'no-store'
+        });
+        const body = await response.text();
+        if (!response.ok || !/BEGIN:VCALENDAR/i.test(body)) {
+            downloadLocalIcsExport('El servidor no devolvio ICS valido. Se exporto version local.');
+            return;
+        }
+        downloadTextAsFile('casa-de-piedra-calendario.ics', body, 'text/calendar;charset=utf-8');
+        window.showToast?.('ICS descargado correctamente.', 'success');
+    } catch (_) {
+        downloadLocalIcsExport('No se pudo conectar al ICS del servidor. Se exporto version local.');
+    }
 };
 
 // ----------------------------------------------------------------------------
 // Arranque
 // ----------------------------------------------------------------------------
 document.addEventListener('DOMContentLoaded', async () => {
+    if (typeof window.getHubConfigReady === 'function') {
+        try { await window.getHubConfigReady(); } catch (_) {}
+    }
     const ok = await initClients();
     if (!ok) return;
 
