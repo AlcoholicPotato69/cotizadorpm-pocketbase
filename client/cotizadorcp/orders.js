@@ -4719,9 +4719,9 @@ window.getOrderHTML = function(o, type) {
     
     let clientName = o.cliente_nombre || 'Cliente'; let clientRfc = o.cliente_rfc; let nameSizeClass = 'text-xl'; if (clientName.length > 35) nameSizeClass = 'text-xs'; else if (clientName.length > 25) nameSizeClass = 'text-sm'; 
     const guests = o.personas || 1;
-    const isApprovedQuote = !isOrder && ['aprobada', 'finalizada'].includes(String(o.status || '').toLowerCase());
-    const showSensitiveClientData = isOrder || isApprovedQuote || o.show_sensitive_client_data === true;
-    const clientComponent = `<div class="cp-pdf-summary flex flex-row justify-between items-center mb-2 p-2 bg-gray-50 rounded border border-gray-100" data-base-resource="summary"><div class="w-1/2 border-r border-gray-200 pr-2"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Cliente / Empresa</p><p class="font-black ${nameSizeClass} text-gray-800 leading-tight">${clientName}</p></div><div class="w-1/2 pl-2"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Contacto / Fiscal</p>${showSensitiveClientData ? `<p class="font-mono text-xs text-gray-700 truncate">${o.cliente_email || 'Sin correo'}</p>${clientRfc ? `<p class="font-mono text-xs text-gray-700 mt-0.5">RFC: <strong>${clientRfc}</strong></p>` : ''}` : `<div class="h-4"></div><div class="h-4 mt-0.5"></div>`}<p class="font-mono text-xs text-brand-red font-bold mt-1">Personas: ${guests}</p></div></div>`; 
+    const clientComponent = isOrder
+        ? `<div class="cp-pdf-summary flex flex-row justify-between items-center mb-2 p-2 bg-gray-50 rounded border border-gray-100" data-base-resource="summary"><div class="w-1/2 border-r border-gray-200 pr-2"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Cliente / Empresa</p><p class="font-black ${nameSizeClass} text-gray-800 leading-tight">${clientName}</p></div><div class="w-1/2 pl-2"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Contacto / Fiscal</p><p class="font-mono text-xs text-gray-700 truncate">${o.cliente_email || 'Sin correo'}</p>${clientRfc ? `<p class="font-mono text-xs text-gray-700 mt-0.5">RFC: <strong>${clientRfc}</strong></p>` : ''}<p class="font-mono text-xs text-brand-red font-bold mt-1">Personas: ${guests}</p></div></div>`
+        : `<div class="cp-pdf-summary flex flex-row justify-between items-center mb-2 p-2 bg-gray-50 rounded border border-gray-100" data-base-resource="summary"><div class="w-full"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Cliente / Empresa</p><p class="font-black ${nameSizeClass} text-gray-800 leading-tight">${clientName}</p></div></div>`; 
     
     const __orderEscapeHtml = (v) => String(v || '')
         .replace(/&/g, '&amp;')
@@ -4775,6 +4775,11 @@ window.getOrderHTML = function(o, type) {
         if (sid && __orderScheduleBySpace[sid]) return __orderScheduleBySpace[sid];
         return __orderDefaultSchedule;
     };
+    const __orderBuildPeopleCellHtml = (peopleValue) => {
+        const parsed = parseInt(peopleValue, 10);
+        if (!Number.isFinite(parsed) || parsed <= 0) return '<span class="text-gray-300">---</span>';
+        return `${parsed} persona${parsed === 1 ? '' : 's'}`;
+    };
     const __orderBuildDateCellHtml = (primaryDate, secondaryDate, spaceId) => {
         const schedule = __orderGetScheduleForSpace(spaceId);
         const scheduleHtml = schedule?.text
@@ -4820,22 +4825,22 @@ window.getOrderHTML = function(o, type) {
                 const breakdown = calculateDayByDayTotal(spObj, fi, ff, spGuests);
                 rentalTotal += breakdown.total;
                 breakdown.details.forEach((day, idx) => {
-                    rentalRows += `<tr><td class="py-2 px-3 align-top text-[11px] text-gray-700 leading-snug break-words"><span class="font-bold">${spName}</span> - Renta ${day.dayName}${(idx === 0 && spKey) ? `<br><span class="text-[9px] text-gray-400 italic">${spKey}</span>` : ''}</td><td class="py-2 px-3 text-center text-[10px] text-gray-500">${__orderBuildDateCellHtml(day.date, '', sid)}</td><td class="py-2 px-3 text-right font-bold text-[11px] text-gray-700">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(day.price)}</td></tr>`;
+                    rentalRows += `<tr><td class="py-2 px-3 align-top text-[11px] text-gray-700 leading-snug break-words"><span class="font-bold">${spName}</span> - Renta ${day.dayName}${(idx === 0 && spKey) ? `<br><span class="text-[9px] text-gray-400 italic">${spKey}</span>` : ''}</td><td class="py-2 px-3 text-left text-[10px] text-gray-500">${__orderBuildPeopleCellHtml(spGuests)}</td><td class="py-2 px-3 text-left text-[10px] text-gray-500">${__orderBuildDateCellHtml(day.date, '', sid)}</td><td class="py-2 px-3 text-right font-bold text-[11px] text-gray-700">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(day.price)}</td></tr>`;
                 });
             } else {
                 const rawSubtotal = parseFloat(sp.subtotal_espacio || sp.subtotal || 0);
                 rentalTotal += rawSubtotal;
-                rentalRows += `<tr><td class="py-2 px-3 align-top text-[11px] leading-snug break-words"><p class="font-bold text-gray-800 text-[11px]">${spName}</p>${spKey ? `<span class="bg-gray-100 text-gray-500 px-1 py-0.5 rounded text-[10px] font-mono mt-0.5 inline-block">${spKey}</span>` : ''}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-[10px]">${__orderBuildDateCellHtml(window.safeFormatDate(fi), window.safeFormatDate(ff), sid)}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-[11px]">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(rawSubtotal)}</td></tr>`;
+                rentalRows += `<tr><td class="py-2 px-3 align-top text-[11px] leading-snug break-words"><p class="font-bold text-gray-800 text-[11px]">${spName}</p>${spKey ? `<span class="bg-gray-100 text-gray-500 px-1 py-0.5 rounded text-[10px] font-mono mt-0.5 inline-block">${spKey}</span>` : ''}</td><td class="py-2 px-3 align-top text-left text-gray-500 text-[10px]">${__orderBuildPeopleCellHtml(spGuests)}</td><td class="py-2 px-3 align-top text-left text-gray-500 text-[10px]">${__orderBuildDateCellHtml(window.safeFormatDate(fi), window.safeFormatDate(ff), sid)}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-[11px]">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(rawSubtotal)}</td></tr>`;
             }
             if (spIdx === detailSpaces.length - 1) rentalRows += '';
         });
     } else if (space && o.fecha_inicio && o.fecha_fin) {
         const dayBreakdown = calculateDayByDayTotal(space, o.fecha_inicio, o.fecha_fin, guests);
         rentalTotal = dayBreakdown.total;
-        dayBreakdown.details.forEach((day, idx) => { rentalRows += `<tr><td class="py-2 px-3 align-top text-[11px] text-gray-700 leading-snug break-words"><span class="font-bold">${space.nombre}</span> - Renta ${day.dayName}${idx === 0 ? `<br><span class="text-[9px] text-gray-400 italic">${space.clave}</span>` : ''}</td><td class="py-2 px-3 text-center text-[10px] text-gray-500">${__orderBuildDateCellHtml(day.date, '', space.id || o.espacio_id)}</td><td class="py-2 px-3 text-right font-bold text-[11px] text-gray-700">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(day.price)}</td></tr>`; });
+        dayBreakdown.details.forEach((day, idx) => { rentalRows += `<tr><td class="py-2 px-3 align-top text-[11px] text-gray-700 leading-snug break-words"><span class="font-bold">${space.nombre}</span> - Renta ${day.dayName}${idx === 0 ? `<br><span class="text-[9px] text-gray-400 italic">${space.clave}</span>` : ''}</td><td class="py-2 px-3 text-left text-[10px] text-gray-500">${__orderBuildPeopleCellHtml(guests)}</td><td class="py-2 px-3 text-left text-[10px] text-gray-500">${__orderBuildDateCellHtml(day.date, '', space.id || o.espacio_id)}</td><td class="py-2 px-3 text-right font-bold text-[11px] text-gray-700">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(day.price)}</td></tr>`; });
     } else {
         const basePrice = parseFloat(space ? space.precio_base : 0); rentalTotal = basePrice;
-        rentalRows = `<tr><td class="py-2 px-3 align-top text-[11px] leading-snug break-words"><p class="font-bold text-gray-800 text-[11px]">${o.espacio_nombre}</p>${descHTML}<span class="bg-gray-100 text-gray-500 px-1 py-0.5 rounded text-[10px] font-mono mt-0.5 inline-block">${o.espacio_clave || ''}</span></td><td class="py-2 px-3 align-top text-center text-gray-500 text-[10px]">${__orderBuildDateCellHtml(window.safeFormatDate(o.fecha_inicio), window.safeFormatDate(o.fecha_fin), o.espacio_id)}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-[11px]">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(basePrice)}</td></tr>`;
+        rentalRows = `<tr><td class="py-2 px-3 align-top text-[11px] leading-snug break-words"><p class="font-bold text-gray-800 text-[11px]">${o.espacio_nombre}</p>${descHTML}<span class="bg-gray-100 text-gray-500 px-1 py-0.5 rounded text-[10px] font-mono mt-0.5 inline-block">${o.espacio_clave || ''}</span></td><td class="py-2 px-3 align-top text-left text-gray-500 text-[10px]">${__orderBuildPeopleCellHtml(guests)}</td><td class="py-2 px-3 align-top text-left text-gray-500 text-[10px]">${__orderBuildDateCellHtml(window.safeFormatDate(o.fecha_inicio), window.safeFormatDate(o.fecha_fin), o.espacio_id)}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-[11px]">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(basePrice)}</td></tr>`;
     }
     
     let runningSubtotal = rentalTotal; let rowsHtml = rentalRows; 
@@ -4853,16 +4858,15 @@ window.getOrderHTML = function(o, type) {
             desc += ' - ' + c.meta.dates.map(d => window.safeFormatDate(d)).join(', ');
         }
         const conceptPeople = __orderResolveConceptPeople(c);
-        if (conceptPeople > 0) desc += ` (${conceptPeople} persona${conceptPeople === 1 ? '' : 's'})`;
         const descHtml = __orderFormatConceptDescription(desc);
 
         const amountCell = (Math.abs(parseFloat(amount || 0)) < 0.000001)
             ? '---'
             : `${sign} ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(amount)}`;
-        rowsHtml += `<tr><td class="py-2 px-3 align-top text-[13px] font-medium text-gray-600 leading-snug break-words">${descHtml}</td><td class="py-2 px-3"></td><td class="py-2 px-3 text-right text-[13px] font-medium text-gray-600">${amountCell}</td></tr>`;
+        rowsHtml += `<tr><td class="py-2 px-3 align-top text-[13px] font-medium text-gray-600 leading-snug break-words">${descHtml}</td><td class="py-2 px-3 text-left text-[11px] text-gray-500">${__orderBuildPeopleCellHtml(conceptPeople)}</td><td class="py-2 px-3"></td><td class="py-2 px-3 text-right text-[13px] font-medium text-gray-600">${amountCell}</td></tr>`;
     });
 
-    if (o.tipo_ajuste && o.tipo_ajuste !== 'ninguno') { let val = parseFloat(o.valor_ajuste); let displayAmount = val; if (o.ajuste_es_porcentaje) { displayAmount = runningSubtotal * (val / 100); } const sign = o.tipo_ajuste === 'descuento' ? '-' : '+'; if (o.tipo_ajuste === 'descuento') runningSubtotal -= displayAmount; else runningSubtotal += displayAmount; rowsHtml += `<tr class="bg-gray-50"><td class="py-2 px-3 italic text-[12px] text-gray-500">Ajuste Global</td><td></td><td class="py-2 px-3 text-right font-bold text-[12px] text-gray-600">${sign} ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(displayAmount)}</td></tr>`; }
+    if (o.tipo_ajuste && o.tipo_ajuste !== 'ninguno') { let val = parseFloat(o.valor_ajuste); let displayAmount = val; if (o.ajuste_es_porcentaje) { displayAmount = runningSubtotal * (val / 100); } const sign = o.tipo_ajuste === 'descuento' ? '-' : '+'; if (o.tipo_ajuste === 'descuento') runningSubtotal -= displayAmount; else runningSubtotal += displayAmount; rowsHtml += `<tr class="bg-gray-50"><td class="py-2 px-3 italic text-[12px] text-gray-500">Ajuste Global</td><td class="py-2 px-3 text-left text-[11px] text-gray-300">---</td><td></td><td class="py-2 px-3 text-right font-bold text-[12px] text-gray-600">${sign} ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(displayAmount)}</td></tr>`; }
     const __orderTableRows = (String(rowsHtml).match(/<tr\b/gi) || []).length;
     const __orderTableChars = String(rowsHtml).replace(/<[^>]+>/g, '').length;
     let __orderDensityLevel = 0;
@@ -4930,12 +4934,13 @@ window.getOrderHTML = function(o, type) {
                     ${isOrder ? `<div class="mb-2 bg-gray-100 p-2 rounded text-base flex justify-between"><span>Folio de Servicio: <strong class="font-black text-lg">${folioUnificado}</strong></span><span>Contrato: <strong class="font-black text-lg">${o.numero_contrato||'---'}</strong></span></div>` : ''}
                     <table class="w-full text-left mb-2 mt-3 table-fixed border-separate border-spacing-0">
                         <colgroup>
-                            <col style="width: 64%;">
-                            <col style="width: 16%;">
+                            <col style="width: 52%;">
+                            <col style="width: 14%;">
+                            <col style="width: 14%;">
                             <col style="width: 20%;">
                         </colgroup>
                         <thead class="cp-pdf-table-head bg-gray-100 text-sm font-black text-gray-500 uppercase">
-                            <tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">Fecha</th><th class="py-2 px-3 text-right rounded-r">Importe</th></tr>
+                            <tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-left">Personas</th><th class="py-2 px-3 text-left">Fecha</th><th class="py-2 px-3 text-right rounded-r">Importe</th></tr>
                         </thead>
                         <tbody class="cp-pdf-table-body divide-y divide-gray-50 text-[12px]" data-base-resource="table-body">${rowsHtml}</tbody>
                     </table>
