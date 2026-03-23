@@ -9,8 +9,10 @@
   <title>Configuración Finanzas - Admin</title>
 
   <!-- Local assets -->
-  <script src="../../assets/libs/js/tailwindcss.js"></script>
-  <link rel="stylesheet" href="../../assets/libs/css/all.min.css">
+  <link rel="preload" as="script" href="../../assets/libs/js/tailwindcss.js">
+    <script src="../../assets/libs/js/tailwindcss.js"></script>
+  <link rel="preload" as="style" href="../../assets/libs/css/all.min.css">
+    <link rel="stylesheet" href="../../assets/libs/css/all.min.css">
 
   <!-- PocketBase + Hub config + Layout (fijo para que SI renderice layout) -->
   <script src="../services/pb-client.js"></script>
@@ -170,6 +172,9 @@
       opacity: 0.85;
     }
   </style>
+    <!-- Local Animations -->
+    <link rel="preload" as="style" href="../../assets/libs/css/animate.min.css">
+    <link rel="stylesheet" href="../../assets/libs/css/animate.min.css">
 </head>
 
 <body class="bg-brand-gray text-gray-800 flex flex-col min-h-screen tenant-pm">
@@ -213,7 +218,7 @@
     </div>
   </nav>
 
-  <main class="flex-grow container mx-auto px-6 py-8 max-w-7xl animate-enter">
+  <main class="flex-grow container mx-auto px-6 py-8 max-w-7xl animate__animated animate__fadeInLeft animate__faster">
 
     <div class="mb-6">
       <div class="bg-white rounded-3xl border border-gray-100 shadow-sm p-5 flex items-center justify-between">

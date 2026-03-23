@@ -136,7 +136,7 @@ function __orderWrapLetterheadPage(innerHtml, options = {}) {
     const top = frame.top + ((frame.height - finalH) / 2);
     const bgUrl = __orderCssSafeUrl(__CP_LETTERHEAD_URL);
     const imageLayer = bgUrl
-        ? `<img src='${bgUrl}' crossorigin='anonymous' onerror='this.style.display=\"none\"' style='position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;'>`
+        ? `<img src='${bgUrl}' ${bgUrl.startsWith('http') ? "crossorigin='anonymous'" : ""} onerror='this.style.display=\"none\"' style='position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;'>`
         : '';
     return `<div style="position:relative;width:${__PDF_PAGE_WIDTH_PX}px;height:${__PDF_PAGE_HEIGHT_PX}px;box-sizing:border-box;overflow:visible;background:#f5f5f5;">${imageLayer}<div data-pdf-preview-frame="1" data-base-width="${baseWidth}" data-base-height="${baseHeight}" style="position:absolute;left:${left.toFixed(2)}px;top:${top.toFixed(2)}px;width:${baseWidth}px;height:${baseHeight}px;transform:scale(${scale.toFixed(6)});transform-origin:top left;overflow:visible;z-index:1;">${innerHtml}</div></div>`;
 }

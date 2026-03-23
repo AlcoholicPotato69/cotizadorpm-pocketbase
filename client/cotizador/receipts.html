@@ -6,7 +6,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Recibos - Plaza Mayor</title>
     
+    <link rel="preload" as="script" href="../../assets/libs/js/tailwindcss.js">
     <script src="../../assets/libs/js/tailwindcss.js"></script>
+    <link rel="preload" as="style" href="../../assets/libs/css/all.min.css">
     <link rel="stylesheet" href="../../assets/libs/css/all.min.css">
     <script src="../../assets/libs/js/jspdf.js"></script>
     <script src="../../assets/libs/js/html2pdf.js"></script>
@@ -79,6 +81,9 @@
             background: white;
         }
 </style>
+    <!-- Local Animations -->
+    <link rel="preload" as="style" href="../../assets/libs/css/animate.min.css">
+    <link rel="stylesheet" href="../../assets/libs/css/animate.min.css">
 </head>
 <body data-page-mode="receipts" class="bg-brand-gray text-gray-800 flex flex-col h-screen overflow-hidden">
     <div id="toast-container" class="fixed bottom-5 right-5 z-[70] flex flex-col gap-2"></div>
@@ -100,7 +105,7 @@
         </div>
     </nav>
 
-    <main class="flex-grow container mx-auto px-2 md:px-6 py-4 h-[calc(100vh-64px)] max-w-[98%] animate-enter overflow-hidden">
+    <main class="flex-grow container mx-auto px-2 md:px-6 py-4 h-[calc(100vh-64px)] max-w-[98%]  overflow-hidden animate__animated animate__fadeInLeft animate__faster">
         
         <div class="flex flex-col lg:flex-row gap-4 h-full">
             

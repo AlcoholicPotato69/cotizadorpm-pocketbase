@@ -6,7 +6,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cotizaciones - Casa de Piedra</title>
     
+    <link rel="preload" as="script" href="../../assets/libs/js/tailwindcss.js">
     <script src="../../assets/libs/js/tailwindcss.js"></script>
+    <link rel="preload" as="style" href="../../assets/libs/css/all.min.css">
     <link rel="stylesheet" href="../../assets/libs/css/all.min.css">
     
     <script src="../js/hub-config.js"></script>
@@ -44,6 +46,9 @@
             .fc-button { width: 100%; margin-bottom: 0.25rem; }
         }
     </style>
+    <!-- Local Animations -->
+    <link rel="preload" as="style" href="../../assets/libs/css/animate.min.css">
+    <link rel="stylesheet" href="../../assets/libs/css/animate.min.css">
 </head>
 <body class="bg-brand-gray text-gray-800 flex flex-col min-h-screen">
     <script>const TENANT_SCHEMA='finanzas_casadepiedra';</script>
@@ -62,7 +67,7 @@
         </div>
     </nav>
     
-    <main class="flex-grow container mx-auto px-4 py-8 max-w-7xl animate-enter">
+    <main class="flex-grow container mx-auto px-4 py-8 max-w-7xl animate__animated animate__fadeInLeft animate__faster">
         <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 mb-6 flex flex-col md:flex-row gap-4 justify-between items-center">
             <h2 class="font-black text-2xl text-gray-800 uppercase tracking-tight">Cotizaciones</h2>
             <div class="relative w-full md:w-1/2"><i class="fa-solid fa-search absolute left-3 top-3.5 text-gray-400 text-xs"></i><input type="text" id="search-orders" placeholder="Buscar por nombre de cotización, cliente o folio..." class="w-full pl-9 pr-4 py-3 border border-gray-200 rounded-full text-sm outline-none focus:border-brand-red focus:ring-4 focus:ring-red-50 transition"></div>

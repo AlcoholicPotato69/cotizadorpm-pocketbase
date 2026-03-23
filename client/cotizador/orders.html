@@ -6,7 +6,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cotizaciones - Plaza Mayor</title>
     
+    <link rel="preload" as="script" href="../../assets/libs/js/tailwindcss.js">
     <script src="../../assets/libs/js/tailwindcss.js"></script>
+    <link rel="preload" as="style" href="../../assets/libs/css/all.min.css">
     <link rel="stylesheet" href="../../assets/libs/css/all.min.css">
     
     <script src="../js/hub-config.js"></script>
@@ -36,6 +38,9 @@
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         input:read-only { background-color: #f9fafb; color: #6b7280; cursor: not-allowed; }
     </style>
+    <!-- Local Animations -->
+    <link rel="preload" as="style" href="../../assets/libs/css/animate.min.css">
+    <link rel="stylesheet" href="../../assets/libs/css/animate.min.css">
 </head>
 <body class="bg-brand-gray text-gray-800 flex flex-col min-h-screen">
     <script>const TENANT_SCHEMA='finanzas';</script>
@@ -55,7 +60,7 @@
         </div>
     </nav>
     
-    <main id="orders-list-section" class="flex-grow container mx-auto px-4 py-8 max-w-7xl animate-enter">
+    <main id="orders-list-section" class="flex-grow container mx-auto px-4 py-8 max-w-7xl animate__animated animate__fadeInLeft animate__faster">
         <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 mb-6 flex flex-col md:flex-row gap-4 justify-between items-center">
             <h2 class="font-black text-2xl text-gray-800 uppercase tracking-tight">Cotizaciones</h2>
             <div class="relative w-full md:w-1/2">

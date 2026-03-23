@@ -4,7 +4,9 @@
 <head>
     <meta charset="UTF-8">
     <title>Agenda - Plaza Mayor</title>
+    <link rel="preload" as="script" href="../../assets/libs/js/tailwindcss.js">
     <script src="../../assets/libs/js/tailwindcss.js"></script>
+    <link rel="preload" as="style" href="../../assets/libs/css/all.min.css">
     <link rel="stylesheet" href="../../assets/libs/css/all.min.css">
     <script src="../js/hub-config.js"></script>
     <script src="../services/pb-client.js"></script>
@@ -30,6 +32,9 @@
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
+    <!-- Local Animations -->
+    <link rel="preload" as="style" href="../../assets/libs/css/animate.min.css">
+    <link rel="stylesheet" href="../../assets/libs/css/animate.min.css">
 </head>
 <body class="bg-brand-gray text-gray-800 flex flex-col min-h-screen relative">
     <div id="toast-container" class="fixed bottom-5 right-5 z-[70] flex flex-col gap-2"></div>
@@ -50,7 +55,7 @@
             <div class="flex-grow"></div>
         </div>
     </nav>
-    <main class="flex-grow container mx-auto px-4 md:px-6 py-6 md:py-8 max-w-7xl animate-enter">
+    <main class="flex-grow container mx-auto px-4 md:px-6 py-6 md:py-8 max-w-7xl animate__animated animate__fadeInLeft animate__faster">
         <div id="v_calendar" class="view-section fade-in h-full flex flex-col">
             <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 mb-6 flex flex-col md:flex-row justify-between items-stretch md:items-center gap-4">
                 <div class="flex items-center gap-3">

@@ -110,6 +110,21 @@
                     max-height:42vh;
                 }
             }
+            @keyframes softFadeIn {
+                0% { opacity: 0; transform: translateY(8px); }
+                100% { opacity: 1; transform: translateY(0); }
+            }
+            @keyframes titlePulse {
+                0% { opacity: 0; transform: scale(0.95); }
+                100% { opacity: 1; transform: scale(1); }
+            }
+            body > main, #main-container, .main-content {
+                animation: softFadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+            }
+            .title-anim {
+                display: inline-block;
+                animation: titlePulse 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+            }
         `;
         document.head.appendChild(style);
     }
@@ -222,9 +237,22 @@
 
     function getCurrentModuleTitle() {
         const path = window.location.pathname.toLowerCase();
+        const file = path.split('/').pop().split('?')[0].split('#')[0];
         
-        if (path.includes('users') || path.includes('system') || path.includes('config')) return 'CONFIGURACIÓN';
-        if (path.includes('finanzas') || path.includes('cotiza') || path.includes('order') || path.includes('catalog') || path.includes('clientes') || path.includes('report')) return 'FINANZAS';
+        if (path.includes('/users/') || path.includes('/system/') || path.includes('/config/')) return 'CONFIGURACIÓN';
+        
+        if (file === 'orders.html') return 'COTIZACIONES';
+        if (file === 'cotizacion.html' || file === 'order_detail.html') return 'COTIZACIÓN';
+        if (file === 'catalog.html') return 'CATÁLOGO';
+        if (file === 'clientes.html') return 'CLIENTES';
+        if (file === 'contracts.html') return 'CONTRATOS';
+        if (file === 'receipts.html' || file === 'recibos.html') return 'RECIBOS';
+        if (file === 'reports.html' || file === 'report.html') return 'REPORTES';
+        if (file === 'invoices.html') return 'FACTURAS';
+        if (file === 'agenda.html') return 'AGENDA';
+        if (file === 'montajes.html') return 'MONTAJES';
+        
+        if (path.includes('/finanzas/')) return 'FINANZAS';
         
         return 'MARKETING HUB';
     }
@@ -646,7 +674,6 @@
 
     document.addEventListener('DOMContentLoaded', async () => {
         installNavigationSafetyGuards();
-        renderHeader('hidden');
         
         const nav = document.querySelector('nav[data-master-nav="1"]');
         if (nav) {
@@ -767,8 +794,10 @@
              </div>
         </div>`;
 
+        if (document.getElementById('hub-layout-header-rendered')) return;
+
         const html = `
-        <header class="bg-brand-dark text-white h-16 shadow-lg z-50 sticky top-0 w-full flex-shrink-0 font-sans border-b border-gray-800">
+        <header id="hub-layout-header-rendered" class="bg-brand-dark text-white h-16 shadow-lg z-50 sticky top-0 w-full flex-shrink-0 font-sans border-b border-gray-800">
             <div class="container mx-auto px-6 h-full flex justify-between items-center">
                 
                 <div class="flex items-center">
@@ -776,7 +805,7 @@
                         <img src="${layoutLogoSrc}" class="h-8 w-auto filter brightness-0 invert group-hover:scale-105 transition" onerror="this.style.display='none'">
                         <div class="flex flex-col justify-center leading-tight">
                             <span class="font-bold text-[10px] tracking-[0.2em] text-gray-500 group-hover:text-gray-400 transition">${layoutBrandName}</span>
-                            <span class="text-xs font-black tracking-widest uppercase whitespace-nowrap" style="color:${layoutAccentHex}">${title}</span>
+                            <span class="text-xs font-black tracking-widest uppercase whitespace-nowrap title-anim" style="color:${layoutAccentHex}">${title}</span>
                         </div>
                     </a>
                     ${userInfoHTML}
@@ -816,6 +845,22 @@
         if (document.body) document.body.insertAdjacentHTML('afterbegin', html);
         else window.addEventListener('DOMContentLoaded', () => document.body.insertAdjacentHTML('afterbegin', html));
     }
+
+    function tryRenderHeaderSync() {
+        if (document.getElementById('hub-layout-header-rendered')) return;
+        if (document.body) {
+            renderHeader('hidden');
+        } else {
+            const obs = new MutationObserver((mutations, observer) => {
+                if (document.body) {
+                    observer.disconnect();
+                    if (!document.getElementById('hub-layout-header-rendered')) renderHeader('hidden');
+                }
+            });
+            obs.observe(document.documentElement, { childList: true });
+        }
+    }
+    tryRenderHeaderSync();
 
     function initUnifiedNotifications() {
         if (IS_LOCAL) return;

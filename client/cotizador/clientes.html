@@ -5,7 +5,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Clientes - Plaza Mayor</title>
+    <link rel="preload" as="script" href="../../assets/libs/js/tailwindcss.js">
     <script src="../../assets/libs/js/tailwindcss.js"></script>
+    <link rel="preload" as="style" href="../../assets/libs/css/all.min.css">
     <link rel="stylesheet" href="../../assets/libs/css/all.min.css">
     <script src="../../assets/libs/js/chart.js"></script>
     <script src="../js/hub-config.js"></script>
@@ -20,6 +22,9 @@
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
+    <!-- Local Animations -->
+    <link rel="preload" as="style" href="../../assets/libs/css/animate.min.css">
+    <link rel="stylesheet" href="../../assets/libs/css/animate.min.css">
 </head>
 <body class="bg-brand-gray text-gray-800 flex flex-col min-h-screen relative">
     <div id="toast-container" class="fixed bottom-5 right-5 z-[70] flex flex-col gap-2"></div>
@@ -40,7 +45,7 @@
             <div class="flex-grow"></div>
         </div>
     </nav>
-    <main class="container mx-auto px-4 py-8 flex-grow">
+    <main class="container mx-auto px-4 py-8 flex-grow animate__animated animate__fadeInLeft animate__faster">
     <div class="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-6">
         <div>
             <h1 class="text-2xl font-black text-brand-dark uppercase flex items-center gap-3">

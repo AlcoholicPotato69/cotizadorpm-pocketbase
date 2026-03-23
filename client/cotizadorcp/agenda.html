@@ -5,7 +5,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Calendario Unificado - Casa de Piedra</title>
+    <link rel="preload" as="script" href="../../assets/libs/js/tailwindcss.js">
     <script src="../../assets/libs/js/tailwindcss.js"></script>
+    <link rel="preload" as="style" href="../../assets/libs/css/all.min.css">
     <link rel="stylesheet" href="../../assets/libs/css/all.min.css">
     <script src="../js/hub-config.js"></script>
     <script src="../services/pb-client.js"></script>
@@ -137,6 +139,9 @@
             .cp-pill .cp-pill-tag { font-size: 8px; padding: 1px 4px; }
         }
     </style>
+    <!-- Local Animations -->
+    <link rel="preload" as="style" href="../../assets/libs/css/animate.min.css">
+    <link rel="stylesheet" href="../../assets/libs/css/animate.min.css">
 </head>
 <body class="bg-brand-gray text-gray-800 flex flex-col min-h-screen">
     <div id="toast-container" class="fixed bottom-5 right-5 z-[90] flex flex-col gap-2"></div>
@@ -156,7 +161,7 @@
         </div>
     </nav>
 
-    <main class="flex-grow w-full px-4 md:px-6 py-5 md:py-6">
+    <main class="flex-grow w-full px-4 md:px-6 py-5 md:py-6 animate__animated animate__fadeInLeft animate__faster">
         <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200 mb-4 flex flex-col gap-3">
             <div class="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-3">
                 <div class="flex items-center gap-3">

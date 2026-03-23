@@ -6,7 +6,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Editar Cotización - Casa de Piedra</title>
     
+    <link rel="preload" as="script" href="../../assets/libs/js/tailwindcss.js">
     <script src="../../assets/libs/js/tailwindcss.js"></script>
+    <link rel="preload" as="style" href="../../assets/libs/css/all.min.css">
     <link rel="stylesheet" href="../../assets/libs/css/all.min.css">
     
     <script src="../js/hub-config.js"></script>
@@ -44,6 +46,9 @@
             .fc-button { width: 100%; margin-bottom: 0.25rem; }
         }
     </style>
+    <!-- Local Animations -->
+    <link rel="preload" as="style" href="../../assets/libs/css/animate.min.css">
+    <link rel="stylesheet" href="../../assets/libs/css/animate.min.css">
 </head>
 <body class="text-gray-800 flex flex-col min-h-screen">
     <script>
@@ -53,7 +58,7 @@
     </script>
     <script src="../js/layout.js"></script>
 
-    <main class="flex-grow container mx-auto px-4 py-8 max-w-[1440px] animate-enter">
+    <main class="flex-grow container mx-auto px-4 py-8 max-w-[1440px] animate__animated animate__fadeInLeft animate__faster">
         <div class="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 mb-6">
             <div class="flex flex-col lg:flex-row lg:items-center gap-3">
                 <div class="flex-grow">

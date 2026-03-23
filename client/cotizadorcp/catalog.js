@@ -240,18 +240,108 @@ async function loadCatalog() { const { data } = await window.tenantPocketBase.fr
 function renderSpaces(list) { 
     const g = document.getElementById('spaces-grid'); g.innerHTML=''; if(list.length === 0) { g.innerHTML = '<div class="col-span-full text-center py-10 text-gray-400 font-bold">No se encontraron espacios.</div>'; return; }
     list.forEach(s => { 
-        let displayImg = '../../assets/img/placeholder_cp.png'; if (s.imagen_url) { if (s.imagen_url.trim().startsWith('[')) { try { const parsed = JSON.parse(s.imagen_url); if (parsed.length > 0) displayImg = parsed[0]; } catch (e) { displayImg = s.imagen_url; } } else { displayImg = s.imagen_url; } }
+        let allUrls = []; try { if(s.imagen_url && typeof s.imagen_url === 'string' && s.imagen_url.startsWith('[')) allUrls = JSON.parse(s.imagen_url); else if(s.imagen_url) allUrls = [s.imagen_url]; } catch(e){}
+        if (allUrls.length === 0) allUrls = ['../../assets/img/placeholder_cp.png'];
+        
         let eTags = []; try { eTags = typeof s.etiquetas === 'string' ? JSON.parse(s.etiquetas) : (s.etiquetas || []); } catch(e){}
         let tagsHtml = ''; if(eTags.length > 0) { tagsHtml = `<div class="flex gap-1 mb-2 flex-wrap">` + eTags.map(t => `<span class="bg-gray-100 text-gray-500 border border-gray-200 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase">${t}</span>`).join('') + `</div>`; }
-        const editBtn = (myPermissions.catalog_manage && IS_CATALOG_ADMIN_PAGE) ? `<button onclick="window.openManagerModal(${s.id})" class="absolute top-3 right-3 bg-white/90 text-gray-700 p-2 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-all z-10"><i class="fa-solid fa-pen"></i></button>` : '';
+        
+        const editBtn = (myPermissions.catalog_manage && IS_CATALOG_ADMIN_PAGE) ? `<button onclick="event.stopPropagation(); window.openManagerModal(${s.id})" class="absolute top-3 right-3 bg-white/90 text-gray-700 p-2 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-all z-20"><i class="fa-solid fa-pen"></i></button>` : '';
         const actionBtn = IS_QUOTE_PAGE
-            ? `<div class="border-t pt-3"><button onclick="window.openQuoteModal(${s.id})" class="bg-gray-900 text-white w-full py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide hover:bg-brand-red transition-colors duration-300 shadow-lg"><i class="fa-solid fa-calculator mr-2"></i> Cotizar Evento</button></div>`
+            ? `<div class="border-t pt-3"><button onclick="event.stopPropagation(); window.openQuoteModal(${s.id})" class="bg-gray-900 text-white w-full py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide hover:bg-brand-red transition-colors duration-300 shadow-lg"><i class="fa-solid fa-calculator mr-2"></i> Cotizar Evento</button></div>`
             : (myPermissions.catalog_manage
-                ? `<div class="border-t pt-3"><button onclick="window.openManagerModal(${s.id})" class="bg-gray-900 text-white w-full py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide hover:bg-brand-red transition-colors duration-300 shadow-lg"><i class="fa-solid fa-sliders mr-2"></i> Administrar Espacio</button></div>`
+                ? `<div class="border-t pt-3"><button onclick="event.stopPropagation(); window.openManagerModal(${s.id})" class="bg-gray-900 text-white w-full py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide hover:bg-brand-red transition-colors duration-300 shadow-lg"><i class="fa-solid fa-sliders mr-2"></i> Administrar Espacio</button></div>`
                 : '');
-        g.innerHTML += `<div class="bg-white rounded-xl shadow-md relative group hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 overflow-hidden border border-gray-100"><div class="h-48 bg-gray-200 relative overflow-hidden">${editBtn}<img src="${displayImg}" class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"><div class="absolute bottom-3 left-4 text-white z-10"><p class="text-[10px] font-bold uppercase tracking-wider bg-brand-red px-2 py-0.5 rounded inline-block mb-1">${s.tipo}</p><h3 class="font-bold text-lg leading-tight shadow-black drop-shadow-md">${s.nombre}</h3></div></div><div class="p-5">${tagsHtml}<div class="flex justify-between items-center mb-4"><p class="text-xs text-gray-400 font-mono"><i class="fa-solid fa-tag mr-1"></i>${s.clave}</p></div><p class="text-xs text-gray-500 line-clamp-2 mb-4 h-8">${s.descripcion || ''}</p>${actionBtn}</div></div>`;
+
+        // Carousel logic: create multiple img tags and cycle them with data-index
+        const imgsHtml = allUrls.map((url, i) => `<img src="${url}" class="card-img absolute inset-0 w-full h-full object-cover transition-opacity duration-1000 ${i===0?'opacity-100':'opacity-0'}" data-index="${i}">`).join('');
+        
+        const cardHtml = `
+            <div class="bg-white rounded-xl shadow-md relative group hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 overflow-hidden border border-gray-100 cursor-pointer" 
+                 onclick="window.openPreviewCardModal(${s.id})"
+                 onmouseenter="window.startCardCarousel(this)" 
+                 onmouseleave="window.stopCardCarousel(this)">
+                <div class="h-48 bg-gray-200 relative overflow-hidden">
+                    ${editBtn}
+                    <div class="carousel-container absolute inset-0 transition-transform duration-700 group-hover:scale-110">
+                        ${imgsHtml}
+                    </div>
+                    <div class="absolute bottom-3 left-4 text-white z-10 pointer-events-none">
+                        <p class="text-[10px] font-bold uppercase tracking-wider bg-brand-red px-2 py-0.5 rounded inline-block mb-1">${s.tipo}</p>
+                        <h3 class="font-bold text-lg leading-tight shadow-black drop-shadow-md">${s.nombre}</h3>
+                    </div>
+                </div>
+                <div class="p-5">
+                    ${tagsHtml}
+                    <div class="flex justify-between items-center mb-4">
+                        <p class="text-xs text-gray-400 font-mono"><i class="fa-solid fa-tag mr-1"></i>${s.clave}</p>
+                    </div>
+                    <p class="text-xs text-gray-500 line-clamp-2 mb-4 h-8">${s.descripcion || ''}</p>
+                    ${actionBtn}
+                </div>
+            </div>`;
+        g.innerHTML += cardHtml;
     }); 
 }
+
+// Carousel helpers
+window.startCardCarousel = function(el) {
+    const imgs = el.querySelectorAll('.card-img');
+    if (imgs.length <= 1) return;
+    let current = 0;
+    el._carouselInterval = setInterval(() => {
+        imgs[current].classList.replace('opacity-100', 'opacity-0');
+        current = (current + 1) % imgs.length;
+        imgs[current].classList.replace('opacity-0', 'opacity-100');
+    }, 2000);
+};
+window.stopCardCarousel = function(el) {
+    if (el._carouselInterval) clearInterval(el._carouselInterval);
+    const imgs = el.querySelectorAll('.card-img');
+    imgs.forEach((img, i) => {
+        if (i === 0) img.classList.replace('opacity-0', 'opacity-100');
+        else img.classList.replace('opacity-100', 'opacity-0');
+    });
+};
+
+// Public Preview Modal
+window.openPreviewCardModal = function(id) {
+    const s = allSpaces.find(x => x.id === id);
+    if (!s) return;
+    let allUrls = []; try { if(s.imagen_url && typeof s.imagen_url === 'string' && s.imagen_url.startsWith('[')) allUrls = JSON.parse(s.imagen_url); else if(s.imagen_url) allUrls = [s.imagen_url]; } catch(e){}
+    if (allUrls.length === 0) allUrls = ['../../assets/img/placeholder_cp.png'];
+
+    const modal = document.createElement('div');
+    modal.id = 'preview-card-modal';
+    modal.className = 'fixed inset-0 bg-black/90 z-[1000] flex items-center justify-center p-4 backdrop-blur-md animate-enter';
+    modal.onclick = (e) => { if(e.target === modal) modal.remove(); };
+
+    let current = 0;
+    const renderContent = () => {
+        const dots = allUrls.map((_, i) => `<div class="w-2 h-2 rounded-full ${i===current?'bg-white':'bg-white/30'}" onclick="event.stopPropagation(); window._updatePreviewIndex(${i})"></div>`).join('');
+        modal.innerHTML = `
+            <div class="relative w-full max-w-4xl aspect-video bg-black rounded-2xl overflow-hidden shadow-2xl border border-white/10 flex items-center justify-center">
+                <button onclick="this.closest('#preview-card-modal').remove()" class="absolute top-4 right-4 text-white/70 hover:text-white z-20 text-2xl drop-shadow-lg"><i class="fa-solid fa-times"></i></button>
+                <img src="${allUrls[current]}" class="max-w-full max-h-full object-contain animate-enter">
+                
+                ${allUrls.length > 1 ? `
+                    <button onclick="event.stopPropagation(); window._updatePreviewIndex(${(current-1+allUrls.length)%allUrls.length})" class="absolute left-4 top-1/2 -translate-y-1/2 bg-white/10 hover:bg-white/20 text-white p-4 rounded-full transition"><i class="fa-solid fa-chevron-left"></i></button>
+                    <button onclick="event.stopPropagation(); window._updatePreviewIndex(${(current+1)%allUrls.length})" class="absolute right-4 top-1/2 -translate-y-1/2 bg-white/10 hover:bg-white/20 text-white p-4 rounded-full transition"><i class="fa-solid fa-chevron-right"></i></button>
+                    <div class="absolute bottom-6 left-1/2 -translate-y-1/2 flex gap-2">${dots}</div>
+                ` : ''}
+                
+                <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-8 pt-20 pointer-events-none">
+                    <h3 class="text-white font-black text-3xl uppercase tracking-tighter">${s.nombre}</h3>
+                    <p class="text-white/60 text-sm font-bold mt-1 uppercase tracking-widest">${s.tipo} • ${s.clave}</p>
+                </div>
+            </div>
+        `;
+    };
+
+    window._updatePreviewIndex = (idx) => { current = idx; renderContent(); };
+    renderContent();
+    document.body.appendChild(modal);
+};
 
 window.addRangeRow = function(data = null) {
     const container = document.getElementById('mgr-ranges-container'); const id = Date.now() + Math.random().toString(36).substr(2, 5);
@@ -267,6 +357,9 @@ window.addHorarioRow = function(data = null) {
     row.innerHTML = `<input type="text" placeholder="Nombre (Ej. Turno Especial)" value="${nombre}" class="h-name w-full sm:w-1/3 border rounded p-1.5 text-xs outline-none focus:border-brand-red font-bold text-gray-700"><input type="time" value="${start}" class="h-start w-full sm:w-auto border rounded p-1.5 text-xs outline-none focus:border-brand-red"><span class="text-xs text-gray-400">a</span><input type="time" value="${end}" class="h-end w-full sm:w-auto border rounded p-1.5 text-xs outline-none focus:border-brand-red"><input type="number" placeholder="Precio $" value="${price}" class="h-price w-full sm:w-24 border rounded p-1.5 text-xs text-right outline-none focus:border-brand-red font-bold"><button onclick="this.parentElement.remove()" class="text-gray-400 hover:text-red-500 transition px-2"><i class="fa-solid fa-trash"></i></button>`;
     container.appendChild(row);
 }
+
+window.previewImage = function(i, id){ const p = document.getElementById(id); if(i.files && i.files[0]){ const r=new FileReader(); r.onload=e=>{ p.src=e.target.result; p.classList.remove('hidden'); p.setAttribute('data-modified', 'true'); }; r.readAsDataURL(i.files[0]); } }
+window.clearManagerImage = function(num) { const input = document.getElementById(`mgr-file-${num}`); if(input) input.value = ''; const img = document.getElementById(`mgr-preview-${num}`); if(img) { img.src = ''; img.classList.add('hidden'); img.setAttribute('data-modified', 'true'); } }
 
 window.openManagerModal = function(id){
     if (!myPermissions.catalog_manage) return window.showToast("No tienes permisos.", "error"); 
@@ -294,10 +387,19 @@ window.openManagerModal = function(id){
         let h = b2b.horarios || []; if (!Array.isArray(h)) { const mapNames = { matutino: 'Matutino', vespertino: 'Vespertino', nocturno: 'Nocturno', todo_dia: 'Todo el día' }; h = Object.keys(h).map(k => ({ nombre: mapNames[k] || k, start: h[k].start, end: h[k].end, price: h[k].price })).filter(item => item.start && item.end); }
         if (h.length > 0) h.forEach(item => window.addHorarioRow(item)); else window.addHorarioRow();
 
-        document.getElementById('mgr-adj-type').value = s.ajuste_tipo || 'ninguno'; document.getElementById('mgr-adj-pct').value = s.ajuste_porcentaje || 0; document.getElementById('mgr-active').checked = s.activa !== false; document.getElementById('btn-delete-mgr').classList.remove('hidden'); if(s.imagen_url) { document.getElementById('mgr-preview').src = s.imagen_url.startsWith('[') ? JSON.parse(s.imagen_url)[0] : s.imagen_url; document.getElementById('mgr-preview').classList.remove('hidden'); }
+        document.getElementById('mgr-adj-type').value = s.ajuste_tipo || 'ninguno'; document.getElementById('mgr-adj-pct').value = s.ajuste_porcentaje || 0; document.getElementById('mgr-active').checked = s.activa !== false; document.getElementById('btn-delete-mgr').classList.remove('hidden'); 
+        let allUrls = []; try { if(s.imagen_url && typeof s.imagen_url === 'string' && s.imagen_url.startsWith('[')) allUrls = JSON.parse(s.imagen_url); else if(s.imagen_url) allUrls = [s.imagen_url]; } catch(e){}
+        for(let i=1; i<=5; i++){
+            const mgrPrev = document.getElementById(`mgr-preview-${i}`);
+            if(mgrPrev) { 
+                if(allUrls[i-1]) { mgrPrev.src = allUrls[i-1]; mgrPrev.classList.remove('hidden'); mgrPrev.removeAttribute('data-modified'); }
+                else { mgrPrev.src = ''; mgrPrev.classList.add('hidden'); mgrPrev.removeAttribute('data-modified'); } 
+            }
+        }
     } else { 
         document.getElementById('mgr-title').innerText = "Nuevo Espacio"; document.getElementById('mgr-key').value = ''; document.getElementById('mgr-key').disabled = false; document.getElementById('mgr-name').value = ''; document.getElementById('mgr-tags').value = ''; document.getElementById('mgr-desc').value = ''; window.addRangeRow(); window.addHorarioRow(); 
-        document.getElementById('cfg-precio-hora').value = 0; document.getElementById('mgr-active').checked = true; document.getElementById('btn-delete-mgr').classList.add('hidden'); document.getElementById('mgr-preview').src = ''; document.getElementById('mgr-preview').classList.add('hidden');
+        document.getElementById('cfg-precio-hora').value = 0; document.getElementById('mgr-active').checked = true; document.getElementById('btn-delete-mgr').classList.add('hidden'); 
+        for(let i=1; i<=5; i++){ const mgrPrev = document.getElementById(`mgr-preview-${i}`); if (mgrPrev) { mgrPrev.src = ''; mgrPrev.classList.add('hidden'); mgrPrev.removeAttribute('data-modified'); } const fi = document.getElementById(`mgr-file-${i}`); if(fi) fi.value = ''; }
     } 
     window.openModal('manager-modal');
 }
@@ -321,26 +423,28 @@ window.saveSpace = async function(){
         let horariosArray = []; document.querySelectorAll('.horario-row').forEach(row => { const nombre = row.querySelector('.h-name').value.trim(); const start = row.querySelector('.h-start').value; const end = row.querySelector('.h-end').value; const price = parseFloat(row.querySelector('.h-price').value) || 0; if (nombre && start && end) horariosArray.push({ nombre, start, end, price }); });
         const b2bConfig = { precio_hora_extra: parseFloat(document.getElementById('cfg-precio-hora').value) || 0, horarios: horariosArray };
 
-        const fileInput = document.getElementById('mgr-file');
-        const imageFile = fileInput && fileInput.files && fileInput.files.length > 0 ? fileInput.files[0] : null;
-
         const payload = { 
             clave: document.getElementById('mgr-key').value.toUpperCase().trim(), nombre: document.getElementById('mgr-name').value, tipo: document.getElementById('mgr-type').value, descripcion: document.getElementById('mgr-desc').value, precio_base: maxPriceFound, 
             precios_por_dia: ranges, dias_bloqueados: blockedDays, config_b2b: b2bConfig, etiquetas: tagsArray, 
             ajuste_tipo: document.getElementById('mgr-adj-type').value, ajuste_porcentaje: parseFloat(document.getElementById('mgr-adj-pct').value) || 0, activa: document.getElementById('mgr-active').checked, impuestos_ids: selectedTaxes 
         }; 
-        const submitPayload = imageFile ? (() => {
-            const fd = new FormData();
-            Object.entries(payload).forEach(([k, v]) => {
-                if (Array.isArray(v) || (v && typeof v === 'object')) fd.append(k, JSON.stringify(v));
-                else if (v !== undefined && v !== null) fd.append(k, String(v));
-            });
-            fd.append('imagen', imageFile, imageFile.name || 'imagen');
-            return fd;
-        })() : payload;
+        
+        const fd = new FormData();
+        Object.entries(payload).forEach(([k, v]) => {
+            if (Array.isArray(v) || (v && typeof v === 'object')) fd.append(k, JSON.stringify(v));
+            else if (v !== undefined && v !== null) fd.append(k, String(v));
+        });
 
-        if(id) { const { error: updErr } = await window.tenantPocketBase.from('espacios').update(submitPayload).eq('id', id); if(updErr) throw updErr; } else { const { error: insErr } = await window.tenantPocketBase.from('espacios').insert(submitPayload); if(insErr) throw insErr; } 
-        window.showToast("Guardado", "success"); window.closeModal('manager-modal'); loadCatalog(); if (fileInput) fileInput.value = '';
+        for(let i=1; i<=5; i++){
+            const fi = document.getElementById(`mgr-file-${i}`);
+            const preview = document.getElementById(`mgr-preview-${i}`);
+            const fieldName = i === 1 ? 'imagen' : `imagen${i}`;
+            if (fi && fi.files && fi.files.length > 0) fd.append(fieldName, fi.files[0], fi.files[0].name || `img${i}`);
+            else if (preview && preview.getAttribute('data-modified') === 'true' && preview.classList.contains('hidden')) fd.append(fieldName, '');
+        }
+
+        if(id) { const { error: updErr } = await window.tenantPocketBase.from('espacios').update(fd).eq('id', id); if(updErr) throw updErr; } else { const { error: insErr } = await window.tenantPocketBase.from('espacios').insert(fd); if(insErr) throw insErr; } 
+        window.showToast("Guardado", "success"); window.closeModal('manager-modal'); loadCatalog(); for(let i=1; i<=5; i++){ const fi = document.getElementById(`mgr-file-${i}`); if(fi) fi.value = ''; }
 
     } catch(e) { console.error("Error al guardar:", e); window.showToast("Error: Verifica la consola", "error"); } finally { btn.disabled = false; btn.innerText = "Guardar"; }
 }
@@ -515,7 +619,7 @@ window.generatePDF = async function() {
 }
 
 window.filterCatalogLogic = function() { const term = document.getElementById('cat-search').value.toLowerCase(); const type = document.getElementById('cat-filter-type').value; const sort = document.getElementById('cat-sort').value; let filtered = allSpaces.filter(s => (s.nombre.toLowerCase().includes(term) || s.clave.toLowerCase().includes(term)) && (type === 'all' || s.tipo === type)); if (sort === 'price_asc') filtered.sort((a,b) => a.precio_base - b.precio_base); if (sort === 'price_desc') filtered.sort((a,b) => b.precio_base - a.precio_base); renderSpaces(filtered); }
-window.previewImage = function(i){ const p = document.getElementById('mgr-preview'); if(i.files[0]){ const r=new FileReader(); r.onload=e=>{ p.src=e.target.result; p.classList.remove('hidden'); }; r.readAsDataURL(i.files[0]); } }
+window.previewImage = function(i, id){ const p = document.getElementById(id || 'mgr-preview'); if(i.files && i.files[0]){ const r=new FileReader(); r.onload=e=>{ p.src=e.target.result; p.classList.remove('hidden'); p.setAttribute('data-modified', 'true'); }; r.readAsDataURL(i.files[0]); } }
 window.checkAvailability = async function() { const s=document.getElementById('date-start').value, e=document.getElementById('date-end').value; if(!s||!e)return; const {data} = await window.tenantPocketBase.from('cotizaciones').select('id').eq('espacio_id',currentSpace.id).in('status',['aprobada','finalizada']).or(`and(fecha_inicio.lte.${e},fecha_fin.gte.${s})`); const msg=document.getElementById('avail-msg'); msg.classList.remove('hidden'); if(data.length){ msg.innerText='OCUPADO'; msg.className='text-red-500 font-bold text-center'; document.getElementById('btn-generate').disabled=true; }else{ msg.innerText='DISPONIBLE'; msg.className='text-green-600 font-bold text-center'; document.getElementById('btn-generate').disabled=false; } }
 window.askDeleteSpace = async function(){ window.openConfirm("¿Eliminar espacio?", async () => { await window.tenantPocketBase.from('espacios').delete().eq('id', document.getElementById('mgr-id').value); window.showToast("Eliminado"); window.closeModal('manager-modal'); loadCatalog(); }); }
 

@@ -90,8 +90,12 @@
     const normalized = normalizeDeepDates(record);
     const out = { ...normalized, _pb_id: record.id };
     if (collection === 'espacios') {
-      const imgUrl = recordFileUrl(window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseUrl, 'espacios', record, 'imagen');
-      if (imgUrl) out.imagen_url = imgUrl;
+      const urls = [];
+      ['imagen', 'imagen2', 'imagen3', 'imagen4', 'imagen5'].forEach(f => {
+        const u = recordFileUrl(window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseUrl, 'espacios', record, f);
+        if (u) urls.push(u);
+      });
+      if (urls.length > 0) out.imagen_url = JSON.stringify(urls);
     }
     if (record.legacy_id !== undefined && record.legacy_id !== null && record.legacy_id !== '') out.id = record.legacy_id;
     if (!out.id) out.id = record.id;

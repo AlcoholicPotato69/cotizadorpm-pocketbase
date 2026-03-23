@@ -41,16 +41,34 @@ if not exist "%ROOT_DIR%\pocketbase.exe" (
 call :require_admin
 if errorlevel 1 goto :fail
 
+set "CUSTOM_IP=127.0.0.1"
+set "CUSTOM_PORT=8090"
+
+echo.
+echo ============================================================
+echo   CONFIGURACION DE RED
+echo ============================================================
+echo.
+CHOICE /C SN /T 10 /D N /M "Desea cambiar la IP y el Puerto por defecto (127.0.0.1:8090)? [S/N]"
+if errorlevel 2 goto skip_net_cfg
+if errorlevel 1 (
+    set /p "CUSTOM_IP=Escribe la IP del backend (ej: 192.168.1.50) [127.0.0.1]: "
+    set /p "CUSTOM_PORT=Escribe el puerto [8090]: "
+)
+:skip_net_cfg
+if "%CUSTOM_IP%"=="" set "CUSTOM_IP=127.0.0.1"
+if "%CUSTOM_PORT%"=="" set "CUSTOM_PORT=8090"
+
 call :exec_backend_step "Paso: Limpiando procesos huerfanos..." cleanup-orphans
 if errorlevel 1 goto :fail
 
 call :exec_backend_step "Paso: Desactivando HTTPS previo..." disable-https
 if errorlevel 1 goto :fail
 
-call :exec_backend_step "Paso: Forzando bind local..." set-bind "127.0.0.1:8090"
+call :exec_backend_step "Paso: Forzando bind local..." set-bind "%CUSTOM_IP%:%CUSTOM_PORT%"
 if errorlevel 1 goto :fail
 
-call :exec_backend_step "Paso: Forzando URL local para frontend..." set-url "http://127.0.0.1:8090"
+call :exec_backend_step "Paso: Forzando URL local para frontend..." set-url "http://%CUSTOM_IP%:%CUSTOM_PORT%"
 if errorlevel 1 goto :fail
 
 call :exec_backend_step "Paso: Configurando ICS local..." set-ics "/api/cotizador/cp-calendar-ics" "-"
@@ -77,10 +95,10 @@ if not "%RUNNING_RC%"=="0" (
   goto :fail
 )
 
-echo [CHECK] Health-check local http://127.0.0.1:8090/api/health
->> "%RUN_LOG%" echo [CHECK] Health-check local http://127.0.0.1:8090/api/health
+echo [CHECK] Health-check local http://%CUSTOM_IP%:%CUSTOM_PORT%/api/health
+>> "%RUN_LOG%" echo [CHECK] Health-check local http://%CUSTOM_IP%:%CUSTOM_PORT%/api/health
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$ok = $false; for ($i = 1; $i -le 20; $i++) { try { $r = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8090/api/health' -TimeoutSec 5 -ErrorAction Stop; if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 400) { $ok = $true; break } } catch { Start-Sleep -Seconds 1 } }; if (-not $ok) { exit 9 }"
+  "$ok = $false; for ($i = 1; $i -le 20; $i++) { try { $r = Invoke-WebRequest -UseBasicParsing -Uri 'http://%CUSTOM_IP%:%CUSTOM_PORT%/api/health' -TimeoutSec 5 -ErrorAction Stop; if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 400) { $ok = $true; break } } catch { Start-Sleep -Seconds 1 } }; if (-not $ok) { exit 9 }"
 if errorlevel 1 (
   echo [ERROR] Health-check local fallo.
   >> "%RUN_LOG%" echo [ERROR] Health-check local fallo.
@@ -93,7 +111,7 @@ echo.
 echo ============================================================
 echo   REPARACION LOCAL COMPLETADA
 echo ============================================================
-echo   BACKEND_URL: http://127.0.0.1:8090
+echo   BACKEND_URL: http://%CUSTOM_IP%:%CUSTOM_PORT%
 echo   Servicio: CotizadorPocketBase
 echo   Estado esperado: RUNNING
 echo   Log: %RUN_LOG%
@@ -157,11 +175,11 @@ exit /b 0
 
 :help
 echo.
-echo levantar-todo.bat - Repara y deja TODO en modo LOCAL.
+echo levantar-todo.bat - Repara y deja TODO en modo LOCAL o el configurado.
 echo.
 echo Fuerza:
-echo   - BIND_ADDR=127.0.0.1:8090
-echo   - BACKEND_URL=http://127.0.0.1:8090
+echo   - BIND_ADDR=127.0.0.1:8090 (o el personalizado)
+echo   - BACKEND_URL=http://127.0.0.1:8090 (o el personalizado)
 echo   - ICS local por defecto
 echo   - servicio CotizadorPocketBase en RUNNING
 echo.
