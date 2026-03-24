@@ -132,15 +132,17 @@ function getPricingRule(space, guests) {
     return active || null;
 }
 
-function getDayBasePrice(space, dateStr, guests) {
+function getDayBasePrice(space, dateStr, guests, ignoreBlocks = false) {
     const d = new Date(`${dateStr}T00:00:00`);
     if (isNaN(d.getTime())) return 0;
     const idx = d.getDay();
     const key = WEEK_KEYS[idx];
     const rule = getPricingRule(space, guests);
     if (!rule) return parseFloat(space?.precio_base || 0) || 0;
-    const blocked = safeArray(space?.dias_bloqueados);
-    if (blocked.includes(key)) return 0;
+    if (!ignoreBlocks) {
+        const blocked = safeArray(space?.dias_bloqueados);
+        if (blocked.includes(key)) return 0;
+    }
     const prices = safeObj(rule.precios);
     return parseFloat(prices[key] || 0) || 0;
 }
@@ -421,7 +423,7 @@ function calcPremontaje(space, guests, dates, courtesy, pct) {
     let total = 0;
     const breakdown = [];
     dates.forEach((ds, i) => {
-        const base = getDayBasePrice(space, ds, guests);
+        const base = getDayBasePrice(space, ds, guests, true);
         const raw = base * (pct / 100);
         const isCourtesy = i < courtesy;
         const amount = isCourtesy ? 0 : raw;

@@ -187,12 +187,10 @@ let __hubIcsUrlFromQuery = '';
 let __hubIcsTokenFromStorage = '';
 let __hubIcsTokenFromQuery = '';
 // Simplificado: el backend e ICS activos salen del archivo runtime + query params.
-// No se aplican overrides persistidos desde localStorage para evitar configuraciones "fantasma".
+// Security: query param overrides for backend/ics are disabled in production.
+// Use hub-runtime.json or window.ENV for configuration.
 try {
-  const params = new URLSearchParams(window.location.search || '');
-  __hubBackendFromQuery = params.get('backend') || params.get('api') || '';
-  __hubIcsUrlFromQuery = params.get('ics') || params.get('icsUrl') || params.get('cpIcs') || '';
-  __hubIcsTokenFromQuery = params.get('icsToken') || params.get('cpIcsToken') || '';
+  // No longer reading: backend, api, ics, icsUrl, cpIcs, icsToken, cpIcsToken from URL
 } catch (_) {}
 
 let __hubBackendBase = __hubResolveBackendForClient(

@@ -162,7 +162,7 @@ async function loadPremontajePctConfig() {
     }
 }
 
-function calculateDayByDayTotal(space, startStr, endStr, guests) {
+function calculateDayByDayTotal(space, startStr, endStr, guests, options = {}) {
     if (!startStr) return { total: 0 };
     const endS = endStr || startStr;
     let rules = [];
@@ -178,8 +178,9 @@ function calculateDayByDayTotal(space, startStr, endStr, guests) {
     let blockedDays = []; try { blockedDays = typeof space.dias_bloqueados === 'string' ? JSON.parse(space.dias_bloqueados) : (space.dias_bloqueados || []); } catch(e){}
     
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-        const key = keys[d.getDay()]; let price = parseFloat(prices[key] || 0);
-        if (blockedDays.includes(key)) price = 0;
+        const key = keys[d.getDay()];
+        let price = parseFloat(prices[key] || 0);
+        if (!options.ignoreBlocks && blockedDays.includes(key)) price = 0;
         total += price;
     }
     return { total };
@@ -363,7 +364,7 @@ window.clearManagerImage = function(num) { const input = document.getElementById
 
 window.openManagerModal = function(id){
     if (!myPermissions.catalog_manage) return window.showToast("No tienes permisos.", "error"); 
-    document.getElementById('mgr-id').value = id || ''; const container = document.getElementById('mgr-taxes-list'); document.querySelectorAll('.day-block-check').forEach(cb => cb.checked = false);
+    document.getElementById('mgr-id').value = id || ''; const container = document.getElementById('mgr-taxes-list'); document.querySelectorAll('.day-block-check').forEach(cb => cb.checked = false); document.querySelectorAll('.day-block-premontaje-check').forEach(cb => cb.checked = false);
     if(container) { container.innerHTML = ''; let currentTaxes = []; if(id) { const s = allSpaces.find(x => x.id === id); currentTaxes = parseIds((s && (s.impuestos_ids || s.impuestos)) || []); } dbTaxes.forEach(t => { const isChecked = currentTaxes.some(cid => String(cid) === String(t.id)) ? 'checked' : ''; container.innerHTML += `<label class="flex items-center gap-2 p-2 border rounded bg-white hover:bg-gray-50 cursor-pointer"><input type="checkbox" value="${t.id}" class="tax-check accent-brand-red cursor-pointer" ${isChecked}><span class="text-[10px] font-bold uppercase text-gray-600 cursor-pointer select-none">${t.nombre} (${t.porcentaje}%)</span></label>`; }); }
 
     const rangesContainer = document.getElementById('mgr-ranges-container'); rangesContainer.innerHTML = '';
@@ -381,6 +382,8 @@ window.openManagerModal = function(id){
 
         let blockedDays = []; try { blockedDays = typeof s.dias_bloqueados === 'string' ? JSON.parse(s.dias_bloqueados) : (s.dias_bloqueados || []); } catch(e){}
         document.querySelectorAll('.day-block-check').forEach(cb => { if(blockedDays.includes(cb.value)) cb.checked = true; });
+        let blockedPremontaje = []; try { blockedPremontaje = typeof s.dias_bloqueados_premontaje === 'string' ? JSON.parse(s.dias_bloqueados_premontaje) : (s.dias_bloqueados_premontaje || []); } catch(e){}
+        document.querySelectorAll('.day-block-premontaje-check').forEach(cb => { if(blockedPremontaje.includes(cb.value)) cb.checked = true; });
 
         let b2b = {}; try { b2b = typeof s.config_b2b === 'string' ? JSON.parse(s.config_b2b) : (s.config_b2b || {}); } catch(e){}
         document.getElementById('cfg-precio-hora').value = b2b.precio_hora_extra || 0;
@@ -410,6 +413,7 @@ window.saveSpace = async function(){
         const id = document.getElementById('mgr-id').value; 
         const selectedTaxes = Array.from(document.querySelectorAll('.tax-check:checked')).map(cb => parseInt(cb.value));
         const blockedDays = Array.from(document.querySelectorAll('.day-block-check:checked')).map(cb => cb.value);
+        const blockedPremontajeDays = Array.from(document.querySelectorAll('.day-block-premontaje-check:checked')).map(cb => cb.value);
 
         const rows = document.querySelectorAll('.range-row'); let ranges = []; let maxPriceFound = 0;
         rows.forEach(row => {
@@ -425,7 +429,7 @@ window.saveSpace = async function(){
 
         const payload = { 
             clave: document.getElementById('mgr-key').value.toUpperCase().trim(), nombre: document.getElementById('mgr-name').value, tipo: document.getElementById('mgr-type').value, descripcion: document.getElementById('mgr-desc').value, precio_base: maxPriceFound, 
-            precios_por_dia: ranges, dias_bloqueados: blockedDays, config_b2b: b2bConfig, etiquetas: tagsArray, 
+            precios_por_dia: ranges, dias_bloqueados: blockedDays, dias_bloqueados_premontaje: blockedPremontajeDays, config_b2b: b2bConfig, etiquetas: tagsArray, 
             ajuste_tipo: document.getElementById('mgr-adj-type').value, ajuste_porcentaje: parseFloat(document.getElementById('mgr-adj-pct').value) || 0, activa: document.getElementById('mgr-active').checked, impuestos_ids: selectedTaxes 
         }; 
         
@@ -667,7 +671,7 @@ function __cpCalcPremCost(space, cfg){
     const breakdown = [];
     let total = 0;
     dates.forEach((ds, idx) => {
-        const base = calculateDayByDayTotal(space, ds, ds, guests).total || 0;
+        const base = calculateDayByDayTotal(space, ds, ds, guests, { ignoreBlocks: true }).total || 0;
         const amount = idx < courtesyDays ? 0 : base * (getPremontajePct() / 100);
         total += amount;
         breakdown.push({ date: ds, base_day: base, porcentaje: getPremontajePct(), courtesy: idx < courtesyDays, amount });

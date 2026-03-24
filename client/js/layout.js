@@ -527,10 +527,14 @@
             if (!(form instanceof HTMLFormElement)) return;
             if (form.id === 'login-form') return;
             if (form.dataset.allowSubmit === '1') return;
+            // Solo bloquear forms con action explícito que causaría navegación
+            // Los forms sin action (JS-driven) no causan recarga
+            const formAction = (form.getAttribute('action') || '').trim();
+            if (!formAction || formAction === '#' || formAction === 'javascript:void(0)') return;
             event.preventDefault();
             pushDiag('submit_blocked', {
                 formId: safeSlice(form.id || '', 120),
-                action: safeSlice(form.getAttribute('action') || '', 180),
+                action: safeSlice(formAction, 180),
                 interaction: lastInteraction
             });
             if (typeof window.showToast === 'function') {
@@ -692,11 +696,22 @@
 
         if (layoutClient) {
             let session = null;
+            // Intento 1: leer sesión
             try {
                 const response = await layoutClient.auth.getSession();
                 session = response?.data?.session || null;
             } catch (_) {
                 session = null;
+            }
+            // Intento 2 con backoff: cubre escrituras concurrentes a localStorage
+            if (!session) {
+                await new Promise(r => setTimeout(r, 300));
+                try {
+                    const response2 = await layoutClient.auth.getSession();
+                    session = response2?.data?.session || null;
+                } catch (_) {
+                    session = null;
+                }
             }
             if (!session) {
                 const fallbackUser = resolveFallbackSessionUser();
@@ -711,8 +726,13 @@
                     const now = Date.now();
                     const last = Number(sessionStorage.getItem(redirectGuardKey) || 0);
                     if (isCotizadorArea) {
-                        if (typeof window.showToast === 'function') {
-                            window.showToast('Sesión no disponible temporalmente. Evitando redirección automática.', 'warning');
+                        // NUNCA redirigir en áreas de cotizador — el usuario puede estar trabajando
+                        // Solo mostrar toast si no se ha mostrado recientemente
+                        if (!Number.isFinite(last) || (now - last) > 30000) {
+                            try { sessionStorage.setItem(redirectGuardKey, String(now)); } catch (_) {}
+                            if (typeof window.showToast === 'function') {
+                                window.showToast('Sesión no disponible temporalmente. Evitando redirección automática.', 'warning');
+                            }
                         }
                     } else if (!Number.isFinite(last) || (now - last) > 8000) {
                         try { sessionStorage.setItem(redirectGuardKey, String(now)); } catch (_) {}

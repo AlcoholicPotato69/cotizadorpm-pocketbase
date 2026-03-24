@@ -121,6 +121,9 @@
   function shouldUseLegacyId(collection) {
     return ['clientes','conceptos_catalogo','configuracion','impuestos','espacios','cotizaciones'].indexOf(collection) !== -1;
   }
+  function isPbRecordId(value) {
+    return /^[a-z0-9]{15}$/i.test(String(value || '').trim());
+  }
   function mapFieldName(collection, field, dir) {
     const f = String(field || '');
     if (collection === 'profiles' || collection === 'app_users') {
@@ -255,7 +258,11 @@
     _buildFilter() {
       const parts = this._tenantFilterParts();
       for (const f of this.filters) {
-        const field = mapFieldName(this.originalTable, f.field, 'filter');
+        const rawField = String(f.field || '');
+        let field = mapFieldName(this.originalTable, f.field, 'filter');
+        if (shouldUseLegacyId(this.collection) && rawField === 'id' && (f.op === 'eq' || f.op === 'neq') && isPbRecordId(f.value)) {
+          field = 'id';
+        }
         if (f.op === 'eq') parts.push(field + ' = ' + escapeFilterValue(f.value));
         else if (f.op === 'neq') parts.push(field + ' != ' + escapeFilterValue(f.value));
         else if (f.op === 'lt') parts.push(field + ' < ' + escapeFilterValue(f.value));
@@ -306,6 +313,22 @@
     }
     async _ensureLegacyId(payload) {
       if (!shouldUseLegacyId(this.collection)) return payload;
+      if (typeof FormData !== 'undefined' && payload instanceof FormData) {
+        if (payload.get('legacy_id')) return payload;
+        const numericCollections = ['clientes','conceptos_catalogo','configuracion','impuestos','espacios'];
+        let nextLegacyId = null;
+        if (numericCollections.indexOf(this.collection) !== -1) {
+          const list = await fetchRecords(this.client.baseUrl, this.collection, { perPage: 500, filter: this._tenantFilterParts().join(' && '), sort: '-legacy_id' });
+          const max = (list.items || []).reduce((m, r) => Math.max(m, Number(r.legacy_id || 0)), 0);
+          nextLegacyId = max + 1;
+        } else {
+          nextLegacyId = uuidv4();
+        }
+        const fd = new FormData();
+        for (const pair of payload.entries()) fd.append(pair[0], pair[1]);
+        fd.append('legacy_id', String(nextLegacyId));
+        return fd;
+      }
       if (payload.legacy_id !== undefined && payload.legacy_id !== null && payload.legacy_id !== '') return payload;
       const numericCollections = ['clientes','conceptos_catalogo','configuracion','impuestos','espacios'];
       if (numericCollections.indexOf(this.collection) !== -1) {

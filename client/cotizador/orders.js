@@ -8,6 +8,67 @@
 // MÓDULO DE COTIZACIONES ADMIN - PLAZA MAYOR
 // =========================================================================
 let orderClientProfiles = []; let orderClientProfilesById = {};
+let __pmMaterialsList = [];
+function __pmNormalizeSpaceMeasureValue(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const num = parseFloat(value);
+    return Number.isFinite(num) && num > 0 ? num : null;
+}
+function __pmNormalizeSpaceMeasureUnit(value) {
+    const unit = String(value || '').trim().toUpperCase();
+    return unit === 'CM' ? 'CM' : 'M';
+}
+function __pmNormalizeSpaceMaterialMeasure(space) {
+    const src = (space && typeof space === 'object') ? space : {};
+    const medidaAncho = __pmNormalizeSpaceMeasureValue(src.medida_ancho ?? src.ancho);
+    const medidaAlto = __pmNormalizeSpaceMeasureValue(src.medida_alto ?? src.alto);
+    const medidaUnidad = __pmNormalizeSpaceMeasureUnit(src.medida_unidad || src.unidad_medida || 'M');
+    return {
+        ...src,
+        material: (src.material === null || src.material === undefined) ? '' : String(src.material),
+        medida_ancho: medidaAncho,
+        medida_alto: medidaAlto,
+        medida_unidad: medidaUnidad,
+        ancho: medidaAncho,
+        alto: medidaAlto,
+        unidad_medida: medidaUnidad
+    };
+}
+function __pmIsSpaceIdMatch(space, candidateId) {
+    const raw = String(candidateId || '').trim();
+    if (!raw || !space) return false;
+    return [space.id, space._pb_id, space.legacy_id].some((value) => String(value || '').trim() === raw);
+}
+function __pmFindSpaceByAnyId(spaceId) {
+    return allSpaces.find((space) => __pmIsSpaceIdMatch(space, spaceId)) || null;
+}
+function __pmResolveDetailMaterialMeasure(detailSpace, catalogSpace) {
+    const detail = __pmNormalizeSpaceMaterialMeasure(detailSpace);
+    const catalog = __pmNormalizeSpaceMaterialMeasure(catalogSpace);
+    const hasDetailMaterial = String(detail.material || '').trim() !== '';
+    const hasDetailWidth = detail.medida_ancho !== null && detail.medida_ancho !== undefined;
+    const hasDetailHeight = detail.medida_alto !== null && detail.medida_alto !== undefined;
+    return {
+        material: hasDetailMaterial ? detail.material : catalog.material,
+        medida_ancho: hasDetailWidth ? detail.medida_ancho : catalog.medida_ancho,
+        medida_alto: hasDetailHeight ? detail.medida_alto : catalog.medida_alto,
+        medida_unidad: (hasDetailWidth || hasDetailHeight) ? detail.medida_unidad : catalog.medida_unidad
+    };
+}
+async function __pmLoadMaterials() {
+    try {
+        const { data, error } = await window.tenantPocketBase.from('configuracion').select('clave,valor_json').eq('clave', 'materiales_pm').maybeSingle();
+        if (error) throw error;
+        const items = data?.valor_json?.items;
+        __pmMaterialsList = Array.isArray(items) ? items.filter(Boolean) : [];
+    } catch (e) { __pmMaterialsList = []; }
+}
+function __pmPopulateMaterialSelect(selectId, selectedValue) {
+    const sel = document.getElementById(selectId);
+    if (!sel) return;
+    sel.innerHTML = '<option value="">— Sin material —</option>' + __pmMaterialsList.map(m => `<option value="${m}">${m}</option>`).join('');
+    if (selectedValue) sel.value = selectedValue;
+}
 
 async function loadClientProfilesForOrderModal() {
     const sel = document.getElementById('oed-client-profile');
@@ -832,7 +893,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 async function loadTaxes() { const { data } = await window.tenantPocketBase.from('impuestos').select('*'); dbTaxes = data || []; }
-async function loadSpaces() { const { data } = await window.tenantPocketBase.from('espacios').select('*'); allSpaces = data || []; __pmEnsureSpaceCardOrder(); window.renderOrderSpaceCards(); }
+async function loadSpaces() { const { data } = await window.tenantPocketBase.from('espacios').select('*'); allSpaces = (data || []).map(__pmNormalizeSpaceMaterialMeasure); __pmEnsureSpaceCardOrder(); window.renderOrderSpaceCards(); }
 async function loadConcepts() { const { data } = await window.tenantPocketBase.from('conceptos_catalogo').select('*').eq('activo', true); catalogConcepts = data || []; }
 
 function __pmFormatUserNameFromRecord(record) {
@@ -4277,8 +4338,7 @@ window.getOrderHTML = function(o, type) {
     
     let folio = o.numero_orden || o.id.split('-')[0].toUpperCase(); 
     
-    const space = allSpaces.find(s=>s.id==o.espacio_id); const basePrice = parseFloat(space ? space.precio_base : 0); 
-    const descHTML = isOrder ? '' : `<p class="text-[9px] text-gray-500 italic mt-0.5 truncate max-w-xs">${space?.descripcion || ''}</p>`; 
+    const space = __pmFindSpaceByAnyId(o.espacio_id); const basePrice = parseFloat(space ? space.precio_base : 0); 
     const footerHubHTML = `<div class="w-full text-center mt-10"><p class="pm-pdf-footer-text text-[10px] text-gray-400 font-medium leading-tight" data-base-resource="footer">Generado el ${genDateTime}<br>a través de Marketing Hub - Plaza Mayor</p></div>`; 
     const renderHeader = (title) => `<div class="pm-pdf-header flex justify-end items-start border-b-4 border-brand-red pb-3 mb-2">${logoImg}<div class="text-right"><h1 class="pm-pdf-title text-2xl font-black text-gray-800 tracking-tighter uppercase" data-base-resource="header-title">${title}</h1><p class="pm-pdf-folio text-sm font-mono text-brand-red font-bold mt-1" data-base-resource="header-meta">FOLIO: ${folio}</p><p class="pm-pdf-date text-[10px] text-gray-500 mt-1" data-base-resource="header-meta">${dateStr}</p></div></div>`; 
     const quickLeftItems = String(pdfContent.quickLeftLines || '')
@@ -4309,6 +4369,20 @@ window.getOrderHTML = function(o, type) {
     if (Array.isArray(o.espacios_detalle)) detailSpaces = o.espacios_detalle;
     else if (typeof o.espacios_detalle === 'string') { try { detailSpaces = JSON.parse(o.espacios_detalle); } catch(e){} }
     detailSpaces = Array.isArray(detailSpaces) ? detailSpaces.filter(Boolean) : [];
+    const __pmFindCatalogSpace = (spaceId) => __pmFindSpaceByAnyId(spaceId);
+    const __pmResolveSpaceIdentity = (detail) => {
+        const sid = String(detail?.espacio_id || detail?.space_id || o.espacio_id || '').trim();
+        const catalogSpace = sid ? __pmFindCatalogSpace(sid) : space;
+        return {
+            nombre: detail?.espacio_nombre || catalogSpace?.nombre || o.espacio_nombre || '--',
+            clave: detail?.espacio_clave || catalogSpace?.clave || o.espacio_clave || ''
+        };
+    };
+    const __pmRenderSpaceCell = (identity) => {
+        const safeName = __pmSafeHtml(identity?.nombre || '--');
+        const safeKey = __pmSafeHtml(identity?.clave || '');
+        return `<div class="break-words"><p class="font-bold text-gray-800 text-xs break-words">${safeName}</p>${safeKey ? `<span class="bg-gray-100 text-gray-500 px-1 py-0.5 rounded text-[10px] font-mono mt-0.5 inline-block">${safeKey}</span>` : ''}</div>`;
+    };
     // Resuelve personas por concepto usando (1) el propio concepto, (2) el espacio ligado o (3) el fallback global.
     const __pmParsePeople = (value) => {
         const parsed = parseInt(value, 10);
@@ -4335,13 +4409,29 @@ window.getOrderHTML = function(o, type) {
     let rowsHtml = '';
     if (detailSpaces.length) {
         detailSpaces.forEach(sp => {
+            const identity = __pmResolveSpaceIdentity(sp);
+            const catalogSpace = __pmFindCatalogSpace(sp?.espacio_id || sp?.space_id || '');
+            const detailMaterialMeasure = __pmResolveDetailMaterialMeasure(sp, catalogSpace);
             const spSubtotal = parseFloat(sp.subtotal_espacio || sp.total_espacio || 0) || 0;
             runningSubtotal += spSubtotal;
-            rowsHtml += `<tr><td class="py-2 px-3 align-top break-words"><p class="font-bold text-gray-800 text-xs break-words">${sp.espacio_nombre || '--'}</p><span class="bg-gray-100 text-gray-500 px-1 py-0.5 rounded text-[10px] font-mono mt-0.5 inline-block">${sp.espacio_clave || ''}</span></td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${window.safeFormatDate(sp.fecha_inicio)}<br>${window.safeFormatDate(sp.fecha_fin)}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(spSubtotal)}</td></tr>`;
+            const mAncho = detailMaterialMeasure.medida_ancho;
+            const mAlto = detailMaterialMeasure.medida_alto;
+            const mUnidad = detailMaterialMeasure.medida_unidad || 'M';
+            const mMaterial = String(detailMaterialMeasure.material || '').trim() || '--';
+            const measuresStr = (mAncho !== null && mAncho !== undefined && mAlto !== null && mAlto !== undefined) ? `${mAncho}x${mAlto} ${mUnidad}` : '--';
+
+            rowsHtml += `<tr><td class="py-2 px-3 align-top break-words">${__pmRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(mMaterial)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(measuresStr)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${window.safeFormatDate(sp.fecha_inicio)}<br>${window.safeFormatDate(sp.fecha_fin)}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(spSubtotal)}</td></tr>`;
         });
     } else {
+        const identity = __pmResolveSpaceIdentity();
+        const detailMaterialMeasure = __pmResolveDetailMaterialMeasure(o, space);
+        const mAncho = detailMaterialMeasure.medida_ancho;
+        const mAlto = detailMaterialMeasure.medida_alto;
+        const mUnidad = detailMaterialMeasure.medida_unidad || 'M';
+        const mMaterial = String(detailMaterialMeasure.material || '').trim() || '--';
+        const measuresStr = (mAncho !== null && mAncho !== undefined && mAlto !== null && mAlto !== undefined) ? `${mAncho}x${mAlto} ${mUnidad}` : '--';
         runningSubtotal = rentalTotal;
-        rowsHtml = `<tr><td class="py-2 px-3 align-top break-words"><p class="font-bold text-gray-800 text-xs break-words">${o.espacio_nombre}</p>${descHTML}<span class="bg-gray-100 text-gray-500 px-1 py-0.5 rounded text-[10px] font-mono mt-0.5 inline-block">${o.espacio_clave || ''}</span></td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${window.safeFormatDate(o.fecha_inicio)}<br>${window.safeFormatDate(o.fecha_fin)}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(rentalTotal)}</td></tr>`;
+        rowsHtml = `<tr><td class="py-2 px-3 align-top break-words">${__pmRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(mMaterial)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(measuresStr)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${window.safeFormatDate(o.fecha_inicio)}<br>${window.safeFormatDate(o.fecha_fin)}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(rentalTotal)}</td></tr>`;
     }
     
     let cArray = [];
@@ -4360,10 +4450,10 @@ window.getOrderHTML = function(o, type) {
         const conceptPeople = __pmResolveConceptPeople(c);
         const peopleSuffix = conceptPeople > 0 ? ` (${conceptPeople} persona${conceptPeople === 1 ? '' : 's'})` : '';
         const label = `${spName ? `${spName} - ` : ''}${c.description || c.nombre || 'Adicional'}${peopleSuffix}`;
-        rowsHtml += `<tr><td class="py-2 px-3 text-[13px] font-medium text-gray-600 break-words leading-snug">${label}</td><td class="py-2 px-3"></td><td class="py-2 px-3 text-right text-[13px] font-medium text-gray-600">${sign} ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(amount)}</td></tr>`; 
+        rowsHtml += `<tr><td class="py-2 px-3 text-[13px] font-medium text-gray-600 break-words leading-snug">${label}</td><td class="py-2 px-3"></td><td class="py-2 px-3"></td><td class="py-2 px-3"></td><td class="py-2 px-3 text-right text-[13px] font-medium text-gray-600">${sign} ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(amount)}</td></tr>`; 
     }); 
     
-    if(o.tipo_ajuste && o.tipo_ajuste !== 'ninguno') { let val = parseFloat(o.valor_ajuste); let displayAmount = val; if (o.ajuste_es_porcentaje) { displayAmount = runningSubtotal * (val / 100); } const sign = o.tipo_ajuste === 'descuento' ? '-' : '+'; if(o.tipo_ajuste==='descuento') runningSubtotal -= displayAmount; else runningSubtotal += displayAmount; rowsHtml += `<tr class="bg-gray-50"><td class="py-2 px-3 italic text-[12px] text-gray-500">Ajuste Global</td><td></td><td class="py-2 px-3 text-right font-bold text-[12px] text-gray-600">${sign} ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(displayAmount)}</td></tr>`; } 
+    if(o.tipo_ajuste && o.tipo_ajuste !== 'ninguno') { let val = parseFloat(o.valor_ajuste); let displayAmount = val; if (o.ajuste_es_porcentaje) { displayAmount = runningSubtotal * (val / 100); } const sign = o.tipo_ajuste === 'descuento' ? '-' : '+'; if(o.tipo_ajuste==='descuento') runningSubtotal -= displayAmount; else runningSubtotal += displayAmount; rowsHtml += `<tr class="bg-gray-50"><td class="py-2 px-3 italic text-[12px] text-gray-500">Ajuste Global</td><td></td><td></td><td></td><td class="py-2 px-3 text-right font-bold text-[12px] text-gray-600">${sign} ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(displayAmount)}</td></tr>`; } 
     const __pmTableRows = (String(rowsHtml).match(/<tr\b/gi) || []).length;
     const __pmTableChars = String(rowsHtml).replace(/<[^>]+>/g, '').length;
     let __pmDensityLevel = 0;
@@ -4380,13 +4470,13 @@ window.getOrderHTML = function(o, type) {
     let taxRows = '';
     let taxIds = [];
     if (o.desglose_precios && o.desglose_precios.impuestos_detalle) taxIds = o.desglose_precios.impuestos_detalle;
-    else { const s = allSpaces.find(sp => sp.id === o.espacio_id); taxIds = s ? parseIds(s.impuestos) : []; }
-    taxRows += `<tr><td class="py-1 px-3 text-[10px] font-bold text-gray-500 text-right" colspan="2">Subtotal</td><td class="py-1 px-3 text-right text-xs font-bold text-gray-800">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(runningSubtotal)}</td></tr>`;
+    else { const s = __pmFindSpaceByAnyId(o.espacio_id); taxIds = s ? parseIds(s.impuestos) : []; }
+    taxRows += `<tr><td class="py-1 px-3 text-[10px] font-bold text-gray-500 text-right" colspan="4">Subtotal</td><td class="py-1 px-3 text-right text-xs font-bold text-gray-800">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(runningSubtotal)}</td></tr>`;
     const storedTaxTotal = parseFloat(o?.desglose_precios?.tax_total || 0) || 0;
     if (storedTaxTotal > 0) {
-        taxRows += `<tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="2">Impuestos</td><td class="py-1 px-3 text-right text-xs text-red-500 font-bold">+ ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(storedTaxTotal)}</td></tr>`;
+        taxRows += `<tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="4">Impuestos</td><td class="py-1 px-3 text-right text-xs text-red-500 font-bold">+ ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(storedTaxTotal)}</td></tr>`;
     } else if (taxIds.length > 0 && dbTaxes.length > 0) {
-        taxIds.forEach(tid => { const t = dbTaxes.find(x => x.id == tid); if(t) { const rate = t.porcentaje > 1 ? t.porcentaje/100 : t.porcentaje; const val = runningSubtotal * rate; taxRows += `<tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="2">${t.nombre} (${t.porcentaje}%)</td><td class="py-1 px-3 text-right text-xs text-red-500 font-bold">+ ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(val)}</td></tr>`; } });
+        taxIds.forEach(tid => { const t = dbTaxes.find(x => x.id == tid); if(t) { const rate = t.porcentaje > 1 ? t.porcentaje/100 : t.porcentaje; const val = runningSubtotal * rate; taxRows += `<tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="4">${t.nombre} (${t.porcentaje}%)</td><td class="py-1 px-3 text-right text-xs text-red-500 font-bold">+ ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(val)}</td></tr>`; } });
     }
     const totalsBlock = `<div class="pm-pdf-summary flex justify-end mb-2 pr-4" data-base-resource="summary"><div class="w-64"><table class="w-full border-collapse">${taxRows}<tr><td class="pt-2 border-t-2 border-gray-800 align-middle text-right" colspan="2"><span class="text-[10px] font-bold uppercase text-gray-500 mr-2">Total Neto</span></td><td class="pt-2 border-t-2 border-gray-800 align-middle text-right"><span class="text-xl font-black text-gray-900">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(o.precio_final)}</span></td></tr></table></div></div>`; 
     
@@ -4405,7 +4495,7 @@ window.getOrderHTML = function(o, type) {
     }
     
     const pageBaseHeight = Number(__pmContentBaseHeightPx().toFixed(2));
-const page1Raw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageBaseHeight}px;height:${pageBaseHeight}px;overflow:visible;position:relative;"><div class="pm-pdf-page-frame" style="${__pmBuildPdfContentFrameStyle(pageBaseHeight, 'display:flex;flex-direction:column;justify-content:space-between;')}"><div>${renderHeader(docTitle)}${clientComponent}${isOrder ? `<div class="mb-2 bg-gray-100 p-2 rounded text-base flex justify-between"><span>Folio de Servicio: <strong class="font-black text-lg">${folio}</strong></span><span>Contrato: <strong class="font-black text-lg">${o.numero_contrato||'---'}</strong></span></div>` : ''}<table class="w-full text-left mb-2 mt-3 table-fixed border-separate border-spacing-0"><colgroup><col style="width:64%;"><col style="width:16%;"><col style="width:20%;"></colgroup><thead class="pm-pdf-table-head bg-gray-100 text-sm font-black text-gray-500 uppercase"><tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">Fecha</th><th class="py-2 px-3 text-right rounded-r">Importe</th></tr></thead><tbody class="pm-pdf-table-body divide-y divide-gray-50 text-[12px]" data-base-resource="table-body">${rowsHtml}</tbody></table> ${totalsBlock}</div><div class="pb-2">${!isOrder ? `<div class="pm-pdf-quick grid grid-cols-2 gap-4 ${__pmQuickMarginClass} pt-4 border-t border-gray-100" data-base-resource="quick"><div><h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">${__pmSafeHtml(pdfContent.quickLeftTitle || 'Condiciones:')}</h4><ul class="list-none text-xs text-gray-600 space-y-0.5 leading-tight">${quickLeftItemsHtml}</ul></div><div><h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">${__pmSafeHtml(pdfContent.quickRightTitle || 'Vigencia:')}</h4><p class="text-xs text-gray-600">${__pmSafeHtml(pdfContent.quickRightBody || '')}</p></div></div>` : ''}<div class="pm-pdf-sign flex justify-between items-start px-2" data-base-resource="sign">${signBlock}</div>${footerHubHTML}</div></div>${__pmRenderPdfResources(pdfStyle, 1)}</div>`;
+const page1Raw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageBaseHeight}px;height:${pageBaseHeight}px;overflow:visible;position:relative;"><div class="pm-pdf-page-frame" style="${__pmBuildPdfContentFrameStyle(pageBaseHeight, 'display:flex;flex-direction:column;justify-content:space-between;')}"><div>${renderHeader(docTitle)}${clientComponent}${isOrder ? `<div class="mb-2 bg-gray-100 p-2 rounded text-base"><span>Folio de Servicio: <strong class="font-black text-lg">${folio}</strong></span></div>` : ''}<table class="w-full text-left mb-2 mt-3 table-fixed border-separate border-spacing-0"><colgroup><col style="width:38%;"><col style="width:14%;"><col style="width:12%;"><col style="width:14%;"><col style="width:22%;"></colgroup><thead class="pm-pdf-table-head bg-gray-100 text-sm font-black text-gray-500 uppercase"><tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">Material</th><th class="py-2 px-3 text-center">Medidas</th><th class="py-2 px-3 text-center">Fecha</th><th class="py-2 px-3 text-right rounded-r">Importe</th></tr></thead><tbody class="pm-pdf-table-body divide-y divide-gray-50 text-[12px]" data-base-resource="table-body">${rowsHtml}</tbody></table> ${totalsBlock}</div><div class="pb-2">${!isOrder ? `<div class="pm-pdf-quick grid grid-cols-2 gap-4 ${__pmQuickMarginClass} pt-4 border-t border-gray-100" data-base-resource="quick"><div><h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">${__pmSafeHtml(pdfContent.quickLeftTitle || 'Condiciones:')}</h4><ul class="list-none text-xs text-gray-600 space-y-0.5 leading-tight">${quickLeftItemsHtml}</ul></div><div><h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">${__pmSafeHtml(pdfContent.quickRightTitle || 'Vigencia:')}</h4><p class="text-xs text-gray-600">${__pmSafeHtml(pdfContent.quickRightBody || '')}</p></div></div>` : ''}<div class="pm-pdf-sign flex justify-between items-start px-2" data-base-resource="sign">${signBlock}</div>${footerHubHTML}</div></div>${__pmRenderPdfResources(pdfStyle, 1)}</div>`;
     const pages = [
         __pmWrapLetterheadPage(__pmOrdersBoostPdfTypography(page1Raw), { baseWidth: __PM_PDF_CONTENT_BASE_WIDTH_PX, baseHeight: pageBaseHeight })
     ];
@@ -4455,9 +4545,62 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     start.setDate(start.getDate() + 29);
     return { s, e: start.toISOString().slice(0, 10) };
   };
-  const getSpace = (sid) => allSpaces.find((s) => String(s.id) === String(sid)) || null;
+  const getSpace = (sid) => __pmFindSpaceByAnyId(sid);
   const defaultTaxIds = (space) => window.parseIds(space?.impuestos_ids || space?.impuestos).map((x) => parseInt(x, 10)).filter(Number.isFinite);
-  const parseDetail = (raw) => safeArr(raw).map((x) => x || {}).filter((x) => x.espacio_id || x.space_id);
+  const detailMeasureNumber = (value) => {
+    if (value === null || value === undefined || value === "") return null;
+    const n = parseFloat(value);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+  const detailMeasureUnit = (value) => {
+    const u = String(value || "M").trim().toUpperCase();
+    return u === "CM" ? "CM" : "M";
+  };
+  const detailTagList = (value) => {
+    let tags = [];
+    if (Array.isArray(value)) tags = value;
+    else if (typeof value === "string") {
+      const raw = value.trim();
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          tags = Array.isArray(parsed) ? parsed : raw.split(",");
+        } catch {
+          tags = raw.split(",");
+        }
+      }
+    }
+    return tags.map((tag) => String(tag || "").trim()).filter(Boolean);
+  };
+  const normalizeDetailSpace = (rawItem) => {
+    const item = rawItem && typeof rawItem === "object" ? { ...rawItem } : {};
+    const spaceId = item.espacio_id || item.space_id || "";
+    const medidaAncho = detailMeasureNumber(item.medida_ancho ?? item.ancho);
+    const medidaAlto = detailMeasureNumber(item.medida_alto ?? item.alto);
+    const medidaUnidad = detailMeasureUnit(item.medida_unidad || item.unidad_medida || "M");
+    const espacioTipo = String(item.espacio_tipo || item.tipo || "");
+    const espacioDescripcion = String(item.espacio_descripcion || item.descripcion || "");
+    const espacioEtiquetas = detailTagList(item.espacio_etiquetas ?? item.etiquetas);
+    return {
+      ...item,
+      espacio_id: item.espacio_id || spaceId,
+      space_id: item.space_id || spaceId,
+      espacio_tipo: espacioTipo,
+      tipo: item.tipo || espacioTipo,
+      espacio_descripcion: espacioDescripcion,
+      descripcion: item.descripcion || espacioDescripcion,
+      espacio_etiquetas: espacioEtiquetas,
+      etiquetas: item.etiquetas ?? espacioEtiquetas,
+      material: String(item.material || ""),
+      medida_ancho: medidaAncho,
+      medida_alto: medidaAlto,
+      medida_unidad: medidaUnidad,
+      ancho: medidaAncho,
+      alto: medidaAlto,
+      unidad_medida: medidaUnidad
+    };
+  };
+  const parseDetail = (raw) => safeArr(raw).map(normalizeDetailSpace).filter((x) => x.espacio_id || x.space_id);
   const normConcept = (c) => {
     const amount = parseFloat(c?.amount ?? c?.value ?? 0) || 0;
     return { description: c?.description || c?.concepto || c?.nombre || "Concepto", amount, value: amount, unit: c?.unit || "fixed", type: c?.type || "aumento", meta: c?.meta && typeof c.meta === "object" ? { ...c.meta } : {} };
@@ -4485,6 +4628,9 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
   };
   const mkCfg = (spaceId, seed = {}) => {
     const sp = getSpace(spaceId);
+    const seedMedidaAncho = seed.medidaAncho ?? seed.medida_ancho ?? seed.ancho ?? sp?.medida_ancho ?? sp?.ancho ?? 0;
+    const seedMedidaAlto = seed.medidaAlto ?? seed.medida_alto ?? seed.alto ?? sp?.medida_alto ?? sp?.alto ?? 0;
+    const seedMedidaUnit = seed.medidaUnit || seed.medida_unidad || seed.unidad_medida || sp?.medida_unidad || sp?.unidad_medida || "M";
     const cfg = {
       spaceId: String(spaceId),
       selected: seed.selected !== false,
@@ -4493,7 +4639,11 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       endDate: iso(seed.endDate || ""),
       customBasePrice: seed.customBasePrice === null || seed.customBasePrice === undefined || seed.customBasePrice === "" ? "" : (parseFloat(seed.customBasePrice) || 0),
       taxIds: Array.isArray(seed.taxIds) && seed.taxIds.length ? seed.taxIds.map((x) => parseInt(x, 10)).filter(Number.isFinite) : defaultTaxIds(sp),
-      concepts: safeArr(seed.concepts).map(normConcept)
+      concepts: safeArr(seed.concepts).map(normConcept),
+      material: String(seed.material || sp?.material || ""),
+      medidaAncho: parseFloat(seedMedidaAncho || 0) || 0,
+      medidaAlto: parseFloat(seedMedidaAlto || 0) || 0,
+      medidaUnit: String(seedMedidaUnit || "M")
     };
     normDates(cfg);
     return cfg;
@@ -4661,6 +4811,10 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       return Math.max(0, parseFloat(raw) || 0);
     })() : "";
     cfg.concepts = safeArr(currentConcepts).map(normConcept);
+    cfg.material = document.getElementById("oed-material")?.value || "";
+    cfg.medidaAncho = parseFloat(document.getElementById("oed-medida-ancho")?.value || 0) || 0;
+    cfg.medidaAlto = parseFloat(document.getElementById("oed-medida-alto")?.value || 0) || 0;
+    cfg.medidaUnit = document.getElementById("oed-medida-unit")?.value || "M";
     normDates(cfg);
   }
 
@@ -4698,6 +4852,13 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     currentConcepts = safeArr(cfg.concepts).map(normConcept);
     window.renderConceptsList();
     syncTaxUI();
+    __pmPopulateMaterialSelect("oed-material", cfg.material || "");
+    const mAncho = document.getElementById("oed-medida-ancho");
+    const mAlto = document.getElementById("oed-medida-alto");
+    const mUnit = document.getElementById("oed-medida-unit");
+    if (mAncho) mAncho.value = cfg.medidaAncho || "";
+    if (mAlto) mAlto.value = cfg.medidaAlto || "";
+    if (mUnit) mUnit.value = cfg.medidaUnit || "M";
     const sel = document.getElementById("oed-space");
     if (sel) {
       sel.innerHTML = "";
@@ -5071,19 +5232,28 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     saveActiveFromForm();
     window.recalcTotal();
     if (!pmTotals.spaces.length) throw new Error("No hay espacios activos.");
-    const details = pmTotals.spaces.map((r) => ({
-      espacio_id: r.cfg.spaceId,
-      espacio_nombre: r.sp?.nombre || r.cfg.spaceId,
-      espacio_clave: r.sp?.clave || "",
-      fecha_inicio: r.cfg.startDate,
-      fecha_fin: r.cfg.endDate,
-      permanencia_personalizada: !!r.cfg.customPermanence,
-      precio_personalizado: (r.cfg.customPermanence && r.cfg.customBasePrice !== "" && r.cfg.customBasePrice !== null && r.cfg.customBasePrice !== undefined) ? (parseFloat(r.cfg.customBasePrice) || 0) : null,
-      subtotal_espacio: r.adjustedSubtotal,
-      impuestos_ids: r.taxIds || [],
-      impuestos_total: r.tax || 0,
-      total_espacio: r.total || 0
-    }));
+    const details = pmTotals.spaces.map((r) => {
+      return {
+        espacio_id: r.cfg.spaceId,
+        espacio_nombre: r.sp?.nombre || r.cfg.spaceId,
+        espacio_clave: r.sp?.clave || "",
+        fecha_inicio: r.cfg.startDate,
+        fecha_fin: r.cfg.endDate,
+        permanencia_personalizada: !!r.cfg.customPermanence,
+        precio_personalizado: (r.cfg.customPermanence && r.cfg.customBasePrice !== "" && r.cfg.customBasePrice !== null && r.cfg.customBasePrice !== undefined) ? (parseFloat(r.cfg.customBasePrice) || 0) : null,
+        subtotal_espacio: r.adjustedSubtotal,
+        impuestos_ids: r.taxIds || [],
+        impuestos_total: r.tax || 0,
+        total_espacio: r.total || 0,
+        material: r.cfg.material || "",
+        medida_ancho: r.cfg.medidaAncho || 0,
+        medida_alto: r.cfg.medidaAlto || 0,
+        medida_unidad: r.cfg.medidaUnit || "M",
+        ancho: r.cfg.medidaAncho || 0,
+        alto: r.cfg.medidaAlto || 0,
+        unidad_medida: r.cfg.medidaUnit || "M"
+      };
+    });
     const concepts = [];
     pmTotals.spaces.forEach((r) => r.concepts.forEach((c) => {
       const n = normConcept(c);
@@ -5302,6 +5472,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     const order = allOrders.find((o) => String(o.id) === String(id));
     if (!order) return;
     await loadClientProfilesForOrderModal();
+    await __pmLoadMaterials();
     currentPreviewOrder = { ...order };
 
     document.getElementById("oed-id").value = order.id;
@@ -5329,7 +5500,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
 
     const details = parseDetail(order.espacios_detalle);
     pmSpaces = details.length
-      ? details.map((d) => mkCfg(d.espacio_id || d.space_id, { selected: true, customPermanence: d.permanencia_personalizada === true, startDate: d.fecha_inicio || "", endDate: d.fecha_fin || "", customBasePrice: d.precio_personalizado, taxIds: safeArr(d.impuestos_ids).map((x) => parseInt(x, 10)).filter(Number.isFinite) }))
+      ? details.map((d) => mkCfg(d.espacio_id || d.space_id, { selected: true, customPermanence: d.permanencia_personalizada === true, startDate: d.fecha_inicio || "", endDate: d.fecha_fin || "", customBasePrice: d.precio_personalizado, taxIds: safeArr(d.impuestos_ids).map((x) => parseInt(x, 10)).filter(Number.isFinite), material: d.material || "", medidaAncho: d.medida_ancho ?? d.ancho ?? 0, medidaAlto: d.medida_alto ?? d.alto ?? 0, medidaUnit: d.medida_unidad || d.unidad_medida || "M" }))
       : [mkCfg(order.espacio_id, { selected: true, startDate: order.fecha_inicio, endDate: order.fecha_fin })];
 
     const rawConcepts = safeArr(order.conceptos_adicionales).map(normConcept);

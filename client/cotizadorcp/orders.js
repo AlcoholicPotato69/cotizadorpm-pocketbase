@@ -449,7 +449,7 @@ window.toggleCustomHorario = function(prefix) {
     }
 }
 
-function calculateDayByDayTotal(space, startStr, endStr, guests) {
+function calculateDayByDayTotal(space, startStr, endStr, guests, options = {}) {
     if (!startStr) return { total: 0, details: [] };
     const endS = endStr || startStr;
     let rules = [];
@@ -468,7 +468,7 @@ function calculateDayByDayTotal(space, startStr, endStr, guests) {
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) { 
         const dayIdx = d.getDay(); const key = keys[dayIdx]; 
         let price = parseFloat(prices[key] || 0); 
-        if (blockedDays.includes(key)) price = 0;
+        if (!options.ignoreBlocks && blockedDays.includes(key)) price = 0;
         total += price; 
         details.push({ date: d.toLocaleDateString('es-MX'), dayName: names[dayIdx], price: price }); 
     }
@@ -494,7 +494,7 @@ function calculatePremontajeByDates(space, dates, guests) {
     const arr = Array.isArray(dates) ? dates : [];
     const premPct = (typeof __orderGetPremPct === 'function') ? __orderGetPremPct() : 25;
     arr.forEach(ds => {
-        const calc = calculateDayByDayTotal(space, ds, ds, guests);
+        const calc = calculateDayByDayTotal(space, ds, ds, guests, { ignoreBlocks: true });
         const base = parseFloat(calc.total || 0);
         const amount = base * (premPct / 100);
         out.total += amount;
@@ -5115,6 +5115,14 @@ function __orderIsBlockedDate(space, dateStr, guests) {
     const base = calculateDayByDayTotal(space, dateStr, dateStr, guests).total || 0;
     return base <= 0;
 }
+
+function __orderIsPremontajeBlockedDate(space, dateStr) {
+    let blockedP = [];
+    try { blockedP = typeof space?.dias_bloqueados_premontaje === 'string' ? JSON.parse(space.dias_bloqueados_premontaje) : (space?.dias_bloqueados_premontaje || []); } catch(e){ blockedP = []; }
+    const dayKey = __orderDayKey(dateStr);
+    return Array.isArray(blockedP) && blockedP.includes(dayKey);
+}
+
 function __orderCfgHasBlockedDates(cfg) {
     const space = __orderGetSpaceById(cfg?.spaceId);
     if (!space) return false;
@@ -5131,7 +5139,9 @@ function __orderCfgHasBlockedDates(cfg) {
         }
     }
     const premDates = __orderSafeArray(cfg?.premontajeDates).map(__orderNormalizeDate).filter(Boolean);
-    return [...eventDates, ...premDates].some(ds => __orderIsBlockedDate(space, ds, guests));
+    const eventBlocked = eventDates.some(ds => __orderIsBlockedDate(space, ds, guests));
+    const premBlocked = premDates.some(ds => __orderIsPremontajeBlockedDate(space, ds));
+    return eventBlocked || premBlocked;
 }
 
 function __orderDefaultTaxIds(space) {
@@ -5673,8 +5683,8 @@ function __orderDateCellClasses(state, flags) {
     return 'bg-white text-gray-700 border border-gray-100 hover:bg-gray-50';
 }
 
-function __orderDayPrice(space, ds, guests) {
-    const value = calculateDayByDayTotal(space, ds, ds, guests).total;
+function __orderDayPrice(space, ds, guests, options = {}) {
+    const value = calculateDayByDayTotal(space, ds, ds, guests, options).total;
     return parseFloat(value || 0) || 0;
 }
 
@@ -5982,7 +5992,7 @@ function __orderIsMontajeUnavailable(ds, cfg, space, guests) {
     const isPast = ds < __orderTodayISO();
     const overLimit = !!state.maxDate && ds > state.maxDate;
     const isReserved = state.reserved?.has(ds);
-    const isBlocked = !isPast && !isReserved && !!space && __orderIsBlockedDate(space, ds, guests);
+    const isBlocked = !isPast && !isReserved && !!space && __orderIsPremontajeBlockedDate(space, ds);
     return { isPast, overLimit, isReserved, isBlocked, disabled: isPast || overLimit || isReserved || isBlocked };
 }
 
@@ -6080,7 +6090,7 @@ async function __orderRenderMontajeDatePicker() {
                 arg.el.style.backgroundColor = flags.isReserved ? '#fef2f2' : '#f3f4f6';
             }
             if (!flags.disabled && space && guests > 0) {
-                const base = __orderDayPrice(space, ds, guests);
+                const base = __orderDayPrice(space, ds, guests, { ignoreBlocks: true });
                 const prem = base * (__orderGetPremPct() / 100);
                 if (prem > 0) {
                     const frame = arg.el.querySelector('.fc-daygrid-day-frame');
@@ -6205,7 +6215,7 @@ function __orderCalcPremontaje(space, cfg) {
     const courtesy = Math.min(requestedDays, Math.max(0, parseInt(cfg.premontajeCourtesyDays, 10) || 0));
     cfg.premontajeCourtesyDays = courtesy;
     const pct = __orderGetPremPct();
-    const priced = dates.map(ds => ({ date: ds, base_day: parseFloat(calculateDayByDayTotal(space, ds, ds, guests).total || 0) || 0 }));
+    const priced = dates.map(ds => ({ date: ds, base_day: parseFloat(calculateDayByDayTotal(space, ds, ds, guests, { ignoreBlocks: true }).total || 0) || 0 }));
     const billableCount = Math.max(0, priced.length - courtesy);
     const chargeMap = new Set(
         [...priced]

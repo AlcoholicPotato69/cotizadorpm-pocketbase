@@ -197,6 +197,9 @@
         <button type="button" id="menu-cp-settings" onclick="switchView('v_cp_settings'); return false;" class="tool-tab hidden">
           <i class="fa-solid fa-cogs"></i> Config CP
         </button>
+        <button type="button" id="menu-materials" onclick="switchView('v_materials'); return false;" class="tool-tab hidden">
+          <i class="fa-solid fa-palette"></i> Materiales
+        </button>
       </div>
 
       <!-- Tabs Tenant -->
@@ -542,6 +545,24 @@
         <div class="text-[10px] font-black uppercase tracking-wider text-amber-500">Casa de Piedra</div>
         <div class="text-sm font-black text-gray-800 mt-1">Configuración de Premontaje y Horas Extra</div>
         <div class="text-xs text-gray-500 mt-1">Usa esta sección para configurar porcentaje de premontaje y regla de horas extra para CP.</div>
+      </div>
+    </div>
+
+    <div id="v_materials" class="view hidden fade-in">
+      <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+        <div class="p-5 border-b border-gray-100">
+          <div class="text-[10px] font-black uppercase tracking-wider text-brand-red">Plaza Mayor</div>
+          <div class="text-sm font-black text-gray-800 mt-1">Materiales Disponibles</div>
+          <div class="text-xs text-gray-500 mt-1">Administra los materiales que aparecerán en el cotizador de Plaza Mayor.</div>
+        </div>
+        <div class="p-5">
+          <div class="flex gap-2 mb-4">
+            <input type="text" id="mat-new-name" placeholder="Nombre del material (ej. Vinyl, Lona, Acrílico)" class="flex-1 border border-gray-200 rounded-lg p-2.5 text-sm font-bold outline-none focus:border-brand-red">
+            <button type="button" id="btn-mat-add" onclick="window.addMaterialItem()" class="bg-brand-red text-white px-5 rounded-lg text-xs font-black uppercase hover:bg-red-700 transition shadow"><i class="fa-solid fa-plus mr-1"></i> Agregar</button>
+          </div>
+          <div id="mat-list" class="space-y-2"></div>
+          <p id="mat-empty" class="text-xs text-gray-400 italic text-center py-4 hidden">No hay materiales configurados.</p>
+        </div>
       </div>
     </div>
 
@@ -2322,7 +2343,7 @@
         const sessionResp = await sb.auth.getSession();
         session = sessionResp?.data?.session || sessionResp?.session || null;
       } catch (error) {
-        console.warn('No se pudo leer la sesion actual en users1:', error);
+        console.warn('No se pudo leer la sesion actual en users1.');
       }
 
       let sessionUser = session?.user || null;
@@ -2331,7 +2352,7 @@
           const userResp = await sb.auth.getUser();
           sessionUser = userResp?.data?.user || userResp?.user || null;
         } catch (error) {
-          console.warn('No se pudo leer el usuario autenticado en users1:', error);
+          console.warn('No se pudo leer el usuario autenticado en users1.');
         }
       }
 
@@ -2419,13 +2440,12 @@
         }
         return resolvedRole === 'admin';
       } catch (error) {
-        console.warn('No se pudo validar el perfil admin en users1:', error);
+        console.warn('No se pudo validar el perfil admin en users1.');
       }
       return false;
     }
 
     function showAdminAccessDenied(){
-      const referrer = String(document.referrer || '').trim();
       const canGoBack = window.history.length > 1;
       let seconds = 4;
       const prevOverlay = document.getElementById('users1-admin-denied-overlay');
@@ -2470,10 +2490,6 @@
           window.history.back();
           return;
         }
-        if (referrer) {
-          window.location.href = referrer;
-          return;
-        }
         window.location.href = "../index.html";
       }, 4000);
     }
@@ -2490,6 +2506,8 @@
         if (!el) return;
         el.classList.toggle('is-active', currentView === item.view);
       });
+      const matBtn = document.getElementById('menu-materials');
+      if (matBtn) matBtn.classList.toggle('is-active', currentView === 'v_materials');
     }
 
     function paintTenantUI(){
@@ -2516,6 +2534,8 @@
         pmBtn.classList.remove('is-active');
         if (cpMenu) cpMenu.classList.remove('hidden');
       }
+      const matMenu = document.getElementById('menu-materials');
+      if (matMenu) matMenu.classList.toggle('hidden', currentTenant !== 'pm');
 
       const isCP = currentTenant === 'cp';
       const isCpConfigView = isCP && currentView === 'v_cp_settings';
@@ -2553,6 +2573,9 @@
       if (currentTenant !== 'cp' && currentView === 'v_cp_settings') {
         currentView = 'v_concepts';
       }
+      if (currentTenant === 'cp' && currentView === 'v_materials') {
+        currentView = 'v_concepts';
+      }
 
       resetCptForm();
       resetTaxForm();
@@ -2575,6 +2598,9 @@
       if(viewId === 'v_cp_settings' && currentTenant === 'cp') {
         await loadPremontajePct();
         await loadHoraExtraCfg();
+      }
+      if(viewId === 'v_materials' && currentTenant === 'pm') {
+        await window.loadMaterialsList();
       }
       paintTenantUI();
     };
@@ -2851,6 +2877,58 @@
       paintTenantUI();
       await loadPremontajePct();
       await loadHoraExtraCfg();
+
+      // ====== MATERIALES PM CRUD ======
+      let __materialItems = [];
+      let __materialsRecordId = null;
+      window.loadMaterialsList = async function() {
+        try {
+          const { data, error } = await pmPocketBase.from('configuracion').select('id,clave,valor_json').eq('clave', 'materiales_pm').maybeSingle();
+          if (error) throw error;
+          __materialsRecordId = data?.id || null;
+          const items = data?.valor_json?.items;
+          __materialItems = Array.isArray(items) ? items.filter(Boolean) : [];
+        } catch (e) { __materialItems = []; __materialsRecordId = null; }
+        renderMaterialsList();
+      };
+      function renderMaterialsList() {
+        const list = document.getElementById('mat-list');
+        const empty = document.getElementById('mat-empty');
+        if (!list) return;
+        list.innerHTML = '';
+        if (__materialItems.length === 0) { if (empty) empty.classList.remove('hidden'); return; }
+        if (empty) empty.classList.add('hidden');
+        __materialItems.forEach((name, idx) => {
+          list.innerHTML += `<div class="flex justify-between items-center bg-gray-50 border border-gray-100 p-3 rounded-lg"><span class="text-sm font-bold text-gray-700"><i class="fa-solid fa-palette text-brand-red mr-2"></i>${name}</span><button onclick="window.removeMaterialItem(${idx})" class="text-gray-400 hover:text-red-500 transition text-xs"><i class="fa-solid fa-trash"></i></button></div>`;
+        });
+      }
+      window.addMaterialItem = async function() {
+        const input = document.getElementById('mat-new-name');
+        const name = (input?.value || '').trim();
+        if (!name) return showToast('Ingresa un nombre de material.', 'error');
+        if (__materialItems.includes(name)) return showToast('Ese material ya existe.', 'error');
+        __materialItems.push(name);
+        await __saveMaterialsToDB();
+        if (input) input.value = '';
+        renderMaterialsList();
+      };
+      window.removeMaterialItem = async function(idx) {
+        __materialItems.splice(idx, 1);
+        await __saveMaterialsToDB();
+        renderMaterialsList();
+      };
+      async function __saveMaterialsToDB() {
+        try {
+          const payload = { clave: 'materiales_pm', valor_json: { items: __materialItems } };
+          if (__materialsRecordId) {
+            await pmPocketBase.from('configuracion').update(payload).eq('id', __materialsRecordId);
+          } else {
+            const { data } = await pmPocketBase.from('configuracion').insert(payload);
+            __materialsRecordId = data?.id || null;
+          }
+          showToast('Materiales guardados.', 'success');
+        } catch (e) { showToast('Error al guardar materiales: ' + (e.message || e), 'error'); }
+      }
 
       // default view
       await switchView('v_concepts');

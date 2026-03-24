@@ -382,6 +382,8 @@
     e.response.header().set("Content-Type", "text/calendar; charset=utf-8");
     e.response.header().set("Cache-Control", "public, max-age=120");
     e.response.header().set("X-ICS-Generated-At", nowStamp);
+    e.response.header().set("X-Content-Type-Options", "nosniff");
+    e.response.header().set("X-Frame-Options", "DENY");
     if (forceDownload) {
       e.response.header().set("Content-Disposition", 'attachment; filename="casa-de-piedra-calendario.ics"');
     }

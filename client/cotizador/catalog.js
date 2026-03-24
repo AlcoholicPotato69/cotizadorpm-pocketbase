@@ -55,7 +55,7 @@ async function loadClientProfilesForQuoteModal() {
             if (sel.value) sel.value = '';
             if (hid) hid.value = '';
         };
-        ['cli-name','cli-phone','cli-email','cli-rfc'].forEach(id => {
+        ['cli-name', 'cli-phone', 'cli-email', 'cli-rfc'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.addEventListener('input', clearAssoc);
         });
@@ -75,8 +75,8 @@ const FIN_SCHEMA = window.HUB_CONFIG?.finanzasSchema || window.ENV?.SCHEMA_PLAZA
 const PM_CATALOG_MODE = window.__PM_CATALOG_MODE || ((window.location.pathname || '').toLowerCase().includes('cotizacion.html') ? 'quote' : 'catalog_admin');
 const IS_PM_QUOTE_PAGE = PM_CATALOG_MODE === 'quote';
 const IS_PM_CATALOG_ADMIN_PAGE = !IS_PM_QUOTE_PAGE;
-let allSpaces = [], dbTaxes = [], currentSpace = null, currentPricing = { base:0, final:0 };
-let myPermissions = { access:false, catalog_manage:false };
+let allSpaces = [], dbTaxes = [], dbMaterials = [], currentSpace = null, currentPricing = { base: 0, final: 0 };
+let myPermissions = { access: false, catalog_manage: false };
 let pmQuoteSpaces = [];
 let pmActiveSpaceId = null;
 let pmQuoteDateCalendar = null;
@@ -160,7 +160,7 @@ async function pmResolveQuoteActorAudit() {
             email ? email.split('@')[0] : ''
         ];
         actorName = candidates.map(sanitizeActorName).find(Boolean) || '';
-    } catch (_) {}
+    } catch (_) { }
     const cachedName = sanitizeActorName(localStorage.getItem('hub_user_cache_name') || '');
     if (cachedName) actorName = cachedName;
     if (!actorName) actorName = 'Usuario';
@@ -178,7 +178,7 @@ async function pmResolveCurrentUserProfile(sessionUser = {}) {
         try {
             const { data, error } = await pbClient.from(table).select('*').eq(field, value).maybeSingle();
             if (!error && data) return data;
-        } catch (_) {}
+        } catch (_) { }
         return null;
     };
     let profile = await lookupOne('app_users', 'id', id);
@@ -189,19 +189,58 @@ async function pmResolveCurrentUserProfile(sessionUser = {}) {
 }
 
 // --- HELPERS ---
-function parseIds(v){ if(!v) return []; if(Array.isArray(v)) return v; if(typeof v === 'string'){ try { const parsed = JSON.parse(v); return Array.isArray(parsed) ? parsed : []; } catch(e){ return v.split(',').map(x=>x.trim()).filter(Boolean); } } return []; }
-function formatMoney(v){ return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(v || 0); }
-function isQuoteWorkspacePage(){ return IS_PM_QUOTE_PAGE && !!document.getElementById('quote-workspace'); }
-function toDateISO(v){ const s = String(v || '').trim(); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : ''; }
-function todayISO(){ return new Date().toISOString().slice(0,10); }
-function getMonthBounds(anchorDate){
+function parseIds(v) { if (!v) return []; if (Array.isArray(v)) return v; if (typeof v === 'string') { try { const parsed = JSON.parse(v); return Array.isArray(parsed) ? parsed : []; } catch (e) { return v.split(',').map(x => x.trim()).filter(Boolean); } } return []; }
+function formatMoney(v) { return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(v || 0); }
+function isQuoteWorkspacePage() { return IS_PM_QUOTE_PAGE && !!document.getElementById('quote-workspace'); }
+function toDateISO(v) { const s = String(v || '').trim(); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : ''; }
+function todayISO() { return new Date().toISOString().slice(0, 10); }
+function normalizeSpaceMeasureValue(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const num = parseFloat(value);
+    return Number.isFinite(num) ? num : null;
+}
+function normalizeSpaceMeasureUnit(value) {
+    const unit = String(value || '').trim().toUpperCase();
+    return unit === 'CM' ? 'CM' : 'M';
+}
+function normalizeSpaceMaterialMeasure(space) {
+    const src = (space && typeof space === 'object') ? space : {};
+    const medidaAncho = normalizeSpaceMeasureValue(src.medida_ancho ?? src.ancho);
+    const medidaAlto = normalizeSpaceMeasureValue(src.medida_alto ?? src.alto);
+    const medidaUnidad = normalizeSpaceMeasureUnit(src.medida_unidad || src.unidad_medida || 'M');
+    return {
+        ...src,
+        material: (src.material === null || src.material === undefined) ? '' : String(src.material),
+        medida_ancho: medidaAncho,
+        medida_alto: medidaAlto,
+        medida_unidad: medidaUnidad,
+        ancho: medidaAncho,
+        alto: medidaAlto,
+        unidad_medida: medidaUnidad
+    };
+}
+function compareSavedSpaceMaterialMeasure(savedSpace, expectedPayload) {
+    const saved = normalizeSpaceMaterialMeasure(savedSpace);
+    const expected = normalizeSpaceMaterialMeasure(expectedPayload);
+    const savedAncho = saved.medida_ancho ?? 0;
+    const expectedAncho = expected.medida_ancho ?? 0;
+    const savedAlto = saved.medida_alto ?? 0;
+    const expectedAlto = expected.medida_alto ?? 0;
+    const mismatches = [];
+    if (String(saved.material || '') !== String(expected.material || '')) mismatches.push('material');
+    if (savedAncho !== expectedAncho) mismatches.push('medida_ancho');
+    if (savedAlto !== expectedAlto) mismatches.push('medida_alto');
+    if (String(saved.medida_unidad || 'M') !== String(expected.medida_unidad || 'M')) mismatches.push('medida_unidad');
+    return { ok: mismatches.length === 0, mismatches, saved, expected };
+}
+function getMonthBounds(anchorDate) {
     const iso = toDateISO(anchorDate) || todayISO();
     const start = new Date(`${iso}T00:00:00`);
     const end = new Date(`${iso}T00:00:00`);
     end.setDate(end.getDate() + 29);
-    return { start: start.toISOString().slice(0,10), end: end.toISOString().slice(0,10) };
+    return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
 }
-function normalizeCfgDates(cfg){
+function normalizeCfgDates(cfg) {
     if (!cfg) return;
     if (cfg.customPermanence) {
         cfg.startDate = toDateISO(cfg.startDate || '');
@@ -218,13 +257,13 @@ function normalizeCfgDates(cfg){
     cfg.startDate = bounds.start;
     cfg.endDate = bounds.end;
 }
-function buildSpacePrice(space, opts = {}){
-    if(!space) return { subtotal: 0, taxes: 0, total: 0, taxIds: [] };
+function buildSpacePrice(space, opts = {}) {
+    if (!space) return { subtotal: 0, taxes: 0, total: 0, taxIds: [] };
     const hasCustom = opts.customBase !== undefined && opts.customBase !== null && opts.customBase !== '';
     let subtotal = hasCustom ? (parseFloat(opts.customBase) || 0) : (parseFloat(space.precio_base || 0) || 0);
-    if(!hasCustom){
-        if(String(space.ajuste_tipo || '') === 'aumento') subtotal += subtotal * ((parseFloat(space.ajuste_porcentaje || 0) || 0) / 100);
-        if(String(space.ajuste_tipo || '') === 'descuento') subtotal -= subtotal * ((parseFloat(space.ajuste_porcentaje || 0) || 0) / 100);
+    if (!hasCustom) {
+        if (String(space.ajuste_tipo || '') === 'aumento') subtotal += subtotal * ((parseFloat(space.ajuste_porcentaje || 0) || 0) / 100);
+        if (String(space.ajuste_tipo || '') === 'descuento') subtotal -= subtotal * ((parseFloat(space.ajuste_porcentaje || 0) || 0) / 100);
     }
     const taxIds = parseIds(space.impuestos_ids || space.impuestos);
     let taxes = 0;
@@ -236,9 +275,14 @@ function buildSpacePrice(space, opts = {}){
     });
     return { subtotal, taxes, total: subtotal + taxes, taxIds };
 }
-function getSpaceById(spaceId){ return allSpaces.find(s => String(s.id) === String(spaceId)) || null; }
-function getActiveCfg(){ return pmQuoteSpaces.find(x => String(x.spaceId) === String(pmActiveSpaceId)) || null; }
-function createSpaceCfg(spaceId, seed = {}){
+function isSpaceIdMatch(space, candidateId) {
+    const raw = String(candidateId || '').trim();
+    if (!raw || !space) return false;
+    return [space.id, space._pb_id, space.legacy_id].some(value => String(value || '').trim() === raw);
+}
+function getSpaceById(spaceId) { return allSpaces.find(s => isSpaceIdMatch(s, spaceId)) || null; }
+function getActiveCfg() { return pmQuoteSpaces.find(x => String(x.spaceId) === String(pmActiveSpaceId)) || null; }
+function createSpaceCfg(spaceId, seed = {}) {
     const customPermanence = !!seed.customPermanence;
     const startSeed = toDateISO(seed.startDate || '');
     const endSeed = toDateISO(seed.endDate || '');
@@ -254,37 +298,71 @@ function createSpaceCfg(spaceId, seed = {}){
             : (parseFloat(seed.customBasePrice) || 0)
     };
 }
-function minDate(values){ const arr = values.filter(Boolean).sort(); return arr[0] || ''; }
-function maxDate(values){ const arr = values.filter(Boolean).sort(); return arr[arr.length - 1] || ''; }
-function toDateObj(ds){ return new Date(`${ds}T00:00:00`); }
-function plusOneDay(ds){ const d = toDateObj(ds); d.setDate(d.getDate() + 1); return d.toISOString().slice(0,10); }
-function safeArray(v){
-    if(!v) return [];
-    if(Array.isArray(v)) return v;
-    if(typeof v === 'string'){ try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch(e){ return []; } }
+function minDate(values) { const arr = values.filter(Boolean).sort(); return arr[0] || ''; }
+function maxDate(values) { const arr = values.filter(Boolean).sort(); return arr[arr.length - 1] || ''; }
+function toDateObj(ds) { return new Date(`${ds}T00:00:00`); }
+function plusOneDay(ds) { const d = toDateObj(ds); d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10); }
+function safeArray(v) {
+    if (!v) return [];
+    if (Array.isArray(v)) return v;
+    if (typeof v === 'string') { try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch (e) { return []; } }
     return [];
 }
-function rangesOverlap(aStart, aEnd, bStart, bEnd){
+function rangesOverlap(aStart, aEnd, bStart, bEnd) {
     const s1 = toDateObj(aStart), e1 = toDateObj(aEnd);
     const s2 = toDateObj(bStart), e2 = toDateObj(bEnd);
     return s1 <= e2 && s2 <= e1;
 }
-function rangeHitsBlocked(startDate, endDate){
+function rangeHitsBlocked(startDate, endDate) {
     const s = toDateISO(startDate), e = toDateISO(endDate || startDate);
-    if(!s || !e) return false;
+    if (!s || !e) return false;
     return pmQuoteBlockedRanges.some(b => rangesOverlap(s, e, b.start, b.end));
 }
-function updatePickedDateLabels(){
+function calculateDayByDayTotal(space, startStr, endStr, guests, options = {}) {
+    const startDate = toDateObj(startStr);
+    const endDate = toDateObj(endStr);
+    if (!startDate || !endDate || startDate > endDate) {
+        return { total: 0, days: 0, prices: {}, keys: [], blockedDays: [] };
+    }
+
+    const prices = {};
+    const keys = [];
+    const blockedDays = [];
+    let total = 0;
+    let currentDate = new Date(startDate);
+
+    while (currentDate <= endDate) {
+        const key = currentDate.toISOString().slice(0, 10);
+        keys.push(key);
+
+        let price = parseFloat(space.precio_base || 0);
+        if (String(space.ajuste_tipo || '') === 'aumento') price += price * ((parseFloat(space.ajuste_porcentaje || 0) || 0) / 100);
+        if (String(space.ajuste_tipo || '') === 'descuento') price -= price * ((parseFloat(space.ajuste_porcentaje || 0) || 0) / 100);
+
+        // Check for blocked days
+        if (!options.ignoreBlocks && pmQuoteBlockedRanges.some(b => rangesOverlap(key, key, b.start, b.end))) {
+            price = 0;
+            blockedDays.push(key);
+        }
+
+        prices[key] = price;
+        total += price;
+        currentDate.setDate(currentDate.getDate() + 1);
+    }
+
+    return { total, days: keys.length, prices, keys, blockedDays };
+}
+function updatePickedDateLabels() {
     const l1 = document.getElementById('quote-date-picked-start');
     const l2 = document.getElementById('quote-date-picked-end');
     if (l1) l1.innerText = pmQuoteTempStart || '--';
     if (l2) l2.innerText = pmQuoteTempEnd || '--';
 }
-function renderSelectedRangeEvent(){
-    if(!pmQuoteDateCalendar) return;
+function renderSelectedRangeEvent() {
+    if (!pmQuoteDateCalendar) return;
     const old = pmQuoteDateCalendar.getEventById('pm-selected-range');
-    if(old) old.remove();
-    if(!pmQuoteTempStart) return;
+    if (old) old.remove();
+    if (!pmQuoteTempStart) return;
     const end = pmQuoteTempEnd || pmQuoteTempStart;
     pmQuoteDateCalendar.addEvent({
         id: 'pm-selected-range',
@@ -295,43 +373,43 @@ function renderSelectedRangeEvent(){
         borderColor: 'rgba(22,163,74,0.30)'
     });
 }
-async function fetchBlockedRangesForSpace(spaceId){
+async function fetchBlockedRangesForSpace(spaceId) {
     const sid = String(spaceId || '');
-    if(!sid) return [];
+    if (!sid) return [];
     const { data, error } = await window.tenantPocketBase
         .from('cotizaciones')
         .select('id,espacio_id,fecha_inicio,fecha_fin,espacios_detalle,status')
         .eq('status', 'aprobada');
-    if(error){
+    if (error) {
         console.error(error);
         return [];
     }
     const out = [];
     (data || []).forEach(o => {
         const detail = safeArray(o.espacios_detalle);
-        if(detail.length){
+        if (detail.length) {
             detail.forEach(d => {
                 const dsid = String(d?.espacio_id || d?.space_id || '');
                 const fi = toDateISO(d?.fecha_inicio || '');
                 const ff = toDateISO(d?.fecha_fin || '');
-                if(dsid === sid && fi && ff) out.push({ start: fi, end: ff, orderId: o.id });
+                if (dsid === sid && fi && ff) out.push({ start: fi, end: ff, orderId: o.id });
             });
             return;
         }
-        if(String(o.espacio_id || '') === sid){
+        if (String(o.espacio_id || '') === sid) {
             const fi = toDateISO(o.fecha_inicio || '');
             const ff = toDateISO(o.fecha_fin || '');
-            if(fi && ff) out.push({ start: fi, end: ff, orderId: o.id });
+            if (fi && ff) out.push({ start: fi, end: ff, orderId: o.id });
         }
     });
     return out;
 }
-async function renderQuoteCalendarBlocked(spaceId){
+async function renderQuoteCalendarBlocked(spaceId) {
     pmQuoteBlockedRanges = await fetchBlockedRangesForSpace(spaceId);
-    if(!pmQuoteDateCalendar) return;
+    if (!pmQuoteDateCalendar) return;
     // Limpiar bloqueos previos
     pmQuoteDateCalendar.getEvents().forEach(ev => {
-        if(String(ev.id || '').startsWith('pm-block-')) ev.remove();
+        if (String(ev.id || '').startsWith('pm-block-')) ev.remove();
     });
     pmQuoteBlockedRanges.forEach((r, i) => {
         pmQuoteDateCalendar.addEvent({
@@ -345,8 +423,8 @@ async function renderQuoteCalendarBlocked(spaceId){
     });
     renderSelectedRangeEvent();
 }
-function initQuoteDateCalendar(){
-    if(pmQuoteDateCalendar || !document.getElementById('quote-date-fc') || typeof FullCalendar === 'undefined') return;
+function initQuoteDateCalendar() {
+    if (pmQuoteDateCalendar || !document.getElementById('quote-date-fc') || typeof FullCalendar === 'undefined') return;
     pmQuoteDateCalendar = new FullCalendar.Calendar(document.getElementById('quote-date-fc'), {
         initialView: 'dayGridMonth',
         locale: 'es',
@@ -357,11 +435,11 @@ function initQuoteDateCalendar(){
         headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth' },
         dateClick: (info) => {
             const clicked = toDateISO(info.dateStr);
-            if(!clicked) return;
+            if (!clicked) return;
             const cfg = getActiveCfg();
             if (cfg && !cfg.customPermanence) {
                 const month = getMonthBounds(clicked);
-                if(rangeHitsBlocked(month.start, month.end)) return window.showToast("Ese periodo automático de 30 días incluye días bloqueados para este espacio.", "error");
+                if (rangeHitsBlocked(month.start, month.end)) return window.showToast("Ese periodo automático de 30 días incluye días bloqueados para este espacio.", "error");
                 pmQuoteTempStart = month.start;
                 pmQuoteTempEnd = month.end;
                 pmQuoteDatePickMode = 'start';
@@ -369,8 +447,8 @@ function initQuoteDateCalendar(){
                 renderSelectedRangeEvent();
                 return;
             }
-            if(!pmQuoteTempStart || (pmQuoteTempStart && pmQuoteTempEnd && pmQuoteDatePickMode === 'start')) {
-                if(rangeHitsBlocked(clicked, clicked)) return window.showToast("Ese día está bloqueado para este espacio.", "error");
+            if (!pmQuoteTempStart || (pmQuoteTempStart && pmQuoteTempEnd && pmQuoteDatePickMode === 'start')) {
+                if (rangeHitsBlocked(clicked, clicked)) return window.showToast("Ese día está bloqueado para este espacio.", "error");
                 pmQuoteTempStart = clicked;
                 pmQuoteTempEnd = '';
                 pmQuoteDatePickMode = 'end';
@@ -380,8 +458,8 @@ function initQuoteDateCalendar(){
             }
             let start = pmQuoteTempStart;
             let end = clicked;
-            if(toDateObj(end) < toDateObj(start)){ const tmp = start; start = end; end = tmp; }
-            if(rangeHitsBlocked(start, end)) return window.showToast("El rango seleccionado incluye días bloqueados.", "error");
+            if (toDateObj(end) < toDateObj(start)) { const tmp = start; start = end; end = tmp; }
+            if (rangeHitsBlocked(start, end)) return window.showToast("El rango seleccionado incluye días bloqueados.", "error");
             pmQuoteTempStart = start;
             pmQuoteTempEnd = end;
             pmQuoteDatePickMode = 'start';
@@ -391,10 +469,10 @@ function initQuoteDateCalendar(){
     });
 }
 
-function setActiveQuoteSpaceCard(_spaceId){
+function setActiveQuoteSpaceCard(_spaceId) {
     if (!IS_PM_QUOTE_PAGE) return;
 }
-function syncQuoteCustomUi(cfg){
+function syncQuoteCustomUi(cfg) {
     const chk = document.getElementById('q-custom-permanence');
     const wrap = document.getElementById('q-custom-price-wrap');
     const input = document.getElementById('q-custom-price');
@@ -405,9 +483,9 @@ function syncQuoteCustomUi(cfg){
         ? String(cfg.customBasePrice)
         : '';
 }
-function saveActiveCfgFromForm(){
+function saveActiveCfgFromForm() {
     const cfg = getActiveCfg();
-    if(!cfg) return;
+    if (!cfg) return;
     cfg.customPermanence = !!document.getElementById('q-custom-permanence')?.checked;
     cfg.startDate = toDateISO(document.getElementById('date-start')?.value || '');
     cfg.endDate = toDateISO(document.getElementById('date-end')?.value || '');
@@ -420,9 +498,9 @@ function saveActiveCfgFromForm(){
         : '';
     normalizeCfgDates(cfg);
 }
-function renderSpaceAddSelect(){
+function renderSpaceAddSelect() {
     const sel = document.getElementById('q-space-add');
-    if(!sel) return;
+    if (!sel) return;
     const selectedIds = new Set(pmQuoteSpaces.map(x => String(x.spaceId)));
     sel.innerHTML = '<option value="">Selecciona espacio...</option>';
     allSpaces.forEach(space => {
@@ -430,9 +508,9 @@ function renderSpaceAddSelect(){
         sel.innerHTML += `<option value="${space.id}" ${disabled}>${space.nombre}</option>`;
     });
 }
-function renderSelectedSpaceTabs(){
+function renderSelectedSpaceTabs() {
     const container = document.getElementById('q-spaces-tabs');
-    if(!container) return;
+    if (!container) return;
     container.innerHTML = '';
     pmQuoteSpaces.forEach(cfg => {
         const space = getSpaceById(cfg.spaceId);
@@ -445,7 +523,7 @@ function renderSelectedSpaceTabs(){
     });
 }
 
-function refreshQuoteSpaceCards(){
+function refreshQuoteSpaceCards() {
     if (!IS_PM_QUOTE_PAGE) return;
     if (typeof window.filterCatalogLogic === 'function') {
         window.filterCatalogLogic();
@@ -454,12 +532,12 @@ function refreshQuoteSpaceCards(){
     renderSpaces(allSpaces);
 }
 
-function loadActiveCfgToForm(){
+function loadActiveCfgToForm() {
     const cfg = getActiveCfg();
-    if(!cfg) return;
+    if (!cfg) return;
     normalizeCfgDates(cfg);
     const space = getSpaceById(cfg.spaceId);
-    if(!space) return;
+    if (!space) return;
     currentSpace = space;
     setActiveQuoteSpaceCard(space.id);
     syncQuoteCustomUi(cfg);
@@ -469,7 +547,7 @@ function loadActiveCfgToForm(){
     if (qName) qName.innerText = space.nombre || 'Espacio';
     if (qKey) qKey.innerText = space.clave || '--';
     let image = space.imagen_url || '';
-    if (typeof image === 'string' && image.startsWith('[')) { try { image = JSON.parse(image)[0]; } catch(e){} }
+    if (typeof image === 'string' && image.startsWith('[')) { try { image = JSON.parse(image)[0]; } catch (e) { } }
     if (qImg) qImg.src = image || '';
 
     const start = document.getElementById('date-start');
@@ -481,9 +559,9 @@ function loadActiveCfgToForm(){
     }
 }
 
-window.toggleQuoteCustomPermanence = function(){
+window.toggleQuoteCustomPermanence = function () {
     const cfg = getActiveCfg();
-    if(!cfg) return;
+    if (!cfg) return;
     cfg.customPermanence = !!document.getElementById('q-custom-permanence')?.checked;
     if (!cfg.customPermanence) cfg.customBasePrice = '';
     normalizeCfgDates(cfg);
@@ -499,8 +577,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     if (window.PB_CLIENT) {
-        if(!window.tenantPocketBase) window.tenantPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY, { db: { schema: FIN_SCHEMA } });
-        if(!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
+        if (!window.tenantPocketBase) window.tenantPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY, { db: { schema: FIN_SCHEMA } });
+        if (!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
     }
 
     let session = null;
@@ -550,19 +628,19 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (myPermissions.catalog_manage && IS_PM_CATALOG_ADMIN_PAGE) document.getElementById('btn-new-space')?.classList.remove('hidden');
 
-	await loadTaxes();
-	await loadClientProfilesForQuoteModal();
+    await loadTaxes();
+    await loadClientProfilesForQuoteModal();
     loadCatalog();
 
     // El listener de mgr-type para alternar el atributo 'multiple' fue desactivado para permitir subir múltiples en todos
-    document.getElementById('mgr-type')?.addEventListener('change', function() { /* f.setAttribute('multiple','') */ });
+    document.getElementById('mgr-type')?.addEventListener('change', function () { /* f.setAttribute('multiple','') */ });
 
     const dStart = document.getElementById('date-start');
     const dEnd = document.getElementById('date-end');
-    
-    if(dStart && dEnd) {
-        dStart.addEventListener('change', function() {
-            dEnd.min = this.value; 
+
+    if (dStart && dEnd) {
+        dStart.addEventListener('change', function () {
+            dEnd.min = this.value;
             if (dEnd.value && dEnd.value < this.value) { dEnd.value = this.value; }
             if (isQuoteWorkspacePage()) saveActiveCfgFromForm();
             window.updateQuoteCalculation?.();
@@ -583,36 +661,51 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 async function loadTaxes() { const { data } = await window.tenantPocketBase.from('impuestos').select('*'); dbTaxes = data || []; }
+async function pmLoadMaterials() {
+    try {
+        const { data } = await window.tenantPocketBase.from('configuracion').select('valor_json').eq('clave', 'materiales_pm').maybeSingle();
+        let list = [];
+        try { list = data?.valor_json?.items || []; } catch (e) { }
+        dbMaterials = list;
+        const sel = document.getElementById('mgr-material');
+        if (sel) {
+            const current = sel.value;
+            sel.innerHTML = '<option value="">— Ninguno —</option>' + list.map(m => `<option value="${m}">${m}</option>`).join('');
+            sel.value = current;
+        }
+    } catch (e) { }
+}
 async function loadCatalog() {
+    await pmLoadMaterials();
     const { data } = await window.tenantPocketBase.from('espacios').select('*').order('id');
-    allSpaces = data||[];
+    allSpaces = (data || []).map(normalizeSpaceMaterialMeasure);
     renderSpaces(allSpaces);
     if (IS_PM_QUOTE_PAGE) renderSpaceAddSelect();
 }
 
-function renderSpaces(list) { 
-    const g = document.getElementById('spaces-grid'); g.innerHTML=''; 
-    if(list.length === 0) { g.innerHTML = '<div class="col-span-full text-center py-10 text-gray-400 font-bold">No se encontraron espacios.</div>'; return; }
-    
-    list.forEach(s => { 
+function renderSpaces(list) {
+    const g = document.getElementById('spaces-grid'); g.innerHTML = '';
+    if (list.length === 0) { g.innerHTML = '<div class="col-span-full text-center py-10 text-gray-400 font-bold">No se encontraron espacios.</div>'; return; }
+
+    list.forEach(s => {
         let adjustedBase = parseFloat(s.precio_base);
         let badgeHTML = '';
 
-        if(s.ajuste_tipo === 'aumento') {
-            adjustedBase += s.precio_base * (s.ajuste_porcentaje/100);
+        if (s.ajuste_tipo === 'aumento') {
+            adjustedBase += s.precio_base * (s.ajuste_porcentaje / 100);
             badgeHTML = `<div class="absolute top-2 left-2 bg-green-500 text-white text-[10px] font-bold px-2 py-1 rounded shadow-md z-10 flex items-center gap-1"><i class="fa-solid fa-arrow-trend-up"></i> +${s.ajuste_porcentaje}%</div>`;
         }
-        if(s.ajuste_tipo === 'descuento') {
-            adjustedBase -= s.precio_base * (s.ajuste_porcentaje/100);
+        if (s.ajuste_tipo === 'descuento') {
+            adjustedBase -= s.precio_base * (s.ajuste_porcentaje / 100);
             badgeHTML = `<div class="absolute top-2 left-2 bg-red-500 text-white text-[10px] font-bold px-2 py-1 rounded shadow-md z-10 flex items-center gap-1"><i class="fa-solid fa-tag"></i> -${s.ajuste_porcentaje}%</div>`;
         }
 
         let totalTax = 0;
         const sTaxes = parseIds(s.impuestos_ids || s.impuestos);
-        if(sTaxes.length > 0 && dbTaxes.length > 0) {
+        if (sTaxes.length > 0 && dbTaxes.length > 0) {
             sTaxes.forEach(taxId => {
                 const t = dbTaxes.find(x => String(x.id) === String(taxId));
-                if(t) {
+                if (t) {
                     const rate = t.porcentaje > 1 ? t.porcentaje / 100 : t.porcentaje;
                     totalTax += adjustedBase * rate;
                 }
@@ -620,36 +713,36 @@ function renderSpaces(list) {
         }
         const finalPrice = adjustedBase + totalTax;
         const taxOnlyAmount = finalPrice - adjustedBase;
-        
+
         let priceDisplay = '';
-        if(totalTax > 0) {
+        if (totalTax > 0) {
             priceDisplay = `<div class="text-right leading-none"><p class="text-[10px] text-gray-400 font-bold mb-0.5 line-through decoration-gray-400">${formatMoney(adjustedBase)}</p><p class="text-[10px] text-red-500 font-bold mb-0.5">+ ${formatMoney(taxOnlyAmount)} (IVA)</p><p class="font-black text-lg text-gray-900">${formatMoney(finalPrice)}</p></div>`;
         } else {
             priceDisplay = `<p class="font-black text-gray-800 text-lg">${formatMoney(finalPrice)}</p>`;
         }
-        
-        let allUrls = []; try { if(s.imagen_url && typeof s.imagen_url === 'string' && s.imagen_url.startsWith('[')) allUrls = JSON.parse(s.imagen_url); else if(s.imagen_url) allUrls = [s.imagen_url]; } catch(e){}
+
+        let allUrls = []; try { if (s.imagen_url && typeof s.imagen_url === 'string' && s.imagen_url.startsWith('[')) allUrls = JSON.parse(s.imagen_url); else if (s.imagen_url) allUrls = [s.imagen_url]; } catch (e) { }
         if (allUrls.length === 0) allUrls = ['../../assets/img/no-image.svg'];
-        
+
         // RENDER DE ETIQUETAS EN ADMIN
         let eTags = [];
-        try { eTags = typeof s.etiquetas === 'string' ? JSON.parse(s.etiquetas) : (s.etiquetas || []); } catch(e){}
+        try { eTags = typeof s.etiquetas === 'string' ? JSON.parse(s.etiquetas) : (s.etiquetas || []); } catch (e) { }
         let tagsHtml = '';
-        if(eTags.length > 0) {
-            tagsHtml = `<div class="flex gap-1 mb-2 flex-wrap">` + 
+        if (eTags.length > 0) {
+            tagsHtml = `<div class="flex gap-1 mb-2 flex-wrap">` +
                 eTags.map(t => `<span class="bg-gray-100 text-gray-500 border border-gray-200 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase">${t}</span>`).join('') +
-            `</div>`;
+                `</div>`;
         }
 
         const editBtn = (myPermissions.catalog_manage && IS_PM_CATALOG_ADMIN_PAGE)
-            ? `<button onclick="event.stopPropagation(); window.openManagerModal(${s.id})" class="absolute top-3 right-3 bg-white/90 text-gray-700 p-2 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-all z-10"><i class="fa-solid fa-pen"></i></button>`
+            ? `<button onclick="event.stopPropagation(); window.openManagerModal('${s.id}')" class="absolute top-3 right-3 bg-white/90 text-gray-700 p-2 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-all z-10"><i class="fa-solid fa-pen"></i></button>`
             : '';
         const actionBtn = IS_PM_QUOTE_PAGE
             ? ''
             : (myPermissions.catalog_manage
-                ? `<button onclick="event.stopPropagation(); window.openManagerModal(${s.id})" class="bg-gray-900 text-white w-full py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide hover:bg-brand-red transition-colors duration-300 shadow-lg"><i class="fa-solid fa-sliders mr-2"></i> Administrar Espacio</button>`
+                ? `<button onclick="event.stopPropagation(); window.openManagerModal('${s.id}')" class="bg-gray-900 text-white w-full py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide hover:bg-brand-red transition-colors duration-300 shadow-lg"><i class="fa-solid fa-sliders mr-2"></i> Administrar Espacio</button>`
                 : `<button disabled class="bg-gray-200 text-gray-500 w-full py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide cursor-not-allowed"><i class="fa-solid fa-lock mr-2"></i> Solo lectura</button>`);
-        
+
         if (IS_PM_QUOTE_PAGE) {
             const sid = String(s.id);
             const inQuote = pmQuoteSpaces.some(x => String(x.spaceId) === sid);
@@ -675,11 +768,11 @@ function renderSpaces(list) {
                 <div class="flex items-center justify-between gap-2">${stateLabel}${powerOffBtn}</div>
             </div>`;
         } else {
-            const imgsHtml = allUrls.map((url, i) => `<img src="${url}" class="card-img absolute inset-0 w-full h-full object-cover transition-opacity duration-1000 ${i===0?'opacity-100':'opacity-0'}" data-index="${i}">`).join('');
+            const imgsHtml = allUrls.map((url, i) => `<img src="${url}" class="card-img absolute inset-0 w-full h-full object-cover transition-opacity duration-1000 ${i === 0 ? 'opacity-100' : 'opacity-0'}" data-index="${i}">`).join('');
 
             g.innerHTML += `
                 <div class="bg-white rounded-xl shadow-md relative group hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 overflow-hidden border border-gray-100 cursor-pointer"
-                     onclick="window.openPreviewCardModal(${s.id})"
+                     onclick="window.openPreviewCardModal('${String(s.id)}')"
                      onmouseenter="window.startCardCarousel(this)" 
                      onmouseleave="window.stopCardCarousel(this)">
                     <div class="h-48 bg-gray-200 relative overflow-hidden">
@@ -703,11 +796,11 @@ function renderSpaces(list) {
                     </div>
                 </div>`;
         }
-    }); 
+    });
     if (IS_PM_QUOTE_PAGE && currentSpace) setActiveQuoteSpaceCard(currentSpace.id);
 }
 
-window.startCardCarousel = function(el) {
+window.startCardCarousel = function (el) {
     const imgs = el.querySelectorAll('.card-img');
     if (imgs.length <= 1) return;
     let current = 0;
@@ -717,7 +810,7 @@ window.startCardCarousel = function(el) {
         imgs[current].classList.replace('opacity-0', 'opacity-100');
     }, 2000);
 };
-window.stopCardCarousel = function(el) {
+window.stopCardCarousel = function (el) {
     if (el._carouselInterval) clearInterval(el._carouselInterval);
     const imgs = el.querySelectorAll('.card-img');
     imgs.forEach((img, i) => {
@@ -726,28 +819,28 @@ window.stopCardCarousel = function(el) {
     });
 };
 
-window.openPreviewCardModal = function(id) {
-    const s = allSpaces.find(x => x.id === id);
+window.openPreviewCardModal = function (id) {
+    const s = getSpaceById(id);
     if (!s) return;
-    let allUrls = []; try { if(s.imagen_url && typeof s.imagen_url === 'string' && s.imagen_url.startsWith('[')) allUrls = JSON.parse(s.imagen_url); else if(s.imagen_url) allUrls = [s.imagen_url]; } catch(e){}
+    let allUrls = []; try { if (s.imagen_url && typeof s.imagen_url === 'string' && s.imagen_url.startsWith('[')) allUrls = JSON.parse(s.imagen_url); else if (s.imagen_url) allUrls = [s.imagen_url]; } catch (e) { }
     if (allUrls.length === 0) allUrls = ['../../assets/img/no-image.svg'];
 
     const modal = document.createElement('div');
     modal.className = 'fixed inset-0 bg-black/90 z-[1000] flex items-center justify-center p-4 backdrop-blur-md animate-enter';
     modal.id = 'preview-card-modal';
-    modal.onclick = (e) => { if(e.target === modal) modal.remove(); };
+    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
 
     let current = 0;
     const renderContent = () => {
-        const dots = allUrls.map((_, i) => `<div class="w-2 h-2 rounded-full ${i===current?'bg-white':'bg-white/30'}" onclick="event.stopPropagation(); window._updatePreviewIndex(${i})"></div>`).join('');
+        const dots = allUrls.map((_, i) => `<div class="w-2 h-2 rounded-full ${i === current ? 'bg-white' : 'bg-white/30'}" onclick="event.stopPropagation(); window._updatePreviewIndex(${i})"></div>`).join('');
         modal.innerHTML = `
             <div class="relative w-full max-w-4xl aspect-video bg-black rounded-2xl overflow-hidden shadow-2xl border border-white/10 flex items-center justify-center">
                 <button onclick="this.closest('#preview-card-modal').remove()" class="absolute top-4 right-4 text-white/70 hover:text-white z-20 text-2xl drop-shadow-lg"><i class="fa-solid fa-times"></i></button>
                 <img src="${allUrls[current]}" class="max-w-full max-h-full object-contain animate-enter">
                 
                 ${allUrls.length > 1 ? `
-                    <button onclick="event.stopPropagation(); window._updatePreviewIndex(${(current-1+allUrls.length)%allUrls.length})" class="absolute left-4 top-1/2 -translate-y-1/2 bg-white/10 hover:bg-white/20 text-white p-4 rounded-full transition"><i class="fa-solid fa-chevron-left"></i></button>
-                    <button onclick="event.stopPropagation(); window._updatePreviewIndex(${(current+1)%allUrls.length})" class="absolute right-4 top-1/2 -translate-y-1/2 bg-white/10 hover:bg-white/20 text-white p-4 rounded-full transition"><i class="fa-solid fa-chevron-right"></i></button>
+                    <button onclick="event.stopPropagation(); window._updatePreviewIndex(${(current - 1 + allUrls.length) % allUrls.length})" class="absolute left-4 top-1/2 -translate-y-1/2 bg-white/10 hover:bg-white/20 text-white p-4 rounded-full transition"><i class="fa-solid fa-chevron-left"></i></button>
+                    <button onclick="event.stopPropagation(); window._updatePreviewIndex(${(current + 1) % allUrls.length})" class="absolute right-4 top-1/2 -translate-y-1/2 bg-white/10 hover:bg-white/20 text-white p-4 rounded-full transition"><i class="fa-solid fa-chevron-right"></i></button>
                     <div class="absolute bottom-6 left-1/2 -translate-y-1/2 flex gap-2">${dots}</div>
                 ` : ''}
                 
@@ -764,7 +857,7 @@ window.openPreviewCardModal = function(id) {
     document.body.appendChild(modal);
 };
 
-window.selectQuoteSpace = function(spaceId){
+window.selectQuoteSpace = function (spaceId) {
     if (!IS_PM_QUOTE_PAGE) return;
     saveActiveCfgFromForm();
     pmActiveSpaceId = String(spaceId);
@@ -775,14 +868,14 @@ window.selectQuoteSpace = function(spaceId){
     window.checkAvailability();
 };
 
-window.openQuoteDatePicker = async function(_target){
+window.openQuoteDatePicker = async function (_target) {
     if (!isQuoteWorkspacePage()) return;
     saveActiveCfgFromForm();
     const cfg = getActiveCfg();
     const space = getSpaceById(cfg?.spaceId);
-    if(!cfg || !space) return window.showToast("Selecciona un espacio primero.", "error");
+    if (!cfg || !space) return window.showToast("Selecciona un espacio primero.", "error");
     initQuoteDateCalendar();
-    if(!pmQuoteDateCalendar) return window.showToast("No se pudo inicializar el calendario.", "error");
+    if (!pmQuoteDateCalendar) return window.showToast("No se pudo inicializar el calendario.", "error");
 
     pmQuoteTempStart = toDateISO(cfg.startDate || '');
     pmQuoteTempEnd = toDateISO(cfg.endDate || '');
@@ -791,24 +884,24 @@ window.openQuoteDatePicker = async function(_target){
     document.getElementById('quote-date-active-space').innerText = space.nombre || '--';
 
     await renderQuoteCalendarBlocked(space.id);
-    const focusDate = pmQuoteTempStart || toDateISO(new Date().toISOString().slice(0,10));
+    const focusDate = pmQuoteTempStart || toDateISO(new Date().toISOString().slice(0, 10));
     if (focusDate) pmQuoteDateCalendar.gotoDate(focusDate);
     window.openModal('quote-date-modal');
     setTimeout(() => pmQuoteDateCalendar.render(), 25);
 };
 
-window.applyQuoteDateSelection = function(){
+window.applyQuoteDateSelection = function () {
     const cfg = getActiveCfg();
-    if(!cfg) return;
+    if (!cfg) return;
     if (cfg.customPermanence) {
-        if(!pmQuoteTempStart || !pmQuoteTempEnd) return window.showToast("Debes seleccionar inicio y fin.", "error");
-        if(rangeHitsBlocked(pmQuoteTempStart, pmQuoteTempEnd)) return window.showToast("El rango seleccionado incluye días bloqueados.", "error");
+        if (!pmQuoteTempStart || !pmQuoteTempEnd) return window.showToast("Debes seleccionar inicio y fin.", "error");
+        if (rangeHitsBlocked(pmQuoteTempStart, pmQuoteTempEnd)) return window.showToast("El rango seleccionado incluye días bloqueados.", "error");
         cfg.startDate = pmQuoteTempStart;
         cfg.endDate = pmQuoteTempEnd;
     } else {
-        if(!pmQuoteTempStart) return window.showToast("Selecciona la fecha de inicio del periodo automático (30 días).", "error");
+        if (!pmQuoteTempStart) return window.showToast("Selecciona la fecha de inicio del periodo automático (30 días).", "error");
         const month = getMonthBounds(pmQuoteTempStart);
-        if(rangeHitsBlocked(month.start, month.end)) return window.showToast("El periodo automático de 30 días incluye días bloqueados.", "error");
+        if (rangeHitsBlocked(month.start, month.end)) return window.showToast("El periodo automático de 30 días incluye días bloqueados.", "error");
         cfg.startDate = month.start;
         cfg.endDate = month.end;
     }
@@ -819,11 +912,11 @@ window.applyQuoteDateSelection = function(){
     window.checkAvailability();
 };
 
-window.addSpaceToQuote = function(){
+window.addSpaceToQuote = function () {
     if (!IS_PM_QUOTE_PAGE) return;
     const sel = document.getElementById('q-space-add');
     const newId = String(sel?.value || '');
-    if(!newId || pmQuoteSpaces.some(x => String(x.spaceId) === newId)) return;
+    if (!newId || pmQuoteSpaces.some(x => String(x.spaceId) === newId)) return;
     saveActiveCfgFromForm();
     const active = getActiveCfg();
     const seed = active ? { startDate: active.startDate, endDate: active.endDate } : {};
@@ -838,11 +931,11 @@ window.addSpaceToQuote = function(){
     window.checkAvailability();
 };
 
-window.removeSpaceFromQuote = function(spaceId){
+window.removeSpaceFromQuote = function (spaceId) {
     if (!IS_PM_QUOTE_PAGE || pmQuoteSpaces.length <= 1) return;
     saveActiveCfgFromForm();
     pmQuoteSpaces = pmQuoteSpaces.filter(x => String(x.spaceId) !== String(spaceId));
-    if(String(pmActiveSpaceId) === String(spaceId) && pmQuoteSpaces.length) pmActiveSpaceId = String(pmQuoteSpaces[0].spaceId);
+    if (String(pmActiveSpaceId) === String(spaceId) && pmQuoteSpaces.length) pmActiveSpaceId = String(pmQuoteSpaces[0].spaceId);
     renderSpaceAddSelect();
     renderSelectedSpaceTabs();
     refreshQuoteSpaceCards();
@@ -851,9 +944,9 @@ window.removeSpaceFromQuote = function(spaceId){
     window.checkAvailability();
 };
 
-window.updateQuoteCalculation = function(){
-    if(!IS_PM_QUOTE_PAGE){
-        if(!currentSpace) return;
+window.updateQuoteCalculation = function () {
+    if (!IS_PM_QUOTE_PAGE) {
+        if (!currentSpace) return;
         const pricing = buildSpacePrice(currentSpace);
         currentPricing = { base: currentSpace.precio_base, subtotal: pricing.subtotal, taxes: pricing.taxes, final: pricing.total };
         document.getElementById('q-price').innerText = formatMoney(pricing.total);
@@ -865,7 +958,7 @@ window.updateQuoteCalculation = function(){
     const spacesPricing = [];
     pmQuoteSpaces.forEach(cfg => {
         const space = getSpaceById(cfg.spaceId);
-        if(!space) return;
+        if (!space) return;
         normalizeCfgDates(cfg);
         const customBase = cfg.customPermanence && cfg.customBasePrice !== '' ? cfg.customBasePrice : null;
         const pricing = buildSpacePrice(space, { customBase });
@@ -891,116 +984,159 @@ window.updateQuoteCalculation = function(){
 };
 
 
-window.clearManagerImage = function(num) { const input = document.getElementById(`mgr-file-${num}`); if(input) input.value = ''; const img = document.getElementById(`mgr-preview-${num}`); if(img) { img.src = ''; img.classList.add('hidden'); img.setAttribute('data-modified', 'true'); } }
+window.clearManagerImage = function (num) { const input = document.getElementById(`mgr-file-${num}`); if (input) input.value = ''; const img = document.getElementById(`mgr-preview-${num}`); if (img) { img.src = ''; img.classList.add('hidden'); img.setAttribute('data-modified', 'true'); } }
 
 
-window.openManagerModal = function(id){
+window.openManagerModal = function (id) {
     if (IS_PM_QUOTE_PAGE) return window.showToast("Esta vista es solo para cotizar.", "error");
-    if (!myPermissions.catalog_manage) return window.showToast("No tienes permisos.", "error"); 
-    document.getElementById('mgr-id').value = id || ''; 
-    const container = document.getElementById('mgr-taxes-list'); 
-    if(container) {
+    if (!myPermissions.catalog_manage) return window.showToast("No tienes permisos.", "error");
+    document.getElementById('mgr-id').value = id || '';
+    const container = document.getElementById('mgr-taxes-list');
+    if (container) {
         container.innerHTML = '';
         let currentTaxes = [];
-        if(id) { const s = allSpaces.find(x => x.id === id); currentTaxes = parseIds((s && (s.impuestos_ids || s.impuestos)) || []); }
+        if (id) { const s = getSpaceById(id); currentTaxes = parseIds((s && (s.impuestos_ids || s.impuestos)) || []); }
         dbTaxes.forEach(t => {
             const isChecked = currentTaxes.some(cid => String(cid) === String(t.id)) ? 'checked' : '';
             container.innerHTML += `<label class="flex items-center gap-2 p-2 border rounded bg-white hover:bg-gray-50 cursor-pointer"><input type="checkbox" value="${t.id}" class="tax-check accent-brand-red cursor-pointer" ${isChecked}><span class="text-[10px] font-bold uppercase text-gray-600 cursor-pointer select-none">${t.nombre} (${t.porcentaje}%)</span></label>`;
         });
     }
 
-    if(id) { 
-        const s = allSpaces.find(x => x.id === id); 
-        document.getElementById('mgr-title').innerText = "Editar: " + s.nombre; 
-        document.getElementById('mgr-key').value = s.clave; document.getElementById('mgr-key').disabled = true; 
-        document.getElementById('mgr-name').value = s.nombre; document.getElementById('mgr-type').value = s.tipo; 
-        document.getElementById('mgr-desc').value = s.descripcion || ''; 
-        
+    if (id) {
+        const s = getSpaceById(id);
+        if (!s) return window.showToast("No se encontro el espacio para editar.", "error");
+        document.getElementById('mgr-title').innerText = "Editar: " + s.nombre;
+        document.getElementById('mgr-key').value = s.clave; document.getElementById('mgr-key').disabled = true;
+        document.getElementById('mgr-name').value = s.nombre; document.getElementById('mgr-type').value = s.tipo;
+        document.getElementById('mgr-desc').value = s.descripcion || '';
+
         let eTags = [];
-        try { eTags = typeof s.etiquetas === 'string' ? JSON.parse(s.etiquetas) : (s.etiquetas || []); } catch(e){}
-        if(!Array.isArray(eTags)) eTags = [];
+        try { eTags = typeof s.etiquetas === 'string' ? JSON.parse(s.etiquetas) : (s.etiquetas || []); } catch (e) { }
+        if (!Array.isArray(eTags)) eTags = [];
         document.getElementById('mgr-tags').value = eTags.join(', ');
 
-        document.getElementById('mgr-base').value = s.precio_base; 
-        document.getElementById('mgr-adj-type').value = s.ajuste_tipo || 'ninguno'; document.getElementById('mgr-adj-pct').value = s.ajuste_porcentaje || 0; 
-        document.getElementById('mgr-active').checked = s.activa !== false; 
-        
-        let allUrls = []; try { if(s.imagen_url && typeof s.imagen_url === 'string' && s.imagen_url.startsWith('[')) allUrls = JSON.parse(s.imagen_url); else if(s.imagen_url) allUrls = [s.imagen_url]; } catch(e){}
-        for(let i=1; i<=5; i++){
+        document.getElementById('mgr-material').value = s.material || '';
+        document.getElementById('mgr-ancho').value = s.medida_ancho ?? s.ancho ?? '';
+        document.getElementById('mgr-alto').value = s.medida_alto ?? s.alto ?? '';
+        document.getElementById('mgr-unidad').value = s.medida_unidad || s.unidad_medida || 'M';
+
+        document.getElementById('mgr-base').value = s.precio_base;
+        document.getElementById('mgr-adj-type').value = s.ajuste_tipo || 'ninguno'; document.getElementById('mgr-adj-pct').value = s.ajuste_porcentaje || 0;
+        document.getElementById('mgr-active').checked = s.activa !== false;
+
+        let allUrls = []; try { if (s.imagen_url && typeof s.imagen_url === 'string' && s.imagen_url.startsWith('[')) allUrls = JSON.parse(s.imagen_url); else if (s.imagen_url) allUrls = [s.imagen_url]; } catch (e) { }
+        for (let i = 1; i <= 5; i++) {
             const mgrPrev = document.getElementById(`mgr-preview-${i}`);
-            if(mgrPrev) { 
-                if(allUrls[i-1]) { mgrPrev.src = allUrls[i-1]; mgrPrev.classList.remove('hidden'); mgrPrev.removeAttribute('data-modified'); }
-                else { mgrPrev.src = ''; mgrPrev.classList.add('hidden'); mgrPrev.removeAttribute('data-modified'); } 
+            if (mgrPrev) {
+                if (allUrls[i - 1]) { mgrPrev.src = allUrls[i - 1]; mgrPrev.classList.remove('hidden'); mgrPrev.removeAttribute('data-modified'); }
+                else { mgrPrev.src = ''; mgrPrev.classList.add('hidden'); mgrPrev.removeAttribute('data-modified'); }
             }
         }
         document.getElementById('btn-delete-mgr').classList.remove('hidden');
-    } else { 
-        document.getElementById('mgr-title').innerText = "Nuevo Espacio"; 
-        document.getElementById('mgr-key').value = ''; document.getElementById('mgr-key').disabled = false; 
-        document.getElementById('mgr-name').value = ''; document.getElementById('mgr-base').value = ''; 
-        document.getElementById('mgr-tags').value = ''; 
-        document.getElementById('mgr-desc').value = ''; document.getElementById('mgr-active').checked = true; 
-        for(let i=1; i<=5; i++){
+    } else {
+        document.getElementById('mgr-title').innerText = "Nuevo Espacio";
+        document.getElementById('mgr-key').value = ''; document.getElementById('mgr-key').disabled = false;
+        document.getElementById('mgr-name').value = ''; document.getElementById('mgr-base').value = '';
+        document.getElementById('mgr-tags').value = '';
+        document.getElementById('mgr-material').value = ''; document.getElementById('mgr-ancho').value = ''; document.getElementById('mgr-alto').value = ''; document.getElementById('mgr-unidad').value = 'M';
+        document.getElementById('mgr-desc').value = ''; document.getElementById('mgr-active').checked = true;
+        for (let i = 1; i <= 5; i++) {
             const mgrPrev = document.getElementById(`mgr-preview-${i}`); if (mgrPrev) { mgrPrev.src = ''; mgrPrev.classList.add('hidden'); mgrPrev.removeAttribute('data-modified'); }
-            const fi = document.getElementById(`mgr-file-${i}`); if(fi) fi.value = '';
+            const fi = document.getElementById(`mgr-file-${i}`); if (fi) fi.value = '';
         }
         document.getElementById('btn-delete-mgr').classList.add('hidden');
-    } 
+    }
     window.openModal('manager-modal');
 }
 
-window.saveSpace = async function(){ 
-    if (!myPermissions.catalog_manage) return; 
-    const id = document.getElementById('mgr-id').value; 
+window.saveSpace = async function () {
+    if (!myPermissions.catalog_manage) return;
+    const id = document.getElementById('mgr-id').value;
     const selectedTaxes = Array.from(document.querySelectorAll('.tax-check:checked')).map(cb => parseInt(cb.value));
 
     // PROCESAR TEXTO A ARREGLO JSONB
     const rawTags = document.getElementById('mgr-tags').value || '';
-    const tagsArray = rawTags.split(',').map(t => t.trim()).filter(Boolean); 
+    const tagsArray = rawTags.split(',').map(t => t.trim()).filter(Boolean);
+    const medidaAncho = normalizeSpaceMeasureValue(document.getElementById('mgr-ancho').value);
+    const medidaAlto = normalizeSpaceMeasureValue(document.getElementById('mgr-alto').value);
+    const medidaUnidad = normalizeSpaceMeasureUnit(document.getElementById('mgr-unidad').value || 'M');
 
-    const payload = { 
-        clave: document.getElementById('mgr-key').value.toUpperCase().trim(), 
-        nombre: document.getElementById('mgr-name').value, 
-        tipo: document.getElementById('mgr-type').value, 
-        descripcion: document.getElementById('mgr-desc').value, 
+    const payload = {
+        clave: document.getElementById('mgr-key').value.toUpperCase().trim(),
+        nombre: document.getElementById('mgr-name').value,
+        tipo: document.getElementById('mgr-type').value,
+        descripcion: document.getElementById('mgr-desc').value,
         etiquetas: tagsArray, // Guarda etiquetas en base de datos
-        precio_base: parseFloat(document.getElementById('mgr-base').value), 
-        ajuste_tipo: document.getElementById('mgr-adj-type').value, 
-        ajuste_porcentaje: parseFloat(document.getElementById('mgr-adj-pct').value) || 0, 
+        material: document.getElementById('mgr-material').value || '',
+        medida_ancho: medidaAncho ?? 0,
+        medida_alto: medidaAlto ?? 0,
+        medida_unidad: medidaUnidad,
+        precio_base: parseFloat(document.getElementById('mgr-base').value),
+        ajuste_tipo: document.getElementById('mgr-adj-type').value,
+        ajuste_porcentaje: parseFloat(document.getElementById('mgr-adj-pct').value) || 0,
         activa: document.getElementById('mgr-active').checked,
-        impuestos_ids: selectedTaxes 
-    }; 
-    
-    // Always use FormData to support individual file manipulation
-    const fd = new FormData();
-    Object.entries(payload).forEach(([k, v]) => {
-        if (Array.isArray(v) || (v && typeof v === 'object')) fd.append(k, JSON.stringify(v));
-        else if (v !== undefined && v !== null) fd.append(k, String(v));
-    });
+        impuestos_ids: selectedTaxes
+    };
 
-    for(let i=1; i<=5; i++){
-        const fi = document.getElementById(`mgr-file-${i}`);
-        const preview = document.getElementById(`mgr-preview-${i}`);
-        const fieldName = i === 1 ? 'imagen' : `imagen${i}`;
-        
-        if (fi && fi.files && fi.files.length > 0) {
-            fd.append(fieldName, fi.files[0], fi.files[0].name || `img${i}`);
-        } else if (preview && preview.getAttribute('data-modified') === 'true' && preview.classList.contains('hidden')) {
-            fd.append(fieldName, ''); // Clear existing file
+    const buildFormData = (payloadToSave) => {
+        const fd = new FormData();
+        Object.entries(payloadToSave).forEach(([k, v]) => {
+            if (v === null || v === undefined) return; // Skip null/undefined
+            if (Array.isArray(v) || (typeof v === 'object' && v !== null)) {
+                fd.append(k, JSON.stringify(v));
+            } else {
+                fd.append(k, String(v));
+            }
+        });
+        for (let i = 1; i <= 5; i++) {
+            const fi = document.getElementById(`mgr-file-${i}`);
+            const preview = document.getElementById(`mgr-preview-${i}`);
+            const fieldName = i === 1 ? 'imagen' : `imagen${i}`;
+            if (fi && fi.files && fi.files.length > 0) {
+                fd.append(fieldName, fi.files[0], fi.files[0].name || `img${i}`);
+            } else if (preview && preview.getAttribute('data-modified') === 'true' && preview.classList.contains('hidden')) {
+                fd.append(fieldName, ''); // Clear existing file
+            }
         }
-    }
-    
+        return fd;
+    };
+    const persistSpacePayload = async (payloadToSave) => {
+        const fd = buildFormData(payloadToSave);
+        const result = id
+            ? await window.tenantPocketBase.from('espacios').update(fd).eq('id', id)
+            : await window.tenantPocketBase.from('espacios').insert(fd);
+        if (result?.error) throw result.error;
+        if (!result?.data) throw new Error('PocketBase no devolvio el espacio guardado.');
+        const verification = compareSavedSpaceMaterialMeasure(result.data, payloadToSave);
+        if (!verification.ok) {
+            throw new Error(`PocketBase no confirmo material/medidas guardadas (${verification.mismatches.join(', ')}).`);
+        }
+        return verification.saved;
+    };
+
     try {
-        if(id) { await window.tenantPocketBase.from('espacios').update(fd).eq('id', id); } 
-        else { await window.tenantPocketBase.from('espacios').insert(fd); } 
-        for(let i=1; i<=5; i++){ const fi = document.getElementById(`mgr-file-${i}`); if(fi) fi.value = ''; } window.showToast("Guardado", "success"); window.closeModal('manager-modal'); loadCatalog(); 
-    } catch(e) {
+        try {
+            await persistSpacePayload(payload);
+        } catch (e) {
+            const errMsg = String(e?.message || e || '').toLowerCase();
+            const hasMeasureFieldInError = errMsg.includes('medida_ancho') || errMsg.includes('medida_alto') || errMsg.includes('medida_unidad');
+            const looksLikeSchemaMismatch = errMsg.includes('unknown') || errMsg.includes('invalid field') || errMsg.includes('schema') || errMsg.includes('not found');
+            const needsLegacyMeasureKeys = hasMeasureFieldInError && looksLikeSchemaMismatch;
+            if (!needsLegacyMeasureKeys) throw e;
+            const legacyPayload = { ...payload, ancho: payload.medida_ancho, alto: payload.medida_alto, unidad_medida: payload.medida_unidad };
+            delete legacyPayload.medida_ancho;
+            delete legacyPayload.medida_alto;
+            delete legacyPayload.medida_unidad;
+            await persistSpacePayload(legacyPayload);
+        }
+        for (let i = 1; i <= 5; i++) { const fi = document.getElementById(`mgr-file-${i}`); if (fi) fi.value = ''; } window.showToast("Guardado", "success"); window.closeModal('manager-modal'); loadCatalog();
+    } catch (e) {
         console.error(e);
         window.showToast("Error al guardar: " + e.message, "error");
     }
 }
 
-window.toggleQuoteSpaceCard = function(spaceId){
+window.toggleQuoteSpaceCard = function (spaceId) {
     if (!IS_PM_QUOTE_PAGE) {
         pmNavigateSafely(`cotizacion.html?space=${encodeURIComponent(spaceId)}`);
         return;
@@ -1034,8 +1170,8 @@ window.toggleQuoteSpaceCard = function(spaceId){
         document.getElementById('cli-rfc').value = '';
         document.getElementById('cli-phone').value = '';
         document.getElementById('cli-email').value = '';
-        const cliSel = document.getElementById('cli-select'); if(cliSel) cliSel.value = '';
-        const cliId = document.getElementById('cli-id'); if(cliId) cliId.value = '';
+        const cliSel = document.getElementById('cli-select'); if (cliSel) cliSel.value = '';
+        const cliId = document.getElementById('cli-id'); if (cliId) cliId.value = '';
         const quoteName = document.getElementById('q-quote-name'); if (quoteName) quoteName.value = '';
         loadClientProfilesForQuoteModal();
     }
@@ -1043,14 +1179,14 @@ window.toggleQuoteSpaceCard = function(spaceId){
     window.checkAvailability();
 };
 
-window.powerOffQuoteSpace = function(spaceId){
+window.powerOffQuoteSpace = function (spaceId) {
     if (!IS_PM_QUOTE_PAGE) return;
     const sid = String(spaceId);
     const exists = pmQuoteSpaces.some(x => String(x.spaceId) === sid);
-    if(!exists) return;
+    if (!exists) return;
     saveActiveCfgFromForm();
     pmQuoteSpaces = pmQuoteSpaces.filter(x => String(x.spaceId) !== sid);
-    if(!pmQuoteSpaces.length){
+    if (!pmQuoteSpaces.length) {
         pmActiveSpaceId = null;
         currentSpace = null;
         renderSpaceAddSelect();
@@ -1063,7 +1199,7 @@ window.powerOffQuoteSpace = function(spaceId){
         const qPrice = document.getElementById('q-price'); if (qPrice) qPrice.innerText = '$0.00';
         return;
     }
-    if(String(pmActiveSpaceId) === sid) pmActiveSpaceId = String(pmQuoteSpaces[0].spaceId);
+    if (String(pmActiveSpaceId) === sid) pmActiveSpaceId = String(pmQuoteSpaces[0].spaceId);
     renderSpaceAddSelect();
     renderSelectedSpaceTabs();
     refreshQuoteSpaceCards();
@@ -1072,8 +1208,8 @@ window.powerOffQuoteSpace = function(spaceId){
     window.checkAvailability();
 };
 
-window.openQuoteModal = function(id) {
-    const space = allSpaces.find(s => String(s.id) === String(id));
+window.openQuoteModal = function (id) {
+    const space = getSpaceById(id);
     if (!space) return;
 
     if (isQuoteWorkspacePage()) {
@@ -1092,30 +1228,30 @@ window.openQuoteModal = function(id) {
     if (qKey) qKey.innerText = currentSpace.clave;
     if (qPrice) qPrice.innerText = formatMoney(pricing.total);
     let modalImg = currentSpace.imagen_url || '';
-    if(typeof modalImg === 'string' && modalImg.startsWith('[')) { try { modalImg = JSON.parse(modalImg)[0]; } catch(e){} }
+    if (typeof modalImg === 'string' && modalImg.startsWith('[')) { try { modalImg = JSON.parse(modalImg)[0]; } catch (e) { } }
     if (qImg) qImg.src = modalImg;
     const dStart = document.getElementById('date-start');
     const dEnd = document.getElementById('date-end');
     if (dStart) dStart.value = '';
     if (dEnd) { dEnd.value = ''; dEnd.min = ''; }
     document.getElementById('cli-name').value = ''; document.getElementById('cli-rfc').value = ''; document.getElementById('cli-phone').value = ''; document.getElementById('cli-email').value = '';
-    const cliSel = document.getElementById('cli-select'); if(cliSel) cliSel.value='';
-    const cliId = document.getElementById('cli-id'); if(cliId) cliId.value='';
-	loadClientProfilesForQuoteModal();
+    const cliSel = document.getElementById('cli-select'); if (cliSel) cliSel.value = '';
+    const cliId = document.getElementById('cli-id'); if (cliId) cliId.value = '';
+    loadClientProfilesForQuoteModal();
     const avail = document.getElementById('avail-msg'); if (avail) avail.classList.add('hidden');
     const btnGenerate = document.getElementById('btn-generate'); if (btnGenerate) btnGenerate.disabled = true;
     if (document.getElementById('quote-modal')) window.openModal('quote-modal');
 }
 
-window.generatePDF = async function() {
+window.generatePDF = async function () {
     if (isQuoteWorkspacePage()) saveActiveCfgFromForm();
     window.updateQuoteCalculation();
     const availabilityOk = await window.checkAvailability();
     if (!availabilityOk) return window.showToast("Hay espacios con conflicto de fechas o datos incompletos.", "error");
 
     const cli = { name: document.getElementById('cli-name').value, rfc: document.getElementById('cli-rfc').value, phone: document.getElementById('cli-phone').value.trim(), email: document.getElementById('cli-email').value.trim() };
-    if(!cli.name) return window.showToast("Falta nombre del cliente", "error");
-    
+    if (!cli.name) return window.showToast("Falta nombre del cliente", "error");
+
     const phoneRegex = /^\d{10}$/;
     if (!phoneRegex.test(cli.phone)) return window.showToast("El teléfono debe tener 10 dígitos numéricos.", "error");
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -1157,19 +1293,34 @@ window.generatePDF = async function() {
     const maxEnd = maxDate(endDates);
     const taxIdsUnion = Array.from(new Set(spaces.flatMap(s => (s.taxIds || []).map(x => String(x)))));
     const first = spaces[0];
-    const espaciosDetalle = spaces.map(sp => ({
-        espacio_id: sp.spaceId,
-        espacio_nombre: sp.spaceName,
-        espacio_clave: sp.spaceKey,
-        fecha_inicio: sp.startDate,
-        fecha_fin: sp.endDate,
-        permanencia_personalizada: !!sp.customPermanence,
-        precio_personalizado: (sp.customBasePrice === '' || sp.customBasePrice === null || sp.customBasePrice === undefined) ? null : (parseFloat(sp.customBasePrice) || 0),
-        subtotal_espacio: sp.subtotalBeforeTax,
-        impuestos_ids: sp.taxIds || [],
-        impuestos_total: sp.taxTotal || 0,
-        total_espacio: sp.total || 0
-    }));
+    const espaciosDetalle = spaces.map(sp => {
+        const fullSpace = getSpaceById(sp.spaceId) || {};
+        const medidaAncho = fullSpace.medida_ancho ?? fullSpace.ancho ?? null;
+        const medidaAlto = fullSpace.medida_alto ?? fullSpace.alto ?? null;
+        const medidaUnidad = fullSpace.medida_unidad || fullSpace.unidad_medida || 'M';
+        return {
+            espacio_id: sp.spaceId,
+            espacio_nombre: sp.spaceName,
+            espacio_clave: sp.spaceKey,
+            fecha_inicio: sp.startDate,
+            fecha_fin: sp.endDate,
+            permanencia_personalizada: !!sp.customPermanence,
+            precio_personalizado: (sp.customBasePrice === '' || sp.customBasePrice === null || sp.customBasePrice === undefined) ? null : (parseFloat(sp.customBasePrice) || 0),
+            subtotal_espacio: sp.subtotalBeforeTax,
+            impuestos_ids: sp.taxIds || [],
+            impuestos_total: sp.taxTotal || 0,
+            total_espacio: sp.total || 0,
+            // Nuevos campos para PDF
+            material: fullSpace.material || null,
+            medida_ancho: medidaAncho,
+            medida_alto: medidaAlto,
+            medida_unidad: medidaUnidad,
+            // Compatibilidad con estructura legacy
+            ancho: medidaAncho,
+            alto: medidaAlto,
+            unidad_medida: medidaUnidad
+        };
+    });
     const audit = await pmResolveQuoteActorAudit();
     const payload = {
         cliente_id: (document.getElementById('cli-id') ? (document.getElementById('cli-id').value || null) : null),
@@ -1200,7 +1351,7 @@ window.generatePDF = async function() {
         modificado_por_nombre: audit.actorName
     };
     const { error, id: createdQuoteId } = await pmCreateQuoteRecord(payload);
-    if(error){
+    if (error) {
         console.error(error);
         if (String(error.message || '').toLowerCase().includes('espacios_detalle') || String(error.message || '').toLowerCase().includes('nombre_cotizacion')) {
             return window.showToast("Falta aplicar migración de BD para multiespacio en Plaza Mayor.", "error");
@@ -1212,9 +1363,9 @@ window.generatePDF = async function() {
     setTimeout(() => { pmNavigateSafely(targetUrl); }, 900);
 }
 
-window.filterCatalogLogic = function() { const term = document.getElementById('cat-search').value.toLowerCase(); const type = document.getElementById('cat-filter-type').value; const sort = document.getElementById('cat-sort').value; let filtered = allSpaces.filter(s => (s.nombre.toLowerCase().includes(term) || s.clave.toLowerCase().includes(term)) && (type === 'all' || s.tipo === type)); if (sort === 'price_asc') filtered.sort((a,b) => a.precio_base - b.precio_base); if (sort === 'price_desc') filtered.sort((a,b) => b.precio_base - a.precio_base); renderSpaces(filtered); }
-window.previewImage = function(i, id){ const p = document.getElementById(id || 'mgr-preview'); if(i.files && i.files[0]){ const r=new FileReader(); r.onload=e=>{ p.src=e.target.result; p.classList.remove('hidden'); p.setAttribute('data-modified', 'true'); }; r.readAsDataURL(i.files[0]); } }
-window.checkAvailability = async function() {
+window.filterCatalogLogic = function () { const term = document.getElementById('cat-search').value.toLowerCase(); const type = document.getElementById('cat-filter-type').value; const sort = document.getElementById('cat-sort').value; let filtered = allSpaces.filter(s => (s.nombre.toLowerCase().includes(term) || s.clave.toLowerCase().includes(term)) && (type === 'all' || s.tipo === type)); if (sort === 'price_asc') filtered.sort((a, b) => a.precio_base - b.precio_base); if (sort === 'price_desc') filtered.sort((a, b) => b.precio_base - a.precio_base); renderSpaces(filtered); }
+window.previewImage = function (i, id) { const p = document.getElementById(id || 'mgr-preview'); if (i.files && i.files[0]) { const r = new FileReader(); r.onload = e => { p.src = e.target.result; p.classList.remove('hidden'); p.setAttribute('data-modified', 'true'); }; r.readAsDataURL(i.files[0]); } }
+window.checkAvailability = async function () {
     const msg = document.getElementById('avail-msg');
     const btn = document.getElementById('btn-generate');
     if (isQuoteWorkspacePage()) saveActiveCfgFromForm();
@@ -1313,7 +1464,17 @@ window.checkAvailability = async function() {
     if (btn) btn.disabled = false;
     return true;
 }
-window.askDeleteSpace = async function(){ window.openConfirm("¿Eliminar espacio?", async () => { await window.tenantPocketBase.from('espacios').delete().eq('id', document.getElementById('mgr-id').value); window.showToast("Eliminado"); window.closeModal('manager-modal'); loadCatalog(); }); }
-
-
-
+window.askDeleteSpace = async function () {
+    window.openConfirm("¿Eliminar espacio?", async () => {
+        try {
+            const result = await window.tenantPocketBase.from('espacios').delete().eq('id', document.getElementById('mgr-id').value);
+            if (result?.error) throw result.error;
+            window.showToast("Eliminado");
+            window.closeModal('manager-modal');
+            loadCatalog();
+        } catch (e) {
+            console.error(e);
+            window.showToast("Error al eliminar: " + (e?.message || e), "error");
+        }
+    });
+}
