@@ -41,13 +41,18 @@ function formatMoney(v){ return new Intl.NumberFormat('es-MX', { style: 'currenc
 
 // --- INICIO ---
 document.addEventListener('DOMContentLoaded', async () => {
+    if (window.__HUB_LAYOUT_READY && typeof window.__HUB_LAYOUT_READY.then === 'function') {
+        try { await window.__HUB_LAYOUT_READY; } catch (_) {}
+    }
+    if (window.__HUB_PAGE_ACCESS_DENIED) return;
     if (window.PB_CLIENT) {
         if(!window.tenantPocketBase) window.tenantPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY, { db: { schema: FIN_SCHEMA } });
         if(!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
     }
-    const { data: { session } } = await window.globalPocketBase.auth.getSession();
-    if (!session) {
-        window.location.href = 'index.html';
+    const authState = await window.PB_SERVICES.auth.bootstrap({ schema: FIN_SCHEMA });
+    const session = authState?.session || null;
+    if (!session?.user) {
+        window.showToast?.('No se encontró una sesión válida. Evitando recarga automática.', 'error');
         return;
     }
 

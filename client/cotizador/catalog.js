@@ -571,6 +571,10 @@ window.toggleQuoteCustomPermanence = function () {
 };
 
 document.addEventListener('DOMContentLoaded', async () => {
+    if (window.__HUB_LAYOUT_READY && typeof window.__HUB_LAYOUT_READY.then === 'function') {
+        try { await window.__HUB_LAYOUT_READY; } catch (_) {}
+    }
+    if (window.__HUB_PAGE_ACCESS_DENIED) return;
     if (!PB_URL) {
         console.error("URL de PocketBase no encontrada en la configuración global.");
         return;
@@ -581,14 +585,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
     }
 
-    let session = null;
-    try {
-        const response = await window.globalPocketBase.auth.getSession();
-        session = response?.data?.session || null;
-    } catch (_) {
-        session = null;
+    const authState = await window.PB_SERVICES.auth.bootstrap({ schema: FIN_SCHEMA });
+    const session = authState?.session || null;
+    if (!session?.user) {
+        window.showToast?.('No se encontró una sesión válida. Evitando recarga automática.', 'error');
+        return;
     }
-    if (!session?.user) return;
 
     const profile = await pmResolveCurrentUserProfile(session.user);
     const cachedRole = String(localStorage.getItem('hub_user_cache_role') || '').trim().toLowerCase();

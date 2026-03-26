@@ -5,8 +5,28 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Redirigiendo - Premontajes</title>
-    <meta http-equiv="refresh" content="0; url=agenda.html?kind=premontaje">
-    <script>window.location.replace('agenda.html?kind=premontaje');</script>
+    <script src="../js/hub-config.js"></script>
+    <script src="../services/pb-core.js"></script>
+    <script src="../services/_shared.js"></script>
+    <script src="../services/auth.js"></script>
+    <script src="../services/pb-client.js"></script>
+    <script>const TENANT_SCHEMA='finanzas_casadepiedra';</script>
+    <script src="../js/layout.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', async () => {
+            if (window.__HUB_LAYOUT_READY && typeof window.__HUB_LAYOUT_READY.then === 'function') {
+                try { await window.__HUB_LAYOUT_READY; } catch (_) {}
+            }
+            if (window.__HUB_PAGE_ACCESS_DENIED) return;
+            const target = 'agenda.html?kind=premontaje';
+            try { window.__HUB_ALLOW_NEXT_UNLOAD?.('cp_montajes_legacy_redirect'); } catch (_) {}
+            if (typeof window.__HUB_SAFE_NAVIGATE === 'function') {
+                window.__HUB_SAFE_NAVIGATE(target, { allowSamePage: true });
+            } else {
+                window.location.replace(target);
+            }
+        });
+    </script>
     <!-- Local Animations -->
     <link rel="preload" as="style" href="../../assets/libs/css/animate.min.css">
     <link rel="stylesheet" href="../../assets/libs/css/animate.min.css">

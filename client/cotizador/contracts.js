@@ -3591,6 +3591,10 @@ function __pmContractsApplyTemplateDefault() {
 
 // --- INICIALIZACIÓN SEGURA ---
 document.addEventListener('DOMContentLoaded', async () => {
+    if (window.__HUB_LAYOUT_READY && typeof window.__HUB_LAYOUT_READY.then === 'function') {
+        try { await window.__HUB_LAYOUT_READY; } catch (_) {}
+    }
+    if (window.__HUB_PAGE_ACCESS_DENIED) return;
     // 1. Verificar librerías
     if (typeof window.PB_CLIENT === 'undefined') {
         alert("Error crítico: No se pudo cargar la librería de conexión. Revisa tu internet o los bloqueadores de anuncios.");
@@ -3615,22 +3619,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     if(!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
 
     // 3. Verificar Sesión
-    // Guard tolerante: evita redirecciones bruscas cuando getSession falla de forma transitoria.
-    let session = null;
-    try {
-        const response = await window.globalPocketBase.auth.getSession();
-        session = response?.data?.session || null;
-    } catch (_) {
-        session = null;
-    }
-    if (!session) {
-        const fallbackUser = window.globalPocketBase?.authStore?.model
-            || window.tenantPocketBase?.authStore?.model
-            || null;
-        if (fallbackUser) session = { user: fallbackUser };
-    }
+    const authState = await window.PB_SERVICES.auth.bootstrap({ schema: FIN_SCHEMA });
+    const session = authState?.session || null;
     if (!session || !session.user) {
-        window.showToast('No se encontró una sesión válida. Inicia sesión de nuevo.', 'error');
+        window.showToast('No se encontró una sesión válida. Evitando recarga automática.', 'error');
         return;
     }
     try {

@@ -136,7 +136,7 @@ function __orderWrapLetterheadPage(innerHtml, options = {}) {
     const top = frame.top + ((frame.height - finalH) / 2);
     const bgUrl = __orderCssSafeUrl(__CP_LETTERHEAD_URL);
     const imageLayer = bgUrl
-        ? `<img src='${bgUrl}' ${bgUrl.startsWith('http') ? "crossorigin='anonymous'" : ""} onerror='this.style.display=\"none\"' style='position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;'>`
+        ? `<img src='${bgUrl}' ${bgUrl.startsWith('http') ? "crossorigin='anonymous'" : ""} onerror='if(!this.dataset.retried){this.dataset.retried=\"1\";var s=this;setTimeout(function(){s.src=s.src;},200);}' style='position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;'>`
         : '';
     return `<div style="position:relative;width:${__PDF_PAGE_WIDTH_PX}px;height:${__PDF_PAGE_HEIGHT_PX}px;box-sizing:border-box;overflow:visible;background:#f5f5f5;">${imageLayer}<div data-pdf-preview-frame="1" data-base-width="${baseWidth}" data-base-height="${baseHeight}" style="position:absolute;left:${left.toFixed(2)}px;top:${top.toFixed(2)}px;width:${baseWidth}px;height:${baseHeight}px;transform:scale(${scale.toFixed(6)});transform-origin:top left;overflow:visible;z-index:1;">${innerHtml}</div></div>`;
 }
@@ -623,11 +623,20 @@ window.addEventListener('click', function(e) {
 });
 
 document.addEventListener('DOMContentLoaded', async () => {
+    if (window.__HUB_LAYOUT_READY && typeof window.__HUB_LAYOUT_READY.then === 'function') {
+        try { await window.__HUB_LAYOUT_READY; } catch (_) {}
+    }
+    if (window.__HUB_PAGE_ACCESS_DENIED) return;
     if (window.PB_CLIENT) {
         if(!window.tenantPocketBase) window.tenantPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY, { db: { schema: FIN_SCHEMA } });
         if(!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
     }
-    const { data: { session } } = await window.globalPocketBase.auth.getSession(); if (!session) return;
+    const authState = await window.PB_SERVICES.auth.bootstrap({ schema: FIN_SCHEMA });
+    const session = authState?.session || null;
+    if (!session?.user) {
+        window.showToast?.('No se encontró una sesión válida. Evitando recarga automática.', 'error');
+        return;
+    }
 
     try {
         window.currentUserProfile = await __cpLoadCurrentUserProfile(session.user);
@@ -1007,7 +1016,7 @@ function renderOrdersTable(data) {
     const canDelete = __cpIsAdminProfile();
     data.forEach(o => {
         let sColor = 'bg-gray-100 text-gray-600', sText = 'Pendiente', missingIcons = []; 
-        if(o.status === 'aprobada') { sColor = 'bg-blue-100 text-blue-700'; sText = 'Aprobada'; if (!o.contrato_url && !o.numero_contrato) missingIcons.push('<i class="fa-solid fa-file-signature" title="Falta Contrato"></i>'); if (!o.factura_xml_url) missingIcons.push('<i class="fa-solid fa-file-invoice" title="Falta Factura"></i>'); if (!o.historial_pagos || o.historial_pagos.length === 0) missingIcons.push('<i class="fa-solid fa-money-bill-wave" title="Falta Pago"></i>'); }
+        if(o.status === 'aprobada') { sColor = 'bg-blue-100 text-blue-700'; sText = 'Aprobada'; if (!o.factura_xml_url) missingIcons.push('<i class="fa-solid fa-file-invoice" title="Falta Factura"></i>'); if (!o.historial_pagos || o.historial_pagos.length === 0) missingIcons.push('<i class="fa-solid fa-money-bill-wave" title="Falta Pago"></i>'); }
         if(o.status === 'finalizada') { sColor = 'bg-green-100 text-green-700 border border-green-200'; sText = 'Finalizada'; }
         if(o.status === 'rechazada') { sColor = 'bg-red-50 text-red-600'; sText = 'Rechazada'; }
         let alertsHTML = ''; if (missingIcons.length > 0 && o.status === 'aprobada') alertsHTML = `<div class="flex gap-2 justify-center mt-1.5 text-[10px] text-red-400">${missingIcons.join('')}</div>`;
@@ -2073,10 +2082,6 @@ window.openDocsModal = function(id) {
     } else {
         list.innerHTML += `<div class="w-full px-4 py-3 rounded-xl border border-gray-100 bg-gray-50 flex items-center gap-3 mb-2 opacity-60"><i class="fa-solid fa-lock text-gray-400"></i><span class="text-xs font-bold text-gray-400">Orden de Compra (Pendiente)</span></div>`;
     }
-
-    // Contrato (sin cambios funcionales)
-    if (order.contrato_url) createBtn('Ver Contrato Firmado', 'fa-solid fa-file-signature', 'indigo', `window.openStoredDocument('${order.contrato_url}')`);
-    else list.innerHTML += `<div class="w-full px-4 py-3 rounded-xl border border-gray-100 bg-gray-50 flex items-center gap-3 mb-2 opacity-60"><i class="fa-solid fa-signature text-gray-400"></i><span class="text-xs font-bold text-gray-400">Contrato (Pendiente Firma)</span></div>`;
 
     // Factura
     if (order.factura_pdf_url) {
@@ -4706,7 +4711,7 @@ window.getOrderHTML = function(o, type) {
     const pdfStyle = __cpGetPdfStyleConfig();
     const pdfContent = __cpNormalizePdfContent(pdfStyle.content);
     const pdfStyleInlineVars = __cpPdfStyleVarsInline(pdfStyle);
-    const pdfStyleTag = `<style>.cp-pdf-root{font-family:var(--cp-font-family)!important;}.cp-pdf-root .cp-pdf-shift{transform:translate(var(--cp-offset-x),var(--cp-offset-y));position:relative;}.cp-pdf-root .cp-pdf-header{border-bottom-width:var(--cp-header-line)!important;justify-content:var(--cp-header-justify)!important;}.cp-pdf-root .cp-pdf-header>div:last-child{text-align:var(--cp-header-align)!important;}.cp-pdf-root .cp-pdf-title{font-size:var(--cp-title-size)!important;line-height:1.05!important;text-align:var(--cp-header-align)!important;}.cp-pdf-root .cp-pdf-folio{font-size:var(--cp-meta-size)!important;text-align:var(--cp-meta-align)!important;}.cp-pdf-root .cp-pdf-date{font-size:var(--cp-date-size)!important;text-align:var(--cp-meta-align)!important;}.cp-pdf-root .cp-pdf-table-head th{font-size:var(--cp-table-head-size)!important;}.cp-pdf-root .cp-pdf-table-body td,.cp-pdf-root .cp-pdf-table-body p,.cp-pdf-root .cp-pdf-table-body span{font-size:var(--cp-table-body-size)!important;line-height:var(--cp-line-height)!important;}.cp-pdf-root .cp-pdf-table-body td:first-child,.cp-pdf-root .cp-pdf-table-body td:first-child *{text-align:var(--cp-table-align)!important;}.cp-pdf-root .cp-pdf-summary,.cp-pdf-root .cp-pdf-summary *{text-align:var(--cp-summary-align)!important;}.cp-pdf-root .cp-pdf-quick,.cp-pdf-root .cp-pdf-quick *{font-size:var(--cp-quick-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-quick-align)!important;}.cp-pdf-root .cp-pdf-general-conditions,.cp-pdf-root .cp-pdf-general-conditions *{font-size:var(--cp-conditions-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-conditions-align)!important;}.cp-pdf-root .cp-pdf-sign,.cp-pdf-root .cp-pdf-sign *{font-size:var(--cp-sign-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-sign-align)!important;}.cp-pdf-root .cp-pdf-footer-text{font-size:var(--cp-footer-size)!important;text-align:var(--cp-footer-align)!important;}.cp-pdf-root [data-base-resource]{position:relative;transform-origin:top left;}.cp-pdf-root .cp-pdf-resource,.cp-pdf-root .cp-pdf-editable{cursor:default;box-sizing:border-box;outline:none;outline-offset:2px;}.cp-pdf-root .cp-pdf-editable::after{content:'';position:absolute;right:-7px;bottom:-7px;width:12px;height:12px;border-radius:999px;background:#c1621e;box-shadow:0 0 0 2px #fff;opacity:0;}.cp-pdf-root .cp-pdf-base-selected,.cp-pdf-root .cp-pdf-edit-selected{outline:none;outline-offset:2px;}.cp-pdf-root.cp-pdf-admin-enabled .cp-pdf-resource,.cp-pdf-root.cp-pdf-admin-enabled .cp-pdf-editable{cursor:move;}.cp-pdf-root.cp-pdf-admin-enabled .cp-pdf-editable{outline:1px dashed rgba(193,98,30,.45);}.cp-pdf-root.cp-pdf-admin-enabled .cp-pdf-editable::after{opacity:.9;}.cp-pdf-root.cp-pdf-admin-enabled .cp-pdf-base-selected,.cp-pdf-root.cp-pdf-admin-enabled .cp-pdf-edit-selected{outline:2px solid #c1621e;}.cp-pdf-delete-btn{position:absolute;top:-8px;right:-8px;width:22px;height:22px;border-radius:50%;background:#c1621e;color:#fff;display:none;align-items:center;justify-content:center;cursor:pointer;font-size:11px;z-index:80;box-shadow:0 0 0 2px #fff;pointer-events:auto;}.cp-pdf-root.cp-pdf-admin-enabled .cp-pdf-edit-selected .cp-pdf-delete-btn{display:flex;}.cp-pdf-delete-btn:hover{background:#9a4f18;transform:scale(1.08);transition:all .2s;}</style>`;
+    const pdfStyleTag = `<style>.cp-pdf-root{font-family:var(--cp-font-family)!important;}.cp-pdf-root .cp-pdf-shift{transform:translate(var(--cp-offset-x),var(--cp-offset-y));position:relative;}.cp-pdf-root .cp-pdf-header{border-bottom-width:var(--cp-header-line)!important;justify-content:var(--cp-header-justify)!important;}.cp-pdf-root .cp-pdf-header>div:last-child{text-align:var(--cp-header-align)!important;}.cp-pdf-root .cp-pdf-title{font-size:var(--cp-title-size)!important;line-height:1.05!important;text-align:var(--cp-header-align)!important;}.cp-pdf-root .cp-pdf-folio{font-size:var(--cp-meta-size)!important;text-align:var(--cp-meta-align)!important;}.cp-pdf-root .cp-pdf-date{font-size:var(--cp-date-size)!important;text-align:var(--cp-meta-align)!important;}.cp-pdf-root .cp-pdf-table-head th{font-size:var(--cp-table-head-size)!important;}.cp-pdf-root .cp-pdf-table-body td,.cp-pdf-root .cp-pdf-table-body p,.cp-pdf-root .cp-pdf-table-body span{font-size:var(--cp-table-body-size)!important;line-height:var(--cp-line-height)!important;}.cp-pdf-root .cp-pdf-table-body td:first-child,.cp-pdf-root .cp-pdf-table-body td:first-child *{text-align:var(--cp-table-align)!important;}.cp-pdf-root .cp-pdf-summary,.cp-pdf-root .cp-pdf-summary *{text-align:var(--cp-summary-align)!important;}.cp-pdf-root .cp-pdf-quick,.cp-pdf-root .cp-pdf-quick *{font-size:var(--cp-quick-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-quick-align)!important;}.cp-pdf-root .cp-pdf-general-conditions,.cp-pdf-root .cp-pdf-general-conditions *{font-size:var(--cp-conditions-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-conditions-align)!important;}.cp-pdf-root .cp-pdf-sign,.cp-pdf-root .cp-pdf-sign *{font-size:var(--cp-sign-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-sign-align)!important;}.cp-pdf-root .cp-pdf-footer-text{font-size:var(--cp-footer-size)!important;text-align:var(--cp-footer-align)!important;}.cp-pdf-root .cp-pdf-amount,.cp-pdf-root .cp-pdf-table-body td:last-child,.cp-pdf-root .cp-pdf-summary td:last-child{white-space:nowrap!important;word-break:normal!important;overflow-wrap:normal!important;font-variant-numeric:tabular-nums;}.cp-pdf-root .cp-pdf-summary-table-wrap{width:20rem;max-width:100%;margin-left:auto;}.cp-pdf-root [data-base-resource]{position:relative;transform-origin:top left;}.cp-pdf-root .cp-pdf-resource,.cp-pdf-root .cp-pdf-editable{cursor:default;box-sizing:border-box;outline:none;outline-offset:2px;}.cp-pdf-root .cp-pdf-editable::after{content:'';position:absolute;right:-7px;bottom:-7px;width:12px;height:12px;border-radius:999px;background:#c1621e;box-shadow:0 0 0 2px #fff;opacity:0;}.cp-pdf-root .cp-pdf-base-selected,.cp-pdf-root .cp-pdf-edit-selected{outline:none;outline-offset:2px;}.cp-pdf-root.cp-pdf-admin-enabled .cp-pdf-resource,.cp-pdf-root.cp-pdf-admin-enabled .cp-pdf-editable{cursor:move;}.cp-pdf-root.cp-pdf-admin-enabled .cp-pdf-editable{outline:1px dashed rgba(193,98,30,.45);}.cp-pdf-root.cp-pdf-admin-enabled .cp-pdf-editable::after{opacity:.9;}.cp-pdf-root.cp-pdf-admin-enabled .cp-pdf-base-selected,.cp-pdf-root.cp-pdf-admin-enabled .cp-pdf-edit-selected{outline:2px solid #c1621e;}.cp-pdf-delete-btn{position:absolute;top:-8px;right:-8px;width:22px;height:22px;border-radius:50%;background:#c1621e;color:#fff;display:none;align-items:center;justify-content:center;cursor:pointer;font-size:11px;z-index:80;box-shadow:0 0 0 2px #fff;pointer-events:auto;}.cp-pdf-root.cp-pdf-admin-enabled .cp-pdf-edit-selected .cp-pdf-delete-btn{display:flex;}.cp-pdf-delete-btn:hover{background:#9a4f18;transform:scale(1.08);transition:all .2s;}</style>`;
     const pdfTableFitTag = `<style>.cp-pdf-root .cp-pdf-table-head th{font-size:var(--cp-fit-head-size,var(--cp-table-head-size))!important;padding-top:var(--cp-fit-cell-py,.5rem)!important;padding-bottom:var(--cp-fit-cell-py,.5rem)!important;padding-left:var(--cp-fit-cell-px,.75rem)!important;padding-right:var(--cp-fit-cell-px,.75rem)!important;}.cp-pdf-root .cp-pdf-table-body td,.cp-pdf-root .cp-pdf-table-body p,.cp-pdf-root .cp-pdf-table-body span{font-size:var(--cp-fit-body-size,var(--cp-table-body-size))!important;line-height:var(--cp-fit-line-height,var(--cp-line-height))!important;}.cp-pdf-root .cp-pdf-table-body td{padding-top:var(--cp-fit-cell-py,.5rem)!important;padding-bottom:var(--cp-fit-cell-py,.5rem)!important;padding-left:var(--cp-fit-cell-px,.75rem)!important;padding-right:var(--cp-fit-cell-px,.75rem)!important;}</style>`;
     const now = new Date(); const dateStr = now.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' }); const genDateTime = now.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'medium' }); let docTitle = isOrder ? "ORDEN DE COMPRA" : "COTIZACIÓN"; 
     
@@ -4811,6 +4816,55 @@ window.getOrderHTML = function(o, type) {
         if (sid && __orderPeopleBySpace[sid] > 0) return __orderPeopleBySpace[sid];
         return __orderParsePeople(o?.personas ?? guests);
     };
+    const __orderCurrencyFormatter = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' });
+    const __orderRoundMoney = (value) => Math.round(((parseFloat(value) || 0) + Number.EPSILON) * 100) / 100;
+    const __orderFormatMoneyHtml = (value, options = {}) => {
+        const opts = options && typeof options === 'object' ? options : {};
+        const amount = Number.isFinite(Number(value)) ? Number(value) : 0;
+        const prefix = opts.prefix ? `${opts.prefix} ` : '';
+        const extraClass = String(opts.className || '').trim();
+        const className = ['cp-pdf-amount', extraClass].filter(Boolean).join(' ');
+        return `<span class="${className}">${prefix}${__orderCurrencyFormatter.format(amount)}</span>`;
+    };
+    const __orderNormalizeTaxName = (value) => {
+        const raw = String(value || '').trim();
+        return raw && !/^impuestos?$/i.test(raw) ? raw : 'IVA';
+    };
+    const __orderBuildTaxRows = (subtotal, activeTaxIds, storedTaxTotal = 0) => {
+        const rows = [
+            `<tr><td class="py-1 px-3 text-[10px] font-bold text-gray-500 text-right" colspan="2">Subtotal</td><td class="py-1 px-3 text-right text-xs font-bold text-gray-800">${__orderFormatMoneyHtml(subtotal)}</td></tr>`
+        ];
+        const resolvedTaxes = parseIds(activeTaxIds)
+            .map((tid) => dbTaxes.find((tax) => String(tax.id) === String(tid)))
+            .filter(Boolean)
+            .map((tax) => {
+                const percentage = parseFloat(tax.porcentaje || 0) || 0;
+                const rate = percentage > 1 ? percentage / 100 : percentage;
+                return {
+                    name: __orderNormalizeTaxName(tax.nombre),
+                    percentage,
+                    amount: __orderRoundMoney(subtotal * rate)
+                };
+            })
+            .filter((entry) => entry.amount > 0 || entry.percentage > 0);
+
+        if (resolvedTaxes.length > 0) {
+            let remainingStoredTax = __orderRoundMoney(storedTaxTotal);
+            resolvedTaxes.forEach((entry, index) => {
+                const amount = storedTaxTotal > 0
+                    ? (index === resolvedTaxes.length - 1 ? Math.max(0, __orderRoundMoney(remainingStoredTax)) : Math.max(0, entry.amount))
+                    : entry.amount;
+                if (storedTaxTotal > 0 && index < resolvedTaxes.length - 1) {
+                    remainingStoredTax = __orderRoundMoney(remainingStoredTax - amount);
+                }
+                rows.push(`<tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="2">${__cpSafeHtml(entry.name)}${entry.percentage > 0 ? ` (${entry.percentage}%)` : ''}</td><td class="py-1 px-3 text-right text-xs text-red-500 font-bold">${__orderFormatMoneyHtml(amount, { prefix: '+' })}</td></tr>`);
+            });
+        } else if (storedTaxTotal > 0) {
+            rows.push(`<tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="2">IVA</td><td class="py-1 px-3 text-right text-xs text-red-500 font-bold">${__orderFormatMoneyHtml(storedTaxTotal, { prefix: '+' })}</td></tr>`);
+        }
+
+        return rows.join('');
+    };
     if (detailSpaces.length > 0) {
         detailSpaces.forEach((sp, spIdx) => {
             const sid = sp.espacio_id || sp.space_id;
@@ -4825,22 +4879,22 @@ window.getOrderHTML = function(o, type) {
                 const breakdown = calculateDayByDayTotal(spObj, fi, ff, spGuests);
                 rentalTotal += breakdown.total;
                 breakdown.details.forEach((day, idx) => {
-                    rentalRows += `<tr><td class="py-2 px-3 align-top text-[11px] text-gray-700 leading-snug break-words"><span class="font-bold">${spName}</span> - Renta ${day.dayName}${(idx === 0 && spKey) ? `<br><span class="text-[9px] text-gray-400 italic">${spKey}</span>` : ''}</td><td class="py-2 px-3 text-left text-[10px] text-gray-500">${__orderBuildPeopleCellHtml(spGuests)}</td><td class="py-2 px-3 text-left text-[10px] text-gray-500">${__orderBuildDateCellHtml(day.date, '', sid)}</td><td class="py-2 px-3 text-right font-bold text-[11px] text-gray-700">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(day.price)}</td></tr>`;
+                    rentalRows += `<tr><td class="py-2 px-3 align-top text-[11px] text-gray-700 leading-snug break-words"><span class="font-bold">${spName}</span> - Renta ${day.dayName}${(idx === 0 && spKey) ? `<br><span class="text-[9px] text-gray-400 italic">${spKey}</span>` : ''}</td><td class="py-2 px-3 text-left text-[10px] text-gray-500">${idx === 0 ? __orderBuildPeopleCellHtml(spGuests) : ''}</td><td class="py-2 px-3 text-left text-[10px] text-gray-500">${__orderBuildDateCellHtml(day.date, '', sid)}</td><td class="py-2 px-3 text-right font-bold text-[11px] text-gray-700">${__orderFormatMoneyHtml(day.price)}</td></tr>`;
                 });
             } else {
                 const rawSubtotal = parseFloat(sp.subtotal_espacio || sp.subtotal || 0);
                 rentalTotal += rawSubtotal;
-                rentalRows += `<tr><td class="py-2 px-3 align-top text-[11px] leading-snug break-words"><p class="font-bold text-gray-800 text-[11px]">${spName}</p>${spKey ? `<span class="bg-gray-100 text-gray-500 px-1 py-0.5 rounded text-[10px] font-mono mt-0.5 inline-block">${spKey}</span>` : ''}</td><td class="py-2 px-3 align-top text-left text-gray-500 text-[10px]">${__orderBuildPeopleCellHtml(spGuests)}</td><td class="py-2 px-3 align-top text-left text-gray-500 text-[10px]">${__orderBuildDateCellHtml(window.safeFormatDate(fi), window.safeFormatDate(ff), sid)}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-[11px]">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(rawSubtotal)}</td></tr>`;
+                rentalRows += `<tr><td class="py-2 px-3 align-top text-[11px] leading-snug break-words"><p class="font-bold text-gray-800 text-[11px]">${spName}</p>${spKey ? `<span class="bg-gray-100 text-gray-500 px-1 py-0.5 rounded text-[10px] font-mono mt-0.5 inline-block">${spKey}</span>` : ''}</td><td class="py-2 px-3 align-top text-left text-gray-500 text-[10px]">${__orderBuildPeopleCellHtml(spGuests)}</td><td class="py-2 px-3 align-top text-left text-gray-500 text-[10px]">${__orderBuildDateCellHtml(window.safeFormatDate(fi), window.safeFormatDate(ff), sid)}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-[11px]">${__orderFormatMoneyHtml(rawSubtotal)}</td></tr>`;
             }
             if (spIdx === detailSpaces.length - 1) rentalRows += '';
         });
     } else if (space && o.fecha_inicio && o.fecha_fin) {
         const dayBreakdown = calculateDayByDayTotal(space, o.fecha_inicio, o.fecha_fin, guests);
         rentalTotal = dayBreakdown.total;
-        dayBreakdown.details.forEach((day, idx) => { rentalRows += `<tr><td class="py-2 px-3 align-top text-[11px] text-gray-700 leading-snug break-words"><span class="font-bold">${space.nombre}</span> - Renta ${day.dayName}${idx === 0 ? `<br><span class="text-[9px] text-gray-400 italic">${space.clave}</span>` : ''}</td><td class="py-2 px-3 text-left text-[10px] text-gray-500">${__orderBuildPeopleCellHtml(guests)}</td><td class="py-2 px-3 text-left text-[10px] text-gray-500">${__orderBuildDateCellHtml(day.date, '', space.id || o.espacio_id)}</td><td class="py-2 px-3 text-right font-bold text-[11px] text-gray-700">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(day.price)}</td></tr>`; });
+        dayBreakdown.details.forEach((day, idx) => { rentalRows += `<tr><td class="py-2 px-3 align-top text-[11px] text-gray-700 leading-snug break-words"><span class="font-bold">${space.nombre}</span> - Renta ${day.dayName}${idx === 0 ? `<br><span class="text-[9px] text-gray-400 italic">${space.clave}</span>` : ''}</td><td class="py-2 px-3 text-left text-[10px] text-gray-500">${idx === 0 ? __orderBuildPeopleCellHtml(guests) : ''}</td><td class="py-2 px-3 text-left text-[10px] text-gray-500">${__orderBuildDateCellHtml(day.date, '', space.id || o.espacio_id)}</td><td class="py-2 px-3 text-right font-bold text-[11px] text-gray-700">${__orderFormatMoneyHtml(day.price)}</td></tr>`; });
     } else {
         const basePrice = parseFloat(space ? space.precio_base : 0); rentalTotal = basePrice;
-        rentalRows = `<tr><td class="py-2 px-3 align-top text-[11px] leading-snug break-words"><p class="font-bold text-gray-800 text-[11px]">${o.espacio_nombre}</p>${descHTML}<span class="bg-gray-100 text-gray-500 px-1 py-0.5 rounded text-[10px] font-mono mt-0.5 inline-block">${o.espacio_clave || ''}</span></td><td class="py-2 px-3 align-top text-left text-gray-500 text-[10px]">${__orderBuildPeopleCellHtml(guests)}</td><td class="py-2 px-3 align-top text-left text-gray-500 text-[10px]">${__orderBuildDateCellHtml(window.safeFormatDate(o.fecha_inicio), window.safeFormatDate(o.fecha_fin), o.espacio_id)}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-[11px]">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(basePrice)}</td></tr>`;
+        rentalRows = `<tr><td class="py-2 px-3 align-top text-[11px] leading-snug break-words"><p class="font-bold text-gray-800 text-[11px]">${o.espacio_nombre}</p>${descHTML}<span class="bg-gray-100 text-gray-500 px-1 py-0.5 rounded text-[10px] font-mono mt-0.5 inline-block">${o.espacio_clave || ''}</span></td><td class="py-2 px-3 align-top text-left text-gray-500 text-[10px]">${__orderBuildPeopleCellHtml(guests)}</td><td class="py-2 px-3 align-top text-left text-gray-500 text-[10px]">${__orderBuildDateCellHtml(window.safeFormatDate(o.fecha_inicio), window.safeFormatDate(o.fecha_fin), o.espacio_id)}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-[11px]">${__orderFormatMoneyHtml(basePrice)}</td></tr>`;
     }
     
     let runningSubtotal = rentalTotal; let rowsHtml = rentalRows; 
@@ -4854,19 +4908,25 @@ window.getOrderHTML = function(o, type) {
         const sign = (c.type === 'descuento') ? '-' : '+';
 
         let desc = c.description || c.nombre || 'Adicional';
-        if (c.type === 'b2b_montaje' && c.meta?.dates && !desc.includes('-')) {
-            desc += ' - ' + c.meta.dates.map(d => window.safeFormatDate(d)).join(', ');
-        }
-        const conceptPeople = __orderResolveConceptPeople(c);
         const descHtml = __orderFormatConceptDescription(desc);
+
+        // Solo mostrar personas en conceptos de tipo espacio
+        const isNonSpaceConcept = ['b2b_montaje', 'b2b_horas', 'descuento', 'b2b_horario'].includes(conceptType) || !conceptType.startsWith('b2b_espacio');
+        const conceptPeopleHtml = isNonSpaceConcept ? '' : __orderBuildPeopleCellHtml(__orderResolveConceptPeople(c));
+
+        // Mostrar fechas de premontaje en la columna de fecha
+        let conceptDateHtml = '';
+        if (conceptType === 'b2b_montaje' && c.meta?.dates?.length) {
+            conceptDateHtml = c.meta.dates.map(d => window.safeFormatDate(d)).join(', ');
+        }
 
         const amountCell = (Math.abs(parseFloat(amount || 0)) < 0.000001)
             ? '---'
-            : `${sign} ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(amount)}`;
-        rowsHtml += `<tr><td class="py-2 px-3 align-top text-[13px] font-medium text-gray-600 leading-snug break-words">${descHtml}</td><td class="py-2 px-3 text-left text-[11px] text-gray-500">${__orderBuildPeopleCellHtml(conceptPeople)}</td><td class="py-2 px-3"></td><td class="py-2 px-3 text-right text-[13px] font-medium text-gray-600">${amountCell}</td></tr>`;
+            : __orderFormatMoneyHtml(amount, { prefix: sign });
+        rowsHtml += `<tr><td class="py-2 px-3 align-top text-[13px] font-medium text-gray-600 leading-snug break-words">${descHtml}</td><td class="py-2 px-3 text-left text-[11px] text-gray-500">${conceptPeopleHtml}</td><td class="py-2 px-3 text-left text-[10px] text-gray-500">${conceptDateHtml}</td><td class="py-2 px-3 text-right text-[13px] font-medium text-gray-600">${amountCell}</td></tr>`;
     });
 
-    if (o.tipo_ajuste && o.tipo_ajuste !== 'ninguno') { let val = parseFloat(o.valor_ajuste); let displayAmount = val; if (o.ajuste_es_porcentaje) { displayAmount = runningSubtotal * (val / 100); } const sign = o.tipo_ajuste === 'descuento' ? '-' : '+'; if (o.tipo_ajuste === 'descuento') runningSubtotal -= displayAmount; else runningSubtotal += displayAmount; rowsHtml += `<tr class="bg-gray-50"><td class="py-2 px-3 italic text-[12px] text-gray-500">Ajuste Global</td><td class="py-2 px-3 text-left text-[11px] text-gray-300">---</td><td></td><td class="py-2 px-3 text-right font-bold text-[12px] text-gray-600">${sign} ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(displayAmount)}</td></tr>`; }
+    if (o.tipo_ajuste && o.tipo_ajuste !== 'ninguno') { let val = parseFloat(o.valor_ajuste); let displayAmount = val; if (o.ajuste_es_porcentaje) { displayAmount = runningSubtotal * (val / 100); } const sign = o.tipo_ajuste === 'descuento' ? '-' : '+'; if (o.tipo_ajuste === 'descuento') runningSubtotal -= displayAmount; else runningSubtotal += displayAmount; rowsHtml += `<tr class="bg-gray-50"><td class="py-2 px-3 italic text-[12px] text-gray-500">Ajuste Global</td><td class="py-2 px-3 text-left text-[11px] text-gray-300">---</td><td></td><td class="py-2 px-3 text-right font-bold text-[12px] text-gray-600">${__orderFormatMoneyHtml(displayAmount, { prefix: sign })}</td></tr>`; }
     const __orderTableRows = (String(rowsHtml).match(/<tr\b/gi) || []).length;
     const __orderTableChars = String(rowsHtml).replace(/<[^>]+>/g, '').length;
     let __orderDensityLevel = 0;
@@ -4880,7 +4940,7 @@ window.getOrderHTML = function(o, type) {
     const __orderFitLineHeight = __orderDensityLevel >= 3 ? '105%' : (__orderDensityLevel >= 2 ? '112%' : '120%');
     const __orderTableFitInline = `--cp-fit-head-size:${__orderFitHeadPx}px;--cp-fit-body-size:${__orderFitBodyPx}px;--cp-fit-cell-py:${__orderFitCellPy}px;--cp-fit-cell-px:${__orderFitCellPx}px;--cp-fit-line-height:${__orderFitLineHeight};`;
     const __orderQuickMarginClass = __orderDensityLevel >= 2 ? 'mb-8' : (__orderDensityLevel === 1 ? 'mb-12' : 'mb-20');
-    let taxRows = ''; let taxIds = []; if (o.desglose_precios && o.desglose_precios.impuestos_detalle) taxIds = o.desglose_precios.impuestos_detalle; else { const s = allSpaces.find(sp => sp.id === o.espacio_id); taxIds = s ? parseIds(s.impuestos_ids || s.impuestos) : []; } taxRows += `<tr><td class="py-1 px-3 text-[10px] font-bold text-gray-500 text-right" colspan="2">Subtotal</td><td class="py-1 px-3 text-right text-xs font-bold text-gray-800">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(runningSubtotal)}</td></tr>`; if (taxIds.length > 0 && dbTaxes.length > 0) { taxIds.forEach(tid => { const t = dbTaxes.find(x => x.id == tid); if(t) { const rate = t.porcentaje > 1 ? t.porcentaje/100 : t.porcentaje; const val = runningSubtotal * rate; taxRows += `<tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="2">${t.nombre} (${t.porcentaje}%)</td><td class="py-1 px-3 text-right text-xs text-red-500 font-bold">+ ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(val)}</td></tr>`; } }); } const totalsBlock = `<div class="cp-pdf-summary flex justify-end mb-2 pr-4" data-base-resource="summary"><div class="w-64"><table class="w-full border-collapse">${taxRows}<tr><td class="pt-2 border-t-2 border-gray-800 align-middle text-right" colspan="2"><span class="text-[10px] font-bold uppercase text-gray-500 mr-2">Total Neto</span></td><td class="pt-2 border-t-2 border-gray-800 align-middle text-right"><span class="text-xl font-black text-gray-900">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(o.precio_final)}</span></td></tr></table></div></div>`; 
+    let taxIds = []; if (o.desglose_precios && o.desglose_precios.impuestos_detalle) taxIds = o.desglose_precios.impuestos_detalle; else { const s = allSpaces.find(sp => sp.id === o.espacio_id); taxIds = s ? parseIds(s.impuestos_ids || s.impuestos) : []; } const storedTaxTotal = parseFloat(o?.desglose_precios?.tax_total || 0) || 0; const taxRows = __orderBuildTaxRows(runningSubtotal, taxIds, storedTaxTotal); const totalsBlock = `<div class="cp-pdf-summary flex justify-end mb-2 pr-4" data-base-resource="summary"><div class="cp-pdf-summary-table-wrap"><table class="w-full border-collapse">${taxRows}<tr><td class="pt-2 border-t-2 border-gray-800 align-middle text-right" colspan="2"><span class="text-[10px] font-bold uppercase text-gray-500 mr-2">Total Neto</span></td><td class="pt-2 border-t-2 border-gray-800 align-middle text-right"><span class="text-xl font-black text-gray-900">${__orderFormatMoneyHtml(o.precio_final)}</span></td></tr></table></div></div>`; 
     
     const quickLeftItems = String(pdfContent.quickLeftLines || '')
         .split(/\r?\n/)
@@ -4931,7 +4991,7 @@ window.getOrderHTML = function(o, type) {
                 <div>
                     ${renderHeader(docTitle)}
                     ${clientComponent}
-                    ${isOrder ? `<div class="mb-2 bg-gray-100 p-2 rounded text-base flex justify-between"><span>Folio de Servicio: <strong class="font-black text-lg">${folioUnificado}</strong></span><span>Contrato: <strong class="font-black text-lg">${o.numero_contrato||'---'}</strong></span></div>` : ''}
+                    ${isOrder ? `<div class="mb-2 bg-gray-100 p-2 rounded text-base"><span>Folio de Servicio: <strong class="font-black text-lg">${folioUnificado}</strong></span></div>` : ''}
                     <table class="w-full text-left mb-2 mt-3 table-fixed border-separate border-spacing-0">
                         <colgroup>
                             <col style="width: 52%;">
@@ -6778,6 +6838,10 @@ window.attemptSaveOrder = function() {
 };
 
 document.addEventListener('DOMContentLoaded', async () => {
+    if (window.__HUB_LAYOUT_READY && typeof window.__HUB_LAYOUT_READY.then === 'function') {
+        try { await window.__HUB_LAYOUT_READY; } catch (_) {}
+    }
+    if (window.__HUB_PAGE_ACCESS_DENIED) return;
     await __orderLoadPremontajePctConfig();
 });
 

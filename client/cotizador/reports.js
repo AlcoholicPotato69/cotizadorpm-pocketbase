@@ -47,12 +47,20 @@ function fillClientSpaceFilter() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+    if (window.__HUB_LAYOUT_READY && typeof window.__HUB_LAYOUT_READY.then === 'function') {
+        try { await window.__HUB_LAYOUT_READY; } catch (_) {}
+    }
+    if (window.__HUB_PAGE_ACCESS_DENIED) return;
     if (window.PB_CLIENT) {
         if(!window.tenantPocketBase) window.tenantPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY, { db: { schema: FIN_SCHEMA } });
         if(!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
     }
-    const { data: { session } } = await window.globalPocketBase.auth.getSession();
-    if (!session) return;
+    const authState = await window.PB_SERVICES.auth.bootstrap({ schema: FIN_SCHEMA });
+    const session = authState?.session || null;
+    if (!session?.user) {
+        window.showToast?.('No se encontró una sesión válida. Evitando recarga automática.', 'error');
+        return;
+    }
     const { data: profile } = await window.globalPocketBase.from('profiles').select('role, app_metadata').eq('id', session.user.id).single();
     const __role = String(profile.role || '').toLowerCase().trim();
     const __roleHasAccess = (__role === 'admin') || (__role === 'plaza_mayor') || (__role === 'ambos');
@@ -60,7 +68,10 @@ const perms = (__role === 'admin')
     ? { orders_view: true, reports_view: true }
     : (__roleHasAccess ? { orders_view: true, reports_view: true } : (profile.app_metadata?.finanzas?.permissions || {}));
 
-if (!perms.reports_view) { setTimeout(() => window.location.href = 'catalog.html', 1500); return; }
+if (!perms.reports_view) {
+    window.showToast?.('No tienes permisos para acceder a Reportes.', 'error');
+    return;
+}
 
 // --- SISTEMA DE PERMISOS DE NAVEGACIÓN ---
 if (__role !== 'admin') {

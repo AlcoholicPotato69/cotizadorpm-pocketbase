@@ -819,11 +819,20 @@ window.addEventListener('click', function(e) {
 });
 
 document.addEventListener('DOMContentLoaded', async () => {
+    if (window.__HUB_LAYOUT_READY && typeof window.__HUB_LAYOUT_READY.then === 'function') {
+        try { await window.__HUB_LAYOUT_READY; } catch (_) {}
+    }
+    if (window.__HUB_PAGE_ACCESS_DENIED) return;
     if (window.PB_CLIENT) {
         if(!window.tenantPocketBase) window.tenantPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY, { db: { schema: FIN_SCHEMA } });
         if(!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
     }
-    const { data: { session } } = await window.globalPocketBase.auth.getSession(); if (!session) return;
+    const authState = await window.PB_SERVICES.auth.bootstrap({ schema: FIN_SCHEMA });
+    const session = authState?.session || null;
+    if (!session?.user) {
+        window.showToast?.('No se encontró una sesión válida. Evitando recarga automática.', 'error');
+        return;
+    }
     await __pmLoadLetterheadConfig();
     try {
         window.currentUserProfile = await __pmLoadCurrentUserProfile(session.user);
@@ -1189,7 +1198,7 @@ function renderOrdersTable(data) {
     const canDelete = __pmIsAdminProfile();
     data.forEach(o => {
         let sColor = 'bg-gray-100 text-gray-600', sText = 'Pendiente', missingIcons = []; 
-        if(o.status === 'aprobada') { sColor = 'bg-blue-100 text-blue-700'; sText = 'Aprobada'; if (!o.contrato_url && !o.numero_contrato) missingIcons.push('<i class="fa-solid fa-file-signature" title="Falta Contrato"></i>'); if (!o.factura_xml_url) missingIcons.push('<i class="fa-solid fa-file-invoice" title="Falta Factura"></i>'); if (!o.historial_pagos || o.historial_pagos.length === 0) missingIcons.push('<i class="fa-solid fa-money-bill-wave" title="Falta Pago"></i>'); }
+        if(o.status === 'aprobada') { sColor = 'bg-blue-100 text-blue-700'; sText = 'Aprobada'; if (!o.factura_xml_url) missingIcons.push('<i class="fa-solid fa-file-invoice" title="Falta Factura"></i>'); if (!o.historial_pagos || o.historial_pagos.length === 0) missingIcons.push('<i class="fa-solid fa-money-bill-wave" title="Falta Pago"></i>'); }
         if(o.status === 'finalizada') { sColor = 'bg-green-100 text-green-700 border border-green-200'; sText = 'Finalizada'; }
         if(o.status === 'rechazada') { sColor = 'bg-red-50 text-red-600'; sText = 'Rechazada'; }
         let alertsHTML = ''; if (missingIcons.length > 0 && o.status === 'aprobada') alertsHTML = `<div class="flex gap-2 justify-center mt-1.5 text-[10px] text-red-400">${missingIcons.join('')}</div>`;
@@ -1702,9 +1711,6 @@ window.openDocsModal = function(id) {
     } else {
         list.innerHTML += `<div class="w-full px-4 py-3 rounded-xl border border-gray-100 bg-gray-50 flex items-center gap-3 mb-2 opacity-60"><i class="fa-solid fa-lock text-gray-400"></i><span class="text-xs font-bold text-gray-400">Orden de Compra (Pendiente)</span></div>`;
     }
-
-    // Contrato (sin cambios funcionales)
-    if (order.contrato_url) { createBtn('Ver Contrato Firmado', 'fa-solid fa-file-signature', 'indigo', `window.openStoredDocument('${order.contrato_url}')`); } else { list.innerHTML += `<div class="w-full px-4 py-3 rounded-xl border border-gray-100 bg-gray-50 flex items-center gap-3 mb-2 opacity-60"><i class="fa-solid fa-signature text-gray-400"></i><span class="text-xs font-bold text-gray-400">Contrato (Pendiente Firma)</span></div>`; }
 
     // Factura
     if (order.factura_pdf_url) {
@@ -4331,7 +4337,7 @@ window.getOrderHTML = function(o, type) {
     const pdfStyle = __pmGetPdfStyleConfig();
     const pdfContent = __pmNormalizePdfContent(pdfStyle.content);
     const pdfStyleInlineVars = __pmPdfStyleVarsInline(pdfStyle);
-    const pdfStyleTag = `<style>.pm-pdf-root{font-family:var(--pm-font-family)!important;}.pm-pdf-root .pm-pdf-shift{transform:translate(var(--pm-offset-x),var(--pm-offset-y));position:relative;}.pm-pdf-root .pm-pdf-header{border-bottom-width:var(--pm-header-line)!important;justify-content:var(--pm-header-justify)!important;}.pm-pdf-root .pm-pdf-header>div:last-child{text-align:var(--pm-header-align)!important;}.pm-pdf-root .pm-pdf-title{font-size:var(--pm-title-size)!important;line-height:1.05!important;text-align:var(--pm-header-align)!important;}.pm-pdf-root .pm-pdf-folio{font-size:var(--pm-meta-size)!important;text-align:var(--pm-meta-align)!important;}.pm-pdf-root .pm-pdf-date{font-size:var(--pm-date-size)!important;text-align:var(--pm-meta-align)!important;}.pm-pdf-root .pm-pdf-table-head th{font-size:var(--pm-table-head-size)!important;}.pm-pdf-root .pm-pdf-table-body td,.pm-pdf-root .pm-pdf-table-body p,.pm-pdf-root .pm-pdf-table-body span{font-size:var(--pm-table-body-size)!important;line-height:var(--pm-line-height)!important;}.pm-pdf-root .pm-pdf-table-body td:first-child,.pm-pdf-root .pm-pdf-table-body td:first-child *{text-align:var(--pm-table-align)!important;}.pm-pdf-root .pm-pdf-summary,.pm-pdf-root .pm-pdf-summary *{text-align:var(--pm-summary-align)!important;}.pm-pdf-root .pm-pdf-quick,.pm-pdf-root .pm-pdf-quick *{font-size:var(--pm-quick-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-quick-align)!important;}.pm-pdf-root .pm-pdf-general-conditions,.pm-pdf-root .pm-pdf-general-conditions *{font-size:var(--pm-conditions-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-conditions-align)!important;}.pm-pdf-root .pm-pdf-sign,.pm-pdf-root .pm-pdf-sign *{font-size:var(--pm-sign-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-sign-align)!important;}.pm-pdf-root .pm-pdf-footer-text{font-size:var(--pm-footer-size)!important;text-align:var(--pm-footer-align)!important;}.pm-pdf-root [data-base-resource]{position:relative;transform-origin:top left;}.pm-pdf-root .pm-pdf-resource,.pm-pdf-root .pm-pdf-editable{cursor:default;box-sizing:border-box;outline:none;outline-offset:2px;}.pm-pdf-root .pm-pdf-editable::after{content:'';position:absolute;right:-7px;bottom:-7px;width:12px;height:12px;border-radius:999px;background:#ef4444;box-shadow:0 0 0 2px #fff;opacity:0;}.pm-pdf-root .pm-pdf-base-selected,.pm-pdf-root .pm-pdf-edit-selected{outline:none;outline-offset:2px;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-resource,.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-editable{cursor:move;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-editable{outline:1px dashed rgba(239,68,68,.45);}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-editable::after{opacity:.9;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-base-selected,.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-edit-selected{outline:2px solid #ef4444;}.pm-pdf-delete-btn{position:absolute;top:-8px;right:-8px;width:22px;height:22px;border-radius:50%;background:#ef4444;color:#fff;display:none;align-items:center;justify-content:center;cursor:pointer;font-size:11px;z-index:80;box-shadow:0 0 0 2px #fff;pointer-events:auto;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-edit-selected .pm-pdf-delete-btn{display:flex;}.pm-pdf-delete-btn:hover{background:#dc2626;transform:scale(1.08);transition:all .2s;}</style>`;
+    const pdfStyleTag = `<style>.pm-pdf-root{font-family:var(--pm-font-family)!important;}.pm-pdf-root .pm-pdf-shift{transform:translate(var(--pm-offset-x),var(--pm-offset-y));position:relative;}.pm-pdf-root .pm-pdf-header{border-bottom-width:var(--pm-header-line)!important;justify-content:var(--pm-header-justify)!important;}.pm-pdf-root .pm-pdf-header>div:last-child{text-align:var(--pm-header-align)!important;}.pm-pdf-root .pm-pdf-title{font-size:var(--pm-title-size)!important;line-height:1.05!important;text-align:var(--pm-header-align)!important;}.pm-pdf-root .pm-pdf-folio{font-size:var(--pm-meta-size)!important;text-align:var(--pm-meta-align)!important;}.pm-pdf-root .pm-pdf-date{font-size:var(--pm-date-size)!important;text-align:var(--pm-meta-align)!important;}.pm-pdf-root .pm-pdf-table-head th{font-size:var(--pm-table-head-size)!important;}.pm-pdf-root .pm-pdf-table-body td,.pm-pdf-root .pm-pdf-table-body p,.pm-pdf-root .pm-pdf-table-body span{font-size:var(--pm-table-body-size)!important;line-height:var(--pm-line-height)!important;}.pm-pdf-root .pm-pdf-table-body td:first-child,.pm-pdf-root .pm-pdf-table-body td:first-child *{text-align:var(--pm-table-align)!important;}.pm-pdf-root .pm-pdf-summary,.pm-pdf-root .pm-pdf-summary *{text-align:var(--pm-summary-align)!important;}.pm-pdf-root .pm-pdf-quick,.pm-pdf-root .pm-pdf-quick *{font-size:var(--pm-quick-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-quick-align)!important;}.pm-pdf-root .pm-pdf-general-conditions,.pm-pdf-root .pm-pdf-general-conditions *{font-size:var(--pm-conditions-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-conditions-align)!important;}.pm-pdf-root .pm-pdf-sign,.pm-pdf-root .pm-pdf-sign *{font-size:var(--pm-sign-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-sign-align)!important;}.pm-pdf-root .pm-pdf-footer-text{font-size:var(--pm-footer-size)!important;text-align:var(--pm-footer-align)!important;}.pm-pdf-root .pm-pdf-amount,.pm-pdf-root .pm-pdf-table-body td:last-child,.pm-pdf-root .pm-pdf-summary td:last-child{white-space:nowrap!important;word-break:normal!important;overflow-wrap:normal!important;font-variant-numeric:tabular-nums;}.pm-pdf-root .pm-pdf-summary-table-wrap{width:20rem;max-width:100%;margin-left:auto;}.pm-pdf-root [data-base-resource]{position:relative;transform-origin:top left;}.pm-pdf-root .pm-pdf-resource,.pm-pdf-root .pm-pdf-editable{cursor:default;box-sizing:border-box;outline:none;outline-offset:2px;}.pm-pdf-root .pm-pdf-editable::after{content:'';position:absolute;right:-7px;bottom:-7px;width:12px;height:12px;border-radius:999px;background:#ef4444;box-shadow:0 0 0 2px #fff;opacity:0;}.pm-pdf-root .pm-pdf-base-selected,.pm-pdf-root .pm-pdf-edit-selected{outline:none;outline-offset:2px;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-resource,.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-editable{cursor:move;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-editable{outline:1px dashed rgba(239,68,68,.45);}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-editable::after{opacity:.9;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-base-selected,.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-edit-selected{outline:2px solid #ef4444;}.pm-pdf-delete-btn{position:absolute;top:-8px;right:-8px;width:22px;height:22px;border-radius:50%;background:#ef4444;color:#fff;display:none;align-items:center;justify-content:center;cursor:pointer;font-size:11px;z-index:80;box-shadow:0 0 0 2px #fff;pointer-events:auto;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-edit-selected .pm-pdf-delete-btn{display:flex;}.pm-pdf-delete-btn:hover{background:#dc2626;transform:scale(1.08);transition:all .2s;}</style>`;
     const pdfTableFitTag = `<style>.pm-pdf-root .pm-pdf-table-head th{font-size:var(--pm-fit-head-size,var(--pm-table-head-size))!important;padding-top:var(--pm-fit-cell-py,.5rem)!important;padding-bottom:var(--pm-fit-cell-py,.5rem)!important;padding-left:var(--pm-fit-cell-px,.75rem)!important;padding-right:var(--pm-fit-cell-px,.75rem)!important;}.pm-pdf-root .pm-pdf-table-body td,.pm-pdf-root .pm-pdf-table-body p,.pm-pdf-root .pm-pdf-table-body span{font-size:var(--pm-fit-body-size,var(--pm-table-body-size))!important;line-height:var(--pm-fit-line-height,var(--pm-line-height))!important;}.pm-pdf-root .pm-pdf-table-body td{padding-top:var(--pm-fit-cell-py,.5rem)!important;padding-bottom:var(--pm-fit-cell-py,.5rem)!important;padding-left:var(--pm-fit-cell-px,.75rem)!important;padding-right:var(--pm-fit-cell-px,.75rem)!important;}</style>`;
 
     const now = new Date(); const dateStr = now.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' }); const genDateTime = now.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'medium' }); let docTitle = isOrder ? "ORDEN DE COMPRA" : "COTIZACIÓN"; 
@@ -4403,6 +4409,55 @@ window.getOrderHTML = function(o, type) {
         if (sid && __pmPeopleBySpace[sid] > 0) return __pmPeopleBySpace[sid];
         return __pmGlobalPeople;
     };
+    const __pmCurrencyFormatter = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' });
+    const __pmRoundMoney = (value) => Math.round(((parseFloat(value) || 0) + Number.EPSILON) * 100) / 100;
+    const __pmFormatMoneyHtml = (value, options = {}) => {
+        const opts = options && typeof options === 'object' ? options : {};
+        const amount = Number.isFinite(Number(value)) ? Number(value) : 0;
+        const prefix = opts.prefix ? `${opts.prefix} ` : '';
+        const extraClass = String(opts.className || '').trim();
+        const className = ['pm-pdf-amount', extraClass].filter(Boolean).join(' ');
+        return `<span class="${className}">${prefix}${__pmCurrencyFormatter.format(amount)}</span>`;
+    };
+    const __pmNormalizeTaxName = (value) => {
+        const raw = String(value || '').trim();
+        return raw && !/^impuestos?$/i.test(raw) ? raw : 'IVA';
+    };
+    const __pmBuildTaxRows = (subtotal, activeTaxIds, storedTaxTotal = 0) => {
+        const rows = [
+            `<tr><td class="py-1 px-3 text-[10px] font-bold text-gray-500 text-right" colspan="4">Subtotal</td><td class="py-1 px-3 text-right text-xs font-bold text-gray-800">${__pmFormatMoneyHtml(subtotal)}</td></tr>`
+        ];
+        const resolvedTaxes = parseIds(activeTaxIds)
+            .map((tid) => dbTaxes.find((tax) => String(tax.id) === String(tid)))
+            .filter(Boolean)
+            .map((tax) => {
+                const percentage = parseFloat(tax.porcentaje || 0) || 0;
+                const rate = percentage > 1 ? percentage / 100 : percentage;
+                return {
+                    name: __pmNormalizeTaxName(tax.nombre),
+                    percentage,
+                    amount: __pmRoundMoney(subtotal * rate)
+                };
+            })
+            .filter((entry) => entry.amount > 0 || entry.percentage > 0);
+
+        if (resolvedTaxes.length > 0) {
+            let remainingStoredTax = __pmRoundMoney(storedTaxTotal);
+            resolvedTaxes.forEach((entry, index) => {
+                const amount = storedTaxTotal > 0
+                    ? (index === resolvedTaxes.length - 1 ? Math.max(0, __pmRoundMoney(remainingStoredTax)) : Math.max(0, entry.amount))
+                    : entry.amount;
+                if (storedTaxTotal > 0 && index < resolvedTaxes.length - 1) {
+                    remainingStoredTax = __pmRoundMoney(remainingStoredTax - amount);
+                }
+                rows.push(`<tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="4">${__pmSafeHtml(entry.name)}${entry.percentage > 0 ? ` (${entry.percentage}%)` : ''}</td><td class="py-1 px-3 text-right text-xs text-red-500 font-bold">${__pmFormatMoneyHtml(amount, { prefix: '+' })}</td></tr>`);
+            });
+        } else if (storedTaxTotal > 0) {
+            rows.push(`<tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="4">IVA</td><td class="py-1 px-3 text-right text-xs text-red-500 font-bold">${__pmFormatMoneyHtml(storedTaxTotal, { prefix: '+' })}</td></tr>`);
+        }
+
+        return rows.join('');
+    };
 
     let rentalTotal = calculateSpaceTotal(space, o.fecha_inicio, o.fecha_fin);
     let runningSubtotal = 0;
@@ -4420,7 +4475,7 @@ window.getOrderHTML = function(o, type) {
             const mMaterial = String(detailMaterialMeasure.material || '').trim() || '--';
             const measuresStr = (mAncho !== null && mAncho !== undefined && mAlto !== null && mAlto !== undefined) ? `${mAncho}x${mAlto} ${mUnidad}` : '--';
 
-            rowsHtml += `<tr><td class="py-2 px-3 align-top break-words">${__pmRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(mMaterial)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(measuresStr)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${window.safeFormatDate(sp.fecha_inicio)}<br>${window.safeFormatDate(sp.fecha_fin)}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(spSubtotal)}</td></tr>`;
+            rowsHtml += `<tr><td class="py-2 px-3 align-top break-words">${__pmRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(mMaterial)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(measuresStr)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${window.safeFormatDate(sp.fecha_inicio)}<br>${window.safeFormatDate(sp.fecha_fin)}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${__pmFormatMoneyHtml(spSubtotal)}</td></tr>`;
         });
     } else {
         const identity = __pmResolveSpaceIdentity();
@@ -4431,7 +4486,7 @@ window.getOrderHTML = function(o, type) {
         const mMaterial = String(detailMaterialMeasure.material || '').trim() || '--';
         const measuresStr = (mAncho !== null && mAncho !== undefined && mAlto !== null && mAlto !== undefined) ? `${mAncho}x${mAlto} ${mUnidad}` : '--';
         runningSubtotal = rentalTotal;
-        rowsHtml = `<tr><td class="py-2 px-3 align-top break-words">${__pmRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(mMaterial)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(measuresStr)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${window.safeFormatDate(o.fecha_inicio)}<br>${window.safeFormatDate(o.fecha_fin)}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(rentalTotal)}</td></tr>`;
+        rowsHtml = `<tr><td class="py-2 px-3 align-top break-words">${__pmRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(mMaterial)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(measuresStr)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${window.safeFormatDate(o.fecha_inicio)}<br>${window.safeFormatDate(o.fecha_fin)}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${__pmFormatMoneyHtml(rentalTotal)}</td></tr>`;
     }
     
     let cArray = [];
@@ -4450,10 +4505,10 @@ window.getOrderHTML = function(o, type) {
         const conceptPeople = __pmResolveConceptPeople(c);
         const peopleSuffix = conceptPeople > 0 ? ` (${conceptPeople} persona${conceptPeople === 1 ? '' : 's'})` : '';
         const label = `${spName ? `${spName} - ` : ''}${c.description || c.nombre || 'Adicional'}${peopleSuffix}`;
-        rowsHtml += `<tr><td class="py-2 px-3 text-[13px] font-medium text-gray-600 break-words leading-snug">${label}</td><td class="py-2 px-3"></td><td class="py-2 px-3"></td><td class="py-2 px-3"></td><td class="py-2 px-3 text-right text-[13px] font-medium text-gray-600">${sign} ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(amount)}</td></tr>`; 
+        rowsHtml += `<tr><td class="py-2 px-3 text-[13px] font-medium text-gray-600 break-words leading-snug">${label}</td><td class="py-2 px-3"></td><td class="py-2 px-3"></td><td class="py-2 px-3"></td><td class="py-2 px-3 text-right text-[13px] font-medium text-gray-600">${__pmFormatMoneyHtml(amount, { prefix: sign })}</td></tr>`; 
     }); 
     
-    if(o.tipo_ajuste && o.tipo_ajuste !== 'ninguno') { let val = parseFloat(o.valor_ajuste); let displayAmount = val; if (o.ajuste_es_porcentaje) { displayAmount = runningSubtotal * (val / 100); } const sign = o.tipo_ajuste === 'descuento' ? '-' : '+'; if(o.tipo_ajuste==='descuento') runningSubtotal -= displayAmount; else runningSubtotal += displayAmount; rowsHtml += `<tr class="bg-gray-50"><td class="py-2 px-3 italic text-[12px] text-gray-500">Ajuste Global</td><td></td><td></td><td></td><td class="py-2 px-3 text-right font-bold text-[12px] text-gray-600">${sign} ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(displayAmount)}</td></tr>`; } 
+    if(o.tipo_ajuste && o.tipo_ajuste !== 'ninguno') { let val = parseFloat(o.valor_ajuste); let displayAmount = val; if (o.ajuste_es_porcentaje) { displayAmount = runningSubtotal * (val / 100); } const sign = o.tipo_ajuste === 'descuento' ? '-' : '+'; if(o.tipo_ajuste==='descuento') runningSubtotal -= displayAmount; else runningSubtotal += displayAmount; rowsHtml += `<tr class="bg-gray-50"><td class="py-2 px-3 italic text-[12px] text-gray-500">Ajuste Global</td><td></td><td></td><td></td><td class="py-2 px-3 text-right font-bold text-[12px] text-gray-600">${__pmFormatMoneyHtml(displayAmount, { prefix: sign })}</td></tr>`; } 
     const __pmTableRows = (String(rowsHtml).match(/<tr\b/gi) || []).length;
     const __pmTableChars = String(rowsHtml).replace(/<[^>]+>/g, '').length;
     let __pmDensityLevel = 0;
@@ -4467,18 +4522,12 @@ window.getOrderHTML = function(o, type) {
     const __pmFitLineHeight = __pmDensityLevel >= 3 ? '105%' : (__pmDensityLevel >= 2 ? '112%' : '120%');
     const __pmTableFitInline = `--pm-fit-head-size:${__pmFitHeadPx}px;--pm-fit-body-size:${__pmFitBodyPx}px;--pm-fit-cell-py:${__pmFitCellPy}px;--pm-fit-cell-px:${__pmFitCellPx}px;--pm-fit-line-height:${__pmFitLineHeight};`;
     const __pmQuickMarginClass = __pmDensityLevel >= 2 ? 'mb-8' : (__pmDensityLevel === 1 ? 'mb-12' : 'mb-20');
-    let taxRows = '';
     let taxIds = [];
     if (o.desglose_precios && o.desglose_precios.impuestos_detalle) taxIds = o.desglose_precios.impuestos_detalle;
     else { const s = __pmFindSpaceByAnyId(o.espacio_id); taxIds = s ? parseIds(s.impuestos) : []; }
-    taxRows += `<tr><td class="py-1 px-3 text-[10px] font-bold text-gray-500 text-right" colspan="4">Subtotal</td><td class="py-1 px-3 text-right text-xs font-bold text-gray-800">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(runningSubtotal)}</td></tr>`;
     const storedTaxTotal = parseFloat(o?.desglose_precios?.tax_total || 0) || 0;
-    if (storedTaxTotal > 0) {
-        taxRows += `<tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="4">Impuestos</td><td class="py-1 px-3 text-right text-xs text-red-500 font-bold">+ ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(storedTaxTotal)}</td></tr>`;
-    } else if (taxIds.length > 0 && dbTaxes.length > 0) {
-        taxIds.forEach(tid => { const t = dbTaxes.find(x => x.id == tid); if(t) { const rate = t.porcentaje > 1 ? t.porcentaje/100 : t.porcentaje; const val = runningSubtotal * rate; taxRows += `<tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="4">${t.nombre} (${t.porcentaje}%)</td><td class="py-1 px-3 text-right text-xs text-red-500 font-bold">+ ${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(val)}</td></tr>`; } });
-    }
-    const totalsBlock = `<div class="pm-pdf-summary flex justify-end mb-2 pr-4" data-base-resource="summary"><div class="w-64"><table class="w-full border-collapse">${taxRows}<tr><td class="pt-2 border-t-2 border-gray-800 align-middle text-right" colspan="2"><span class="text-[10px] font-bold uppercase text-gray-500 mr-2">Total Neto</span></td><td class="pt-2 border-t-2 border-gray-800 align-middle text-right"><span class="text-xl font-black text-gray-900">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(o.precio_final)}</span></td></tr></table></div></div>`; 
+    const taxRows = __pmBuildTaxRows(runningSubtotal, taxIds, storedTaxTotal);
+    const totalsBlock = `<div class="pm-pdf-summary flex justify-end mb-2 pr-4" data-base-resource="summary"><div class="pm-pdf-summary-table-wrap"><table class="w-full border-collapse">${taxRows}<tr><td class="pt-2 border-t-2 border-gray-800 align-middle text-right" colspan="4"><span class="text-[10px] font-bold uppercase text-gray-500 mr-2">Total Neto</span></td><td class="pt-2 border-t-2 border-gray-800 align-middle text-right"><span class="text-xl font-black text-gray-900">${__pmFormatMoneyHtml(o.precio_final)}</span></td></tr></table></div></div>`; 
     
     const quoteApproverTitle = __pmResolvePdfTemplateString(pdfContent.quoteApproverTitle || 'QUIEN APRUEBA', { CLIENT_NAME: clientName });
     const quoteApproverSubtitle = __pmResolvePdfTemplateString(pdfContent.quoteApproverSubtitle || 'Plaza Mayor', { CLIENT_NAME: clientName });

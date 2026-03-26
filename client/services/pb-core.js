@@ -43,10 +43,25 @@
     return null;
   }
 
+  function normalizeAuthState(payload) {
+    if (!payload || typeof payload !== "object") return null;
+    const token = String(payload.token || payload.access_token || "").trim();
+    if (!token) return null;
+    const record = payload.record && typeof payload.record === "object" ? payload.record : null;
+    const user = normalizeUser(payload.user || record || null);
+    if (!user) return null;
+    return {
+      ...payload,
+      token: token,
+      record: record || payload.user || null,
+      user: user
+    };
+  }
+
   function readAuthState() {
-    const nativeState = parseJsonSafe(localStorage.getItem(NATIVE_AUTH_KEY) || "null", null);
+    const nativeState = normalizeAuthState(parseJsonSafe(localStorage.getItem(NATIVE_AUTH_KEY) || "null", null));
     if (nativeState && nativeState.token) return nativeState;
-    const legacyState = parseJsonSafe(localStorage.getItem(LEGACY_AUTH_KEY) || "null", null);
+    const legacyState = normalizeAuthState(parseJsonSafe(localStorage.getItem(LEGACY_AUTH_KEY) || "null", null));
     if (legacyState && legacyState.token) return legacyState;
     return null;
   }
@@ -57,7 +72,9 @@
       localStorage.removeItem(LEGACY_AUTH_KEY);
       return;
     }
-    const raw = JSON.stringify(payload);
+    const normalized = normalizeAuthState(payload);
+    if (!normalized) return;
+    const raw = JSON.stringify(normalized);
     localStorage.setItem(NATIVE_AUTH_KEY, raw);
     localStorage.setItem(LEGACY_AUTH_KEY, raw);
   }

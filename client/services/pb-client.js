@@ -4,6 +4,8 @@
  */
 (function () {
   const AUTH_KEY = 'pb_compat_auth_v1';
+  const NATIVE_AUTH_KEY = 'pb_native_auth_v1';
+  const AUTH_KEYS = [AUTH_KEY, NATIVE_AUTH_KEY];
   const HUB_NOTIFS_KEY = 'pb_compat_hub_notifications_v1';
 
   function trimSlash(url) { return String(url || '').replace(/\/+$/, ''); }
@@ -49,17 +51,6 @@
     if (s.indexOf('casadepiedra') !== -1) return 'casa_de_piedra';
     return null;
   }
-  function readAuth() {
-    return safeJsonParse(localStorage.getItem(AUTH_KEY) || 'null', null);
-  }
-  function writeAuth(payload) {
-    if (!payload) localStorage.removeItem(AUTH_KEY);
-    else localStorage.setItem(AUTH_KEY, JSON.stringify(payload));
-  }
-  function authHeader() {
-    const st = readAuth();
-    return st && st.token ? { 'Authorization': st.token } : {};
-  }
   function errObj(message, extra) {
     const e = Object.assign({ message: message || 'Error' }, extra || {});
     return e;
@@ -84,6 +75,57 @@
       created_at: record.created_at || record.created || null,
       updated_at: record.updated_at || record.updated || null,
     };
+  }
+  function normalizeAuthPayload(payload) {
+    if (!payload || typeof payload !== 'object') return null;
+    const token = String(payload.token || payload.access_token || '').trim();
+    if (!token) return null;
+    const record = payload.record && typeof payload.record === 'object' ? payload.record : null;
+    const user = mapProfileOut(payload.user || record || null);
+    if (!user) return null;
+    return {
+      ...payload,
+      token: token,
+      record: record || payload.user || null,
+      user: user
+    };
+  }
+  function readAuth() {
+    let resolved = null;
+    for (let i = 0; i < AUTH_KEYS.length; i += 1) {
+      const parsed = safeJsonParse(localStorage.getItem(AUTH_KEYS[i]) || 'null', null);
+      const normalized = normalizeAuthPayload(parsed);
+      if (normalized) {
+        resolved = normalized;
+        break;
+      }
+    }
+    if (!resolved) return null;
+    const raw = JSON.stringify(resolved);
+    AUTH_KEYS.forEach(function (key) {
+      try {
+        if (localStorage.getItem(key) !== raw) localStorage.setItem(key, raw);
+      } catch (_) {}
+    });
+    return resolved;
+  }
+  function writeAuth(payload) {
+    if (!payload) {
+      AUTH_KEYS.forEach(function (key) {
+        try { localStorage.removeItem(key); } catch (_) {}
+      });
+      return;
+    }
+    const normalized = normalizeAuthPayload(payload);
+    if (!normalized) return;
+    const raw = JSON.stringify(normalized);
+    AUTH_KEYS.forEach(function (key) {
+      try { localStorage.setItem(key, raw); } catch (_) {}
+    });
+  }
+  function authHeader() {
+    const st = readAuth();
+    return st && st.token ? { 'Authorization': st.token } : {};
   }
   function mapBusinessOut(collection, record) {
     if (!record) return record;

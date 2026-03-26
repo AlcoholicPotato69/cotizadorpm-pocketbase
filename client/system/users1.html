@@ -1295,7 +1295,7 @@
         'header-title': { x: 48, y: 54, w: 362, h: 86, sample: headerSample },
         'header-meta': { x: 434, y: 54, w: 332, h: 86, sample: 'CLIENTE\\nFECHA\\nFOLIO' },
         'table-body': { x: 48, y: 172, w: 718, h: 360, sample: 'Tabla de conceptos y descripciones' },
-        'summary': { x: 490, y: 550, w: 276, h: 140, sample: 'Subtotal\\nImpuestos\\nTotal Neto' },
+        'summary': { x: 490, y: 550, w: 276, h: 140, sample: 'Subtotal\\nIVA\\nISH\\nTotal Neto' },
         'quick': { x: 48, y: 550, w: 420, h: 128, sample: quickSample },
         'conditions': { x: 48, y: 700, w: 718, h: 188, sample: conditionsSample },
         'sign': { x: 48, y: 904, w: 718, h: 86, sample: 'Firmas y vistos buenos' },
@@ -2848,6 +2848,12 @@
           await window.HUB_CONFIG_READY;
         } catch (_) {}
       }
+      if (window.__HUB_LAYOUT_READY && typeof window.__HUB_LAYOUT_READY.then === 'function') {
+        try {
+          await window.__HUB_LAYOUT_READY;
+        } catch (_) {}
+      }
+      if (window.__HUB_PAGE_ACCESS_DENIED) return;
 
       if (!window.globalPocketBase && window.PB_CLIENT && window.HUB_CONFIG) {
         window.globalPocketBase = window.PB_CLIENT.createClient(window.HUB_CONFIG.pocketbaseUrl, window.HUB_CONFIG.pocketbaseAnonKey);

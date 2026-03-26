@@ -1013,11 +1013,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (typeof window.getHubConfigReady === 'function') {
         try { await window.getHubConfigReady(); } catch (_) {}
     }
+    if (window.__HUB_LAYOUT_READY && typeof window.__HUB_LAYOUT_READY.then === 'function') {
+        try { await window.__HUB_LAYOUT_READY; } catch (_) {}
+    }
+    if (window.__HUB_PAGE_ACCESS_DENIED) return;
     const ok = await initClients();
     if (!ok) return;
 
-    const { data: { session } } = await window.globalPocketBase.auth.getSession();
-    if (!session) return;
+    const authState = await window.PB_SERVICES.auth.bootstrap({ schema: FIN_SCHEMA });
+    const session = authState?.session || null;
+    if (!session?.user) {
+        window.showToast?.('No se encontró una sesión válida. Evitando recarga automática.', 'error');
+        return;
+    }
 
     const profileRes = await window.globalPocketBase.from('profiles').select('*').eq('id', session.user.id).maybeSingle();
     myPermissions = resolvePermissions(profileRes.data || {});

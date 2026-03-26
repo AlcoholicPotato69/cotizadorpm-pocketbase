@@ -276,6 +276,273 @@
         return originalLink || '#';
     }
 
+    if (typeof window.__HUB_LAYOUT_READY_RESOLVE !== 'function' || !window.__HUB_LAYOUT_READY || typeof window.__HUB_LAYOUT_READY.then !== 'function') {
+        window.__HUB_LAYOUT_READY = new Promise((resolve) => {
+            window.__HUB_LAYOUT_READY_RESOLVE = resolve;
+        });
+    }
+    window.__HUB_PAGE_ACCESS_DENIED = false;
+    window.__HUB_PAGE_ACCESS_DENIED_REASON = '';
+
+    let layoutReadyPublished = false;
+
+    function publishLayoutReady(context) {
+        const payload = context || null;
+        try { window.__HUB_AUTH_CONTEXT = payload; } catch (_) {}
+        if (layoutReadyPublished) return payload;
+        layoutReadyPublished = true;
+        try {
+            const resolve = window.__HUB_LAYOUT_READY_RESOLVE;
+            if (typeof resolve === 'function') resolve(payload);
+        } catch (_) {}
+        try { window.__HUB_LAYOUT_READY_RESOLVE = null; } catch (_) {}
+        return payload;
+    }
+
+    function normalizeLayoutRole(value) {
+        const safe = String(value || '').trim().toLowerCase();
+        if (!safe) return '';
+        if (safe === 'administrador' || safe === 'superadmin' || safe === 'super_admin') return 'admin';
+        return safe;
+    }
+
+    function normalizeTenantSlug(value) {
+        const safe = String(value || '').trim().toLowerCase();
+        if (!safe) return '';
+        if (safe === 'pm' || safe === 'plaza mayor' || safe === 'plaza_mayor') return 'plaza_mayor';
+        if (safe === 'cp' || safe === 'casa de piedra' || safe === 'casa_de_piedra') return 'casa_de_piedra';
+        if (safe === 'ambos' || safe === 'both') return 'ambos';
+        return safe;
+    }
+
+    function normalizeTenantList(input, role, fallbackTenant) {
+        const values = Array.isArray(input)
+            ? input
+            : (input == null || input === '' ? [] : [input]);
+        const unique = new Set();
+        values.forEach((item) => {
+            const normalized = normalizeTenantSlug(item);
+            if (!normalized) return;
+            if (normalized === 'ambos') {
+                unique.add('plaza_mayor');
+                unique.add('casa_de_piedra');
+                return;
+            }
+            unique.add(normalized);
+        });
+        const normalizedRole = normalizeLayoutRole(role);
+        if (normalizedRole === 'admin' || normalizedRole === 'ambos') {
+            unique.add('plaza_mayor');
+            unique.add('casa_de_piedra');
+        } else if (normalizedRole === 'plaza_mayor' || normalizedRole === 'casa_de_piedra') {
+            unique.add(normalizedRole);
+        }
+        const fallback = normalizeTenantSlug(fallbackTenant);
+        if (fallback && fallback !== 'ambos') unique.add(fallback);
+        return Array.from(unique);
+    }
+
+    function resolveLayoutRouteContext() {
+        const path = String(window.location.pathname || '').toLowerCase();
+        const file = path.split('/').pop().split('?')[0].split('#')[0];
+        const isPM = /\/cotizador(\/|$)/.test(path);
+        const isCP = /\/cotizadorcp(\/|$)/.test(path);
+        const isSystem = /\/system(\/|$)/.test(path);
+        const isLoginPage = file === 'index.html' && !path.includes('/calendar/');
+        return {
+            path,
+            file,
+            isPM,
+            isCP,
+            isSystem,
+            isCotizadorArea: isPM || isCP,
+            isLoginPage,
+            tenant: isPM ? 'plaza_mayor' : (isCP ? 'casa_de_piedra' : null),
+            redirectUrl: pathPrefix + 'index.html'
+        };
+    }
+
+    function hasOwn(object, key) {
+        return !!object && Object.prototype.hasOwnProperty.call(object, key);
+    }
+
+    function resolveRoutePermission(perms, key, fallbackAccess) {
+        if (!perms || typeof perms !== 'object') return !!fallbackAccess;
+        if (!hasOwn(perms, key)) return !!fallbackAccess;
+        return !!perms[key];
+    }
+
+    function resolveClientsPermission(perms, fallbackAccess) {
+        if (!perms || typeof perms !== 'object') return !!fallbackAccess;
+        if (hasOwn(perms, 'clients_view') || hasOwn(perms, 'clients_manage')) {
+            return !!perms.clients_view || !!perms.clients_manage;
+        }
+        return !!fallbackAccess;
+    }
+
+    function buildLayoutPermissions(identity, routeCtx) {
+        const profile = identity && typeof identity === 'object' ? identity : {};
+        const role = normalizeLayoutRole(profile.role || profile.rol || '');
+        const defaultTenant = normalizeTenantSlug(profile.tenant_default || profile.default_tenant || '');
+        const allowedTenants = normalizeTenantList(profile.allowed_tenants, role, defaultTenant);
+        const rawPermissions = (profile.app_metadata && profile.app_metadata.finanzas && profile.app_metadata.finanzas.permissions && typeof profile.app_metadata.finanzas.permissions === 'object')
+            ? { ...profile.app_metadata.finanzas.permissions }
+            : {};
+        const tenant = routeCtx && routeCtx.tenant ? routeCtx.tenant : null;
+        const roleHasTenantAccess = role === 'admin' || role === 'ambos' || (!!tenant && role === tenant);
+        const tenantAllowed = !tenant || roleHasTenantAccess || allowedTenants.includes(tenant) || defaultTenant === tenant;
+
+        let permissions;
+        if (role === 'admin') {
+            permissions = {
+                access: true,
+                orders_view: true,
+                orders_edit: true,
+                reports_view: true,
+                clients_view: true,
+                clients_manage: true,
+                catalog_manage: true
+            };
+        } else if (!!tenant && (role === tenant || role === 'ambos')) {
+            permissions = {
+                access: true,
+                orders_view: true,
+                orders_edit: true,
+                reports_view: true,
+                clients_view: true,
+                clients_manage: true,
+                catalog_manage: false
+            };
+        } else {
+            permissions = {
+                access: !!tenantAllowed
+            };
+            Object.assign(permissions, rawPermissions);
+        }
+
+        if (!tenantAllowed && tenant) permissions.access = false;
+
+        return {
+            role,
+            allowedTenants,
+            defaultTenant: defaultTenant || null,
+            tenantAllowed: !!tenantAllowed,
+            permissions,
+            rawPermissions,
+            isAdmin: role === 'admin'
+        };
+    }
+
+    function canAccessCurrentRoute(routeCtx, authCtx) {
+        if (!routeCtx) return true;
+        if (routeCtx.isLoginPage) return true;
+        if (!authCtx || !authCtx.session || !authCtx.session.user) return false;
+        if (routeCtx.isSystem) return authCtx.isAdmin === true;
+        if (!routeCtx.tenant) return true;
+        if (authCtx.tenantAllowed !== true) return false;
+
+        const perms = authCtx.permissions || {};
+        const accessFallback = perms.access !== false;
+
+        switch (routeCtx.file) {
+            case 'orders.html':
+            case 'order_detail.html':
+            case 'cotizacion.html':
+                return resolveRoutePermission(perms, 'orders_view', accessFallback);
+            case 'reports.html':
+            case 'report.html':
+                return resolveRoutePermission(perms, 'reports_view', accessFallback);
+            case 'clientes.html':
+                return resolveClientsPermission(perms, accessFallback);
+            default:
+                return !!accessFallback;
+        }
+    }
+
+    function applyLayoutNavPermissions(authCtx) {
+        if (!authCtx || !authCtx.permissions) return;
+        const perms = authCtx.permissions || {};
+        const accessFallback = perms.access !== false;
+        const navRules = {
+            'catalog.html': !!accessFallback,
+            'agenda.html': !!accessFallback,
+            'contracts.html': !!accessFallback,
+            'receipts.html': !!accessFallback,
+            'invoices.html': !!accessFallback,
+            'montajes.html': !!accessFallback,
+            'orders.html': resolveRoutePermission(perms, 'orders_view', accessFallback),
+            'cotizacion.html': resolveRoutePermission(perms, 'orders_view', accessFallback),
+            'reports.html': resolveRoutePermission(perms, 'reports_view', accessFallback),
+            'clientes.html': resolveClientsPermission(perms, accessFallback)
+        };
+        Object.keys(navRules).forEach((page) => {
+            const visible = !!navRules[page];
+            document.querySelectorAll(`a[href="${page}"], a[data-href="${page}"]`).forEach((link) => {
+                link.classList.toggle('hidden', !visible);
+            });
+        });
+        const settingsBtn = document.getElementById('layout-settings-btn');
+        if (settingsBtn) {
+            if (authCtx.isAdmin) settingsBtn.classList.replace('hidden', 'flex');
+            else settingsBtn.classList.add('hidden');
+        }
+    }
+
+    async function loadLayoutIdentity(sessionUser) {
+        const fields = '*';
+        const userId = String(sessionUser?.id || '').trim();
+        const userEmail = String(sessionUser?.email || '').trim().toLowerCase();
+        const lookupOne = async (table, field, value) => {
+            if (!value || !layoutClient) return null;
+            try {
+                const { data } = await layoutClient.from(table).select(fields).eq(field, value).maybeSingle();
+                return data || null;
+            } catch (_) {
+                return null;
+            }
+        };
+        let appUser = await lookupOne('app_users', 'id', userId);
+        if (!appUser) appUser = await lookupOne('app_users', 'email', userEmail);
+        let profile = await lookupOne('profiles', 'id', userId);
+        if (!profile) profile = await lookupOne('profiles', 'email', userEmail);
+        const merged = {
+            ...(sessionUser && typeof sessionUser === 'object' ? sessionUser : {}),
+            ...(appUser && typeof appUser === 'object' ? appUser : {}),
+            ...(profile && typeof profile === 'object' ? profile : {})
+        };
+        const resolvedRole = normalizeLayoutRole(
+            profile?.role
+            || appUser?.role
+            || sessionUser?.role
+            || sessionUser?.rol
+            || ''
+        );
+        const resolvedDefaultTenant = normalizeTenantSlug(
+            profile?.tenant_default
+            || profile?.default_tenant
+            || appUser?.tenant_default
+            || appUser?.default_tenant
+            || sessionUser?.tenant_default
+            || sessionUser?.default_tenant
+            || ''
+        );
+        merged.role = resolvedRole || normalizeLayoutRole(merged.role || merged.rol || '');
+        merged.tenant_default = resolvedDefaultTenant || null;
+        merged.default_tenant = resolvedDefaultTenant || null;
+        merged.allowed_tenants = normalizeTenantList(
+            profile?.allowed_tenants
+            || appUser?.allowed_tenants
+            || sessionUser?.allowed_tenants,
+            merged.role,
+            merged.tenant_default
+        );
+        if (!merged.app_metadata && appUser?.app_metadata) merged.app_metadata = appUser.app_metadata;
+        if (profile?.app_metadata) merged.app_metadata = profile.app_metadata;
+        merged.profile = profile || null;
+        merged.app_user = appUser || null;
+        return merged;
+    }
+
     window.layoutApi = {
         toggleNotif: () => {
             if (IS_LOCAL) return;
@@ -678,6 +945,7 @@
 
     document.addEventListener('DOMContentLoaded', async () => {
         installNavigationSafetyGuards();
+        const routeCtx = resolveLayoutRouteContext();
         
         const nav = document.querySelector('nav[data-master-nav="1"]');
         if (nav) {
@@ -696,14 +964,25 @@
 
         if (layoutClient) {
             let session = null;
-            // Intento 1: leer sesión
             try {
-                const response = await layoutClient.auth.getSession();
-                session = response?.data?.session || null;
+                const authState = await window.PB_SERVICES?.auth?.bootstrap?.({
+                    schema: (typeof TENANT_SCHEMA !== 'undefined' && TENANT_SCHEMA) ? TENANT_SCHEMA : FIN_SCHEMA,
+                    retries: 2,
+                    delayMs: 220
+                });
+                session = authState?.session || null;
             } catch (_) {
                 session = null;
             }
-            // Intento 2 con backoff: cubre escrituras concurrentes a localStorage
+            // Fallback legacy para mantener compatibilidad si el helper aún no resolvió sesión.
+            if (!session) {
+                try {
+                    const response = await layoutClient.auth.getSession();
+                    session = response?.data?.session || null;
+                } catch (_) {
+                    session = null;
+                }
+            }
             if (!session) {
                 await new Promise(r => setTimeout(r, 300));
                 try {
@@ -719,79 +998,125 @@
             }
             
             if (!session) {
-                const isLoginPage = window.location.pathname.endsWith('index.html') && !window.location.pathname.includes('/calendar/');
-                if (!isLoginPage && pathPrefix !== '') {
-                    const isCotizadorArea = /\/cotizador(cp)?\//.test(window.location.pathname || '');
-                    const redirectGuardKey = 'hub_session_redirect_guard_v1';
-                    const now = Date.now();
-                    const last = Number(sessionStorage.getItem(redirectGuardKey) || 0);
-                    if (isCotizadorArea) {
-                        // NUNCA redirigir en áreas de cotizador — el usuario puede estar trabajando
-                        // Solo mostrar toast si no se ha mostrado recientemente
-                        if (!Number.isFinite(last) || (now - last) > 30000) {
-                            try { sessionStorage.setItem(redirectGuardKey, String(now)); } catch (_) {}
-                            if (typeof window.showToast === 'function') {
-                                window.showToast('Sesión no disponible temporalmente. Evitando redirección automática.', 'warning');
-                            }
-                        }
-                    } else if (!Number.isFinite(last) || (now - last) > 8000) {
-                        try { sessionStorage.setItem(redirectGuardKey, String(now)); } catch (_) {}
-                        window.location.href = pathPrefix + 'index.html';
-                    } else if (typeof window.showToast === 'function') {
-                        window.showToast('Sesión no disponible temporalmente. Evitando redirección repetitiva.', 'warning');
+                publishLayoutReady({
+                    route: routeCtx,
+                    session: null,
+                    user: null,
+                    profile: null,
+                    permissions: {},
+                    role: '',
+                    tenantAllowed: false,
+                    isAdmin: false,
+                    canAccessCurrentRoute: false,
+                    deniedReason: 'missing_session'
+                });
+                if (!routeCtx.isLoginPage && pathPrefix !== '') {
+                    window.__HUB_PAGE_ACCESS_DENIED = true;
+                    window.__HUB_PAGE_ACCESS_DENIED_REASON = 'missing_session';
+                    try { window.__HUB_ALLOW_NEXT_UNLOAD?.('layout_missing_session'); } catch (_) {}
+                    if (typeof window.__HUB_SAFE_NAVIGATE === 'function') {
+                        window.__HUB_SAFE_NAVIGATE(routeCtx.redirectUrl, { allowSamePage: true });
+                    } else {
+                        window.location.href = routeCtx.redirectUrl;
                     }
                 }
                 return;
             }
+            try { window.PB_SERVICES?.auth?.rememberSession?.(session); } catch (_) {}
             
             myId = session.user.id;
+            let authCtx = null;
             
             try {
-                const normalizeRole = (value) => {
-                    const safe = String(value || '').trim().toLowerCase();
-                    if (!safe) return '';
-                    if (safe === 'administrador' || safe === 'superadmin' || safe === 'super_admin') return 'admin';
-                    return safe;
+                const data = await loadLayoutIdentity(session.user);
+                authCtx = {
+                    route: routeCtx,
+                    session,
+                    user: session.user,
+                    profile: data,
+                    ...buildLayoutPermissions(data, routeCtx)
                 };
-                const userEmail = String(session?.user?.email || '').trim().toLowerCase();
-                const lookupOne = async (table, field, value) => {
-                    if (!value) return null;
-                    try {
-                        const { data } = await layoutClient.from(table).select('role, username, login_username, email').eq(field, value).maybeSingle();
-                        return data || null;
-                    } catch (_) {
-                        return null;
-                    }
-                };
+                authCtx.canAccessCurrentRoute = canAccessCurrentRoute(routeCtx, authCtx);
 
-                let data = await lookupOne('app_users', 'id', myId);
-                if (!data) data = await lookupOne('app_users', 'email', userEmail);
-                if (!data) data = await lookupOne('profiles', 'id', myId);
-                if (!data) data = await lookupOne('profiles', 'email', userEmail);
-
-                const resolvedRole = normalizeRole(data?.role);
-                if (resolvedRole === 'admin') {
-                    document.getElementById('layout-settings-btn')?.classList.replace('hidden', 'flex');
+                if (authCtx.isAdmin) {
                     localStorage.setItem('hub_user_cache_role', 'admin');
                 } else {
                     localStorage.removeItem('hub_user_cache_role');
                 }
                 
-                let displayName = session.user.email.split('@')[0];
+                let displayName = String(session?.user?.email || '').split('@')[0] || 'Usuario';
                 if (data && (data.username || data.login_username)) displayName = data.username || data.login_username;
                 else displayName = displayName.charAt(0).toUpperCase() + displayName.slice(1);
 
-                localStorage.setItem('hub_user_cache_name', displayName);
-                localStorage.setItem('hub_user_cache_email', session.user.email);
+                localStorage.setItem('hub_user_cache_name', displayName || 'Usuario');
+                localStorage.setItem('hub_user_cache_email', session.user.email || '');
 
-                updateHeaderInfo(displayName, session.user.email);
+                updateHeaderInfo(displayName, session.user.email || '');
+                window.currentUserProfile = data || session.user || null;
+                window.currentUserPermissions = authCtx.permissions || {};
+                applyLayoutNavPermissions(authCtx);
+                publishLayoutReady(authCtx);
 
-            } catch(e) {}
+                if (!authCtx.canAccessCurrentRoute && !routeCtx.isLoginPage) {
+                    window.__HUB_PAGE_ACCESS_DENIED = true;
+                    window.__HUB_PAGE_ACCESS_DENIED_REASON = authCtx.tenantAllowed ? 'insufficient_permissions' : 'tenant_forbidden';
+                    try { window.__HUB_ALLOW_NEXT_UNLOAD?.('layout_access_guard'); } catch (_) {}
+                    if (typeof window.showToast === 'function') {
+                        window.showToast('Tu sesión no tiene acceso a esta pantalla. Redirigiendo al inicio.', 'warning');
+                    }
+                    if (typeof window.__HUB_SAFE_NAVIGATE === 'function') {
+                        window.__HUB_SAFE_NAVIGATE(routeCtx.redirectUrl, { allowSamePage: true });
+                    } else {
+                        window.location.href = routeCtx.redirectUrl;
+                    }
+                    return;
+                }
+
+            } catch(e) {
+                const fallbackProfile = session?.user && typeof session.user === 'object'
+                    ? { ...session.user }
+                    : {};
+                authCtx = {
+                    route: routeCtx,
+                    session,
+                    user: session.user,
+                    profile: fallbackProfile,
+                    ...buildLayoutPermissions(fallbackProfile, routeCtx)
+                };
+                authCtx.canAccessCurrentRoute = canAccessCurrentRoute(routeCtx, authCtx);
+                window.currentUserProfile = fallbackProfile || session.user || null;
+                window.currentUserPermissions = authCtx.permissions || {};
+                applyLayoutNavPermissions(authCtx);
+                publishLayoutReady(authCtx);
+                if (!authCtx.canAccessCurrentRoute && !routeCtx.isLoginPage) {
+                    window.__HUB_PAGE_ACCESS_DENIED = true;
+                    window.__HUB_PAGE_ACCESS_DENIED_REASON = authCtx.tenantAllowed ? 'insufficient_permissions' : 'tenant_forbidden';
+                    try { window.__HUB_ALLOW_NEXT_UNLOAD?.('layout_access_guard_fallback'); } catch (_) {}
+                    if (typeof window.__HUB_SAFE_NAVIGATE === 'function') {
+                        window.__HUB_SAFE_NAVIGATE(routeCtx.redirectUrl, { allowSamePage: true });
+                    } else {
+                        window.location.href = routeCtx.redirectUrl;
+                    }
+                    return;
+                }
+            }
 
             initUnifiedNotifications();
             initLegacyCalendarListener(); 
             loadHistory();
         }
+        publishLayoutReady({
+            route: routeCtx,
+            session: null,
+            user: null,
+            profile: null,
+            permissions: {},
+            role: '',
+            tenantAllowed: true,
+            isAdmin: false,
+            canAccessCurrentRoute: true,
+            deniedReason: ''
+        });
     });
 
     function updateHeaderInfo(name, email) {

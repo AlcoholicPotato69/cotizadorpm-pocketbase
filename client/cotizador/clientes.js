@@ -443,12 +443,20 @@ async function saveClient() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+  if (window.__HUB_LAYOUT_READY && typeof window.__HUB_LAYOUT_READY.then === 'function') {
+    try { await window.__HUB_LAYOUT_READY; } catch (_) {}
+  }
+  if (window.__HUB_PAGE_ACCESS_DENIED) return;
   if (!window.PB_CLIENT) return;
   if (!window.tenantPocketBase) window.tenantPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY, { db: { schema: FIN_SCHEMA } });
   if (!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
 
-  const { data: { session } } = await window.globalPocketBase.auth.getSession();
-  if (!session) return;
+  const authState = await window.PB_SERVICES.auth.bootstrap({ schema: FIN_SCHEMA });
+  const session = authState?.session || null;
+  if (!session?.user) {
+    window.showToast?.('No se encontró una sesión válida. Evitando recarga automática.', 'error');
+    return;
+  }
 
   const { data: profile } = await window.globalPocketBase
     .from('profiles')
@@ -469,7 +477,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     || perms.reports_view === true;
 
   canManage = (role === 'admin') || roleHasAccess || perms.clients_manage === true;
-  if (!canView) { setTimeout(() => window.location.href = 'catalog.html', 800); return; }
+  if (!canView) {
+    window.showToast?.('No tienes permisos para acceder a Clientes.', 'error');
+    return;
+  }
 
   if (profile?.role !== 'admin') {
     const navRules = {
