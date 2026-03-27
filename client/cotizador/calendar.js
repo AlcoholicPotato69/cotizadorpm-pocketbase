@@ -44,7 +44,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         window.showToast?.('No se encontró una sesión válida. Evitando recarga automática.', 'error');
         return;
     }
-    const { data: profile } = await window.globalPocketBase.from('profiles').select('*').eq('id', session.user.id).single();
+    const { data: profile } = await window.globalPocketBase.from('app_users').select('*').eq('id', session.user.id).single();
 const __role = String(profile.role || '').toLowerCase().trim();
 const __roleHasAccess = (__role === 'admin') || (__role === 'plaza_mayor') || (__role === 'ambos');
 

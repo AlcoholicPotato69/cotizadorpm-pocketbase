@@ -59,7 +59,10 @@
         }
     </script>
     <style>
+        html, body { max-width: 100%; overscroll-behavior-y: none; }
         body { background-color: #f3f4f6; overflow-x: hidden; }
+        main, header, nav, footer { max-width: 100%; }
+        img, svg, canvas { max-width: 100%; }
         .hidden { display: none !important; }
         
         /* Fondo Login Corporativo */
@@ -107,6 +110,11 @@
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
         ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        #view-dashboard { width: min(100%, 1680px); margin-inline: auto; }
+        #apps-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); }
+        @media (max-width: 767px) {
+            #main-container { padding: 12px !important; }
+        }
     </style>
 
     <script>
@@ -244,12 +252,12 @@
             }
             syncHubRuntimeConfig();
 
-            // 1. Inicializar cliente nativo y fallback compat
+            // 1. Inicializar cliente de autenticacion nativo
             hubAuthNative = window.PB_SERVICES && window.PB_SERVICES.auth ? window.PB_SERVICES.auth : null;
             useNativeAuth = !!hubAuthNative;
             if (!useNativeAuth) {
                 if (typeof window.PB_CLIENT === 'undefined') {
-                    console.error("CRÍTICO: No hay cliente de autenticación (native ni compat).");
+                    console.error("CRÍTICO: No hay cliente de autenticación nativo.");
                     alert("Error de sistema: cliente no inicializado.");
                     return;
                 }
@@ -357,7 +365,7 @@
                 }
             } else {
                 const resp = await hubPocketBase
-                    .from('profiles')
+                    .from('app_users')
                     .select('role, username, allowed_tenants, tenant_default')
                     .eq('id', user.id)
                     .single();

@@ -1,59 +1,74 @@
 # cotizadorpm-pocketbase
 
-Configuracion simplificada para correr en local con PocketBase.
+Proyecto de cotizacion y administracion para dos tenants:
 
-## Modo local (simple)
-1. Configuracion activa unica del frontend:
-   - `client/config/hub-runtime.json`
-2. URL local por defecto:
-   - `http://127.0.0.1:8090`
-3. Script de reparacion local:
-   - `levantar-todo.bat`
+- `plaza_mayor`
+- `casa_de_piedra`
 
-## Levantar todo en local
-Ejecuta en CMD como Administrador:
+Stack actual:
+
+- PocketBase como backend
+- frontend HTML + JS vanilla
+- Tailwind por script
+- generadores PDF en frontend
+
+## Documentacion vigente
+
+La documentacion consolidada vive en `docs/`.
+
+Puntos de entrada:
+
+- `docs/README.md`
+- `docs/10-funcionamiento-general-del-codigo.txt`
+- `docs/20-operacion-local-y-soporte.md`
+- `docs/30-despliegue-y-servicio-windows.md`
+- `docs/40-modelo-de-datos-y-colecciones.md`
+- `docs/50-modulos-y-flujos-de-negocio.md`
+- `docs/60-pdfs-y-documentos.md`
+- `docs/70-troubleshooting-y-runbooks.md`
+
+## Arranque local rapido
+
+Ejecutar en CMD como Administrador:
 
 ```bat
 cd /d "C:\Users\johan\OneDrive\Desktop\repos git\cotizadorpm-pocketbase"
 levantar-todo.bat
 ```
 
-Ese script fuerza:
-1. `BIND_ADDR=127.0.0.1:8090`
-2. `BACKEND_URL=http://127.0.0.1:8090`
-3. HTTPS desactivado
-4. Servicio `CotizadorPocketBase` instalado/iniciado
+## Validaciones minimas
 
-## Archivos que se editan manualmente
-1. Frontend: `client/config/hub-runtime.json`
-2. Servicio backend: `deploy/backend-service.local.conf`
+Servicio:
 
-## Comandos utiles
-1. Ver estado del servicio:
 ```bat
 backend-service.bat status
 ```
-2. Ver configuracion efectiva:
-```bat
-backend-service.bat show
-```
-3. Limpiar procesos huerfanos:
-```bat
-backend-service.bat cleanup-orphans
-```
 
-## Desarrollo manual rapido
-Backend:
+Health:
+
 ```powershell
-.\pocketbase.exe serve --http=127.0.0.1:8090 --dir=pb_data --hooksDir=pb_hooks --migrationsDir=pb_migrations
+Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8090/api/health
 ```
 
-Frontend:
+Frontend de desarrollo:
+
 ```powershell
 cd client
 python -m http.server 8080
 ```
 
-Acceso:
-1. Backend: `http://127.0.0.1:8090/_/`
-2. Frontend: `http://127.0.0.1:8080/index.html`
+Accesos:
+
+- backend: `http://127.0.0.1:8090/_/`
+- frontend: `http://127.0.0.1:8080/index.html`
+
+## Archivos operativos mas importantes
+
+- `client/config/hub-runtime.json`
+- `deploy/backend-service.local.conf`
+- `backend-service.bat`
+- `levantar-todo.bat`
+- `pb_hooks/`
+- `pb_migrations/`
+- `pb_data/`
+

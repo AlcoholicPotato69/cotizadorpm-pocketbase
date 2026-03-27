@@ -2,23 +2,6 @@
 (function () {
   if (window.PBServicesShared) return;
 
-  const LEGACY_COLLECTIONS = new Set([
-    "clientes",
-    "conceptos_catalogo",
-    "configuracion",
-    "impuestos",
-    "espacios",
-    "cotizaciones"
-  ]);
-
-  const NUMERIC_LEGACY_COLLECTIONS = new Set([
-    "clientes",
-    "conceptos_catalogo",
-    "configuracion",
-    "impuestos",
-    "espacios"
-  ]);
-
   function cloneJson(value) {
     if (value == null) return value;
     try {
@@ -30,19 +13,6 @@
 
   function trimSlash(url) {
     return String(url || "").replace(/\/+$/, "");
-  }
-
-  function uuidv4() {
-    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
-    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (char) {
-      const random = (Math.random() * 16) | 0;
-      const value = char === "x" ? random : (random & 0x3) | 0x8;
-      return value.toString(16);
-    });
-  }
-
-  function isPbRecordId(value) {
-    return /^[a-z0-9]{15}$/i.test(String(value || "").trim());
   }
 
   function parseJsonSafe(raw, fallback) {
@@ -74,131 +44,102 @@
     return value;
   }
 
+  function parseJsonFieldValue(value) {
+    if (typeof value !== "string") return undefined;
+    const raw = value.trim();
+    if (!raw) return undefined;
+    const parsed = parseJsonSafe(raw, undefined);
+    return parsed === undefined ? undefined : parsed;
+  }
+
+  function coerceJsonFields(record, fields) {
+    if (!record || !Array.isArray(fields)) return;
+    fields.forEach(function (field) {
+      if (!Object.prototype.hasOwnProperty.call(record, field)) return;
+      const parsed = parseJsonFieldValue(record[field]);
+      if (parsed !== undefined) record[field] = parsed;
+    });
+  }
+
   function getBaseUrl() {
     const hub = window.HUB_CONFIG || {};
     return trimSlash(hub.pocketbaseUrl || "http://127.0.0.1:8090");
   }
 
-  function mapLegacyRecordOut(collectionName, record) {
+  function buildNativeQuoteFolio(record) {
+    const current = String((record && record.numero_orden) || "").trim();
+    if (current) return current;
+    const tenant = String((record && record.tenant) || "").trim().toLowerCase();
+    const prefix = tenant === "casa_de_piedra" ? "CP" : (tenant === "plaza_mayor" ? "PM" : "COT");
+    const nativeId = String((record && record.id) || "")
+      .replace(/[^a-z0-9]/gi, "")
+      .toUpperCase();
+    const shortId = nativeId.slice(0, 6) || "PEND";
+    return prefix + "-" + shortId;
+  }
+
+  function mapRecordOut(collectionName, record) {
     if (!record) return record;
     const normalized = normalizeDeepDates(record);
     const out = Object.assign({}, normalized, { _pb_id: record.id });
-    if (record.legacy_id !== undefined && record.legacy_id !== null && record.legacy_id !== "") out.id = record.legacy_id;
-    else out.id = record.id;
+    out.id = record.id;
     out.created_at = out.created_at || record.created || null;
     out.updated_at = out.updated_at || record.updated || null;
 
+    if (collectionName === "configuracion") {
+      coerceJsonFields(out, ["valor_json"]);
+    } else if (collectionName === "impuestos") {
+      coerceJsonFields(out, ["impuestos_aplicados"]);
+    } else if (collectionName === "espacios") {
+      coerceJsonFields(out, ["impuestos_ids", "etiquetas", "precios_por_dia", "dias_bloqueados", "config_b2b"]);
+    } else if (collectionName === "cotizaciones") {
+      coerceJsonFields(out, [
+        "desglose_precios",
+        "desglose_impuestos",
+        "historial_pagos",
+        "datos_factura",
+        "datos_fiscales",
+        "conceptos_adicionales",
+        "detalles_evento",
+        "espacios_detalle",
+        "notas_pdf"
+      ]);
+      out.numero_orden = buildNativeQuoteFolio(record);
+    }
+
     if (collectionName === "espacios") {
-      const filename = Array.isArray(record.imagen) ? record.imagen[0] : record.imagen;
-      if (filename && record.id) {
-        out.imagen_url =
-          getBaseUrl() +
+      const baseUrl = getBaseUrl();
+      const imageFields = ["imagen", "imagen2", "imagen3", "imagen4", "imagen5"];
+      const imageUrls = [];
+      imageFields.forEach(function (fieldName) {
+        const filename = Array.isArray(record[fieldName]) ? record[fieldName][0] : record[fieldName];
+        if (!filename || !record.id) return;
+        imageUrls.push(
+          baseUrl +
           "/api/files/espacios/" +
           encodeURIComponent(record.id) +
           "/" +
-          encodeURIComponent(filename);
-      }
-    }
-
-    if (collectionName === "cotizaciones") {
-      out.cliente_id = record.cliente_legacy_id || record.cliente_id || null;
-      out.creado_por = record.creado_por_legacy || record.creado_por || null;
+          encodeURIComponent(filename)
+        );
+      });
+      out.imagen_url = imageUrls.length ? JSON.stringify(imageUrls) : "";
     }
 
     return out;
   }
 
-  function escapeFilterValue(value) {
-    if (value === null) return "null";
-    if (typeof value === "number") return String(value);
-    if (typeof value === "boolean") return value ? "true" : "false";
-    return '"' + String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
-  }
-
-  function translateFilter(collectionName, filter) {
-    let out = String(filter || "");
-    if (!out) return out;
-    if (collectionName === "cotizaciones") {
-      out = out.replace(/\bcliente_id\b/g, "cliente_legacy_id");
-      out = out.replace(/\bcreado_por\b/g, "creado_por_legacy");
-    }
-    if (LEGACY_COLLECTIONS.has(collectionName)) out = out.replace(/\bid\b/g, "legacy_id");
-    return out;
-  }
-
-  function translatePayload(collectionName, payload) {
+  function normalizePayload(payload) {
     if (typeof FormData !== "undefined" && payload instanceof FormData) {
       const form = new FormData();
       for (const pair of payload.entries()) form.append(pair[0], pair[1]);
-      if (collectionName === "cotizaciones") {
-        if (form.get("cliente_id")) {
-          form.append("cliente_legacy_id", form.get("cliente_id"));
-          form.delete("cliente_id");
-        }
-        if (form.get("creado_por")) {
-          form.append("creado_por_legacy", form.get("creado_por"));
-          form.delete("creado_por");
-        }
-      }
       return form;
     }
-    const data = cloneJson(payload);
-    if (!data || typeof data !== "object" || Array.isArray(data)) return data;
-    if (collectionName === "cotizaciones") {
-      if (Object.prototype.hasOwnProperty.call(data, "cliente_id")) {
-        data.cliente_legacy_id = data.cliente_id;
-        delete data.cliente_id;
-      }
-      if (Object.prototype.hasOwnProperty.call(data, "creado_por")) {
-        data.creado_por_legacy = data.creado_por;
-        delete data.creado_por;
-      }
-    }
-    return data;
-  }
-
-  function ensureLegacyIdInFormData(collectionName, payload, nextLegacyId) {
-    if (typeof FormData === "undefined" || !(payload instanceof FormData)) return payload;
-    const fd = new FormData();
-    for (const pair of payload.entries()) fd.append(pair[0], pair[1]);
-    if (!fd.get("legacy_id")) fd.append("legacy_id", String(nextLegacyId));
-    return fd;
-  }
-
-  async function nextLegacyId(collectionName, client) {
-    if (!LEGACY_COLLECTIONS.has(collectionName)) return null;
-    if (NUMERIC_LEGACY_COLLECTIONS.has(collectionName)) {
-      const result = await client.collection(collectionName).list({ page: 1, perPage: 1, sort: "-legacy_id" });
-      const item = (result && result.items && result.items[0]) || null;
-      const current = Number(item && item.legacy_id) || 0;
-      return current + 1;
-    }
-    return uuidv4();
-  }
-
-  async function ensureLegacyId(collectionName, payload, client) {
-    if (!LEGACY_COLLECTIONS.has(collectionName)) return payload;
-
-    if (typeof FormData !== "undefined" && payload instanceof FormData) {
-      if (payload.get("legacy_id")) return payload;
-      return ensureLegacyIdInFormData(collectionName, payload, await nextLegacyId(collectionName, client));
-    }
-
-    const data = cloneJson(payload);
-    if (!data || typeof data !== "object" || Array.isArray(data)) return data;
-    if (data.legacy_id !== undefined && data.legacy_id !== null && data.legacy_id !== "") return data;
-    data.legacy_id = await nextLegacyId(collectionName, client);
-    return data;
+    return cloneJson(payload);
   }
 
   async function resolveRecordId(collectionName, id, client) {
     if (id === undefined || id === null || id === "") return id;
-    const raw = String(id).trim();
-    if (!LEGACY_COLLECTIONS.has(collectionName) || isPbRecordId(raw)) return raw;
-    const queryFilter = "legacy_id = " + escapeFilterValue(raw);
-    const result = await client.collection(collectionName).list({ page: 1, perPage: 1, filter: queryFilter });
-    const item = (result && result.items && result.items[0]) || null;
-    return (item && item.id) || raw;
+    return String(id).trim();
   }
 
   function resolveSchema() {
@@ -233,11 +174,10 @@
       async list(query, options) {
         const client = getClient(options);
         const params = Object.assign({}, query || {});
-        if (params.filter) params.filter = translateFilter(collectionName, params.filter);
         const result = await client.collection(collectionName).list(params);
         const page = mapListResponse(result);
         page.items = (page.items || []).map(function (item) {
-          return mapLegacyRecordOut(collectionName, item);
+          return mapRecordOut(collectionName, item);
         });
         return page;
       },
@@ -245,21 +185,20 @@
         const client = getClient(options);
         const recordId = await resolveRecordId(collectionName, id, client);
         const row = await client.collection(collectionName).get(recordId);
-        return mapLegacyRecordOut(collectionName, row);
+        return mapRecordOut(collectionName, row);
       },
       async create(payload, options) {
         const client = getClient(options);
-        let data = translatePayload(collectionName, payload || {});
-        data = await ensureLegacyId(collectionName, data, client);
+        const data = normalizePayload(payload || {});
         const created = await client.collection(collectionName).create(data);
-        return mapLegacyRecordOut(collectionName, created);
+        return mapRecordOut(collectionName, created);
       },
       async update(id, payload, options) {
         const client = getClient(options);
         const recordId = await resolveRecordId(collectionName, id, client);
-        const data = translatePayload(collectionName, payload || {});
+        const data = normalizePayload(payload || {});
         const updated = await client.collection(collectionName).update(recordId, data);
-        return mapLegacyRecordOut(collectionName, updated);
+        return mapRecordOut(collectionName, updated);
       },
       async remove(id, options) {
         const client = getClient(options);
@@ -274,10 +213,8 @@
     getClient: getClient,
     createCrudService: createCrudService,
     mapListResponse: mapListResponse,
-    mapLegacyRecordOut: mapLegacyRecordOut,
+    mapRecordOut: mapRecordOut,
     resolveRecordId: resolveRecordId,
-    translateFilter: translateFilter,
     parseJsonSafe: parseJsonSafe
   };
 })();
-

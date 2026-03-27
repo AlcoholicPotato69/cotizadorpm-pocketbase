@@ -16,6 +16,7 @@
 // ============================================================================
 
 const FIN_SCHEMA = 'finanzas_casadepiedra';
+const CP_CALENDAR_CONFIG_TENANT = 'casa_de_piedra';
 
 const BLOCKING_STATUSES = ['aprobada', 'finalizada'];
 const VISIBLE_STATUSES = ['pendiente', 'aprobada', 'finalizada'];
@@ -76,6 +77,17 @@ function safeObj(v) {
         }
     }
     return {};
+}
+
+function pickLatestConfigRow(rows) {
+    const list = Array.isArray(rows) ? rows.filter((row) => row && typeof row === 'object') : [];
+    if (!list.length) return null;
+    list.sort((a, b) => {
+        const aTs = Date.parse(String(a.updated_at || a.updated || a.created_at || a.created || '')) || 0;
+        const bTs = Date.parse(String(b.updated_at || b.updated || b.created_at || b.created || '')) || 0;
+        return bTs - aTs;
+    });
+    return list[0] || null;
 }
 
 function normalizeDate(v) {
@@ -313,14 +325,19 @@ async function loadBaseData() {
         window.tenantPocketBase.from('espacios').select('*').order('nombre', { ascending: true }),
         window.tenantPocketBase.from('cotizaciones').select('*').in('status', VISIBLE_STATUSES).order('created_at', { ascending: false }),
         window.tenantPocketBase.from('impuestos').select('*'),
-        window.tenantPocketBase.from('configuracion').select('clave,valor_json,valor_num').eq('clave', 'premontaje_pct').maybeSingle()
+        window.tenantPocketBase
+            .from('configuracion')
+            .select('clave,valor_json,valor_num,updated,updated_at,created,created_at')
+            .eq('tenant', CP_CALENDAR_CONFIG_TENANT)
+            .eq('clave', 'premontaje_pct')
     ]);
 
     allSpaces = spacesRes.data || [];
     allOrders = ordersRes.data || [];
     allTaxes = taxesRes.data || [];
 
-    const cfg = configRes.data || null;
+    const cfgRows = Array.isArray(configRes.data) ? configRes.data : (configRes.data ? [configRes.data] : []);
+    const cfg = pickLatestConfigRow(cfgRows);
     const jsonPct = parseFloat(safeObj(cfg?.valor_json).value);
     const numPct = parseFloat(cfg?.valor_num);
     const pct = Number.isFinite(jsonPct) ? jsonPct : numPct;
@@ -1027,7 +1044,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
     }
 
-    const profileRes = await window.globalPocketBase.from('profiles').select('*').eq('id', session.user.id).maybeSingle();
+    const profileRes = await window.globalPocketBase.from('app_users').select('*').eq('id', session.user.id).maybeSingle();
     myPermissions = resolvePermissions(profileRes.data || {});
     if (!myPermissions.access) {
         window.showToast?.('No tienes permisos para entrar al calendario.', 'error');

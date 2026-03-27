@@ -1,10 +1,10 @@
 
-/* PocketBase native runtime client for legacy query-style frontend modules.
+/* PocketBase native runtime client with direct record field usage.
  * Backed directly by PocketBase REST API.
  */
 (function () {
-  const AUTH_KEY = 'pb_compat_auth_v1';
-  const HUB_NOTIFS_KEY = 'pb_compat_hub_notifications_v1';
+  const AUTH_KEYS = ['pb_native_auth_v1', 'pb_compat_auth_v1', 'pb_auth'];
+  const HUB_NOTIFS_KEY = 'pb_native_hub_notifications_v1';
 
   function trimSlash(url) { return String(url || '').replace(/\/+$/, ''); }
   function clone(v) { return v == null ? v : JSON.parse(JSON.stringify(v)); }
@@ -41,7 +41,9 @@
   function recordFileUrl(baseUrl, collection, record, field) {
     const filename = recordFileName(record, field);
     if (!filename || !record || !record.id) return null;
-    return trimSlash(baseUrl) + '/api/files/' + encodeURIComponent(collection) + '/' + encodeURIComponent(record.id) + '/' + encodeURIComponent(filename);
+    const versionValue = String(record.updated || record.updated_at || record.created || record.created_at || filename || '').trim();
+    const versionQuery = versionValue ? ('?v=' + encodeURIComponent(versionValue)) : '';
+    return trimSlash(baseUrl) + '/api/files/' + encodeURIComponent(collection) + '/' + encodeURIComponent(record.id) + '/' + encodeURIComponent(filename) + versionQuery;
   }
   function normalizeSchemaToTenant(schema) {
     const s = String(schema || '').toLowerCase();
@@ -49,26 +51,36 @@
     if (s.indexOf('casadepiedra') !== -1) return 'casa_de_piedra';
     return null;
   }
-  function readAuth() {
-    return safeJsonParse(localStorage.getItem(AUTH_KEY) || 'null', null);
-  }
-  function writeAuth(payload) {
-    if (!payload) localStorage.removeItem(AUTH_KEY);
-    else localStorage.setItem(AUTH_KEY, JSON.stringify(payload));
-  }
-  function authHeader() {
-    const st = readAuth();
-    return st && st.token ? { 'Authorization': st.token } : {};
-  }
   function errObj(message, extra) {
     const e = Object.assign({ message: message || 'Error' }, extra || {});
     return e;
+  }
+  function parseJsonFieldValue(value) {
+    if (typeof value !== 'string') return undefined;
+    const raw = value.trim();
+    if (!raw) return undefined;
+    const parsed = safeJsonParse(raw, undefined);
+    return parsed === undefined ? undefined : parsed;
+  }
+  function coerceJsonFields(record, fields) {
+    if (!record || !Array.isArray(fields)) return;
+    fields.forEach(function (field) {
+      if (!Object.prototype.hasOwnProperty.call(record, field)) return;
+      const parsed = parseJsonFieldValue(record[field]);
+      if (parsed !== undefined) record[field] = parsed;
+    });
   }
   function mapProfileOut(record) {
     if (!record) return record;
     record = normalizeDeepDates(record);
     const role = String(record.role || 'user').toLowerCase().trim();
-    let allowed = Array.isArray(record.allowed_tenants) ? record.allowed_tenants.filter(Boolean).map(v => String(v).toLowerCase().trim()) : [];
+    const allowedRaw = Array.isArray(record.allowed_tenants)
+      ? record.allowed_tenants
+      : (function () {
+          const parsed = parseJsonFieldValue(record.allowed_tenants);
+          return Array.isArray(parsed) ? parsed : [];
+        })();
+    let allowed = allowedRaw.filter(Boolean).map(v => String(v).toLowerCase().trim());
     if (!allowed.length) {
       if (role === 'admin') allowed = ['plaza_mayor', 'casa_de_piedra'];
       else if (role === 'plaza_mayor' || role === 'casa_de_piedra') allowed = [role];
@@ -85,22 +97,101 @@
       updated_at: record.updated_at || record.updated || null,
     };
   }
+  function normalizeAuthPayload(payload) {
+    if (!payload || typeof payload !== 'object') return null;
+    const token = String(payload.token || payload.access_token || '').trim();
+    if (!token) return null;
+    const record = payload.record && typeof payload.record === 'object' ? payload.record : null;
+    const user = mapProfileOut(payload.user || record || null);
+    if (!user) return null;
+    return {
+      ...payload,
+      token: token,
+      record: record || payload.user || null,
+      user: user
+    };
+  }
+  function readAuth() {
+    let resolved = null;
+    for (let i = 0; i < AUTH_KEYS.length; i += 1) {
+      const parsed = safeJsonParse(localStorage.getItem(AUTH_KEYS[i]) || 'null', null);
+      const normalized = normalizeAuthPayload(parsed);
+      if (normalized) {
+        resolved = normalized;
+        break;
+      }
+    }
+    if (!resolved) return null;
+    const raw = JSON.stringify(resolved);
+    AUTH_KEYS.forEach(function (key) {
+      try {
+        if (localStorage.getItem(key) !== raw) localStorage.setItem(key, raw);
+      } catch (_) {}
+    });
+    return resolved;
+  }
+  function writeAuth(payload) {
+    if (!payload) {
+      AUTH_KEYS.forEach(function (key) {
+        try { localStorage.removeItem(key); } catch (_) {}
+      });
+      return;
+    }
+    const normalized = normalizeAuthPayload(payload);
+    if (!normalized) return;
+    const raw = JSON.stringify(normalized);
+    AUTH_KEYS.forEach(function (key) {
+      try { localStorage.setItem(key, raw); } catch (_) {}
+    });
+  }
+  function authHeader() {
+    const st = readAuth();
+    return st && st.token ? { 'Authorization': st.token } : {};
+  }
+  function buildNativeQuoteFolio(record) {
+    const current = String((record && record.numero_orden) || '').trim();
+    if (current) return current;
+    const tenant = String((record && record.tenant) || '').trim().toLowerCase();
+    const prefix = tenant === 'casa_de_piedra' ? 'CP' : (tenant === 'plaza_mayor' ? 'PM' : 'COT');
+    const nativeId = String((record && record.id) || '').replace(/[^a-z0-9]/gi, '').toUpperCase();
+    const shortId = nativeId.slice(0, 6) || 'PEND';
+    return prefix + '-' + shortId;
+  }
   function mapBusinessOut(collection, record) {
     if (!record) return record;
     const normalized = normalizeDeepDates(record);
     const out = { ...normalized, _pb_id: record.id };
-    if (collection === 'espacios') {
-      const imgUrl = recordFileUrl(window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseUrl, 'espacios', record, 'imagen');
-      if (imgUrl) out.imagen_url = imgUrl;
+    if (collection === 'configuracion') {
+      coerceJsonFields(out, ['valor_json']);
+    } else if (collection === 'impuestos') {
+      coerceJsonFields(out, ['impuestos_aplicados']);
+    } else if (collection === 'espacios') {
+      coerceJsonFields(out, ['impuestos_ids', 'etiquetas', 'precios_por_dia', 'dias_bloqueados', 'config_b2b']);
+    } else if (collection === 'cotizaciones') {
+      coerceJsonFields(out, [
+        'desglose_precios',
+        'desglose_impuestos',
+        'historial_pagos',
+        'datos_factura',
+        'datos_fiscales',
+        'conceptos_adicionales',
+        'detalles_evento',
+        'espacios_detalle',
+        'notas_pdf'
+      ]);
     }
-    if (record.legacy_id !== undefined && record.legacy_id !== null && record.legacy_id !== '') out.id = record.legacy_id;
-    if (!out.id) out.id = record.id;
+    if (collection === 'espacios') {
+      const urls = [];
+      ['imagen', 'imagen2', 'imagen3', 'imagen4', 'imagen5'].forEach(f => {
+        const u = recordFileUrl(window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseUrl, 'espacios', record, f);
+        if (u) urls.push(u);
+      });
+      out.imagen_url = urls.length > 0 ? JSON.stringify(urls) : '';
+    }
+    out.id = record.id;
     out.created_at = out.created_at || record.created || null;
     out.updated_at = out.updated_at || record.updated || null;
-    if (collection === 'cotizaciones') {
-      out.cliente_id = record.cliente_legacy_id || record.cliente_id || null;
-      out.creado_por = record.creado_por_legacy || record.creado_por || null;
-    }
+    if (collection === 'cotizaciones') out.numero_orden = buildNativeQuoteFolio(record);
     return out;
   }
   function mapDocumentOut(record, baseUrl) {
@@ -110,25 +201,17 @@
     return {
       ...record,
       name: record.nombre_original || filename || '',
-      file_path: record.ruta_legacy || '',
+      file_path: record.ruta || '',
       publicUrl: filename ? (trimSlash(baseUrl) + '/api/files/documentos/' + record.id + '/' + encodeURIComponent(filename)) : null,
     };
   }
-  function shouldUseLegacyId(collection) {
-    return ['clientes','conceptos_catalogo','configuracion','impuestos','espacios','cotizaciones'].indexOf(collection) !== -1;
-  }
   function mapFieldName(collection, field, dir) {
     const f = String(field || '');
-    if (collection === 'profiles' || collection === 'app_users') {
+    if (collection === 'app_users') {
       if (f === 'username') return 'login_username';
       if (f === 'default_tenant') return 'tenant_default';
       return f;
     }
-    if (collection === 'cotizaciones') {
-      if (f === 'cliente_id') return 'cliente_legacy_id';
-      if (f === 'creado_por') return 'creado_por_legacy';
-    }
-    if (shouldUseLegacyId(collection) && f === 'id') return 'legacy_id';
     return f;
   }
   function escapeFilterValue(v) {
@@ -213,7 +296,7 @@
     constructor(client, table) {
       this.client = client;
       this.originalTable = table;
-      this.collection = table === 'profiles' ? 'app_users' : table;
+      this.collection = table;
       this.action = 'select';
       this.selectFields = '*';
       this.filters = [];
@@ -270,7 +353,7 @@
       return parts.filter(Boolean).join(' && ');
     }
     _mapOut(record) {
-      if (this.originalTable === 'profiles' || this.collection === 'app_users') return mapProfileOut(record);
+      if (this.collection === 'app_users') return mapProfileOut(record);
       if (this.collection === 'documentos') return mapDocumentOut(record, this.client.baseUrl);
       return mapBusinessOut(this.collection, record);
     }
@@ -285,37 +368,15 @@
       if (Array.isArray(p)) p = p[0];
       if (!isObject(p)) return p;
       if (this.client.tenant && ['app_users','hub_notifications'].indexOf(this.collection) === -1 && !p.tenant) p.tenant = this.client.tenant;
-      if (this.originalTable === 'profiles' || this.collection === 'app_users') {
+      if (this.collection === 'app_users') {
         if (Object.prototype.hasOwnProperty.call(p, 'username')) { p.login_username = p.username; delete p.username; }
         if (Object.prototype.hasOwnProperty.call(p, 'default_tenant')) { p.tenant_default = p.default_tenant; delete p.default_tenant; }
       }
-      if (this.collection === 'cotizaciones') {
-        if (Object.prototype.hasOwnProperty.call(p, 'cliente_id')) { p.cliente_legacy_id = p.cliente_id; delete p.cliente_id; }
-        if (Object.prototype.hasOwnProperty.call(p, 'creado_por')) {
-          const auth = readAuth();
-          const authUser = auth && auth.record ? auth.record : null;
-          p.creado_por_legacy = (authUser && authUser.id === p.creado_por && authUser.legacy_profile_id) ? authUser.legacy_profile_id : p.creado_por;
-          delete p.creado_por;
-        }
-      }
       return p;
-    }
-    async _ensureLegacyId(payload) {
-      if (!shouldUseLegacyId(this.collection)) return payload;
-      if (payload.legacy_id !== undefined && payload.legacy_id !== null && payload.legacy_id !== '') return payload;
-      const numericCollections = ['clientes','conceptos_catalogo','configuracion','impuestos','espacios'];
-      if (numericCollections.indexOf(this.collection) !== -1) {
-        const list = await fetchRecords(this.client.baseUrl, this.collection, { perPage: 500, filter: this._tenantFilterParts().join(' && '), sort: '-legacy_id' });
-        const max = (list.items || []).reduce((m, r) => Math.max(m, Number(r.legacy_id || 0)), 0);
-        payload.legacy_id = max + 1;
-      } else {
-        payload.legacy_id = uuidv4();
-      }
-      return payload;
     }
     async _findMatchingRecords() {
       const filter = this._buildFilter();
-      if ((this.originalTable === 'profiles' || this.collection === 'app_users') && this.singleMode && this.filters.length === 1 && this.filters[0].op === 'eq' && this.filters[0].field === 'id') {
+      if (this.collection === 'app_users' && this.singleMode && this.filters.length === 1 && this.filters[0].op === 'eq' && this.filters[0].field === 'id') {
         try {
           return [await fetchOne(this.client.baseUrl, 'app_users', this.filters[0].value)];
         } catch (e) {
@@ -342,30 +403,29 @@
           return { data: mapped, error: null };
         }
         if (this.action === 'insert') {
-          let payload = this._normalizePayload(this.payload);
-          payload = await this._ensureLegacyId(payload);
+          const payload = this._normalizePayload(this.payload);
           const created = await createRecord(this.client.baseUrl, this.collection, payload);
           return { data: this._mapOut(created), error: null };
         }
         if (this.action === 'upsert') {
-          let payload = this._normalizePayload(this.payload);
+          const payload = this._normalizePayload(this.payload);
           const conflictField = mapFieldName(this.originalTable, this.onConflict || 'id', 'filter');
-          const filterField = payload[conflictField] !== undefined ? conflictField : (conflictField === 'id' ? 'legacy_id' : conflictField);
-          const filterVal = payload[filterField];
+          const filterField = conflictField;
+          const filterVal = (typeof FormData !== 'undefined' && payload instanceof FormData)
+            ? payload.get(filterField)
+            : (payload && typeof payload === 'object' ? payload[filterField] : undefined);
           if (filterVal === undefined || filterVal === null || filterVal === '') {
-            payload = await this._ensureLegacyId(payload);
             const created = await createRecord(this.client.baseUrl, this.collection, payload);
             return { data: this._mapOut(created), error: null };
           }
           const temp = new QueryBuilder(this.client, this.originalTable);
           temp.collection = this.collection;
-          temp.eq(filterField === 'legacy_id' ? 'id' : filterField, filterVal);
+          temp.eq(filterField, filterVal);
           const found = await temp._findMatchingRecords();
           if (found.length) {
             const updated = await updateRecord(this.client.baseUrl, this.collection, found[0].id, payload);
             return { data: this._mapOut(updated), error: null };
           }
-          payload = await this._ensureLegacyId(payload);
           const created = await createRecord(this.client.baseUrl, this.collection, payload);
           return { data: this._mapOut(created), error: null };
         }
@@ -442,7 +502,7 @@
       if (p.indexOf('factura') !== -1) return 'factura_pdf';
       return 'otro';
     }
-    _quoteLegacyIdFromPath(path) {
+    _quotePathKeyFromPath(path) {
       const raw = String(path || '').replace(/\\/g, '/').trim();
       const first = raw.split('/').filter(Boolean)[0] || '';
       return first || '';
@@ -456,22 +516,28 @@
       return '';
     }
     async _findByPath(path) {
-      const filter = this._tenantFilter() + ' && ruta_legacy = ' + escapeFilterValue(path);
+      const filter = this._tenantFilter() + ' && ruta = ' + escapeFilterValue(path);
       const list = await fetchRecords(this.client.baseUrl, 'documentos', { perPage: 1, filter: filter });
       return (list.items || [])[0] || null;
     }
-    async _findQuoteByLegacyId(legacyId) {
-      const filter = this._tenantFilter() + ' && legacy_id = ' + escapeFilterValue(legacyId);
+    async _findQuoteByPathKey(pathKey) {
+      const value = String(pathKey || '').trim();
+      if (!value) return null;
+      try {
+        const byId = await fetchOne(this.client.baseUrl, 'cotizaciones', value);
+        if (byId && byId.id) return byId;
+      } catch (_) {}
+      const filter = this._tenantFilter() + ' && id = ' + escapeFilterValue(value);
       const list = await fetchRecords(this.client.baseUrl, 'cotizaciones', { perPage: 1, filter: filter });
       return (list.items || [])[0] || null;
     }
     async _syncKnownQuoteField(path, clearInstead) {
       const tipo = this._guessTipo(path);
       const field = this._fieldForTipo(tipo);
-      const quoteLegacyId = this._quoteLegacyIdFromPath(path);
-      if (!field || !quoteLegacyId) return;
+      const quotePathKey = this._quotePathKeyFromPath(path);
+      if (!field || !quotePathKey) return;
       try {
-        const quote = await this._findQuoteByLegacyId(quoteLegacyId);
+        const quote = await this._findQuoteByPathKey(quotePathKey);
         if (!quote || !quote.id) return;
         const current = quote[field] || '';
         if (clearInstead) {
@@ -493,14 +559,14 @@
         const form = new FormData();
         const tenant = this._tenant();
         const tipo = this._guessTipo(path);
-        const quoteLegacyId = this._quoteLegacyIdFromPath(path);
+        const quotePathKey = this._quotePathKeyFromPath(path);
         const pathName = String(path || '').split('/').pop() || 'archivo.bin';
         const uploadName = (file && file.name) ? file.name : pathName;
         form.append('tenant', tenant);
         form.append('tipo', tipo);
         form.append('nombre_original', uploadName);
-        form.append('ruta_legacy', path);
-        if (quoteLegacyId) form.append('cotizacion_legacy_id', quoteLegacyId);
+        form.append('ruta', path);
+        if (quotePathKey) form.append('cotizacion_id', quotePathKey);
         form.append('archivo', file, uploadName);
         const created = await createRecord(this.client.baseUrl, 'documentos', form);
         await this._syncKnownQuoteField(path, false);
@@ -514,10 +580,10 @@
         const pre = String(prefix || '');
         const filter = this._tenantFilter();
         const list = await fetchRecords(this.client.baseUrl, 'documentos', { perPage: 500, filter: filter });
-        const items = (list.items || []).filter(r => String(r.ruta_legacy || '').startsWith(pre)).map(r => ({
+        const items = (list.items || []).filter(r => String(r.ruta || '').startsWith(pre)).map(r => ({
           id: r.id,
-          name: String(r.ruta_legacy || '').split('/').pop(),
-          path: r.ruta_legacy || '',
+          name: String(r.ruta || '').split('/').pop(),
+          path: r.ruta || '',
           created: r.created || r.created_at || null,
         }));
         return { data: items, error: null };
@@ -556,8 +622,7 @@
       if (String(this.bucket).toLowerCase() === 'espacios') {
         return { data: { publicUrl: path } };
       }
-      const full = trimSlash(this.client.baseUrl) + '/api/legacy-file?path=' + encodeURIComponent(path);
-      return { data: { publicUrl: full } };
+      return { data: { publicUrl: path } };
     }
     async download(path) {
       try {
@@ -572,7 +637,7 @@
     }
   }
 
-  class CompatClient {
+  class PocketBaseClient {
     constructor(baseUrl, options) {
       this.baseUrl = trimSlash(baseUrl || ((window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseUrl) || 'http://127.0.0.1:8090'));
       this.options = options || {};
@@ -610,7 +675,7 @@
       } };
     }
     from(table) { return new QueryBuilder(this, table); }
-    schema(schemaName) { return new CompatClient(this.baseUrl, { db: { schema: schemaName } }); }
+    schema(schemaName) { return new PocketBaseClient(this.baseUrl, { db: { schema: schemaName } }); }
     channel() { const self = { on(){ return self; }, subscribe(){ return self; }, unsubscribe(){ return self; } }; return self; }
     getChannels(){ return []; }
     removeChannel(){ return Promise.resolve(true); }
@@ -619,8 +684,10 @@
 
   window.PB_CLIENT = {
     createClient: function(baseUrl, anonKey, options) {
-      return new CompatClient(baseUrl, options || {});
+      return new PocketBaseClient(baseUrl, options || {});
     }
   };
 })();
+
+
 

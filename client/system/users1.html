@@ -198,7 +198,7 @@
           <i class="fa-solid fa-cogs"></i> Config CP
         </button>
         <button type="button" id="menu-materials" onclick="switchView('v_materials'); return false;" class="tool-tab hidden">
-          <i class="fa-solid fa-palette"></i> Materiales
+          <i class="fa-solid fa-palette"></i> Config de espacio
         </button>
       </div>
 
@@ -549,19 +549,36 @@
     </div>
 
     <div id="v_materials" class="view hidden fade-in">
-      <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-        <div class="p-5 border-b border-gray-100">
-          <div class="text-[10px] font-black uppercase tracking-wider text-brand-red">Plaza Mayor</div>
-          <div class="text-sm font-black text-gray-800 mt-1">Materiales Disponibles</div>
-          <div class="text-xs text-gray-500 mt-1">Administra los materiales que aparecerán en el cotizador de Plaza Mayor.</div>
-        </div>
-        <div class="p-5">
-          <div class="flex gap-2 mb-4">
-            <input type="text" id="mat-new-name" placeholder="Nombre del material (ej. Vinyl, Lona, Acrílico)" class="flex-1 border border-gray-200 rounded-lg p-2.5 text-sm font-bold outline-none focus:border-brand-red">
-            <button type="button" id="btn-mat-add" onclick="window.addMaterialItem()" class="bg-brand-red text-white px-5 rounded-lg text-xs font-black uppercase hover:bg-red-700 transition shadow"><i class="fa-solid fa-plus mr-1"></i> Agregar</button>
+      <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div class="p-5 border-b border-gray-100">
+            <div class="text-[10px] font-black uppercase tracking-wider text-brand-red">Plaza Mayor</div>
+            <div class="text-sm font-black text-gray-800 mt-1">Materiales Disponibles</div>
+            <div class="text-xs text-gray-500 mt-1">Administra los materiales que aparecerán en el cotizador de Plaza Mayor.</div>
           </div>
-          <div id="mat-list" class="space-y-2"></div>
-          <p id="mat-empty" class="text-xs text-gray-400 italic text-center py-4 hidden">No hay materiales configurados.</p>
+          <div class="p-5">
+            <div class="flex gap-2 mb-4">
+              <input type="text" id="mat-new-name" placeholder="Nombre del material (ej. Vinyl, Lona, Acrílico)" class="flex-1 border border-gray-200 rounded-lg p-2.5 text-sm font-bold outline-none focus:border-brand-red">
+              <button type="button" id="btn-mat-add" onclick="window.addMaterialItem()" class="bg-brand-red text-white px-5 rounded-lg text-xs font-black uppercase hover:bg-red-700 transition shadow"><i class="fa-solid fa-plus mr-1"></i> Agregar</button>
+            </div>
+            <div id="mat-list" class="space-y-2"></div>
+            <p id="mat-empty" class="text-xs text-gray-400 italic text-center py-4 hidden">No hay materiales configurados.</p>
+          </div>
+        </div>
+        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div class="p-5 border-b border-gray-100">
+            <div class="text-[10px] font-black uppercase tracking-wider text-brand-red">Plaza Mayor</div>
+            <div class="text-sm font-black text-gray-800 mt-1">Ubicaciones Disponibles</div>
+            <div class="text-xs text-gray-500 mt-1">Administra las ubicaciones que podrás asignar a locales e islas en el catálogo.</div>
+          </div>
+          <div class="p-5">
+            <div class="flex gap-2 mb-4">
+              <input type="text" id="loc-new-name" placeholder="Nombre de la ubicación (ej. Planta Baja, Pasillo Central)" class="flex-1 border border-gray-200 rounded-lg p-2.5 text-sm font-bold outline-none focus:border-brand-red">
+              <button type="button" id="btn-loc-add" onclick="window.addLocationItem()" class="bg-brand-red text-white px-5 rounded-lg text-xs font-black uppercase hover:bg-red-700 transition shadow"><i class="fa-solid fa-plus mr-1"></i> Agregar</button>
+            </div>
+            <div id="loc-list" class="space-y-2"></div>
+            <p id="loc-empty" class="text-xs text-gray-400 italic text-center py-4 hidden">No hay ubicaciones configuradas.</p>
+          </div>
         </div>
       </div>
     </div>
@@ -583,7 +600,13 @@
     const DOC_LETTERHEAD_PATH = 'membretes_pdf';
     const CFG_TEMPLATE_DEFAULT_KEY = 'contract_template_default';
     const CFG_LETTERHEAD_KEY = 'pdf_letterhead_path';
-    const CFG_PDF_STYLE_KEY = 'pdf_typography_style';
+    const PDF_EDITOR_OVERLAYS_COLLECTION = 'pdf_overlays';
+    const PDF_EDITOR_OVERLAY_DOC_TYPE_BY_ID = Object.freeze({
+      quote: 'generator:quotes',
+      order: 'generator:orders',
+      receipt: 'generator:receipts',
+      contract: 'generator:contracts'
+    });
     let docsDefaultTemplateFile = '';
     let docsDefaultLetterheadFile = '';
     let pdfEditorConfigRecordId = '';
@@ -901,11 +924,12 @@
       try {
         const { data, error } = await getDB()
           .from('configuracion')
-          .select('valor_json')
-          .eq('clave', CFG_LETTERHEAD_KEY)
-          .maybeSingle();
+          .select('id,valor_json,updated,updated_at,created,created_at')
+          .eq('tenant', getCurrentConfigTenant())
+          .eq('clave', CFG_LETTERHEAD_KEY);
         if (error) throw error;
-        const cfg = data?.valor_json && typeof data.valor_json === 'object' ? data.valor_json : {};
+        const row = pickLatestConfigRow(Array.isArray(data) ? data : (data ? [data] : []));
+        const cfg = parseConfigJson(row?.valor_json);
         const fileName = String(cfg.file_name || '').trim();
         const path = String(cfg.path || cfg.file_path || '').trim() || (fileName ? `${DOC_LETTERHEAD_PATH}/${fileName}` : '');
         if (!path) return;
@@ -1031,12 +1055,28 @@
 
     function buildPdfEditorConfigPayload() {
       return {
-        tenant: currentTenant === 'cp' ? 'casa_de_piedra' : 'plaza_mayor',
+        tenant: getCurrentConfigTenant(),
         version: 2,
         updated_at: new Date().toISOString(),
         profiles: ensurePdfEditorProfiles(pdfEditorProfiles),
         templates: normalizePdfEditorTemplates(pdfEditorTemplates)
       };
+    }
+
+    function getPdfEditorOverlayDocumentType(docType) {
+      const key = String(docType || '').toLowerCase();
+      return PDF_EDITOR_OVERLAY_DOC_TYPE_BY_ID[key] || PDF_EDITOR_OVERLAY_DOC_TYPE_BY_ID.quote;
+    }
+
+    function pickLatestPdfEditorOverlayRecord(rows) {
+      const list = Array.isArray(rows) ? rows.filter(row => row && typeof row === 'object') : [];
+      if (!list.length) return null;
+      list.sort((a, b) => {
+        const aTs = Date.parse(String(a.updated_at || a.updated || a.created_at || a.created || '')) || 0;
+        const bTs = Date.parse(String(b.updated_at || b.updated || b.created_at || b.created || '')) || 0;
+        return bTs - aTs;
+      });
+      return list[0] || null;
     }
 
     function getPdfEditorTemplatesForActiveType() {
@@ -1564,27 +1604,44 @@
       pdfEditorProfiles = ensurePdfEditorProfiles({});
       pdfEditorTemplates = normalizePdfEditorTemplates({});
       try {
-        const { data, error } = await getDB()
-          .from('configuracion')
-          .select('id,clave,valor_json')
-          .eq('clave', CFG_PDF_STYLE_KEY)
-          .maybeSingle();
-        if (error) throw error;
-        if (data) {
-          pdfEditorConfigRecordId = data.id || '';
-          const raw = data.valor_json && typeof data.valor_json === 'object' ? data.valor_json : {};
-          if (raw.profiles && typeof raw.profiles === 'object') {
-            pdfEditorProfiles = ensurePdfEditorProfiles(raw.profiles);
-          } else {
-            const migrated = normalizePdfEditorStyle(raw, 'quote');
-            pdfEditorProfiles = ensurePdfEditorProfiles({
-              quote: migrated,
-              order: migrated,
-              receipt: migrated,
-              contract: migrated
-            });
+        const db = getDB();
+        const tenant = getCurrentConfigTenant();
+        const loadedProfiles = {};
+        let loadedTemplates = null;
+
+        for (const doc of PDF_EDITOR_DOC_TYPES) {
+          const overlayType = getPdfEditorOverlayDocumentType(doc.id);
+          const { data, error } = await db
+            .from(PDF_EDITOR_OVERLAYS_COLLECTION)
+            .select('id,config_json,elements,updated_at,updated,created_at,created')
+            .eq('tenant', tenant)
+            .eq('document_type', overlayType);
+          if (error) throw error;
+          const row = pickLatestPdfEditorOverlayRecord(Array.isArray(data) ? data : (data ? [data] : []));
+          if (!row) continue;
+
+          if (doc.id === pdfEditorSelectedType) {
+            pdfEditorConfigRecordId = row.id || '';
           }
-          pdfEditorTemplates = normalizePdfEditorTemplates(raw.templates || {});
+
+          const parsedConfig = parseConfigJson(row.config_json);
+          const raw = Object.keys(parsedConfig).length ? parsedConfig : parseConfigJson(row.elements);
+          const profilesRaw = raw.profiles && typeof raw.profiles === 'object' ? raw.profiles : null;
+          const profileFallback = profilesRaw
+            ? (profilesRaw[doc.id] || profilesRaw.default || profilesRaw.quote || profilesRaw.receipt || profilesRaw.order || profilesRaw.contract || {})
+            : raw;
+          loadedProfiles[doc.id] = normalizePdfEditorStyle(profileFallback, doc.id);
+
+          if (!loadedTemplates && raw.templates && typeof raw.templates === 'object') {
+            loadedTemplates = raw.templates;
+          }
+        }
+
+        if (Object.keys(loadedProfiles).length) {
+          pdfEditorProfiles = ensurePdfEditorProfiles(loadedProfiles);
+        }
+        if (loadedTemplates) {
+          pdfEditorTemplates = normalizePdfEditorTemplates(loadedTemplates);
         }
       } catch (e) {
         _toast('No se pudo cargar la configuración del editor PDF: ' + (e.message || e), 'error');
@@ -1608,13 +1665,49 @@
         clearTimeout(pdfEditorSyncTimer);
         pdfEditorSyncTimer = null;
       }
-      const payload = {
-        clave: CFG_PDF_STYLE_KEY,
-        valor_json: buildPdfEditorConfigPayload()
-      };
+      const payload = buildPdfEditorConfigPayload();
       try {
-        const { error } = await getDB().from('configuracion').upsert(payload, { onConflict: 'clave' });
-        if (error) throw error;
+        const db = getDB();
+        const profiles = ensurePdfEditorProfiles(payload.profiles || {});
+        for (const doc of PDF_EDITOR_DOC_TYPES) {
+          const overlayType = getPdfEditorOverlayDocumentType(doc.id);
+          const profileStyle = normalizePdfEditorStyle(profiles[doc.id], doc.id);
+          const overlayPayload = {
+            ...payload,
+            profiles: {
+              ...profiles,
+              [doc.id]: profileStyle
+            }
+          };
+          const baseRecord = {
+            tenant: payload.tenant,
+            document_type: overlayType,
+            config_json: overlayPayload
+          };
+          const { data: existingRows, error: lookupError } = await db
+            .from(PDF_EDITOR_OVERLAYS_COLLECTION)
+            .select('id,updated_at,updated,created_at,created')
+            .eq('tenant', payload.tenant)
+            .eq('document_type', overlayType);
+          if (lookupError) throw lookupError;
+          const existing = pickLatestPdfEditorOverlayRecord(Array.isArray(existingRows) ? existingRows : (existingRows ? [existingRows] : []));
+          if (existing?.id) {
+            const { error: updateError } = await db
+              .from(PDF_EDITOR_OVERLAYS_COLLECTION)
+              .update(baseRecord)
+              .eq('id', existing.id);
+            if (updateError) throw updateError;
+            if (doc.id === pdfEditorSelectedType) pdfEditorConfigRecordId = existing.id || '';
+          } else {
+            const { data: inserted, error: insertError } = await db
+              .from(PDF_EDITOR_OVERLAYS_COLLECTION)
+              .insert(baseRecord)
+              .select('id')
+              .single();
+            if (insertError) throw insertError;
+            if (doc.id === pdfEditorSelectedType) pdfEditorConfigRecordId = inserted?.id || '';
+          }
+        }
         if (!silent) _toast('Editor PDF guardado correctamente', 'success');
       } catch (e) {
         if (!silent) _toast('No se pudo guardar el editor PDF: ' + (e.message || e), 'error');
@@ -1851,6 +1944,10 @@
       return currentTenant === 'cp' ? 'documentos-cp' : 'documentos';
     }
 
+    function getCurrentConfigTenant(){
+      return currentTenant === 'cp' ? 'casa_de_piedra' : 'plaza_mayor';
+    }
+
     function baseName(path){
       const normalized = String(path || '').replace(/\\/g, '/');
       const parts = normalized.split('/').filter(Boolean);
@@ -1862,6 +1959,31 @@
         .trim()
         .replace(/\s+/g, '_')
         .replace(/[^a-zA-Z0-9_\-.]/g, '');
+    }
+
+    function parseConfigJson(raw) {
+      if (!raw) return {};
+      if (typeof raw === 'object') return raw;
+      if (typeof raw === 'string') {
+        try {
+          const parsed = JSON.parse(raw);
+          return parsed && typeof parsed === 'object' ? parsed : {};
+        } catch (_) {
+          return {};
+        }
+      }
+      return {};
+    }
+
+    function pickLatestConfigRow(rows) {
+      const list = Array.isArray(rows) ? rows.filter(row => row && typeof row === 'object') : [];
+      if (!list.length) return null;
+      list.sort((a, b) => {
+        const aTs = Date.parse(String(a.updated_at || a.updated || a.created_at || a.created || '')) || 0;
+        const bTs = Date.parse(String(b.updated_at || b.updated || b.created_at || b.created || '')) || 0;
+        return bTs - aTs;
+      });
+      return list[0] || null;
     }
 
     function updateDocsTenantLabels() {
@@ -1912,18 +2034,16 @@
         const { data, error } = await db
           .from('configuracion')
           .select('*')
+          .eq('tenant', getCurrentConfigTenant())
           .in('clave', [CFG_TEMPLATE_DEFAULT_KEY, CFG_LETTERHEAD_KEY]);
         if (error) throw error;
-        (Array.isArray(data) ? data : []).forEach(row => {
-          const key = String(row?.clave || '').toLowerCase();
-          const cfg = row?.valor_json || {};
-          if (key === CFG_TEMPLATE_DEFAULT_KEY) {
-            docsDefaultTemplateFile = cfg.file_name || baseName(cfg.path || cfg.file_path || cfg.value || '');
-          }
-          if (key === CFG_LETTERHEAD_KEY) {
-            docsDefaultLetterheadFile = cfg.file_name || baseName(cfg.path || cfg.file_path || cfg.value || '');
-          }
-        });
+        const rows = Array.isArray(data) ? data : (data ? [data] : []);
+        const templateRow = pickLatestConfigRow(rows.filter(row => String(row?.clave || '').toLowerCase() === CFG_TEMPLATE_DEFAULT_KEY));
+        const letterheadRow = pickLatestConfigRow(rows.filter(row => String(row?.clave || '').toLowerCase() === CFG_LETTERHEAD_KEY));
+        const templateCfg = parseConfigJson(templateRow?.valor_json);
+        const letterheadCfg = parseConfigJson(letterheadRow?.valor_json);
+        docsDefaultTemplateFile = templateCfg.file_name || baseName(templateCfg.path || templateCfg.file_path || templateCfg.value || '');
+        docsDefaultLetterheadFile = letterheadCfg.file_name || baseName(letterheadCfg.path || letterheadCfg.file_path || letterheadCfg.value || '');
       } catch (_) {}
 
       await Promise.all([loadTemplateFiles(), loadLetterheadFiles()]);
@@ -2085,6 +2205,7 @@
       const fileName = String(sel?.value || '').trim();
       if (!fileName) return _toast("Selecciona una plantilla", "error");
       const payload = {
+        tenant: getCurrentConfigTenant(),
         clave: CFG_TEMPLATE_DEFAULT_KEY,
         valor_json: {
           file_name: fileName,
@@ -2092,7 +2213,7 @@
           updated_at: new Date().toISOString()
         }
       };
-      const { error } = await getDB().from('configuracion').upsert(payload, { onConflict: 'clave' });
+      const { error } = await getDB().from('configuracion').upsert(payload, { onConflict: 'tenant,clave' });
       if (error) return _toast("Error al guardar: " + error.message, "error");
       docsDefaultTemplateFile = fileName;
       await previewSelectedContractTemplate();
@@ -2106,6 +2227,7 @@
       const fileName = String(sel?.value || '').trim();
       if (!fileName) return _toast("Selecciona un membrete", "error");
       const payload = {
+        tenant: getCurrentConfigTenant(),
         clave: CFG_LETTERHEAD_KEY,
         valor_json: {
           file_name: fileName,
@@ -2113,7 +2235,7 @@
           updated_at: new Date().toISOString()
         }
       };
-      const { error } = await getDB().from('configuracion').upsert(payload, { onConflict: 'clave' });
+      const { error } = await getDB().from('configuracion').upsert(payload, { onConflict: 'tenant,clave' });
       if (error) return _toast("Error al guardar: " + error.message, "error");
       docsDefaultLetterheadFile = fileName;
       await previewSelectedLetterhead();
@@ -2184,10 +2306,12 @@
         const { data, error } = await db
           .from('configuracion')
           .select('clave,valor_json,valor_num')
-          .eq('clave', 'premontaje_pct')
-          .maybeSingle();
+          .eq('tenant', getCurrentConfigTenant())
+          .eq('clave', 'premontaje_pct');
         if (error) throw error;
-        const raw = data?.valor_num ?? data?.valor_json?.value ?? data?.valor_json?.percent;
+        const row = pickLatestConfigRow(Array.isArray(data) ? data : (data ? [data] : []));
+        const cfg = parseConfigJson(row?.valor_json);
+        const raw = row?.valor_num ?? cfg?.value ?? cfg?.percent;
         const val = Number(raw);
         input.value = Number.isFinite(val) && val >= 0 ? String(val) : '25';
       } catch (e) {
@@ -2209,14 +2333,16 @@
         const { data, error } = await db
           .from('configuracion')
           .select('clave,valor_json,valor_num')
-          .eq('clave', 'hora_extra_cfg')
-          .maybeSingle();
+          .eq('tenant', getCurrentConfigTenant())
+          .eq('clave', 'hora_extra_cfg');
         if (error) throw error;
-        const modeRaw = String(data?.valor_json?.mode || '').toLowerCase();
+        const row = pickLatestConfigRow(Array.isArray(data) ? data : (data ? [data] : []));
+        const cfg = parseConfigJson(row?.valor_json);
+        const modeRaw = String(cfg?.mode || '').toLowerCase();
         const mode = (modeRaw === 'fixed' || modeRaw === 'percent') ? modeRaw : 'percent';
-        const rawVal = data?.valor_num ?? data?.valor_json?.value ?? 100;
+        const rawVal = row?.valor_num ?? cfg?.value ?? 100;
         const parsedVal = Number(rawVal);
-        const allowCustom = data?.valor_json?.allow_custom !== false;
+        const allowCustom = cfg?.allow_custom !== false;
         modeEl.value = mode;
         valEl.value = Number.isFinite(parsedVal) && parsedVal >= 0 ? String(parsedVal) : '100';
         customEl.checked = !!allowCustom;
@@ -2235,11 +2361,12 @@
       try {
         const db = getDB();
         const payload = {
+          tenant: getCurrentConfigTenant(),
           clave: 'premontaje_pct',
           valor_num: val,
           valor_json: { value: val, percent: val, updated_at: new Date().toISOString() }
         };
-        const { error } = await db.from('configuracion').upsert(payload, { onConflict: 'clave' });
+        const { error } = await db.from('configuracion').upsert(payload, { onConflict: 'tenant,clave' });
         if (error) throw error;
         togglePremontajeHint(false);
         _toast("Porcentaje de premontaje guardado", "success");
@@ -2265,6 +2392,7 @@
       try {
         const db = getDB();
         const payload = {
+          tenant: getCurrentConfigTenant(),
           clave: 'hora_extra_cfg',
           valor_num: val,
           valor_json: {
@@ -2274,7 +2402,7 @@
             updated_at: new Date().toISOString()
           }
         };
-        const { error } = await db.from('configuracion').upsert(payload, { onConflict: 'clave' });
+        const { error } = await db.from('configuracion').upsert(payload, { onConflict: 'tenant,clave' });
         if (error) throw error;
         toggleHoraExtraHint(false);
         _toast("Configuración de horas extra guardada", "success");
@@ -2333,8 +2461,7 @@
     }
 
     async function requireAdmin(){
-      const compatAuth = readUsers1StoredAuthState('pb_compat_auth_v1');
-      const nativeAuth = readUsers1StoredAuthState('pb_native_auth_v1');
+      const authState = readUsers1StoredAuthState('pb_native_auth_v1');
       const sb = getUsersAdminClient();
       if (!sb) return false;
 
@@ -2358,10 +2485,8 @@
 
       const identitySources = [
         sessionUser,
-        compatAuth?.user,
-        compatAuth?.record,
-        nativeAuth?.user,
-        nativeAuth?.record
+        authState?.user,
+        authState?.record
       ].filter(Boolean);
 
       const userRoleCandidates = collectUsers1RoleCandidates(
@@ -2382,28 +2507,20 @@
       try {
         const idCandidates = [...new Set([
           ...identitySources.map(item => String(item?.id || item?.record?.id || '').trim()),
-          String(compatAuth?.user?.id || '').trim(),
-          String(compatAuth?.record?.id || '').trim(),
-          String(nativeAuth?.user?.id || '').trim(),
-          String(nativeAuth?.record?.id || '').trim()
+          String(authState?.user?.id || '').trim(),
+          String(authState?.record?.id || '').trim()
         ].filter(Boolean))];
         const emailCandidates = [...new Set([
           ...identitySources.map(item => String(item?.email || item?.record?.email || '').trim().toLowerCase()),
-          String(compatAuth?.user?.email || '').trim().toLowerCase(),
-          String(compatAuth?.record?.email || '').trim().toLowerCase(),
-          String(nativeAuth?.user?.email || '').trim().toLowerCase(),
-          String(nativeAuth?.record?.email || '').trim().toLowerCase()
+          String(authState?.user?.email || '').trim().toLowerCase(),
+          String(authState?.record?.email || '').trim().toLowerCase()
         ].filter(Boolean))];
         const usernameCandidates = [...new Set([
           ...identitySources.map(item => String(item?.username || item?.login_username || item?.record?.username || item?.record?.login_username || '').trim()),
-          String(compatAuth?.user?.username || '').trim(),
-          String(compatAuth?.user?.login_username || '').trim(),
-          String(compatAuth?.record?.username || '').trim(),
-          String(compatAuth?.record?.login_username || '').trim(),
-          String(nativeAuth?.user?.username || '').trim(),
-          String(nativeAuth?.user?.login_username || '').trim(),
-          String(nativeAuth?.record?.username || '').trim(),
-          String(nativeAuth?.record?.login_username || '').trim()
+          String(authState?.user?.username || '').trim(),
+          String(authState?.user?.login_username || '').trim(),
+          String(authState?.record?.username || '').trim(),
+          String(authState?.record?.login_username || '').trim()
         ].filter(Boolean))];
 
         const lookupByField = async (table, field, values) => {
@@ -2424,14 +2541,9 @@
         let appUser = await lookupByField('app_users', 'id', idCandidates);
         if (!appUser) appUser = await lookupByField('app_users', 'email', emailCandidates);
         if (!appUser) appUser = await lookupByField('app_users', 'username', usernameCandidates);
-        // Compat extra: algunos flujos guardan app_users en "profiles".
-        let profile = await lookupByField('profiles', 'id', idCandidates);
-        if (!profile) profile = await lookupByField('profiles', 'email', emailCandidates);
-        if (!profile) profile = await lookupByField('profiles', 'username', usernameCandidates);
 
         const resolvedRole = normalizeAdminRole(
           appUser?.role
-          || profile?.role
           || sessionUser?.role
           || sessionUser?.record?.role
         );
@@ -2601,6 +2713,7 @@
       }
       if(viewId === 'v_materials' && currentTenant === 'pm') {
         await window.loadMaterialsList();
+        await window.loadLocationsList();
       }
       paintTenantUI();
     };
@@ -2887,12 +3000,18 @@
       // ====== MATERIALES PM CRUD ======
       let __materialItems = [];
       let __materialsRecordId = null;
+      const __materialsTenant = 'plaza_mayor';
       window.loadMaterialsList = async function() {
         try {
-          const { data, error } = await pmPocketBase.from('configuracion').select('id,clave,valor_json').eq('clave', 'materiales_pm').maybeSingle();
+          const { data, error } = await pmPocketBase
+            .from('configuracion')
+            .select('id,clave,valor_json,updated,updated_at,created,created_at')
+            .eq('tenant', __materialsTenant)
+            .eq('clave', 'materiales_pm');
           if (error) throw error;
-          __materialsRecordId = data?.id || null;
-          const items = data?.valor_json?.items;
+          const row = pickLatestConfigRow(Array.isArray(data) ? data : (data ? [data] : []));
+          __materialsRecordId = row?.id || null;
+          const items = parseConfigJson(row?.valor_json)?.items;
           __materialItems = Array.isArray(items) ? items.filter(Boolean) : [];
         } catch (e) { __materialItems = []; __materialsRecordId = null; }
         renderMaterialsList();
@@ -2925,7 +3044,7 @@
       };
       async function __saveMaterialsToDB() {
         try {
-          const payload = { clave: 'materiales_pm', valor_json: { items: __materialItems } };
+          const payload = { tenant: __materialsTenant, clave: 'materiales_pm', valor_json: { items: __materialItems } };
           if (__materialsRecordId) {
             await pmPocketBase.from('configuracion').update(payload).eq('id', __materialsRecordId);
           } else {
@@ -2936,6 +3055,63 @@
         } catch (e) { showToast('Error al guardar materiales: ' + (e.message || e), 'error'); }
       }
 
+      let __locationItems = [];
+      let __locationsRecordId = null;
+      const __locationsTenant = 'plaza_mayor';
+      window.loadLocationsList = async function() {
+        try {
+          const { data, error } = await pmPocketBase
+            .from('configuracion')
+            .select('id,clave,valor_json,updated,updated_at,created,created_at')
+            .eq('tenant', __locationsTenant)
+            .eq('clave', 'ubicaciones_pm');
+          if (error) throw error;
+          const row = pickLatestConfigRow(Array.isArray(data) ? data : (data ? [data] : []));
+          __locationsRecordId = row?.id || null;
+          const items = parseConfigJson(row?.valor_json)?.items;
+          __locationItems = Array.isArray(items) ? items.filter(Boolean) : [];
+        } catch (e) { __locationItems = []; __locationsRecordId = null; }
+        renderLocationsList();
+      };
+      function renderLocationsList() {
+        const list = document.getElementById('loc-list');
+        const empty = document.getElementById('loc-empty');
+        if (!list) return;
+        list.innerHTML = '';
+        if (__locationItems.length === 0) { if (empty) empty.classList.remove('hidden'); return; }
+        if (empty) empty.classList.add('hidden');
+        __locationItems.forEach((name, idx) => {
+          list.innerHTML += `<div class="flex justify-between items-center bg-gray-50 border border-gray-100 p-3 rounded-lg"><span class="text-sm font-bold text-gray-700"><i class="fa-solid fa-location-dot text-brand-red mr-2"></i>${name}</span><button onclick="window.removeLocationItem(${idx})" class="text-gray-400 hover:text-red-500 transition text-xs"><i class="fa-solid fa-trash"></i></button></div>`;
+        });
+      }
+      window.addLocationItem = async function() {
+        const input = document.getElementById('loc-new-name');
+        const name = (input?.value || '').trim();
+        if (!name) return showToast('Ingresa un nombre de ubicación.', 'error');
+        if (__locationItems.includes(name)) return showToast('Esa ubicación ya existe.', 'error');
+        __locationItems.push(name);
+        await __saveLocationsToDB();
+        if (input) input.value = '';
+        renderLocationsList();
+      };
+      window.removeLocationItem = async function(idx) {
+        __locationItems.splice(idx, 1);
+        await __saveLocationsToDB();
+        renderLocationsList();
+      };
+      async function __saveLocationsToDB() {
+        try {
+          const payload = { tenant: __locationsTenant, clave: 'ubicaciones_pm', valor_json: { items: __locationItems } };
+          if (__locationsRecordId) {
+            await pmPocketBase.from('configuracion').update(payload).eq('id', __locationsRecordId);
+          } else {
+            const { data } = await pmPocketBase.from('configuracion').insert(payload);
+            __locationsRecordId = data?.id || null;
+          }
+          showToast('Ubicaciones guardadas.', 'success');
+        } catch (e) { showToast('Error al guardar ubicaciones: ' + (e.message || e), 'error'); }
+      }
+
       // default view
       await switchView('v_concepts');
     });
@@ -2943,6 +3119,7 @@
 
 </body>
 </html>
+
 
 
 

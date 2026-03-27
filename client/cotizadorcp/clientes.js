@@ -24,6 +24,73 @@ let canManage = false;
 let clientHistoryRows = [];
 let activeHistoryClient = null;
 
+function normalizeRoleName(value='') {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return '';
+  if (raw === 'administrador' || raw === 'superadmin' || raw === 'super_admin') return 'admin';
+  return raw;
+}
+
+function deriveClientAccessFromLayout() {
+  const authCtx = window.__HUB_AUTH_CONTEXT || null;
+  if (!authCtx?.session?.user) return null;
+  const perms = (authCtx.permissions && typeof authCtx.permissions === 'object') ? authCtx.permissions : {};
+  return {
+    role: normalizeRoleName(authCtx.role || authCtx.profile?.role || ''),
+    perms,
+    canView: true,
+    canManage: authCtx.isAdmin === true || perms.clients_manage === true
+  };
+}
+
+async function fetchClientAccessContext(sessionUser) {
+  const fromLayout = deriveClientAccessFromLayout();
+  if (fromLayout) return fromLayout;
+
+  const lookupOne = async (table, field, value) => {
+    if (!value || !window.globalPocketBase) return null;
+    try {
+      const { data, error } = await window.globalPocketBase.from(table).select('*').eq(field, value).maybeSingle();
+      if (!error && data) return data;
+    } catch (_) {}
+    return null;
+  };
+
+  const userId = String(sessionUser?.id || '').trim();
+  const userEmail = String(sessionUser?.email || '').trim().toLowerCase();
+  let appUser = await lookupOne('app_users', 'id', userId);
+  if (!appUser) appUser = await lookupOne('app_users', 'email', userEmail);
+
+  const role = normalizeRoleName(
+    appUser?.role
+    || sessionUser?.role
+    || sessionUser?.rol
+    || ''
+  );
+  const roleHasAccess = role === 'admin' || role === 'casa_de_piedra' || role === 'ambos';
+  const roleDefaultPerms = {
+    clients_view: true,
+    clients_manage: true,
+    orders_view: true,
+    reports_view: true
+  };
+  const rawPerms =
+    (appUser?.app_metadata?.finanzas?.permissions && typeof appUser.app_metadata.finanzas.permissions === 'object')
+      ? appUser.app_metadata.finanzas.permissions
+      : {};
+  const perms = (role === 'admin' || roleHasAccess) ? roleDefaultPerms : rawPerms;
+  const canView = (role === 'admin') || roleHasAccess
+    || perms.clients_view === true
+    || perms.clients_manage === true
+    || perms.orders_view === true
+    || perms.catalog_manage === true
+    || perms.reports_view === true
+    || perms.access !== false;
+  const canManageResolved = (role === 'admin') || roleHasAccess || perms.clients_manage === true;
+
+  return { role, perms, canView, canManage: canManageResolved };
+}
+
 function escapeHTML(str='') {
   return String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 }
@@ -43,6 +110,13 @@ function safeDate(v){
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return '--';
   const p = s.split('-');
   return `${p[2]}/${p[1]}/${p[0]}`;
+}
+
+function buildClientQuoteFolio(row) {
+  const current = String(row?.numero_orden || '').trim();
+  if (current) return current.toUpperCase();
+  const rawId = String(row?.id || '').trim().toUpperCase();
+  return rawId ? `CP-${rawId.slice(0, 6)}` : 'CP-PEND';
 }
 
 function normalizePdfNoteDocType(value='') {
@@ -279,7 +353,7 @@ function renderClientHistoryRows(rows) {
     return;
   }
   rows.forEach(o => {
-    const folio = (o.numero_orden || o.id.split('-')[0].toUpperCase());
+    const folio = buildClientQuoteFolio(o);
     const qName = (o.nombre_cotizacion || o.detalles_evento?.nombre_cotizacion || '').trim();
     const dateLabel = (o.fecha_inicio && o.fecha_fin)
       ? (o.fecha_inicio === o.fecha_fin ? safeDate(o.fecha_inicio) : `${safeDate(o.fecha_inicio)} - ${safeDate(o.fecha_fin)}`)
@@ -337,7 +411,7 @@ async function openClientQuoteDocs(quoteId) {
   const sub = document.getElementById('qdocs-sub');
   const list = document.getElementById('client-quote-docs-list');
   if (!title || !sub || !list) return;
-  const folio = row.numero_orden || row.id.split('-')[0].toUpperCase();
+  const folio = buildClientQuoteFolio(row);
   title.innerText = `Expediente #${folio}`;
   sub.innerText = `${row.cliente_nombre || ''} • ${row.espacio_nombre || '--'}`;
   list.innerHTML = '';
@@ -484,44 +558,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     return;
   }
 
-  // Perfil + permisos (roles tenant o legacy app_metadata)
-const { data: profile } = await window.globalPocketBase
-  .from('profiles')
-  .select('role, app_metadata')
-  .eq('id', session.user.id)
-  .single();
+  const accessCtx = await fetchClientAccessContext(session.user);
+  const role = accessCtx.role;
+  const perms = accessCtx.perms || {};
+  canManage = accessCtx.canManage === true;
 
-const role = String(profile?.role || '').toLowerCase().trim();
-const roleHasAccess = (role === 'admin') || (role === 'casa_de_piedra') || (role === 'ambos');
-
-const roleDefaultPerms = {
-  clients_view: true,
-  clients_manage: true,
-  orders_view: true,
-  reports_view: true
-};
-
-const perms = (role === 'admin')
-  ? roleDefaultPerms
-  : (roleHasAccess ? roleDefaultPerms : (profile?.app_metadata?.finanzas?.permissions || {}));
-
-// Access rules: roles tenant siempre pueden ver Clientes
-const canView = (role === 'admin') || roleHasAccess
-  || perms.clients_view === true
-  || perms.clients_manage === true
-  || perms.orders_view === true
-  || perms.catalog_manage === true
-  || perms.reports_view === true;
-
-canManage = (role === 'admin') || roleHasAccess || perms.clients_manage === true;
-
-if (!canView) {
-  window.showToast?.('No tienes permisos para acceder a Clientes.', 'error');
-  return;
-}
+  if (!accessCtx.canView) {
+    window.showToast?.('No tienes permisos para acceder a Clientes.', 'error');
+    return;
+  }
 
 // Nav hide (compat: si no existe key, NO escondemos)
-  if (profile?.role !== 'admin') {
+  if (role !== 'admin') {
     const navRules = {
       'orders.html': ('orders_view' in perms) ? !!perms.orders_view : true,
       'reports.html': ('reports_view' in perms) ? !!perms.reports_view : true,
@@ -547,6 +595,8 @@ if (!canView) {
 
   await loadClients();
 });
+
+
 
 
 

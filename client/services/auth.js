@@ -18,7 +18,7 @@
 (function () {
   window.PB_SERVICES = window.PB_SERVICES || {};
   if (window.PB_SERVICES.auth) return;
-  const AUTH_KEYS = ["pb_native_auth_v1", "pb_compat_auth_v1"];
+  const AUTH_KEYS = ["pb_native_auth_v1", "pb_compat_auth_v1", "pb_auth"];
   let activeSessionCache = null;
 
   /**
@@ -246,7 +246,7 @@
       session = readRememberedSession();
       if (session) source = "memory";
     }
-    if (!session && opts.allowCachedUser !== false) {
+    if (!session && opts.allowCachedUser === true) {
       const cachedUser = buildCachedUser();
       if (cachedUser) {
         session = { user: cachedUser, __fallback: true };
@@ -311,3 +311,4 @@
     }
   };
 })();
+

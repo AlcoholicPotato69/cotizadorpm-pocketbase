@@ -3,7 +3,7 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Catálogo Exclusivo - Casa de Piedra</title>
     
     <link rel="preload" as="script" href="assets/libs/js/tailwindcss.js">
@@ -23,8 +23,16 @@
         tailwind.config = { theme: { extend: { colors: { brand: { gold: '#c1621e', dark: '#121212', gray: '#1f1f1f' } }, fontFamily: { serif: ['"Playfair Display"', 'serif'], sans: ['"Montserrat"', 'sans-serif'] }, boxShadow: { 'luxury': '0 10px 40px -10px rgba(0,0,0,0.1)', 'luxury-hover': '0 20px 40px -10px rgba(193,98,30,0.15)', 'upward': '0 -10px 20px -5px rgba(0,0,0,0.05)', } } } }
     </script>
     <style>
+        html, body { max-width: 100%; overscroll-behavior-y: none; }
+        body { overflow-x: hidden; }
         body.modal-open { overflow: hidden; }
         .custom-scroll::-webkit-scrollbar { width: 6px; height: 6px;} .custom-scroll::-webkit-scrollbar-track { background: rgba(0,0,0,0.02); border-radius: 8px; } .custom-scroll::-webkit-scrollbar-thumb { background: rgba(193,98,30,0.4); border-radius: 8px; } .custom-scroll::-webkit-scrollbar-thumb:hover { background: rgba(193,98,30,0.8); }
+        .custom-scroll { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+        img, svg, canvas { max-width: 100%; }
+        #modal-backdrop, #preview-modal { padding: clamp(0.75rem, 2vw, 1.5rem); }
+        #step-1-info, #step-2-contact, #preview-modal > div {
+            max-height: min(94vh, calc(100dvh - 16px));
+        }
         .cal-day { transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
         .cal-day:hover:not(.cal-disabled):not(.cal-occupied) { border-color: #c1621e; background-color: #fdfaf0; z-index: 10; transform: scale(1.05); box-shadow: 0 4px 12px rgba(0,0,0,0.05); border-radius: 0.5rem; }
         .cal-selected { background-color: #c1621e !important; color: #121212 !important; border-color: #c1621e !important; border-radius: 0.5rem; transform: scale(1.05); z-index: 20; box-shadow: 0 4px 15px rgba(193,98,30,0.4); }
@@ -35,6 +43,12 @@
         .cal-occupied::after { content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(0,0,0,0.03) 10px, rgba(0,0,0,0.03) 20px); }
         .shake-animation { animation: shake 0.4s cubic-bezier(.36,.07,.19,.97) both; }
         @keyframes shake { 10%, 90% { transform: translate3d(-1px, 0, 0); } 20%, 80% { transform: translate3d(2px, 0, 0); } 30%, 50%, 70% { transform: translate3d(-4px, 0, 0); } 40%, 60% { transform: translate3d(4px, 0, 0); } }
+        @media (max-width: 767px) {
+            #modal-backdrop, #preview-modal { padding: 0.5rem !important; }
+            #step-1-info, #step-2-contact, #preview-modal > div {
+                max-height: min(calc(100vh - 8px), calc(100dvh - 8px));
+            }
+        }
     </style>
     <!-- Local Animations -->
     <link rel="preload" as="style" href="../../assets/libs/css/animate.min.css">
@@ -345,11 +359,27 @@
             try {
                 const { data, error } = await clientePocketBase
                     .from('configuracion')
-                    .select('clave,valor_json,valor_num')
+                    .select('clave,valor_json,valor_num,updated,updated_at,created,created_at')
+                    .eq('tenant', 'casa_de_piedra')
                     .in('clave', ['premontaje_pct', 'hora_extra_cfg', 'pdf_letterhead_path']);
                 if (error) throw error;
                 const rows = Array.isArray(data) ? data : [];
-                for (const row of rows) {
+                const pickLatest = (entries) => {
+                    const list = Array.isArray(entries) ? entries.filter((item) => item && typeof item === 'object') : [];
+                    if (!list.length) return null;
+                    list.sort((a, b) => {
+                        const aTs = Date.parse(String(a.updated_at || a.updated || a.created_at || a.created || '')) || 0;
+                        const bTs = Date.parse(String(b.updated_at || b.updated || b.created_at || b.created || '')) || 0;
+                        return bTs - aTs;
+                    });
+                    return list[0] || null;
+                };
+                const selectedRows = [
+                    pickLatest(rows.filter((row) => String(row?.clave || '').toLowerCase() === 'premontaje_pct')),
+                    pickLatest(rows.filter((row) => String(row?.clave || '').toLowerCase() === 'hora_extra_cfg')),
+                    pickLatest(rows.filter((row) => String(row?.clave || '').toLowerCase() === 'pdf_letterhead_path'))
+                ].filter(Boolean);
+                for (const row of selectedRows) {
                     const key = String(row?.clave || '').toLowerCase();
                     if (key === 'premontaje_pct') {
                         const raw = row?.valor_num ?? row?.valor_json?.value ?? row?.valor_json?.percent;
@@ -1161,7 +1191,7 @@
                     const { data, error } = await clientePocketBase.from('cotizaciones').insert(payload).select();
                     if (error) throw error;
 
-                    const folioBD = data && data.length > 0 ? data[0].id.split('-')[0].toUpperCase() : Math.floor(Math.random() * 10000);
+                    const folioBD = data && data.length > 0 ? `CP-${String(data[0].id || '').toUpperCase().slice(0, 6)}` : `CP-${Math.floor(Math.random() * 10000)}`;
                     descargarPDFPublico(payload, folioBD);
                     publicQuoteSpaces = [];
 
@@ -1201,6 +1231,8 @@
     </script>
 </body>
 </html>
+
+
 
 
 

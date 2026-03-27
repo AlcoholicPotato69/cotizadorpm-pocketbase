@@ -75,7 +75,8 @@ const FIN_SCHEMA = window.HUB_CONFIG?.finanzasSchema || window.ENV?.SCHEMA_PLAZA
 const PM_CATALOG_MODE = window.__PM_CATALOG_MODE || ((window.location.pathname || '').toLowerCase().includes('cotizacion.html') ? 'quote' : 'catalog_admin');
 const IS_PM_QUOTE_PAGE = PM_CATALOG_MODE === 'quote';
 const IS_PM_CATALOG_ADMIN_PAGE = !IS_PM_QUOTE_PAGE;
-let allSpaces = [], dbTaxes = [], dbMaterials = [], currentSpace = null, currentPricing = { base: 0, final: 0 };
+const PM_MATERIAL_TAGS = new Set(['Vinil', 'Vinil transparente', 'Vinil con reverso negro', 'Vinil con reverso gris/negro', 'Lona', 'Lona sobre bastidor', 'Coroplast', 'Imagen fija JPG']);
+let allSpaces = [], dbTaxes = [], dbMaterials = [], dbLocations = [], currentSpace = null, currentPricing = { base: 0, final: 0 };
 let myPermissions = { access: false, catalog_manage: false };
 let pmQuoteSpaces = [];
 let pmActiveSpaceId = null;
@@ -84,6 +85,86 @@ let pmQuoteDatePickMode = 'start';
 let pmQuoteTempStart = '';
 let pmQuoteTempEnd = '';
 let pmQuoteBlockedRanges = [];
+
+function normalizeCatalogTenantSlug(value) {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw) return '';
+    if (raw === 'finanzas' || raw.indexOf('plaza') !== -1) return 'plaza_mayor';
+    if (raw.indexOf('casadepiedra') !== -1 || raw.indexOf('casa_de_piedra') !== -1 || raw.indexOf('casa-de-piedra') !== -1) return 'casa_de_piedra';
+    return raw;
+}
+
+function resolveCatalogTenantSlug(fallback = '') {
+    const fromClient = normalizeCatalogTenantSlug(window.tenantPocketBase?.tenant || '');
+    if (fromClient) return fromClient;
+    const fromFallback = normalizeCatalogTenantSlug(fallback);
+    if (fromFallback) return fromFallback;
+    const fromSchema = normalizeCatalogTenantSlug(FIN_SCHEMA);
+    if (fromSchema) return fromSchema;
+    const path = String(window.location.pathname || '').toLowerCase();
+    return path.indexOf('/cotizadorcp/') !== -1 ? 'casa_de_piedra' : 'plaza_mayor';
+}
+
+function filterCatalogRowsByTenant(rows, fallback = '') {
+    const tenant = resolveCatalogTenantSlug(fallback);
+    const source = Array.isArray(rows) ? rows : [];
+    if (!tenant) return source.slice();
+    return source.filter((row) => {
+        const rowTenant = normalizeCatalogTenantSlug(row?.tenant || '');
+        return !rowTenant || rowTenant === tenant;
+    });
+}
+
+function findCatalogTaxRecord(taxId, space = null) {
+    const safeId = String(taxId || '').trim();
+    if (!safeId) return null;
+    const tenant = resolveCatalogTenantSlug(space?.tenant || '');
+    const tenantTaxes = filterCatalogRowsByTenant(dbTaxes, tenant);
+    return tenantTaxes.find((tax) => String(tax?.id || '').trim() === safeId)
+        || dbTaxes.find((tax) => String(tax?.id || '').trim() === safeId)
+        || null;
+}
+
+function pmEspaciosService() {
+    return window.PB_SERVICES && window.PB_SERVICES.espacios ? window.PB_SERVICES.espacios : null;
+}
+
+async function pmEnsureCatalogManageSession(actionLabel = 'guardar cambios') {
+    if (!IS_PM_CATALOG_ADMIN_PAGE) return true;
+    try {
+        const authState = await window.PB_SERVICES.auth.bootstrap({ schema: FIN_SCHEMA, allowCachedUser: false });
+        const session = authState?.session || null;
+        const token = String(session?.access_token || session?.token || '').trim();
+        if (session?.user && token) return true;
+    } catch (_) { }
+    window.showToast?.(`Tu sesión expiró. Inicia sesión de nuevo para ${actionLabel}.`, 'error');
+    return false;
+}
+
+async function pmSaveEspacioRecord(id, payload) {
+    const svc = pmEspaciosService();
+    if (svc) {
+        return id
+            ? svc.update(id, payload, { schema: FIN_SCHEMA })
+            : svc.create(payload, { schema: FIN_SCHEMA });
+    }
+    const result = id
+        ? await window.tenantPocketBase.from('espacios').update(payload).eq('id', id)
+        : await window.tenantPocketBase.from('espacios').insert(payload);
+    if (result?.error) throw result.error;
+    return result?.data || null;
+}
+
+async function pmDeleteEspacioRecord(id) {
+    const svc = pmEspaciosService();
+    if (svc) {
+        await svc.remove(id, { schema: FIN_SCHEMA });
+        return true;
+    }
+    const result = await window.tenantPocketBase.from('espacios').delete().eq('id', id);
+    if (result?.error) throw result.error;
+    return true;
+}
 
 // Evita recargar la misma página por navegaciones accidentales.
 function pmNormalizeUrlForNav(value) {
@@ -191,6 +272,128 @@ async function pmResolveCurrentUserProfile(sessionUser = {}) {
 // --- HELPERS ---
 function parseIds(v) { if (!v) return []; if (Array.isArray(v)) return v; if (typeof v === 'string') { try { const parsed = JSON.parse(v); return Array.isArray(parsed) ? parsed : []; } catch (e) { return v.split(',').map(x => x.trim()).filter(Boolean); } } return []; }
 function formatMoney(v) { return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(v || 0); }
+function formatTaxPercent(value) {
+    const raw = parseFloat(value);
+    const pct = Number.isFinite(raw) ? (raw > 0 && raw <= 1 ? raw * 100 : raw) : 0;
+    return Number.isInteger(pct) ? String(pct) : pct.toLocaleString('es-MX', { maximumFractionDigits: 2 });
+}
+function getSpaceTaxDetails(space) {
+    const taxIds = parseIds(space?.impuestos_ids || space?.impuestos).map(id => String(id || '').trim()).filter(Boolean);
+    return taxIds
+        .map(taxId => findCatalogTaxRecord(taxId, space))
+        .filter(Boolean);
+}
+function getSpaceTaxLabel(space) {
+    const rows = getSpaceTaxDetails(space);
+    if (!rows.length) return 'Sin impuestos';
+    return rows.map(t => `${t.nombre} ${formatTaxPercent(t.porcentaje)}%`).join(', ');
+}
+function getSpaceMaterialLabel(space) {
+    const material = normalizePmMaterialTag(space?.material || '');
+    return material || 'Sin material';
+}
+function getCatalogTagLabels(space) {
+    let rawTags = [];
+    try {
+        rawTags = typeof space?.etiquetas === 'string' ? JSON.parse(space.etiquetas) : (space?.etiquetas || []);
+    } catch (_) {
+        rawTags = [];
+    }
+    return (Array.isArray(rawTags) ? rawTags : [])
+        .map((tag) => String(tag || '').trim())
+        .filter(Boolean);
+}
+function getCatalogSpaceTags(space) {
+    const tags = new Set();
+    const push = (value) => {
+        const normalized = normalizeCatalogSearchText(value);
+        if (normalized) tags.add(normalized);
+    };
+    push(space?.tipo);
+    getCatalogTagLabels(space).forEach(push);
+    return tags;
+}
+function catalogSpaceHasTag(space, term) {
+    const needle = normalizeCatalogSearchText(term);
+    return Array.from(getCatalogSpaceTags(space)).some((tag) => tag === needle || tag.includes(needle));
+}
+function isCatalogAdvertisingSpace(space) {
+    return catalogSpaceHasTag(space, 'publicidad');
+}
+function isCatalogLocalLikeSpace(space) {
+    return catalogSpaceHasTag(space, 'local') || catalogSpaceHasTag(space, 'isla') || catalogSpaceHasTag(space, 'espacio');
+}
+function isCatalogLocalOrIslandType(value) {
+    const safe = normalizeCatalogSearchText(value);
+    return safe === 'local' || safe === 'isla' || safe === 'espacio';
+}
+function isCatalogAdvertisingType(value) {
+    return normalizeCatalogSearchText(value) === 'publicidad';
+}
+function isCatalogTypeWithMeasures(value) {
+    return isCatalogAdvertisingType(value) || isCatalogLocalOrIslandType(value);
+}
+function syncManagerTypeFields(selectedType = '') {
+    const type = String(selectedType || document.getElementById('mgr-type')?.value || '').trim();
+    const materialField = document.getElementById('mgr-material-field');
+    const locationField = document.getElementById('mgr-location-field');
+    const measuresField = document.getElementById('mgr-measures-field');
+    const attributesGrid = document.getElementById('mgr-attributes-grid');
+    const showMaterial = isCatalogAdvertisingType(type);
+    const showLocation = isCatalogLocalOrIslandType(type);
+    const showMeasures = isCatalogTypeWithMeasures(type);
+    if (materialField) materialField.classList.toggle('hidden', !showMaterial);
+    if (locationField) locationField.classList.toggle('hidden', !showLocation);
+    if (measuresField) measuresField.classList.toggle('hidden', !showMeasures);
+    if (attributesGrid) attributesGrid.classList.toggle('hidden', !showMaterial && !showLocation && !showMeasures);
+}
+function normalizePmLocationLabel(value) {
+    return String(value || '').trim().replace(/\s+/g, ' ');
+}
+function findPmLocationOption(value) {
+    const needle = normalizeCatalogSearchText(value);
+    if (!needle) return '';
+    const match = dbLocations.find((item) => normalizeCatalogSearchText(item) === needle);
+    return match || '';
+}
+function getSpaceLocationLabel(space) {
+    const direct = normalizePmLocationLabel(space?.ubicacion || '');
+    if (direct) return findPmLocationOption(direct) || direct;
+    const tagMatch = getCatalogTagLabels(space).find((tag) => !!findPmLocationOption(tag));
+    return tagMatch ? (findPmLocationOption(tagMatch) || normalizePmLocationLabel(tagMatch)) : '';
+}
+function getCatalogSpaceMeasuresLabel(space) {
+    const width = normalizeSpaceMeasureValue(space?.medida_ancho ?? space?.ancho);
+    const height = normalizeSpaceMeasureValue(space?.medida_alto ?? space?.alto);
+    const unit = normalizeSpaceMeasureUnit(space?.medida_unidad || space?.unidad_medida || 'M');
+    if (width === null && height === null) return 'Sin medidas';
+    if (width !== null && height !== null) return `${trimCatalogMeasureNumber(width)} x ${trimCatalogMeasureNumber(height)} ${unit}`;
+    const single = width !== null ? width : height;
+    return `${trimCatalogMeasureNumber(single)} ${unit}`;
+}
+function getCatalogSpaceInfoRows(space, options = {}) {
+    const rows = [];
+    const includeType = options.includeType === true;
+    const advertising = isCatalogAdvertisingSpace(space);
+    const localLike = isCatalogLocalLikeSpace(space);
+    const localOrIsland = catalogSpaceHasTag(space, 'local') || catalogSpaceHasTag(space, 'isla') || catalogSpaceHasTag(space, 'espacio');
+    const locationLabel = getSpaceLocationLabel(space);
+    if (includeType) rows.push({ label: 'Tipo', value: space?.tipo || '--' });
+    if (localOrIsland && locationLabel) rows.push({ label: 'Ubicación', value: locationLabel });
+    if (advertising || localOrIsland) rows.push({ label: 'Medidas', value: getCatalogSpaceMeasuresLabel(space) });
+    if (!localLike) rows.push({ label: 'Material', value: getSpaceMaterialLabel(space) });
+    if (!advertising && !localLike) rows.push({ label: 'Impuestos', value: getSpaceTaxLabel(space) });
+    return rows.filter((row) => String(row?.value || '').trim());
+}
+function renderCatalogSpaceInfoRows(space, options = {}) {
+    return getCatalogSpaceInfoRows(space, options).map((row) => `<div class="flex justify-between gap-3 rounded-lg bg-gray-50 border border-gray-100 px-3 py-2"><span class="font-black uppercase text-gray-400">${row.label}</span><span class="font-bold text-gray-700 text-right">${row.value}</span></div>`).join('');
+}
+function renderCatalogPreviewBadges(space) {
+    return getCatalogSpaceInfoRows(space).map((row) => `<span class="px-2 py-1 rounded-full bg-white/15 text-white font-bold">${row.label}: ${row.value}</span>`).join('');
+}
+function shouldHideCatalogTaxPriceDetail(space) {
+    return isCatalogAdvertisingSpace(space) || isCatalogLocalLikeSpace(space);
+}
 function isQuoteWorkspacePage() { return IS_PM_QUOTE_PAGE && !!document.getElementById('quote-workspace'); }
 function toDateISO(v) { const s = String(v || '').trim(); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : ''; }
 function todayISO() { return new Date().toISOString().slice(0, 10); }
@@ -201,7 +404,205 @@ function normalizeSpaceMeasureValue(value) {
 }
 function normalizeSpaceMeasureUnit(value) {
     const unit = String(value || '').trim().toUpperCase();
-    return unit === 'CM' ? 'CM' : 'M';
+    if (unit === 'CM') return 'CM';
+    if (unit === 'M2') return 'M2';
+    return 'M';
+}
+function normalizePmMaterialTag(value) {
+    const text = String(value || '').trim();
+    const folded = normalizeCatalogSearchText(text);
+    if (!folded) return '';
+    if (folded.includes('imagen fija') || folded.includes('jpg')) return 'Imagen fija JPG';
+    if (folded.includes('coroplast')) return 'Coroplast';
+    if (folded.includes('lona')) return folded.includes('bastidor') ? 'Lona sobre bastidor' : 'Lona';
+    if (folded.includes('vinil') || folded.includes('vinyl')) {
+        if (folded.includes('transparen')) return 'Vinil transparente';
+        if (folded.includes('reverso')) {
+            const hasBlack = folded.includes('negro');
+            const hasGray = folded.includes('gris') || folded.includes('gray');
+            if (hasBlack && hasGray) return 'Vinil con reverso gris/negro';
+            if (hasBlack) return 'Vinil con reverso negro';
+        }
+        return 'Vinil';
+    }
+    return text;
+}
+function parseConfigJsonValue(value) {
+    if (!value) return {};
+    if (typeof value === 'object') return value;
+    if (typeof value === 'string') {
+        try {
+            const parsed = JSON.parse(value);
+            return parsed && typeof parsed === 'object' ? parsed : {};
+        } catch (_) {
+            return {};
+        }
+    }
+    return {};
+}
+function pickCatalogLatestConfigRow(rows) {
+    const list = Array.isArray(rows) ? rows.filter((row) => row && typeof row === 'object') : [];
+    if (!list.length) return null;
+    list.sort((a, b) => {
+        const aTs = Date.parse(String(a.updated_at || a.updated || a.created_at || a.created || '')) || 0;
+        const bTs = Date.parse(String(b.updated_at || b.updated || b.created_at || b.created || '')) || 0;
+        return bTs - aTs;
+    });
+    return list[0] || null;
+}
+function buildPmMaterialOptions(primaryItems, extraItems = []) {
+    const out = [];
+    const seen = new Set();
+    const push = (value) => {
+        const normalized = normalizePmMaterialTag(value);
+        const label = String(normalized || value || '').trim();
+        if (!label) return;
+        const folded = normalizeCatalogSearchText(label);
+        if (!folded || seen.has(folded)) return;
+        seen.add(folded);
+        out.push(label);
+    };
+    (Array.isArray(primaryItems) ? primaryItems : []).forEach(push);
+    (Array.isArray(extraItems) ? extraItems : []).forEach(push);
+    return out;
+}
+function buildPmLocationOptions(primaryItems, extraItems = []) {
+    const out = [];
+    const seen = new Set();
+    const push = (value) => {
+        const label = normalizePmLocationLabel(value);
+        if (!label) return;
+        const folded = normalizeCatalogSearchText(label);
+        if (!folded || seen.has(folded)) return;
+        seen.add(folded);
+        out.push(label);
+    };
+    (Array.isArray(primaryItems) ? primaryItems : []).forEach(push);
+    (Array.isArray(extraItems) ? extraItems : []).forEach(push);
+    return out;
+}
+function isPmLocationTag(value) {
+    return !!findPmLocationOption(value);
+}
+function syncPmTagsWithSelections(tags, material, location) {
+    const materialLabel = normalizePmMaterialTag(material);
+    const locationLabel = findPmLocationOption(location) || normalizePmLocationLabel(location);
+    const source = Array.isArray(tags) ? tags : [];
+    const clean = [];
+    const seen = new Set();
+    source.forEach(tag => {
+        const value = String(tag || '').trim();
+        if (!value) return;
+        if (PM_MATERIAL_TAGS.has(normalizePmMaterialTag(value))) return;
+        if (isPmLocationTag(value)) return;
+        if (seen.has(value)) return;
+        seen.add(value);
+        clean.push(value);
+    });
+    if (materialLabel && !seen.has(materialLabel)) clean.push(materialLabel);
+    if (locationLabel && !seen.has(locationLabel)) clean.push(locationLabel);
+    return clean;
+}
+function normalizeCatalogSearchText(value) {
+    const text = String(value || '');
+    const normalized = typeof text.normalize === 'function' ? text.normalize('NFD') : text;
+    return normalized
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+function trimCatalogMeasureNumber(value) {
+    return String(value || '')
+        .replace(/(\.\d*?[1-9])0+$/g, '$1')
+        .replace(/\.0+$/g, '')
+        .trim();
+}
+function buildCatalogMeasureNumberVariants(value) {
+    const num = normalizeSpaceMeasureValue(value);
+    if (num === null) return [];
+    const variants = new Set();
+    [num.toString(), num.toFixed(1), num.toFixed(2)].forEach(item => {
+        const raw = String(item || '').trim();
+        const compact = trimCatalogMeasureNumber(raw);
+        if (raw) variants.add(raw);
+        if (compact) variants.add(compact);
+    });
+    return Array.from(variants).filter(Boolean);
+}
+function addCatalogMeasureNumberTerms(tokens, variants, unit) {
+    variants.forEach(v => {
+        tokens.add(v);
+        if (unit) {
+            tokens.add(`${v} ${unit}`);
+            tokens.add(`${v}${unit}`);
+        }
+    });
+}
+function addCatalogMeasurePairTerms(tokens, firstVariants, secondVariants, unit) {
+    if (!firstVariants.length || !secondVariants.length) return;
+    firstVariants.forEach(first => {
+        secondVariants.forEach(second => {
+            tokens.add(`${first} x ${second}`);
+            tokens.add(`${first}x${second}`);
+            if (unit) {
+                tokens.add(`${first} x ${second} ${unit}`);
+                tokens.add(`${first}x${second} ${unit}`);
+                tokens.add(`${first}${unit} x ${second}${unit}`);
+                tokens.add(`${first}${unit}x${second}${unit}`);
+            }
+        });
+    });
+}
+function buildCatalogMeasureSearchTerms(space) {
+    const width = normalizeSpaceMeasureValue(space?.medida_ancho ?? space?.ancho);
+    const height = normalizeSpaceMeasureValue(space?.medida_alto ?? space?.alto);
+    const unit = normalizeSpaceMeasureUnit(space?.medida_unidad || space?.unidad_medida || 'M');
+    const unitLower = unit.toLowerCase();
+    const terms = new Set();
+    const widthVariants = buildCatalogMeasureNumberVariants(width);
+    const heightVariants = buildCatalogMeasureNumberVariants(height);
+
+    addCatalogMeasureNumberTerms(terms, widthVariants, unitLower);
+    addCatalogMeasureNumberTerms(terms, heightVariants, unitLower);
+    addCatalogMeasurePairTerms(terms, widthVariants, heightVariants, unitLower);
+    addCatalogMeasurePairTerms(terms, heightVariants, widthVariants, unitLower);
+
+    if (width !== null && height !== null) {
+        if (unit === 'M') {
+            const widthCmVariants = buildCatalogMeasureNumberVariants(width * 100);
+            const heightCmVariants = buildCatalogMeasureNumberVariants(height * 100);
+            addCatalogMeasureNumberTerms(terms, widthCmVariants, 'cm');
+            addCatalogMeasureNumberTerms(terms, heightCmVariants, 'cm');
+            addCatalogMeasurePairTerms(terms, widthCmVariants, heightCmVariants, 'cm');
+            addCatalogMeasurePairTerms(terms, heightCmVariants, widthCmVariants, 'cm');
+        } else if (unit === 'CM') {
+            const widthMVariants = buildCatalogMeasureNumberVariants(width / 100);
+            const heightMVariants = buildCatalogMeasureNumberVariants(height / 100);
+            addCatalogMeasureNumberTerms(terms, widthMVariants, 'm');
+            addCatalogMeasureNumberTerms(terms, heightMVariants, 'm');
+            addCatalogMeasurePairTerms(terms, widthMVariants, heightMVariants, 'm');
+            addCatalogMeasurePairTerms(terms, heightMVariants, widthMVariants, 'm');
+        }
+    }
+
+    return Array.from(terms);
+}
+function buildCatalogSearchIndex(space) {
+    return normalizeCatalogSearchText([
+        space?.nombre,
+        space?.clave,
+        space?.tipo,
+        space?.descripcion,
+        space?.material,
+        getSpaceLocationLabel(space),
+        ...buildCatalogMeasureSearchTerms(space)
+    ].filter(Boolean).join(' | '));
+}
+function matchesCatalogSearch(space, term) {
+    const normalizedTerm = normalizeCatalogSearchText(term);
+    if (!normalizedTerm) return true;
+    return buildCatalogSearchIndex(space).includes(normalizedTerm);
 }
 function normalizeSpaceMaterialMeasure(space) {
     const src = (space && typeof space === 'object') ? space : {};
@@ -211,6 +612,7 @@ function normalizeSpaceMaterialMeasure(space) {
     return {
         ...src,
         material: (src.material === null || src.material === undefined) ? '' : String(src.material),
+        ubicacion: (src.ubicacion === null || src.ubicacion === undefined) ? '' : normalizePmLocationLabel(src.ubicacion),
         medida_ancho: medidaAncho,
         medida_alto: medidaAlto,
         medida_unidad: medidaUnidad,
@@ -268,7 +670,7 @@ function buildSpacePrice(space, opts = {}) {
     const taxIds = parseIds(space.impuestos_ids || space.impuestos);
     let taxes = 0;
     taxIds.forEach(tid => {
-        const t = dbTaxes.find(x => String(x.id) === String(tid));
+        const t = findCatalogTaxRecord(tid, space);
         if (!t) return;
         const rate = parseFloat(t.porcentaje || 0) > 1 ? (parseFloat(t.porcentaje || 0) / 100) : parseFloat(t.porcentaje || 0);
         taxes += subtotal * rate;
@@ -278,7 +680,7 @@ function buildSpacePrice(space, opts = {}) {
 function isSpaceIdMatch(space, candidateId) {
     const raw = String(candidateId || '').trim();
     if (!raw || !space) return false;
-    return [space.id, space._pb_id, space.legacy_id].some(value => String(value || '').trim() === raw);
+    return String(space.id || '').trim() === raw;
 }
 function getSpaceById(spaceId) { return allSpaces.find(s => isSpaceIdMatch(s, spaceId)) || null; }
 function getActiveCfg() { return pmQuoteSpaces.find(x => String(x.spaceId) === String(pmActiveSpaceId)) || null; }
@@ -634,8 +1036,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadClientProfilesForQuoteModal();
     loadCatalog();
 
-    // El listener de mgr-type para alternar el atributo 'multiple' fue desactivado para permitir subir múltiples en todos
-    document.getElementById('mgr-type')?.addEventListener('change', function () { /* f.setAttribute('multiple','') */ });
+    document.getElementById('mgr-type')?.addEventListener('change', function () {
+        syncManagerTypeFields(this.value);
+    });
 
     const dStart = document.getElementById('date-start');
     const dEnd = document.getElementById('date-end');
@@ -662,25 +1065,80 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 });
 
-async function loadTaxes() { const { data } = await window.tenantPocketBase.from('impuestos').select('*'); dbTaxes = data || []; }
-async function pmLoadMaterials() {
+async function loadTaxes() {
+    const tenant = resolveCatalogTenantSlug();
+    let rows = [];
     try {
-        const { data } = await window.tenantPocketBase.from('configuracion').select('valor_json').eq('clave', 'materiales_pm').maybeSingle();
-        let list = [];
-        try { list = data?.valor_json?.items || []; } catch (e) { }
-        dbMaterials = list;
-        const sel = document.getElementById('mgr-material');
-        if (sel) {
-            const current = sel.value;
-            sel.innerHTML = '<option value="">— Ninguno —</option>' + list.map(m => `<option value="${m}">${m}</option>`).join('');
-            sel.value = current;
-        }
-    } catch (e) { }
+        const { data } = await window.tenantPocketBase.from('impuestos').select('*').order('nombre', { ascending: true });
+        rows = data || [];
+    } catch (_) {
+        rows = [];
+    }
+    dbTaxes = filterCatalogRowsByTenant(rows, tenant);
+    if (!dbTaxes.length && window.globalPocketBase && tenant) {
+        try {
+            const { data } = await window.globalPocketBase.from('impuestos').select('*').eq('tenant', tenant);
+            dbTaxes = filterCatalogRowsByTenant(data || [], tenant);
+        } catch (_) {}
+    }
+}
+async function pmLoadMaterials(spaceList = []) {
+    const tenant = resolveCatalogTenantSlug('plaza_mayor');
+    const fallback = (Array.isArray(spaceList) ? spaceList : [])
+        .map(space => normalizePmMaterialTag(space?.material))
+        .filter(Boolean);
+    try {
+        const { data } = await window.tenantPocketBase
+            .from('configuracion')
+            .select('id,valor_json,updated,updated_at,created,created_at')
+            .eq('tenant', tenant)
+            .eq('clave', 'materiales_pm');
+        const row = pickCatalogLatestConfigRow(Array.isArray(data) ? data : (data ? [data] : []));
+        const configValue = parseConfigJsonValue(row?.valor_json);
+        dbMaterials = buildPmMaterialOptions(configValue?.items, fallback);
+    } catch (e) {
+        dbMaterials = buildPmMaterialOptions(fallback, []);
+    }
+    const sel = document.getElementById('mgr-material');
+    if (sel) {
+        const current = sel.value;
+        sel.innerHTML = '<option value="">— Ninguno —</option>' + dbMaterials.map(m => `<option value="${m}">${m}</option>`).join('');
+        sel.value = current;
+    }
+}
+async function pmLoadLocations(spaceList = []) {
+    const tenant = resolveCatalogTenantSlug('plaza_mayor');
+    const fallback = (Array.isArray(spaceList) ? spaceList : [])
+        .map(space => getSpaceLocationLabel(space))
+        .filter(Boolean);
+    try {
+        const { data } = await window.tenantPocketBase
+            .from('configuracion')
+            .select('id,valor_json,updated,updated_at,created,created_at')
+            .eq('tenant', tenant)
+            .eq('clave', 'ubicaciones_pm');
+        const row = pickCatalogLatestConfigRow(Array.isArray(data) ? data : (data ? [data] : []));
+        const configValue = parseConfigJsonValue(row?.valor_json);
+        dbLocations = buildPmLocationOptions(configValue?.items, fallback);
+    } catch (e) {
+        dbLocations = buildPmLocationOptions(fallback, []);
+    }
+    const sel = document.getElementById('mgr-location');
+    if (sel) {
+        const current = normalizePmLocationLabel(sel.value || '');
+        const options = buildPmLocationOptions(dbLocations, current ? [current] : []);
+        sel.innerHTML = '<option value="">— Ninguna —</option>' + options.map((item) => `<option value="${item}">${item}</option>`).join('');
+        sel.value = current;
+    }
 }
 async function loadCatalog() {
-    await pmLoadMaterials();
-    const { data } = await window.tenantPocketBase.from('espacios').select('*').order('id');
-    allSpaces = (data || []).map(normalizeSpaceMaterialMeasure);
+    const tenant = resolveCatalogTenantSlug();
+    const { data } = await window.tenantPocketBase.from('espacios').select('*').order('clave');
+    allSpaces = filterCatalogRowsByTenant(data || [], tenant)
+        .map(normalizeSpaceMaterialMeasure)
+        .sort((a, b) => String(a?.clave || a?.nombre || '').localeCompare(String(b?.clave || b?.nombre || ''), 'es', { numeric: true, sensitivity: 'base' }));
+    await pmLoadMaterials(allSpaces);
+    await pmLoadLocations(allSpaces);
     renderSpaces(allSpaces);
     if (IS_PM_QUOTE_PAGE) renderSpaceAddSelect();
 }
@@ -692,6 +1150,10 @@ function renderSpaces(list) {
     list.forEach(s => {
         let adjustedBase = parseFloat(s.precio_base);
         let badgeHTML = '';
+        const taxDetails = getSpaceTaxDetails(s);
+        const taxPriceLabel = taxDetails.length === 1 ? taxDetails[0].nombre : 'Impuestos';
+        const infoRowsHtml = renderCatalogSpaceInfoRows(s);
+        const quoteInfoRows = getCatalogSpaceInfoRows(s, { includeType: true });
 
         if (s.ajuste_tipo === 'aumento') {
             adjustedBase += s.precio_base * (s.ajuste_porcentaje / 100);
@@ -703,22 +1165,18 @@ function renderSpaces(list) {
         }
 
         let totalTax = 0;
-        const sTaxes = parseIds(s.impuestos_ids || s.impuestos);
-        if (sTaxes.length > 0 && dbTaxes.length > 0) {
-            sTaxes.forEach(taxId => {
-                const t = dbTaxes.find(x => String(x.id) === String(taxId));
-                if (t) {
-                    const rate = t.porcentaje > 1 ? t.porcentaje / 100 : t.porcentaje;
-                    totalTax += adjustedBase * rate;
-                }
+        if (taxDetails.length > 0) {
+            taxDetails.forEach(t => {
+                const rate = t.porcentaje > 1 ? t.porcentaje / 100 : t.porcentaje;
+                totalTax += adjustedBase * rate;
             });
         }
         const finalPrice = adjustedBase + totalTax;
         const taxOnlyAmount = finalPrice - adjustedBase;
 
         let priceDisplay = '';
-        if (totalTax > 0) {
-            priceDisplay = `<div class="text-right leading-none"><p class="text-[10px] text-gray-400 font-bold mb-0.5 line-through decoration-gray-400">${formatMoney(adjustedBase)}</p><p class="text-[10px] text-red-500 font-bold mb-0.5">+ ${formatMoney(taxOnlyAmount)} (IVA)</p><p class="font-black text-lg text-gray-900">${formatMoney(finalPrice)}</p></div>`;
+        if (totalTax > 0 && !shouldHideCatalogTaxPriceDetail(s)) {
+            priceDisplay = `<div class="text-right leading-none"><p class="text-[10px] text-gray-400 font-bold mb-0.5 line-through decoration-gray-400">${formatMoney(adjustedBase)}</p><p class="text-[10px] text-red-500 font-bold mb-0.5">+ ${formatMoney(taxOnlyAmount)} (${taxPriceLabel})</p><p class="font-black text-lg text-gray-900">${formatMoney(finalPrice)}</p></div>`;
         } else {
             priceDisplay = `<p class="font-black text-gray-800 text-lg">${formatMoney(finalPrice)}</p>`;
         }
@@ -764,7 +1222,7 @@ function renderSpaces(list) {
                     <p class="text-[10px] font-mono text-gray-400 mt-1">${s.clave || '--'}</p>
                 </div>
                 <div class="space-y-1.5 mb-4 text-[11px]">
-                    <div class="flex justify-between gap-2"><span class="text-gray-400 font-bold uppercase">Tipo</span><span class="text-gray-700 font-bold text-right">${s.tipo || '--'}</span></div>
+                    ${quoteInfoRows.map((row) => `<div class="flex justify-between gap-2"><span class="text-gray-400 font-bold uppercase">${row.label}</span><span class="text-gray-700 font-bold text-right">${row.value}</span></div>`).join('')}
                     <div class="flex justify-between gap-2"><span class="text-gray-400 font-bold uppercase">Precio</span><span class="text-gray-800 font-black text-right">${formatMoney(finalPrice)}</span></div>
                 </div>
                 <div class="flex items-center justify-between gap-2">${stateLabel}${powerOffBtn}</div>
@@ -794,6 +1252,7 @@ function renderSpaces(list) {
                             ${priceDisplay}
                         </div>
                         <p class="text-xs text-gray-500 line-clamp-2 mb-4 h-8">${s.descripcion || 'Sin descripción disponible.'}</p>
+                        ${infoRowsHtml ? `<div class="grid grid-cols-1 gap-2 text-[11px] mb-4">${infoRowsHtml}</div>` : ''}
                         <div class="border-t pt-3">${actionBtn}</div>
                     </div>
                 </div>`;
@@ -824,6 +1283,7 @@ window.stopCardCarousel = function (el) {
 window.openPreviewCardModal = function (id) {
     const s = getSpaceById(id);
     if (!s) return;
+    const previewBadges = renderCatalogPreviewBadges(s);
     let allUrls = []; try { if (s.imagen_url && typeof s.imagen_url === 'string' && s.imagen_url.startsWith('[')) allUrls = JSON.parse(s.imagen_url); else if (s.imagen_url) allUrls = [s.imagen_url]; } catch (e) { }
     if (allUrls.length === 0) allUrls = ['../../assets/img/no-image.svg'];
 
@@ -849,6 +1309,7 @@ window.openPreviewCardModal = function (id) {
                 <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-8 pt-20 pointer-events-none">
                     <h3 class="text-white font-black text-3xl uppercase tracking-tighter">${s.nombre}</h3>
                     <p class="text-white/60 text-sm font-bold mt-1 uppercase tracking-widest">${s.tipo} • ${s.clave}</p>
+                    ${previewBadges ? `<div class="mt-3 flex flex-wrap gap-2 text-[11px]">${previewBadges}</div>` : ''}
                 </div>
             </div>
         `;
@@ -1018,6 +1479,12 @@ window.openManagerModal = function (id) {
         document.getElementById('mgr-tags').value = eTags.join(', ');
 
         document.getElementById('mgr-material').value = s.material || '';
+        const currentLocation = getSpaceLocationLabel(s);
+        const locationSelect = document.getElementById('mgr-location');
+        if (locationSelect && currentLocation && !Array.from(locationSelect.options).some((opt) => opt.value === currentLocation)) {
+            locationSelect.innerHTML += `<option value="${currentLocation}">${currentLocation}</option>`;
+        }
+        document.getElementById('mgr-location').value = currentLocation;
         document.getElementById('mgr-ancho').value = s.medida_ancho ?? s.ancho ?? '';
         document.getElementById('mgr-alto').value = s.medida_alto ?? s.alto ?? '';
         document.getElementById('mgr-unidad').value = s.medida_unidad || s.unidad_medida || 'M';
@@ -1035,41 +1502,56 @@ window.openManagerModal = function (id) {
             }
         }
         document.getElementById('btn-delete-mgr').classList.remove('hidden');
+        syncManagerTypeFields(s.tipo);
     } else {
         document.getElementById('mgr-title').innerText = "Nuevo Espacio";
         document.getElementById('mgr-key').value = ''; document.getElementById('mgr-key').disabled = false;
+        document.getElementById('mgr-type').value = 'local';
         document.getElementById('mgr-name').value = ''; document.getElementById('mgr-base').value = '';
         document.getElementById('mgr-tags').value = '';
-        document.getElementById('mgr-material').value = ''; document.getElementById('mgr-ancho').value = ''; document.getElementById('mgr-alto').value = ''; document.getElementById('mgr-unidad').value = 'M';
+        document.getElementById('mgr-material').value = ''; document.getElementById('mgr-location').value = ''; document.getElementById('mgr-ancho').value = ''; document.getElementById('mgr-alto').value = ''; document.getElementById('mgr-unidad').value = 'M';
         document.getElementById('mgr-desc').value = ''; document.getElementById('mgr-active').checked = true;
         for (let i = 1; i <= 5; i++) {
             const mgrPrev = document.getElementById(`mgr-preview-${i}`); if (mgrPrev) { mgrPrev.src = ''; mgrPrev.classList.add('hidden'); mgrPrev.removeAttribute('data-modified'); }
             const fi = document.getElementById(`mgr-file-${i}`); if (fi) fi.value = '';
         }
         document.getElementById('btn-delete-mgr').classList.add('hidden');
+        syncManagerTypeFields('local');
     }
     window.openModal('manager-modal');
 }
 
 window.saveSpace = async function () {
     if (!myPermissions.catalog_manage) return;
+    if (!(await pmEnsureCatalogManageSession('guardar cambios'))) return;
     const id = document.getElementById('mgr-id').value;
-    const selectedTaxes = Array.from(document.querySelectorAll('.tax-check:checked')).map(cb => parseInt(cb.value));
+    const selectedTaxes = Array.from(document.querySelectorAll('.tax-check:checked'))
+        .map(cb => String(cb.value || '').trim())
+        .filter(Boolean);
 
     // PROCESAR TEXTO A ARREGLO JSONB
     const rawTags = document.getElementById('mgr-tags').value || '';
-    const tagsArray = rawTags.split(',').map(t => t.trim()).filter(Boolean);
-    const medidaAncho = normalizeSpaceMeasureValue(document.getElementById('mgr-ancho').value);
-    const medidaAlto = normalizeSpaceMeasureValue(document.getElementById('mgr-alto').value);
-    const medidaUnidad = normalizeSpaceMeasureUnit(document.getElementById('mgr-unidad').value || 'M');
+    const selectedType = document.getElementById('mgr-type').value || '';
+    const allowsMaterial = isCatalogAdvertisingType(selectedType);
+    const allowsMeasures = isCatalogTypeWithMeasures(selectedType);
+    const material = allowsMaterial ? (document.getElementById('mgr-material').value || '') : '';
+    const location = isCatalogLocalOrIslandType(selectedType) ? (document.getElementById('mgr-location').value || '') : '';
+    const tagsArray = syncPmTagsWithSelections(rawTags.split(',').map(t => t.trim()).filter(Boolean), material, location);
+    const medidaAncho = allowsMeasures ? normalizeSpaceMeasureValue(document.getElementById('mgr-ancho').value) : null;
+    const medidaAlto = allowsMeasures ? normalizeSpaceMeasureValue(document.getElementById('mgr-alto').value) : null;
+    const medidaUnidad = allowsMeasures ? normalizeSpaceMeasureUnit(document.getElementById('mgr-unidad').value || 'M') : 'M';
+    document.getElementById('mgr-tags').value = tagsArray.join(', ');
+    document.getElementById('mgr-material').value = material;
+    document.getElementById('mgr-location').value = normalizePmLocationLabel(location);
 
     const payload = {
         clave: document.getElementById('mgr-key').value.toUpperCase().trim(),
         nombre: document.getElementById('mgr-name').value,
-        tipo: document.getElementById('mgr-type').value,
+        tipo: selectedType,
         descripcion: document.getElementById('mgr-desc').value,
         etiquetas: tagsArray, // Guarda etiquetas en base de datos
-        material: document.getElementById('mgr-material').value || '',
+        material,
+        ubicacion: normalizePmLocationLabel(location),
         medida_ancho: medidaAncho ?? 0,
         medida_alto: medidaAlto ?? 0,
         medida_unidad: medidaUnidad,
@@ -1104,12 +1586,9 @@ window.saveSpace = async function () {
     };
     const persistSpacePayload = async (payloadToSave) => {
         const fd = buildFormData(payloadToSave);
-        const result = id
-            ? await window.tenantPocketBase.from('espacios').update(fd).eq('id', id)
-            : await window.tenantPocketBase.from('espacios').insert(fd);
-        if (result?.error) throw result.error;
-        if (!result?.data) throw new Error('PocketBase no devolvio el espacio guardado.');
-        const verification = compareSavedSpaceMaterialMeasure(result.data, payloadToSave);
+        const savedSpace = await pmSaveEspacioRecord(id, fd);
+        if (!savedSpace) throw new Error('PocketBase no devolvio el espacio guardado.');
+        const verification = compareSavedSpaceMaterialMeasure(savedSpace, payloadToSave);
         if (!verification.ok) {
             throw new Error(`PocketBase no confirmo material/medidas guardadas (${verification.mismatches.join(', ')}).`);
         }
@@ -1117,20 +1596,7 @@ window.saveSpace = async function () {
     };
 
     try {
-        try {
-            await persistSpacePayload(payload);
-        } catch (e) {
-            const errMsg = String(e?.message || e || '').toLowerCase();
-            const hasMeasureFieldInError = errMsg.includes('medida_ancho') || errMsg.includes('medida_alto') || errMsg.includes('medida_unidad');
-            const looksLikeSchemaMismatch = errMsg.includes('unknown') || errMsg.includes('invalid field') || errMsg.includes('schema') || errMsg.includes('not found');
-            const needsLegacyMeasureKeys = hasMeasureFieldInError && looksLikeSchemaMismatch;
-            if (!needsLegacyMeasureKeys) throw e;
-            const legacyPayload = { ...payload, ancho: payload.medida_ancho, alto: payload.medida_alto, unidad_medida: payload.medida_unidad };
-            delete legacyPayload.medida_ancho;
-            delete legacyPayload.medida_alto;
-            delete legacyPayload.medida_unidad;
-            await persistSpacePayload(legacyPayload);
-        }
+        await persistSpacePayload(payload);
         for (let i = 1; i <= 5; i++) { const fi = document.getElementById(`mgr-file-${i}`); if (fi) fi.value = ''; } window.showToast("Guardado", "success"); window.closeModal('manager-modal'); loadCatalog();
     } catch (e) {
         console.error(e);
@@ -1304,6 +1770,8 @@ window.generatePDF = async function () {
             espacio_id: sp.spaceId,
             espacio_nombre: sp.spaceName,
             espacio_clave: sp.spaceKey,
+            espacio_tipo: fullSpace.tipo || null,
+            tipo: fullSpace.tipo || null,
             fecha_inicio: sp.startDate,
             fecha_fin: sp.endDate,
             permanencia_personalizada: !!sp.customPermanence,
@@ -1314,6 +1782,7 @@ window.generatePDF = async function () {
             total_espacio: sp.total || 0,
             // Nuevos campos para PDF
             material: fullSpace.material || null,
+            ubicacion: normalizePmLocationLabel(fullSpace.ubicacion || '') || null,
             medida_ancho: medidaAncho,
             medida_alto: medidaAlto,
             medida_unidad: medidaUnidad,
@@ -1349,7 +1818,7 @@ window.generatePDF = async function () {
         status: 'pendiente',
         creado_por: audit.actorId || null,
         creado_por_nombre: audit.actorName,
-        modificado_por_legacy: audit.actorId || null,
+        modificado_por: audit.actorId || null,
         modificado_por_nombre: audit.actorName
     };
     const { error, id: createdQuoteId } = await pmCreateQuoteRecord(payload);
@@ -1365,7 +1834,15 @@ window.generatePDF = async function () {
     setTimeout(() => { pmNavigateSafely(targetUrl); }, 900);
 }
 
-window.filterCatalogLogic = function () { const term = document.getElementById('cat-search').value.toLowerCase(); const type = document.getElementById('cat-filter-type').value; const sort = document.getElementById('cat-sort').value; let filtered = allSpaces.filter(s => (s.nombre.toLowerCase().includes(term) || s.clave.toLowerCase().includes(term)) && (type === 'all' || s.tipo === type)); if (sort === 'price_asc') filtered.sort((a, b) => a.precio_base - b.precio_base); if (sort === 'price_desc') filtered.sort((a, b) => b.precio_base - a.precio_base); renderSpaces(filtered); }
+window.filterCatalogLogic = function () {
+    const term = document.getElementById('cat-search')?.value || '';
+    const type = document.getElementById('cat-filter-type')?.value || 'all';
+    const sort = document.getElementById('cat-sort')?.value || 'default';
+    let filtered = allSpaces.filter(s => matchesCatalogSearch(s, term) && (type === 'all' || s.tipo === type));
+    if (sort === 'price_asc') filtered.sort((a, b) => a.precio_base - b.precio_base);
+    if (sort === 'price_desc') filtered.sort((a, b) => b.precio_base - a.precio_base);
+    renderSpaces(filtered);
+}
 window.previewImage = function (i, id) { const p = document.getElementById(id || 'mgr-preview'); if (i.files && i.files[0]) { const r = new FileReader(); r.onload = e => { p.src = e.target.result; p.classList.remove('hidden'); p.setAttribute('data-modified', 'true'); }; r.readAsDataURL(i.files[0]); } }
 window.checkAvailability = async function () {
     const msg = document.getElementById('avail-msg');
@@ -1468,9 +1945,9 @@ window.checkAvailability = async function () {
 }
 window.askDeleteSpace = async function () {
     window.openConfirm("¿Eliminar espacio?", async () => {
+        if (!(await pmEnsureCatalogManageSession('eliminar el espacio'))) return;
         try {
-            const result = await window.tenantPocketBase.from('espacios').delete().eq('id', document.getElementById('mgr-id').value);
-            if (result?.error) throw result.error;
+            await pmDeleteEspacioRecord(document.getElementById('mgr-id').value);
             window.showToast("Eliminado");
             window.closeModal('manager-modal');
             loadCatalog();
@@ -1480,3 +1957,6 @@ window.askDeleteSpace = async function () {
         }
     });
 }
+
+
+

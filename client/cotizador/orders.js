@@ -9,6 +9,60 @@
 // =========================================================================
 let orderClientProfiles = []; let orderClientProfilesById = {};
 let __pmMaterialsList = [];
+let __pmLocationsList = [];
+function __pmNormalizeMaterialLabel(value) {
+    const text = String(value || '').trim();
+    const folded = typeof text.normalize === 'function' ? text.normalize('NFD') : text;
+    const clean = folded.replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    if (!clean) return '';
+    if (clean.includes('imagen fija') || clean.includes('jpg')) return 'Imagen fija JPG';
+    if (clean.includes('coroplast')) return 'Coroplast';
+    if (clean.includes('lona')) return clean.includes('bastidor') ? 'Lona sobre bastidor' : 'Lona';
+    if (clean.includes('vinil') || clean.includes('vinyl')) {
+        if (clean.includes('transparen')) return 'Vinil transparente';
+        if (clean.includes('reverso')) {
+            const hasBlack = clean.includes('negro');
+            const hasGray = clean.includes('gris') || clean.includes('gray');
+            if (hasBlack && hasGray) return 'Vinil con reverso gris/negro';
+            if (hasBlack) return 'Vinil con reverso negro';
+        }
+        return 'Vinil';
+    }
+    return text;
+}
+function __pmParseConfigJsonValue(value) {
+    if (!value) return {};
+    if (typeof value === 'object') return value;
+    if (typeof value === 'string') {
+        try {
+            const parsed = JSON.parse(value);
+            return parsed && typeof parsed === 'object' ? parsed : {};
+        } catch (_) {
+            return {};
+        }
+    }
+    return {};
+}
+function __pmBuildMaterialOptions(primaryItems, extraItems = []) {
+    const out = [];
+    const seen = new Set();
+    const push = (value) => {
+        const label = String(__pmNormalizeMaterialLabel(value) || value || '').trim();
+        if (!label) return;
+        const key = label.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        out.push(label);
+    };
+    (Array.isArray(primaryItems) ? primaryItems : []).forEach(push);
+    (Array.isArray(extraItems) ? extraItems : []).forEach(push);
+    return out;
+}
+function __pmNormalizeTaxIds(value) {
+    return (window.parseIds ? window.parseIds(value) : [])
+        .map((item) => String(item || '').trim())
+        .filter(Boolean);
+}
 function __pmNormalizeSpaceMeasureValue(value) {
     if (value === null || value === undefined || value === '') return null;
     const num = parseFloat(value);
@@ -16,7 +70,27 @@ function __pmNormalizeSpaceMeasureValue(value) {
 }
 function __pmNormalizeSpaceMeasureUnit(value) {
     const unit = String(value || '').trim().toUpperCase();
-    return unit === 'CM' ? 'CM' : 'M';
+    if (unit === 'CM') return 'CM';
+    if (unit === 'M2') return 'M2';
+    return 'M';
+}
+function __pmNormalizeLocationLabel(value) {
+    return String(value || '').trim().replace(/\s+/g, ' ');
+}
+function __pmBuildLocationOptions(primaryItems, extraItems = []) {
+    const out = [];
+    const seen = new Set();
+    const push = (value) => {
+        const label = __pmNormalizeLocationLabel(value);
+        if (!label) return;
+        const folded = __pmNormalizeSearchText(label);
+        if (!folded || seen.has(folded)) return;
+        seen.add(folded);
+        out.push(label);
+    };
+    (Array.isArray(primaryItems) ? primaryItems : []).forEach(push);
+    (Array.isArray(extraItems) ? extraItems : []).forEach(push);
+    return out;
 }
 function __pmNormalizeSpaceMaterialMeasure(space) {
     const src = (space && typeof space === 'object') ? space : {};
@@ -26,6 +100,7 @@ function __pmNormalizeSpaceMaterialMeasure(space) {
     return {
         ...src,
         material: (src.material === null || src.material === undefined) ? '' : String(src.material),
+        ubicacion: (src.ubicacion === null || src.ubicacion === undefined) ? '' : __pmNormalizeLocationLabel(src.ubicacion),
         medida_ancho: medidaAncho,
         medida_alto: medidaAlto,
         medida_unidad: medidaUnidad,
@@ -34,34 +109,360 @@ function __pmNormalizeSpaceMaterialMeasure(space) {
         unidad_medida: medidaUnidad
     };
 }
+function __pmNormalizeSearchText(value) {
+    const text = String(value || '');
+    const normalized = typeof text.normalize === 'function' ? text.normalize('NFD') : text;
+    return normalized
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+function __pmGetSpaceTagLabels(space) {
+    const raw = space?.etiquetas ?? space?.espacio_etiquetas;
+    if (Array.isArray(raw)) {
+        return raw.map((item) => String(item || '').trim()).filter(Boolean);
+    }
+    if (typeof raw === 'string') {
+        try {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) return parsed.map((item) => String(item || '').trim()).filter(Boolean);
+        } catch (_) {}
+        return raw.split(',').map((item) => String(item || '').trim()).filter(Boolean);
+    }
+    return [];
+}
+function __pmFindLocationOption(value) {
+    const needle = __pmNormalizeSearchText(value);
+    if (!needle) return '';
+    const match = __pmLocationsList.find((item) => __pmNormalizeSearchText(item) === needle);
+    return match || '';
+}
+function __pmSpaceHasTag(space, term) {
+    const needle = __pmNormalizeSearchText(term);
+    if (!needle) return false;
+    const pool = [space?.tipo, space?.espacio_tipo, ...__pmGetSpaceTagLabels(space)];
+    return pool.some((item) => {
+        const normalized = __pmNormalizeSearchText(item);
+        return normalized === needle || normalized.includes(needle);
+    });
+}
+function __pmResolveSpaceCategory(space) {
+    return __pmNormalizeSearchText(space?.espacio_tipo || space?.tipo || '');
+}
+function __pmResolveAssignedSpace(detailSpace, catalogSpace = null) {
+    const spaceId = String(
+        detailSpace?.espacio_id
+        || detailSpace?.space_id
+        || detailSpace?.espacioId
+        || detailSpace?.spaceId
+        || catalogSpace?.id
+        || ''
+    ).trim();
+    if (!spaceId) return catalogSpace || null;
+    return __pmFindSpaceByAnyId(spaceId) || catalogSpace || null;
+}
+function __pmResolveDetailSpaceCategory(detailSpace, catalogSpace = null) {
+    const assignedSpace = __pmResolveAssignedSpace(detailSpace, catalogSpace);
+    return __pmResolveSpaceCategory(assignedSpace) || __pmResolveSpaceCategory(detailSpace) || __pmResolveSpaceCategory(catalogSpace);
+}
+function __pmIsLocationDetailSpace(space, catalogSpace = null) {
+    const category = __pmResolveDetailSpaceCategory(space, catalogSpace);
+    return category === 'local' || category === 'isla' || category === 'espacio';
+}
+function __pmResolveLocationTagCandidate(space) {
+    const tags = __pmGetSpaceTagLabels(space).map(__pmNormalizeLocationLabel).filter(Boolean);
+    const configuredMatch = tags.find((tag) => !!__pmFindLocationOption(tag));
+    if (configuredMatch) return __pmFindLocationOption(configuredMatch) || configuredMatch;
+    if (!__pmLocationsList.length && __pmIsLocationDetailSpace(space)) {
+        const genericTags = new Set(['local', 'isla', 'espacio']);
+        const typeTags = new Set([
+            __pmNormalizeSearchText(space?.tipo),
+            __pmNormalizeSearchText(space?.espacio_tipo)
+        ].filter(Boolean));
+        const materialTag = __pmNormalizeSearchText(space?.material || '');
+        const fallback = tags.find((tag) => {
+            const normalized = __pmNormalizeSearchText(tag);
+            if (!normalized) return false;
+            if (genericTags.has(normalized)) return false;
+            if (typeTags.has(normalized)) return false;
+            if (materialTag && normalized === materialTag) return false;
+            return true;
+        });
+        if (fallback) return fallback;
+    }
+    return '';
+}
+function __pmGetSpaceLocationLabel(space) {
+    return __pmNormalizeLocationLabel(space?.ubicacion || '');
+}
+function __pmResolveDetailLocation(detailSpace, catalogSpace) {
+    const assignedSpace = __pmResolveAssignedSpace(detailSpace, catalogSpace);
+    const assignedLabel = __pmNormalizeLocationLabel(assignedSpace?.ubicacion || '');
+    if (assignedLabel) return assignedLabel;
+    const detailLabel = __pmNormalizeLocationLabel(detailSpace?.ubicacion || '');
+    if (detailLabel) return detailLabel;
+    return __pmNormalizeLocationLabel(catalogSpace?.ubicacion || '');
+}
 function __pmIsSpaceIdMatch(space, candidateId) {
     const raw = String(candidateId || '').trim();
     if (!raw || !space) return false;
-    return [space.id, space._pb_id, space.legacy_id].some((value) => String(value || '').trim() === raw);
+    return String(space.id || '').trim() === raw;
 }
 function __pmFindSpaceByAnyId(spaceId) {
     return allSpaces.find((space) => __pmIsSpaceIdMatch(space, spaceId)) || null;
 }
+function __pmResolveQuoteFolio(recordOrId, fallbackId = '') {
+    if (recordOrId && typeof recordOrId === 'object') {
+        const current = String(recordOrId.numero_orden || '').trim();
+        if (current) return current.toUpperCase();
+        const rawId = String(recordOrId.id || fallbackId || '').trim().toUpperCase();
+        return rawId ? `PM-${rawId.slice(0, 6)}` : 'PM-PEND';
+    }
+    const rawId = String(recordOrId || fallbackId || '').trim().toUpperCase();
+    return rawId ? `PM-${rawId.slice(0, 6)}` : 'PM-PEND';
+}
+function __pmRoundCurrency(value) {
+    return Math.round(((parseFloat(value) || 0) + Number.EPSILON) * 100) / 100;
+}
+function __pmToFiniteNumber(value, fallback = 0) {
+    const num = parseFloat(value);
+    return Number.isFinite(num) ? num : fallback;
+}
+function __pmHasExplicitValue(value) {
+    return !(value === null || value === undefined || (typeof value === 'string' && value.trim() === ''));
+}
+function __pmParseRecordJson(value) {
+    if (!value) return {};
+    if (typeof value === 'object') return value;
+    if (typeof value === 'string') {
+        try {
+            const parsed = JSON.parse(value);
+            return parsed && typeof parsed === 'object' ? parsed : {};
+        } catch (_) {}
+    }
+    return {};
+}
+function __pmNormalizeConceptsArray(value) {
+    if (!value) return [];
+    if (Array.isArray(value)) return value;
+    const parsed = __pmParseRecordJson(value);
+    if (Array.isArray(parsed)) return parsed;
+    const candidates = [
+        parsed?.items,
+        parsed?.conceptos,
+        parsed?.conceptos_adicionales,
+        parsed?.servicios,
+        parsed?.data
+    ];
+    for (const candidate of candidates) {
+        if (Array.isArray(candidate)) return candidate;
+    }
+    return [];
+}
+function __pmResolveTaxIdsFromDetails(order) {
+    const detailRaw = __pmParseRecordJson(order?.espacios_detalle);
+    const detailList = Array.isArray(detailRaw) ? detailRaw : [];
+    const seen = new Set();
+    const out = [];
+    detailList.forEach((detail) => {
+        __pmNormalizeTaxIds(
+            detail?.impuestos_ids
+            || detail?.impuestos
+            || detail?.tax_ids
+            || detail?.impuestos_detalle
+        ).forEach((taxId) => {
+            if (seen.has(taxId)) return;
+            seen.add(taxId);
+            out.push(taxId);
+        });
+    });
+    return out;
+}
+function __pmResolveTaxTotalFromBreakdown(order, fallback = 0) {
+    const breakdown = __pmParseRecordJson(order?.desglose_impuestos);
+    const direct = [
+        breakdown?.total,
+        breakdown?.tax_total,
+        breakdown?.impuestos_total,
+        breakdown?.total_impuestos
+    ]
+        .map((value) => __pmToFiniteNumber(value, NaN))
+        .find((value) => Number.isFinite(value) && value >= 0);
+    if (Number.isFinite(direct)) return direct;
+    const list = Array.isArray(breakdown)
+        ? breakdown
+        : (Array.isArray(breakdown?.items)
+            ? breakdown.items
+            : (Array.isArray(breakdown?.impuestos) ? breakdown.impuestos : []));
+    const sum = list.reduce((acc, item) => {
+        const amount = __pmToFiniteNumber(
+            item?.monto ?? item?.importe ?? item?.amount ?? item?.valor ?? 0,
+            0
+        );
+        return acc + Math.max(0, amount);
+    }, 0);
+    if (sum > 0) return sum;
+    return Math.max(0, __pmToFiniteNumber(fallback, 0));
+}
+function __pmResolveTaxRecord(taxId, tenantOrSpace = '') {
+    const safeId = String(taxId || '').trim();
+    if (!safeId) return null;
+    const tenant = typeof tenantOrSpace === 'string'
+        ? __pmResolveTenantSlug(tenantOrSpace)
+        : __pmResolveTenantSlug(tenantOrSpace?.tenant || '');
+    const tenantTaxes = __pmFilterRowsByTenant(dbTaxes, tenant);
+    return tenantTaxes.find((tax) => String(tax?.id || '').trim() === safeId)
+        || dbTaxes.find((tax) => String(tax?.id || '').trim() === safeId)
+        || null;
+}
+function __pmResolveTaxRate(tax) {
+    const pct = __pmToFiniteNumber(tax?.porcentaje, 0);
+    return pct > 1 ? pct / 100 : pct;
+}
+function __pmResolveTaxDisplayPercent(tax) {
+    const pct = __pmToFiniteNumber(tax?.porcentaje, 0);
+    return pct > 0 && pct <= 1 ? (pct * 100) : pct;
+}
+function __pmResolveOrderTaxIds(order) {
+    const breakdown = __pmParseRecordJson(order?.desglose_precios);
+    const breakdownIds = __pmNormalizeTaxIds(breakdown?.impuestos_detalle);
+    if (breakdownIds.length) return breakdownIds;
+    const detailIds = __pmResolveTaxIdsFromDetails(order);
+    if (detailIds.length) return detailIds;
+    const space = __pmFindSpaceByAnyId(order?.espacio_id);
+    return __pmNormalizeTaxIds(space?.impuestos_ids || space?.impuestos);
+}
+function __pmResolveOrderPricing(order) {
+    const breakdown = __pmParseRecordJson(order?.desglose_precios);
+    const taxIds = __pmResolveOrderTaxIds(order);
+    const hasSubtotal = __pmHasExplicitValue(breakdown?.subtotal_antes_impuestos);
+    const hasTaxTotal = __pmHasExplicitValue(breakdown?.tax_total);
+    const hasTotal = __pmHasExplicitValue(order?.precio_final);
+
+    let subtotal = hasSubtotal ? __pmToFiniteNumber(breakdown?.subtotal_antes_impuestos, 0) : null;
+    let taxTotal = hasTaxTotal ? __pmToFiniteNumber(breakdown?.tax_total, 0) : null;
+
+    if (subtotal === null && hasTotal && hasTaxTotal) {
+        subtotal = Math.max(0, __pmToFiniteNumber(order?.precio_final, 0) - __pmToFiniteNumber(breakdown?.tax_total, 0));
+    }
+    if (subtotal === null) subtotal = 0;
+
+    if (taxTotal === null) {
+        taxTotal = __pmRoundCurrency(taxIds.reduce((sum, taxId) => {
+            const tax = __pmResolveTaxRecord(taxId, order);
+            return sum + (subtotal * __pmResolveTaxRate(tax));
+        }, 0));
+    }
+    if (!taxTotal || taxTotal <= 0) {
+        taxTotal = __pmRoundCurrency(__pmResolveTaxTotalFromBreakdown(order, taxTotal));
+    }
+    if ((!taxTotal || taxTotal <= 0) && hasTotal) {
+        const inferred = __pmToFiniteNumber(order?.precio_final, 0) - __pmToFiniteNumber(subtotal, 0);
+        if (Number.isFinite(inferred) && inferred > 0) {
+            taxTotal = __pmRoundCurrency(inferred);
+        }
+    }
+
+    const total = hasTotal
+        ? __pmToFiniteNumber(order?.precio_final, 0)
+        : __pmRoundCurrency(subtotal + taxTotal);
+
+    return {
+        breakdown,
+        taxIds,
+        subtotal: __pmRoundCurrency(subtotal),
+        taxTotal: __pmRoundCurrency(taxTotal),
+        total: __pmRoundCurrency(total)
+    };
+}
+function __pmHydrateOrderPricing(order) {
+    if (!order || typeof order !== 'object') return order;
+    const pricing = __pmResolveOrderPricing(order);
+    return {
+        ...order,
+        precio_final: pricing.total,
+        desglose_precios: {
+            ...pricing.breakdown,
+            subtotal_antes_impuestos: pricing.subtotal,
+            impuestos_detalle: pricing.taxIds,
+            tax_total: pricing.taxTotal
+        }
+    };
+}
 function __pmResolveDetailMaterialMeasure(detailSpace, catalogSpace) {
     const detail = __pmNormalizeSpaceMaterialMeasure(detailSpace);
-    const catalog = __pmNormalizeSpaceMaterialMeasure(catalogSpace);
+    const assignedSpace = __pmResolveAssignedSpace(detailSpace, catalogSpace);
+    const catalog = __pmNormalizeSpaceMaterialMeasure(assignedSpace || catalogSpace);
     const hasDetailMaterial = String(detail.material || '').trim() !== '';
     const hasDetailWidth = detail.medida_ancho !== null && detail.medida_ancho !== undefined;
     const hasDetailHeight = detail.medida_alto !== null && detail.medida_alto !== undefined;
     return {
-        material: hasDetailMaterial ? detail.material : catalog.material,
+        material: String(catalog.material || '').trim() || (hasDetailMaterial ? detail.material : ''),
+        ubicacion: __pmResolveDetailLocation(detail, catalog),
         medida_ancho: hasDetailWidth ? detail.medida_ancho : catalog.medida_ancho,
         medida_alto: hasDetailHeight ? detail.medida_alto : catalog.medida_alto,
         medida_unidad: (hasDetailWidth || hasDetailHeight) ? detail.medida_unidad : catalog.medida_unidad
     };
 }
+function __pmResolvePdfSpaceDetail(detailSpace, catalogSpace) {
+    const locationValue = __pmResolveDetailLocation(detailSpace, catalogSpace);
+    if (__pmIsLocationDetailSpace(detailSpace, catalogSpace)) {
+        return locationValue || '--';
+    }
+    const detailMaterialMeasure = __pmResolveDetailMaterialMeasure(detailSpace, catalogSpace);
+    return String(detailMaterialMeasure.material || '').trim() || '--';
+}
+function __pmResolvePdfDetailHeader(detailSpaces = [], fallbackOrder = null, fallbackCatalogSpace = null) {
+    const candidates = Array.isArray(detailSpaces) && detailSpaces.length ? detailSpaces : [fallbackOrder].filter(Boolean);
+    let hasLocation = false;
+    let hasMaterial = false;
+    candidates.forEach((item) => {
+        const catalogSpace = __pmResolveAssignedSpace(item, fallbackCatalogSpace || __pmFindSpaceByAnyId(item?.espacio_id || item?.space_id || item?.espacioId || item?.spaceId || ''));
+        if (__pmIsLocationDetailSpace(item, catalogSpace)) hasLocation = true;
+        else hasMaterial = true;
+    });
+    if (hasLocation && !hasMaterial) return 'Ubicación';
+    if (hasMaterial && !hasLocation) return 'Material';
+    return 'Detalle';
+}
 async function __pmLoadMaterials() {
+    const fallbackMaterials = (Array.isArray(allSpaces) ? allSpaces : [])
+        .map((space) => __pmNormalizeMaterialLabel(space?.material))
+        .filter(Boolean);
     try {
-        const { data, error } = await window.tenantPocketBase.from('configuracion').select('clave,valor_json').eq('clave', 'materiales_pm').maybeSingle();
+        const tenant = __pmResolveTenantSlug('plaza_mayor');
+        const { data, error } = await window.tenantPocketBase
+            .from('configuracion')
+            .select('id,clave,valor_json,updated,updated_at,created,created_at')
+            .eq('tenant', tenant)
+            .eq('clave', 'materiales_pm');
         if (error) throw error;
-        const items = data?.valor_json?.items;
-        __pmMaterialsList = Array.isArray(items) ? items.filter(Boolean) : [];
-    } catch (e) { __pmMaterialsList = []; }
+        const row = __pmPickLatestRecord(Array.isArray(data) ? data : (data ? [data] : []));
+        const items = __pmParseConfigJsonValue(row?.valor_json)?.items;
+        __pmMaterialsList = __pmBuildMaterialOptions(items, fallbackMaterials);
+    } catch (e) {
+        __pmMaterialsList = __pmBuildMaterialOptions(fallbackMaterials, []);
+    }
+}
+async function __pmLoadLocations() {
+    const fallback = (Array.isArray(allSpaces) ? allSpaces : [])
+        .map((space) => __pmNormalizeLocationLabel(space?.ubicacion || ''))
+        .filter(Boolean);
+    try {
+        const tenant = __pmResolveTenantSlug('plaza_mayor');
+        const { data, error } = await window.tenantPocketBase
+            .from('configuracion')
+            .select('id,clave,valor_json,updated,updated_at,created,created_at')
+            .eq('tenant', tenant)
+            .eq('clave', 'ubicaciones_pm');
+        if (error) throw error;
+        const row = __pmPickLatestRecord(Array.isArray(data) ? data : (data ? [data] : []));
+        const items = __pmParseConfigJsonValue(row?.valor_json)?.items;
+        __pmLocationsList = __pmBuildLocationOptions(items, fallback);
+    } catch (_) {
+        __pmLocationsList = __pmBuildLocationOptions(fallback, []);
+    }
 }
 function __pmPopulateMaterialSelect(selectId, selectedValue) {
     const sel = document.getElementById(selectId);
@@ -162,13 +563,16 @@ function __pmBasename(path) {
 async function __pmLoadLetterheadConfig() {
     __PM_LETTERHEAD_URL = (window.HUB_CONFIG && (window.HUB_CONFIG.pmPdfLetterheadUrl || window.HUB_CONFIG.pdfLetterheadPlazaMayorUrl)) || '../public/assets/img/pm-letterhead-default.png';
     try {
+        const tenant = __pmResolveTenantSlug('plaza_mayor');
         const { data, error } = await window.tenantPocketBase
             .from('configuracion')
-            .select('*')
-            .eq('clave', __PM_CFG_LETTERHEAD_KEY)
-            .maybeSingle();
-        if (error || !data) return;
-        const cfg = data.valor_json || {};
+            .select('id,clave,valor_json,updated,updated_at,created,created_at')
+            .eq('tenant', tenant)
+            .eq('clave', __PM_CFG_LETTERHEAD_KEY);
+        if (error) return;
+        const row = __pmPickLatestRecord(Array.isArray(data) ? data : (data ? [data] : []));
+        if (!row) return;
+        const cfg = __pmParseRecordJson(row.valor_json);
         const rawPath = cfg.path || cfg.file_path || cfg.value || '';
         const safePath = rawPath || (cfg.file_name ? `${__PM_LETTERHEAD_PATH}/${cfg.file_name}` : '');
         if (!safePath) return;
@@ -292,6 +696,35 @@ let __pmOrderDetailDirty = false;
 let __pmOrderDetailDirtyBound = false;
 let __pmOrderUsersById = Object.create(null);
 
+function __pmNormalizeTenantSlug(value) {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw) return '';
+    if (raw === 'finanzas' || raw.indexOf('plaza') !== -1) return 'plaza_mayor';
+    if (raw.indexOf('casadepiedra') !== -1 || raw.indexOf('casa_de_piedra') !== -1 || raw.indexOf('casa-de-piedra') !== -1) return 'casa_de_piedra';
+    return raw;
+}
+
+function __pmResolveTenantSlug(fallback = '') {
+    const fromClient = __pmNormalizeTenantSlug(window.tenantPocketBase?.tenant || '');
+    if (fromClient) return fromClient;
+    const fromFallback = __pmNormalizeTenantSlug(fallback);
+    if (fromFallback) return fromFallback;
+    const fromSchema = __pmNormalizeTenantSlug(FIN_SCHEMA);
+    if (fromSchema) return fromSchema;
+    const path = String(window.location.pathname || '').toLowerCase();
+    return path.indexOf('/cotizadorcp/') !== -1 ? 'casa_de_piedra' : 'plaza_mayor';
+}
+
+function __pmFilterRowsByTenant(rows, fallback = '') {
+    const tenant = __pmResolveTenantSlug(fallback);
+    const source = Array.isArray(rows) ? rows : [];
+    if (!tenant) return source.slice();
+    return source.filter((row) => {
+        const rowTenant = __pmNormalizeTenantSlug(row?.tenant || '');
+        return !rowTenant || rowTenant === tenant;
+    });
+}
+
 window.__HUB_HAS_UNSAVED_CHANGES = function() {
     try {
         return IS_PM_ORDER_DETAIL_PAGE === true && __pmOrderDetailDirty === true;
@@ -312,16 +745,13 @@ function __pmReadAuthState(key) {
 }
 
 function __pmResolveCurrentActorId() {
-    const compatAuth = __pmReadAuthState('pb_compat_auth_v1');
-    const nativeAuth = __pmReadAuthState('pb_native_auth_v1');
+    const authState = __pmReadAuthState('pb_native_auth_v1');
     const candidates = [
         currentUserProfile?.id,
         currentUserProfile?.record?.id,
         currentUserProfile?.user?.id,
-        compatAuth?.user?.id,
-        compatAuth?.record?.id,
-        nativeAuth?.user?.id,
-        nativeAuth?.record?.id
+        authState?.user?.id,
+        authState?.record?.id
     ];
     return candidates.map((v) => String(v || '').trim()).find(Boolean) || '';
 }
@@ -331,21 +761,16 @@ function __pmResolveCurrentActorName() {
     if (fromProfile) return fromProfile;
     const cachedName = __pmSanitizeActorName(localStorage.getItem('hub_user_cache_name') || '');
     if (cachedName) return cachedName;
-    const compatAuth = __pmReadAuthState('pb_compat_auth_v1');
-    const nativeAuth = __pmReadAuthState('pb_native_auth_v1');
+    const authState = __pmReadAuthState('pb_native_auth_v1');
     const username = [
         currentUserProfile?.login_username,
         currentUserProfile?.record?.login_username,
         currentUserProfile?.username,
         currentUserProfile?.record?.username,
-        compatAuth?.user?.login_username,
-        compatAuth?.record?.login_username,
-        compatAuth?.user?.username,
-        compatAuth?.record?.username,
-        nativeAuth?.user?.login_username,
-        nativeAuth?.record?.login_username,
-        nativeAuth?.user?.username,
-        nativeAuth?.record?.username
+        authState?.user?.login_username,
+        authState?.record?.login_username,
+        authState?.user?.username,
+        authState?.record?.username
     ]
         .map((value) => __pmSanitizeActorName(value))
         .find(Boolean);
@@ -353,10 +778,8 @@ function __pmResolveCurrentActorName() {
     const email = [
         currentUserProfile?.email,
         currentUserProfile?.record?.email,
-        compatAuth?.user?.email,
-        compatAuth?.record?.email,
-        nativeAuth?.user?.email,
-        nativeAuth?.record?.email
+        authState?.user?.email,
+        authState?.record?.email
     ].map((v) => String(v || '').trim()).find(Boolean) || '';
     const emailUser = __pmSanitizeActorName(email ? email.split('@')[0] : '');
     return emailUser || 'Usuario';
@@ -366,7 +789,7 @@ function __pmBuildQuoteAuditPayload(payload = {}) {
     const next = payload && typeof payload === 'object' ? { ...payload } : {};
     const actorId = __pmResolveCurrentActorId();
     const actorName = __pmResolveCurrentActorName();
-    if (actorId) next.modificado_por_legacy = actorId;
+    if (actorId) next.modificado_por = actorId;
     if (actorName) next.modificado_por_nombre = actorName;
     return next;
 }
@@ -433,6 +856,17 @@ async function __pmQuotesUpdate(id, payload) {
     }
     const result = await window.tenantPocketBase.from('cotizaciones').update(safePayload).eq('id', id);
     return { error: result && result.error ? result.error : null };
+}
+async function __pmEnsureOrderRecord(id) {
+    const safeId = String(id || '').trim();
+    if (!safeId) return null;
+    const existing = allOrders.find((row) => String(row.id || '') === safeId);
+    if (existing) return existing;
+    const { data, error } = await window.tenantPocketBase.from('cotizaciones').select('*').eq('id', safeId).maybeSingle();
+    if (error || !data) throw (error || new Error('No se encontró la cotización.'));
+    const hydrated = __pmHydrateOrderPricing(data);
+    if (!allOrders.some((row) => String(row.id || '') === safeId)) allOrders.push(hydrated);
+    return hydrated;
 }
 
 async function __pmQuotesDelete(id) {
@@ -601,7 +1035,7 @@ async function __pmUploadApprovalSnapshotBlob(orderId, blob, formData = {}) {
     const safeOrderId = String(orderId || '').trim();
     if (!safeOrderId) throw new Error('Cotización inválida para snapshot.');
     if (!blob || !(blob.size > 0)) throw new Error('Snapshot PDF vacío.');
-    const folio = String(formData?.numero_orden || currentPreviewOrder?.numero_orden || safeOrderId.split('-')[0].toUpperCase()).trim();
+    const folio = String(formData?.numero_orden || __pmResolveQuoteFolio(currentPreviewOrder, safeOrderId)).trim();
     const path = `${safeOrderId}/cotizacion_aprobada_${folio}.pdf`;
     const { error: uploadErr } = await window.globalPocketBase.storage.from('documentos').upload(path, blob, { upsert: true });
     if (uploadErr) throw uploadErr;
@@ -612,7 +1046,7 @@ async function __pmUploadApprovalSnapshotBlob(orderId, blob, formData = {}) {
 
 function __pmBuildApprovalSnapshotMeta(orderId, formData = {}) {
     const safeOrderId = String(orderId || '').trim();
-    const folio = String(formData?.numero_orden || currentPreviewOrder?.numero_orden || safeOrderId.split('-')[0].toUpperCase()).trim();
+    const folio = String(formData?.numero_orden || __pmResolveQuoteFolio(currentPreviewOrder, safeOrderId)).trim();
     return {
         folio,
         path: safeOrderId ? `${safeOrderId}/cotizacion_aprobada_${folio}.pdf` : ''
@@ -669,7 +1103,7 @@ window.renderOrderSpaceCards = function() {
             : 'border-gray-200 bg-white text-gray-700 hover:border-brand-red';
         return `<button type="button" ${locked ? 'disabled' : ''} onclick="window.selectOrderSpaceCard('${space.id}')" class="shrink-0 text-left rounded-xl border ${cardCls} p-3 transition ${locked ? 'opacity-70 cursor-not-allowed' : ''}" style="min-width: calc((100% - 1.5rem) / 4);">
             <p class="text-[11px] font-black uppercase leading-tight whitespace-normal break-words">${space.nombre || '--'}</p>
-            <p class="text-[10px] font-mono text-gray-500 mt-1 whitespace-normal break-all">ID: ${space.id || '--'}${space.clave ? ` · ${space.clave}` : ''}</p>
+            <p class="text-[10px] font-mono text-gray-500 mt-1 whitespace-normal break-all">${space.clave ? `Clave: ${space.clave}` : '--'}</p>
         </button>`;
     }).join('');
 };
@@ -734,7 +1168,85 @@ window.showToast = (msg, type='success') => {
     c.appendChild(e);
     setTimeout(() => e.remove(), 3000);
 };
-window.openStoredDocument = async function(path) { if(!path) return window.showToast("Documento no disponible", "error"); window.showToast("Abriendo documento...", "info"); const { data, error } = await window.globalPocketBase.storage.from('documentos').createSignedUrl(path, 3600); if (error || !data) return window.showToast("Error de acceso al archivo", "error"); window.open(data.signedUrl, '_blank'); };
+function __pmEnsureBusyOverlay() {
+    let overlay = document.getElementById('pm-pdf-busy-overlay');
+    if (overlay) return overlay;
+    overlay = document.createElement('div');
+    overlay.id = 'pm-pdf-busy-overlay';
+    overlay.className = 'fixed inset-0 z-[410] hidden items-center justify-center bg-black/70 backdrop-blur-sm p-4';
+    overlay.innerHTML = `<div class="bg-white rounded-2xl shadow-2xl border border-gray-200 px-8 py-7 flex flex-col items-center text-center max-w-sm w-full"><div class="w-12 h-12 rounded-full border-4 border-gray-200 border-t-brand-red animate-spin mb-4"></div><p id="pm-pdf-busy-title" class="text-sm font-black uppercase tracking-wide text-gray-800">Guardando cotización...</p><p class="text-[11px] text-gray-500 mt-2">Espera un momento mientras se genera y guarda el PDF.</p></div>`;
+    document.body.appendChild(overlay);
+    return overlay;
+}
+let __pmBusyOverlayDepth = 0;
+window.__pmShowBusyOverlay = function(message = 'Guardando cotización...') {
+    const overlay = __pmEnsureBusyOverlay();
+    const title = document.getElementById('pm-pdf-busy-title');
+    if (title) title.innerText = String(message || 'Guardando cotización...');
+    __pmBusyOverlayDepth += 1;
+    overlay.classList.remove('hidden');
+    overlay.classList.add('flex');
+};
+window.__pmHideBusyOverlay = function() {
+    const overlay = document.getElementById('pm-pdf-busy-overlay');
+    if (!overlay) return;
+    __pmBusyOverlayDepth = Math.max(0, __pmBusyOverlayDepth - 1);
+    if (__pmBusyOverlayDepth > 0) return;
+    overlay.classList.add('hidden');
+    overlay.classList.remove('flex');
+};
+async function __pmWithBusyOverlay(message, work) {
+    window.__pmShowBusyOverlay(message);
+    try {
+        return await work();
+    } finally {
+        window.__pmHideBusyOverlay();
+    }
+}
+function __pmOpenBlobInViewer(blob, title = 'Documento', popupRef = null) {
+    const popup = popupRef || window.open('', '_blank');
+    if (!popup) return false;
+    const objectUrl = URL.createObjectURL(blob);
+    const safeTitle = String(title || 'Documento').replace(/[<>&"]/g, '');
+    popup.document.open();
+    popup.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${safeTitle}</title><style>html,body{margin:0;height:100%;background:#111827;}iframe{border:0;width:100%;height:100%;background:#fff;}</style></head><body><iframe src="${objectUrl}" title="${safeTitle}"></iframe></body></html>`);
+    popup.document.close();
+    setTimeout(() => {
+        try { URL.revokeObjectURL(objectUrl); } catch (_) {}
+    }, 300000);
+    return true;
+}
+window.openStoredDocument = async function(path) {
+    const safePath = String(path || '').trim();
+    if (!safePath) return window.showToast("Documento no disponible", "error");
+    window.showToast("Abriendo documento...", "info");
+    const popup = window.open('', '_blank');
+    if (popup) {
+        try {
+            popup.document.open();
+            popup.document.write('<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Cargando documento</title><style>html,body{height:100%;margin:0;font-family:Segoe UI,sans-serif;background:#111827;color:#fff;display:flex;align-items:center;justify-content:center;}</style></head><body>Cargando documento...</body></html>');
+            popup.document.close();
+        } catch (_) {}
+    }
+    try {
+        const { data, error } = await window.globalPocketBase.storage.from('documentos').createSignedUrl(safePath, 3600);
+        if (error || !data?.signedUrl) throw (error || new Error('No se pudo firmar el documento.'));
+        const response = await fetch(data.signedUrl, { method: 'GET', credentials: 'omit' });
+        if (!response.ok) throw new Error(`No se pudo abrir el documento (${response.status}).`);
+        const blob = await response.blob();
+        if (!blob || !blob.size) throw new Error('Documento vacío.');
+        if (!__pmOpenBlobInViewer(blob, safePath.split('/').pop() || 'Documento', popup)) {
+            const objectUrl = URL.createObjectURL(blob);
+            window.open(objectUrl, '_blank');
+            setTimeout(() => {
+                try { URL.revokeObjectURL(objectUrl); } catch (_) {}
+            }, 300000);
+        }
+    } catch (e) {
+        try { if (popup && !popup.closed) popup.close(); } catch (_) {}
+        window.showToast("Error de acceso al archivo", "error");
+    }
+};
 
 // MODALES DE CONFIRMACIÓN Y CIERRE INTELIGENTE
 let confirmCallback = null;
@@ -858,7 +1370,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('new-concept-select')?.addEventListener('change', function() { const c = catalogConcepts.find(x => x.id == this.value); if(c) document.getElementById('new-concept-amount').value = c.precio_sugerido; });
     __pmBindOrderDetailDirtyTracking();
     
-    await Promise.all([loadTaxes(), loadSpaces(), loadConcepts()]); await window.loadOrders();
+    await Promise.all([loadTaxes(), loadSpaces(), loadConcepts()]);
+    await __pmLoadLocations();
+    if (!IS_PM_ORDER_DETAIL_PAGE && !IS_PM_ORDER_PREVIEW_PAGE) await window.loadOrders();
     if (!IS_PM_ORDER_DETAIL_PAGE && !IS_PM_ORDER_PREVIEW_PAGE) {
         const firstSignal = __pmReadRefreshSignal();
         if (firstSignal) __pmLastRefreshSignalTs = firstSignal.ts;
@@ -901,9 +1415,35 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 });
 
-async function loadTaxes() { const { data } = await window.tenantPocketBase.from('impuestos').select('*'); dbTaxes = data || []; }
-async function loadSpaces() { const { data } = await window.tenantPocketBase.from('espacios').select('*'); allSpaces = (data || []).map(__pmNormalizeSpaceMaterialMeasure); __pmEnsureSpaceCardOrder(); window.renderOrderSpaceCards(); }
-async function loadConcepts() { const { data } = await window.tenantPocketBase.from('conceptos_catalogo').select('*').eq('activo', true); catalogConcepts = data || []; }
+async function loadTaxes() {
+    const tenant = __pmResolveTenantSlug();
+    let rows = [];
+    try {
+        const { data } = await window.tenantPocketBase.from('impuestos').select('*').order('nombre', { ascending: true });
+        rows = data || [];
+    } catch (_) {
+        rows = [];
+    }
+    dbTaxes = __pmFilterRowsByTenant(rows, tenant);
+    if (!dbTaxes.length && window.globalPocketBase && tenant) {
+        try {
+            const { data } = await window.globalPocketBase.from('impuestos').select('*').eq('tenant', tenant);
+            dbTaxes = __pmFilterRowsByTenant(data || [], tenant);
+        } catch (_) {}
+    }
+}
+async function loadSpaces() {
+    const tenant = __pmResolveTenantSlug();
+    const { data } = await window.tenantPocketBase.from('espacios').select('*');
+    allSpaces = __pmFilterRowsByTenant(data || [], tenant).map(__pmNormalizeSpaceMaterialMeasure);
+    __pmEnsureSpaceCardOrder();
+    window.renderOrderSpaceCards();
+}
+async function loadConcepts() {
+    const tenant = __pmResolveTenantSlug();
+    const { data } = await window.tenantPocketBase.from('conceptos_catalogo').select('*').eq('activo', true);
+    catalogConcepts = __pmFilterRowsByTenant(data || [], tenant);
+}
 
 function __pmFormatUserNameFromRecord(record) {
     const candidates = [
@@ -967,8 +1507,6 @@ function __pmRegisterOrderUserRecord(record) {
     if (!name) return;
     const aliases = [
         record?.id,
-        record?.legacy_id,
-        record?.legacyId,
         record?.user_id,
         record?.userId,
         record?.login_username,
@@ -987,7 +1525,6 @@ function __pmRegisterOrderUserRecord(record) {
 function __pmResolveOrderActorId(order, kind = 'created') {
     if (!order || typeof order !== 'object') return '';
     const createdCandidates = [
-        order.creado_por_legacy,
         order.creado_por,
         order.created_by,
         order.created_by_id,
@@ -998,7 +1535,7 @@ function __pmResolveOrderActorId(order, kind = 'created') {
         order.autor_id
     ];
     const updatedCandidates = [
-        order.modificado_por_legacy,
+        order.modificado_por,
         order.modificado_por,
         order.updated_by,
         order.updated_by_id,
@@ -1138,24 +1675,12 @@ async function __pmPrimeOrderUsers(rows = []) {
     const sources = [window.globalPocketBase, window.tenantPocketBase].filter(Boolean);
     for (let i = 0; i < idList.length; i += chunkSize) {
         const chunk = idList.slice(i, i + chunkSize);
-        const numericChunk = chunk.filter((value) => __pmIsNumericLike(value));
         const textChunk = chunk.filter((value) => !__pmIsNumericLike(value) && !__pmLooksLikeUuid(value));
         for (const source of sources) {
             try {
                 const { data } = await source.from('app_users').select('*').in('id', chunk);
                 (data || []).forEach(__pmRegisterOrderUserRecord);
             } catch (_) {}
-            try {
-                const { data } = await source.from('app_users').select('*').in('legacy_id', chunk);
-                (data || []).forEach(__pmRegisterOrderUserRecord);
-            } catch (_) {
-                if (numericChunk.length) {
-                    try {
-                        const { data } = await source.from('app_users').select('*').in('legacy_id', numericChunk);
-                        (data || []).forEach(__pmRegisterOrderUserRecord);
-                    } catch (_) {}
-                }
-            }
             if (textChunk.length) {
                 try {
                     const { data } = await source.from('app_users').select('*').in('login_username', textChunk);
@@ -1174,7 +1699,7 @@ async function __pmPrimeOrderUsers(rows = []) {
         try {
             const { data } = await source
                 .from('app_users')
-                .select('id,legacy_id,legacyId,user_id,userId,login_username,user_name,username,full_name,name,email');
+                .select('*');
             (data || []).forEach(__pmRegisterOrderUserRecord);
         } catch (_) {}
     }
@@ -1186,7 +1711,7 @@ window.loadOrders = async function() {
         window.showToast(`No se pudieron cargar cotizaciones: ${error.message || error}`, 'error');
         allOrders = [];
     } else {
-        allOrders = data || [];
+        allOrders = (data || []).map(__pmHydrateOrderPricing);
     }
     await __pmPrimeOrderUsers(allOrders);
     renderOrdersTable(allOrders);
@@ -1206,7 +1731,7 @@ function renderOrdersTable(data) {
         const tr = document.createElement('tr'); tr.className = "border-b hover:bg-gray-50 transition group cursor-pointer";
         tr.onclick = (e) => { if(!e.target.closest('button')) window.openOrderEditorPage(o.id); };
         
-        const folioUnificado = o.numero_orden || o.id.split('-')[0].toUpperCase();
+        const folioUnificado = __pmResolveQuoteFolio(o);
         const createdBy = __pmResolveOrderActorName(o, 'created');
         const updatedBy = __pmResolveOrderActorName(o, 'updated');
         const createdTooltip = __pmBuildOrderAuditTooltip(o, 'created');
@@ -1216,8 +1741,9 @@ function renderOrdersTable(data) {
         const deleteCell = canDelete
             ? `<button type="button" onclick="window.askDeleteOrder('${o.id}', event)" class="text-gray-400 hover:text-red-600"><i class="fa-solid fa-trash"></i></button>`
             : `<span class="text-[10px] text-gray-300">—</span>`;
+        const pricing = __pmResolveOrderPricing(o);
         
-        tr.innerHTML = `<td class="p-4 font-black text-brand-dark">${folioUnificado}</td><td class="p-4 font-bold text-xs text-gray-700">${o.cliente_nombre}</td><td class="p-4 text-xs"><span class="font-bold block">${o.espacio_nombre}</span><span class="text-gray-500 font-mono">${window.safeFormatDate(o.fecha_inicio)}</span></td><td class="p-4 text-right font-mono font-bold text-xs">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(o.precio_final)}</td><td class="p-4 text-center"><span class="${sColor} px-2 py-1 rounded text-[9px] font-black uppercase tracking-wider">${sText}</span>${alertsHTML}</td><td class="p-4 text-[10px] font-bold text-gray-600 text-center"${createdTooltipAttr}>${createdBy}</td><td class="p-4 text-[10px] font-bold text-gray-600 text-center"${updatedTooltipAttr}>${updatedBy}</td><td class="p-4 text-center"><button type="button" onclick="event.stopPropagation(); window.openDocsModal('${o.id}')" class="bg-white border border-gray-300 text-gray-600 hover:bg-gray-50 hover:text-brand-dark px-3 py-1.5 rounded-lg text-xs font-bold transition shadow-sm flex items-center gap-2 mx-auto"><i class="fa-solid fa-folder-open text-brand-red"></i> Expediente</button></td><td class="p-4 text-center">${deleteCell}</td>`;
+        tr.innerHTML = `<td class="p-4 font-black text-brand-dark">${folioUnificado}</td><td class="p-4 font-bold text-xs text-gray-700">${o.cliente_nombre}</td><td class="p-4 text-xs"><span class="font-bold block">${o.espacio_nombre}</span><span class="text-gray-500 font-mono">${window.safeFormatDate(o.fecha_inicio)}</span></td><td class="p-4 text-right font-mono font-bold text-xs">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(pricing.total)}</td><td class="p-4 text-center"><span class="${sColor} px-2 py-1 rounded text-[9px] font-black uppercase tracking-wider">${sText}</span>${alertsHTML}</td><td class="p-4 text-[10px] font-bold text-gray-600 text-center"${createdTooltipAttr}>${createdBy}</td><td class="p-4 text-[10px] font-bold text-gray-600 text-center"${updatedTooltipAttr}>${updatedBy}</td><td class="p-4 text-center"><button type="button" onclick="event.stopPropagation(); window.openDocsModal('${o.id}')" class="bg-white border border-gray-300 text-gray-600 hover:bg-gray-50 hover:text-brand-dark px-3 py-1.5 rounded-lg text-xs font-bold transition shadow-sm flex items-center gap-2 mx-auto"><i class="fa-solid fa-folder-open text-brand-red"></i> Expediente</button></td><td class="p-4 text-center">${deleteCell}</td>`;
         t.appendChild(tr);
     });
 }
@@ -1239,7 +1765,7 @@ window.openOrderPreviewTab = function(id, docType = 'quote', action = 'view') {
 function filterOrders(term) { 
     const lower = term.toLowerCase();
     renderOrdersTable(allOrders.filter(o => {
-        const folioUnificado = o.numero_orden || o.id.split('-')[0].toUpperCase();
+        const folioUnificado = __pmResolveQuoteFolio(o);
         return (o.cliente_nombre || '').toLowerCase().includes(lower) || 
                folioUnificado.toLowerCase().includes(lower);
     })); 
@@ -1251,15 +1777,7 @@ window.openOrderEditModal = async function(id) {
 
     await loadClientProfilesForOrderModal();
     
-    currentConcepts = [];
-    if (order.conceptos_adicionales) {
-        if (typeof order.conceptos_adicionales === 'string') {
-            try { currentConcepts = JSON.parse(order.conceptos_adicionales); } catch(e) {}
-        } else if (Array.isArray(order.conceptos_adicionales)) {
-            currentConcepts = order.conceptos_adicionales;
-        }
-    }
-    if(!Array.isArray(currentConcepts)) currentConcepts = [];
+    currentConcepts = __pmNormalizeConceptsArray(order.conceptos_adicionales);
     
     currentPreviewOrder = order;
 
@@ -1321,7 +1839,12 @@ window.openOrderEditModal = async function(id) {
     }
     
     const spaceObj = allSpaces.find(s => s.id == order.espacio_id);
-    if(spaceObj) window.renderTaxesForSpace(spaceObj, order.desglose_precios?.impuestos_detalle);
+    const breakdownForEditor = __pmParseRecordJson(order.desglose_precios);
+    const activeTaxIds = __pmNormalizeTaxIds(
+        breakdownForEditor?.impuestos_detalle
+        || __pmResolveTaxIdsFromDetails(order)
+    );
+    if(spaceObj) window.renderTaxesForSpace(spaceObj, activeTaxIds);
     
     const conceptSel = document.getElementById('new-concept-select');
     conceptSel.innerHTML = '<option value="">-- Agregar --</option>';
@@ -1337,22 +1860,12 @@ window.openOrderEditModal = async function(id) {
 window.renderTaxesForSpace = function(spaceObj, activeTaxIds = null) {
     const container = document.getElementById('oed-taxes-list');
     if(!container) return;
-    container.innerHTML = '';
-    
-    const defaultTaxIds = window.parseIds(spaceObj.impuestos_ids || spaceObj.impuestos).map(String);
-    const isLocked = currentPreviewOrder && ['aprobada', 'finalizada'].includes(currentPreviewOrder.status);
-    
-    dbTaxes.forEach(t => {
-        const tIdStr = String(t.id);
-        const isMandatory = defaultTaxIds.includes(tIdStr);
-        let isChecked = isMandatory || (activeTaxIds && activeTaxIds.map(String).includes(tIdStr));
-        let isDisabled = isLocked || isMandatory;
-        
-        container.innerHTML += `<label class="flex items-center gap-1.5 ${isDisabled ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'}">
-            <input type="checkbox" value="${t.id}" class="oed-tax-check accent-brand-red w-3 h-3" ${isChecked ? 'checked' : ''} ${isDisabled ? 'disabled' : ''} onchange="window.recalcTotal()">
-            <span class="text-[10px] font-bold uppercase text-gray-700">${t.nombre}</span>
-        </label>`;
-    });
+    const selectedTaxIds = (Array.isArray(activeTaxIds) && activeTaxIds.length ? activeTaxIds : window.parseIds(spaceObj.impuestos_ids || spaceObj.impuestos)).map(String);
+    container.dataset.taxIds = JSON.stringify(selectedTaxIds);
+    const taxes = selectedTaxIds.map((taxId) => __pmResolveTaxRecord(taxId, spaceObj)).filter(Boolean);
+    container.innerHTML = taxes.length
+        ? taxes.map((tax) => `<div class="text-[10px] text-gray-500 font-bold uppercase">${tax.nombre}</div>`).join('')
+        : '<p class="text-[10px] text-gray-400 italic">Sin impuestos configurados.</p>';
 };
 
 window.renderConceptsList = function() { 
@@ -1431,12 +1944,17 @@ window.recalcTotal = function() {
         if (adjType === 'descuento') sub -= adjAmount; else sub += adjAmount;
     }
 
+    const activeTaxIds = (() => {
+        const box = document.getElementById('oed-taxes-list');
+        const fromBox = box ? window.parseIds(box.dataset.taxIds || '[]').map(String).filter(Boolean) : [];
+        return fromBox.length ? fromBox : window.parseIds(spaceObj?.impuestos_ids || spaceObj?.impuestos).map(String);
+    })();
     let taxTotal = 0;
     let taxHtml = '';
-    document.querySelectorAll('.oed-tax-check:checked').forEach(cb => {
-        const t = dbTaxes.find(x => x.id == cb.value);
+    activeTaxIds.forEach(taxId => {
+        const t = __pmResolveTaxRecord(taxId, spaceObj);
         if(t) {
-            const taxVal = sub * (t.porcentaje / 100);
+            const taxVal = sub * __pmResolveTaxRate(t);
             taxTotal += taxVal;
             taxHtml += `<div class="flex justify-between text-[10px] text-gray-500"><span>${t.nombre}</span><span>+${taxVal.toLocaleString('es-MX', {style:'currency',currency:'MXN'})}</span></div>`;
         }
@@ -1506,7 +2024,7 @@ window.attemptSaveOrder = function() {
 window.initiateApprovalSnapshot = async function() {
     await __pmEnsurePdfStyleProfile('quote', { forceReload: !__pmIsAdminProfile() });
     const formData = window.getFormDataFromModal();
-    if (!formData.numero_orden) { formData.numero_orden = currentPreviewOrder.id.split('-')[0].toUpperCase(); }
+    if (!formData.numero_orden) { formData.numero_orden = __pmResolveQuoteFolio(currentPreviewOrder); }
 
     const content = await window.getOrderHTML({ ...currentPreviewOrder, ...formData }, 'quote'); 
     
@@ -1576,8 +2094,19 @@ window.getFormDataFromModal = function() {
     currentConcepts.forEach(c => { concepts += parseFloat(c.amount || c.value || 0); });
     let sub = base + concepts;
 
-    const activeTaxIds = Array.from(document.querySelectorAll('.oed-tax-check:checked')).map(cb => parseInt(cb.value));
-    const priceFinal = parseFloat(document.getElementById('oed-price').value);
+    const activeTaxIds = (() => {
+        const box = document.getElementById('oed-taxes-list');
+        const fromBox = box ? window.parseIds(box.dataset.taxIds || '[]').map(String).filter(Boolean) : [];
+        return fromBox.length ? fromBox : __pmNormalizeTaxIds(spaceObj?.impuestos_ids || spaceObj?.impuestos);
+    })();
+    const taxTotal = __pmRoundCurrency(activeTaxIds.reduce((sum, taxId) => {
+        const tax = __pmResolveTaxRecord(taxId, spaceObj);
+        return sum + (sub * __pmResolveTaxRate(tax));
+    }, 0));
+    const priceInputValue = document.getElementById('oed-price').value;
+    const priceFinal = __pmHasExplicitValue(priceInputValue)
+        ? __pmToFiniteNumber(priceInputValue, __pmRoundCurrency(sub + taxTotal))
+        : __pmRoundCurrency(sub + taxTotal);
 
     const adjType = document.getElementById('oed-adj-type').value; 
     const adjVal = parseFloat(document.getElementById('oed-adj-val').value) || 0; 
@@ -1599,7 +2128,7 @@ window.getFormDataFromModal = function() {
         valor_ajuste: adjVal,
         ajuste_es_porcentaje: isPercent,
         conceptos_adicionales: currentConcepts, 
-        desglose_precios: { subtotal_antes_impuestos: sub, impuestos_detalle: activeTaxIds }
+        desglose_precios: { subtotal_antes_impuestos: __pmRoundCurrency(sub), impuestos_detalle: activeTaxIds, tax_total: taxTotal }
     };
 };
 
@@ -1611,7 +2140,7 @@ window.processSaveOrder = async function() {
     try {
         const formData = window.getFormDataFromModal();
         formData.status = document.getElementById('oed-status').value;
-        if(!formData.numero_orden) formData.numero_orden = currentPreviewOrder.id.split('-')[0].toUpperCase();
+        if(!formData.numero_orden) formData.numero_orden = __pmResolveQuoteFolio(currentPreviewOrder);
         
         const { error } = await __pmQuotesUpdate(document.getElementById('oed-id').value, formData);
         if (error) throw error;
@@ -1626,7 +2155,7 @@ window.processSaveOrder = async function() {
 
 window.previewOrderForGeneration = async function(id) {
     await __pmEnsurePdfStyleProfile('order', { forceReload: !__pmIsAdminProfile() });
-    const order = allOrders.find(o => o.id === id);
+    const order = await __pmEnsureOrderRecord(id);
     if(!order) return;
     currentPreviewOrder = { ...order, docType: 'order' }; 
     
@@ -1655,25 +2184,28 @@ window.confirmAndGeneratePurchaseOrder = async function() {
         btn.disabled = true; btn.innerText = "Generando OC...";
         
         try {
-            const element = document.getElementById('pdf-content');
-            if (!__pmIsAdminProfile() && element && currentPreviewOrder) {
-                await __pmEnsurePdfStyleProfile('order', { forceReload: true });
-                element.innerHTML = window.getOrderHTML(currentPreviewOrder, 'order');
-                __pmApplyPdfStyleToLivePreview();
-            }
-            const pdfBlob = await window.generatePdfBlobFromNode(element);
-            const folioUnificado = currentPreviewOrder.numero_orden || currentPreviewOrder.id.split('-')[0].toUpperCase();
-            const path = `${currentPreviewOrder.id}/orden_compra_${folioUnificado}.pdf`;
-            
-            await window.globalPocketBase.storage.from('documentos').upload(path, pdfBlob, { upsert: true });
-            const ocUpdate = await __pmQuotesUpdate(currentPreviewOrder.id, { url_orden_compra: path, fecha_orden_compra: new Date().toISOString() });
-            if (ocUpdate.error) throw ocUpdate.error;
+            const pdfBlob = await __pmWithBusyOverlay('Generando orden de compra...', async () => {
+                const element = document.getElementById('pdf-content');
+                if (!__pmIsAdminProfile() && element && currentPreviewOrder) {
+                    await __pmEnsurePdfStyleProfile('order', { forceReload: true });
+                    element.innerHTML = window.getOrderHTML(currentPreviewOrder, 'order');
+                    __pmApplyPdfStyleToLivePreview();
+                }
+                const blob = await window.generatePdfBlobFromNode(element);
+                const folioUnificado = __pmResolveQuoteFolio(currentPreviewOrder);
+                const path = `${currentPreviewOrder.id}/orden_compra_${folioUnificado}.pdf`;
+                await window.globalPocketBase.storage.from('documentos').upload(path, blob, { upsert: true });
+                const ocUpdate = await __pmQuotesUpdate(currentPreviewOrder.id, { url_orden_compra: path, fecha_orden_compra: new Date().toISOString() });
+                if (ocUpdate.error) throw ocUpdate.error;
+                return blob;
+            });
+            const folioUnificado = __pmResolveQuoteFolio(currentPreviewOrder);
             window.__pmBroadcastOrdersRefresh('purchase_order');
             
             window.downloadBlobAsFile(pdfBlob, `OC_${folioUnificado}.pdf`);
     
             window.showToast("Orden de Compra Generada");
-            if (!(IS_PM_ORDER_PREVIEW_PAGE || __pmIsPreviewOnlyQueryMode())) await window.loadOrders();
+            if (!(IS_PM_ORDER_PREVIEW_PAGE || __pmIsPreviewOnlyQueryMode() || IS_PM_ORDER_DETAIL_PAGE)) await window.loadOrders();
             window.closeModal('preview-modal');
             window.closeModal('docs-modal');
             __pmClosePreviewTabIfNeeded();
@@ -1685,15 +2217,32 @@ window.confirmAndGeneratePurchaseOrder = async function() {
 window.openDocsModal = function(id) {
     const order = allOrders.find(o => o.id === id); if(!order) return;
     document.getElementById('doc-client').innerText = order.cliente_nombre;
-    const folioUnificado = order.numero_orden || order.id.split('-')[0].toUpperCase();
+    const folioUnificado = __pmResolveQuoteFolio(order);
     document.getElementById('doc-folio').innerText = folioUnificado;
-    document.getElementById('doc-space').innerText = order.espacio_nombre;
+    let details = [];
+    try {
+        details = Array.isArray(order.espacios_detalle) ? order.espacios_detalle : JSON.parse(order.espacios_detalle || '[]');
+    } catch (_) {
+        details = [];
+    }
+    const firstSpaceRef = details[0]?.espacio_clave || details[0]?.espacio_nombre || order.espacio_clave || order.espacio_nombre || 'Espacio';
+    document.getElementById('doc-space').innerText = details.length > 1 ? `${firstSpaceRef} + ${details.length - 1}` : firstSpaceRef;
     document.getElementById('doc-dates').innerText = `${window.safeFormatDate(order.fecha_inicio)} - ${window.safeFormatDate(order.fecha_fin)}`;
     
     const list = document.getElementById('docs-list'); list.innerHTML = '';
 
     const createBtn = (label, icon, color, action) => {
         list.innerHTML += `<button type="button" onclick="${action}" class="w-full text-left px-4 py-3 rounded-xl border border-gray-200 hover:bg-gray-50 flex items-center gap-3 transition shadow-sm group bg-white mb-2"><div class="w-8 h-8 rounded-full bg-${color}-100 text-${color}-600 flex items-center justify-center shrink-0"><i class="${icon}"></i></div><div class="flex-grow"><p class="text-xs font-bold text-gray-700">${label}</p></div><i class="fa-solid fa-arrow-right text-xs text-gray-300"></i></button>`;
+    };
+    const createLocked = (label, icon) => {
+        list.innerHTML += `<div class="w-full px-4 py-3 rounded-xl border border-gray-100 bg-gray-50 flex items-center gap-3 mb-2 opacity-60"><i class="${icon} text-gray-400"></i><span class="text-xs font-bold text-gray-400">${label}</span></div>`;
+    };
+    window.toggleDocsPayments = function(sectionId) {
+        const section = document.getElementById(sectionId);
+        const chevron = document.querySelector(`[data-docs-pay-toggle="${sectionId}"]`);
+        if (!section) return;
+        const hidden = section.classList.toggle('hidden');
+        if (chevron) chevron.classList.toggle('rotate-180', !hidden);
     };
 
     // Cotización
@@ -1709,7 +2258,14 @@ window.openDocsModal = function(id) {
     } else if(['aprobada', 'finalizada'].includes(order.status)) {
         createBtn('Generar Orden de Compra', 'fa-solid fa-plus', 'purple', `window.openOrderPreviewTab('${order.id}', 'order', 'generate')`);
     } else {
-        list.innerHTML += `<div class="w-full px-4 py-3 rounded-xl border border-gray-100 bg-gray-50 flex items-center gap-3 mb-2 opacity-60"><i class="fa-solid fa-lock text-gray-400"></i><span class="text-xs font-bold text-gray-400">Orden de Compra (Pendiente)</span></div>`;
+        createLocked('Orden de Compra (Pendiente)', 'fa-solid fa-lock');
+    }
+
+    // Contrato
+    if (order.contrato_url) {
+        createBtn('Ver Contrato', 'fa-solid fa-file-signature', 'emerald', `window.openStoredDocument('${order.contrato_url}')`);
+    } else {
+        createLocked('Contrato (Pendiente)', 'fa-solid fa-lock');
     }
 
     // Factura
@@ -1717,23 +2273,41 @@ window.openDocsModal = function(id) {
         createBtn('Ver Factura (PDF)', 'fa-solid fa-file-pdf', 'red', `window.openStoredDocument('${order.factura_pdf_url}')`);
         if(order.factura_xml_url) createBtn('Descargar XML', 'fa-solid fa-file-code', 'orange', `window.openStoredDocument('${order.factura_xml_url}')`);
     } else {
-        list.innerHTML += `<div class="w-full px-4 py-3 rounded-xl border border-gray-100 bg-gray-50 flex items-center gap-3 mb-2 opacity-60"><i class="fa-solid fa-file-invoice-dollar text-gray-400"></i><span class="text-xs font-bold text-gray-400">Factura (Pendiente)</span></div>`;
+        createLocked('Factura (Pendiente)', 'fa-solid fa-file-invoice-dollar');
     }
 
-    // Historial de recibos
-    if (order.historial_pagos?.length > 0) {
-        const divider = document.createElement('div');
-        divider.className = 'border-t border-gray-100 my-2 pt-2 text-[10px] font-bold text-gray-400 uppercase text-center';
-        divider.innerHTML = 'Historial de Recibos';
-        list.appendChild(divider);
+    const payments = (() => {
+        if (Array.isArray(order.historial_pagos)) return order.historial_pagos.filter(Boolean);
+        try {
+            const parsed = JSON.parse(order.historial_pagos || '[]');
+            return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+        } catch (_) {
+            return [];
+        }
+    })();
+
+    // Pagos
+    if (payments.length > 0) {
+        const paymentSectionId = `docs-payments-${String(order.id)}`;
         let recNo = 0;
-        order.historial_pagos.forEach((p) => {
+        const paymentButtons = payments.map((p) => {
             const type = String(p?.type || p?.tipo || '').toLowerCase();
             const isConstancia = type === 'constancia_liquidacion' || p?.closed === true || p?.is_closure === true;
             const label = isConstancia ? 'Constancia de Liquidación' : `Recibo #${++recNo}`;
             const icon = isConstancia ? 'fa-solid fa-circle-check' : 'fa-solid fa-receipt';
-            createBtn(label, icon, 'green', `window.openStoredDocument('${p.file_path}')`);
-        });
+            const path = String(p?.file_path || p?.path || p?.url || '').trim();
+            return path ? `<button type="button" onclick="window.openStoredDocument('${path}')" class="w-full text-left px-4 py-3 rounded-xl border border-emerald-100 hover:bg-emerald-50 flex items-center gap-3 transition shadow-sm group bg-white mb-2"><div class="w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0"><i class="${icon}"></i></div><div class="flex-grow"><p class="text-xs font-bold text-gray-700">${label}</p></div><i class="fa-solid fa-arrow-right text-xs text-gray-300"></i></button>` : '';
+        }).join('');
+        list.innerHTML += `<div class="mb-2">
+            <button type="button" onclick="window.toggleDocsPayments('${paymentSectionId}')" class="w-full text-left px-4 py-3 rounded-xl border border-gray-200 hover:bg-gray-50 flex items-center gap-3 transition shadow-sm group bg-white">
+                <div class="w-8 h-8 rounded-full bg-green-100 text-green-600 flex items-center justify-center shrink-0"><i class="fa-solid fa-money-bill-wave"></i></div>
+                <div class="flex-grow"><p class="text-xs font-bold text-gray-700">Pagos</p><p class="text-[10px] text-gray-400">${payments.length} documento(s) registrado(s)</p></div>
+                <i data-docs-pay-toggle="${paymentSectionId}" class="fa-solid fa-chevron-down text-xs text-gray-300 transition-transform"></i>
+            </button>
+            <div id="${paymentSectionId}" class="hidden pt-2 pl-3">${paymentButtons}</div>
+        </div>`;
+    } else {
+        createLocked('Pagos (Sin recibos)', 'fa-solid fa-lock');
     }
 
     window.openModal('docs-modal');
@@ -1744,13 +2318,7 @@ window.openPDFPreview = async function(id, type) {
     if (!safeId) return;
     try {
         await __pmEnsurePdfStyleProfile(type, { forceReload: !__pmIsAdminProfile() });
-        let order = allOrders.find((x) => String(x.id || '') === safeId) || null;
-        if (!order) {
-            const { data, error } = await window.tenantPocketBase.from('cotizaciones').select('*').eq('id', safeId).maybeSingle();
-            if (error || !data) throw (error || new Error('No se encontró la cotización.'));
-            order = data;
-            if (!allOrders.some((row) => String(row.id || '') === safeId)) allOrders.push(order);
-        }
+        const order = await __pmEnsureOrderRecord(safeId);
         currentPreviewOrder = { ...order, docType: type }; 
         const content = await window.getOrderHTML(order, type); 
         const pdfContainer = document.getElementById('pdf-content'); 
@@ -1776,15 +2344,17 @@ window.openPDFPreview = async function(id, type) {
 
 window.downloadPDFFromPreview = async function() { 
     const element = document.getElementById('pdf-content'); 
-    const folioUnificado = currentPreviewOrder.numero_orden || currentPreviewOrder.id.split('-')[0].toUpperCase();
+    const folioUnificado = __pmResolveQuoteFolio(currentPreviewOrder);
     try {
-        if (!__pmIsAdminProfile() && element && currentPreviewOrder) {
-            const docType = String(currentPreviewOrder.docType || 'quote').toLowerCase() === 'order' ? 'order' : 'quote';
-            await __pmEnsurePdfStyleProfile(docType, { forceReload: true });
-            element.innerHTML = window.getOrderHTML(currentPreviewOrder, docType);
-            __pmApplyPdfStyleToLivePreview();
-        }
-        const pdfBlob = await window.generatePdfBlobFromNode(element);
+        const pdfBlob = await __pmWithBusyOverlay('Generando PDF...', async () => {
+            if (!__pmIsAdminProfile() && element && currentPreviewOrder) {
+                const docType = String(currentPreviewOrder.docType || 'quote').toLowerCase() === 'order' ? 'order' : 'quote';
+                await __pmEnsurePdfStyleProfile(docType, { forceReload: true });
+                element.innerHTML = window.getOrderHTML(currentPreviewOrder, docType);
+                __pmApplyPdfStyleToLivePreview();
+            }
+            return await window.generatePdfBlobFromNode(element);
+        });
         window.downloadBlobAsFile(pdfBlob, `Documento_${folioUnificado}.pdf`);
     } catch (e) {
         window.showToast("No se pudo descargar el PDF: " + (e?.message || e), "error");
@@ -1813,10 +2383,8 @@ function __pmOrdersBoostPdfTypography(html) {
         .replace(/__PM_TXT_SM__/g, 'text-base');
 }
 
-const __PM_PDF_STYLE_CONFIG_KEY = 'pdf_typography_style';
 const __PM_PDF_STYLE_TENANT = 'plaza_mayor';
 const __PM_PDF_OVERLAYS_COLLECTION = 'pdf_overlays';
-const __PM_PDF_SETTINGS_COLLECTION = 'pdf_generator_settings';
 const __PM_PDF_OVERLAY_TYPES = Object.freeze({
     quote: 'generator:quotes',
     order: 'generator:orders'
@@ -2568,6 +3136,10 @@ function __pmBindFloatingPanelDrag(panel, host) {
     };
     handle.addEventListener('pointerdown', (event) => {
         if (event.button !== 0) return;
+        const interactive = event.target instanceof Element
+            ? event.target.closest('button, input, select, textarea, [data-pdf-inspector-action], [data-pdf-inspector-toggle]')
+            : null;
+        if (interactive) return;
         ensureInitialPosition();
         dragState = {
             startX: event.clientX,
@@ -3068,7 +3640,6 @@ function __pmEnsurePdfEditingChrome(options = {}) {
         const backdrop = document.createElement('div');
         backdrop.id = 'pm-pdf-inspector-backdrop';
         backdrop.className = 'hidden absolute inset-0 z-[96] bg-gray-950/45 backdrop-blur-[1px]';
-        backdrop.addEventListener('click', () => __pmClosePdfInspector());
         container.appendChild(backdrop);
     }
     if (!document.getElementById('pm-pdf-inspector')) {
@@ -3096,9 +3667,6 @@ function __pmEnsurePdfEditingChrome(options = {}) {
             event.preventDefault();
         });
         panel.addEventListener('click', __pmHandlePdfInspectorClick);
-        panel.addEventListener('click', (event) => {
-            if (event.target === panel) __pmClosePdfInspector();
-        });
         container.appendChild(panel);
     }
     __pmBindFloatingPanelDrag(document.getElementById('pm-pdf-inspector'), container);
@@ -3278,8 +3846,7 @@ function __pmResolveCurrentUserRole() {
             return null;
         }
     };
-    const compatAuth = parseAuthState('pb_compat_auth_v1');
-    const nativeAuth = parseAuthState('pb_native_auth_v1');
+    const authState = parseAuthState('pb_native_auth_v1');
     const candidates = [
         window.currentUserProfile?.role,
         window.currentUserProfile?.rol,
@@ -3295,10 +3862,8 @@ function __pmResolveCurrentUserRole() {
         window.userProfile?.role,
         Array.isArray(window.currentUserProfile?.roles) ? window.currentUserProfile.roles[0] : '',
         localStorage.getItem('hub_user_cache_role') || '',
-        compatAuth?.user?.role,
-        compatAuth?.record?.role,
-        nativeAuth?.user?.role,
-        nativeAuth?.record?.role
+        authState?.user?.role,
+        authState?.record?.role
     ];
     for (const candidate of candidates) {
         const safe = __pmNormalizeUserRole(candidate);
@@ -3351,37 +3916,28 @@ async function __pmLoadCurrentUserProfile(user) {
             return null;
         }
     };
-    const compatAuth = parseAuthState('pb_compat_auth_v1');
-    const nativeAuth = parseAuthState('pb_native_auth_v1');
+    const authState = parseAuthState('pb_native_auth_v1');
     const idCandidates = [...new Set([
         String(fallback?.id || '').trim(),
         String(fallback?.record?.id || '').trim(),
-        String(compatAuth?.user?.id || '').trim(),
-        String(compatAuth?.record?.id || '').trim(),
-        String(nativeAuth?.user?.id || '').trim(),
-        String(nativeAuth?.record?.id || '').trim()
+        String(authState?.user?.id || '').trim(),
+        String(authState?.record?.id || '').trim()
     ].filter(Boolean))];
     const emailCandidates = [...new Set([
         String(fallback?.email || '').trim().toLowerCase(),
         String(fallback?.record?.email || '').trim().toLowerCase(),
-        String(compatAuth?.user?.email || '').trim().toLowerCase(),
-        String(compatAuth?.record?.email || '').trim().toLowerCase(),
-        String(nativeAuth?.user?.email || '').trim().toLowerCase(),
-        String(nativeAuth?.record?.email || '').trim().toLowerCase()
+        String(authState?.user?.email || '').trim().toLowerCase(),
+        String(authState?.record?.email || '').trim().toLowerCase()
     ].filter(Boolean))];
     const usernameCandidates = [...new Set([
         String(fallback?.login_username || '').trim(),
         String(fallback?.record?.login_username || '').trim(),
         String(fallback?.username || '').trim(),
         String(fallback?.record?.username || '').trim(),
-        String(compatAuth?.user?.login_username || '').trim(),
-        String(compatAuth?.record?.login_username || '').trim(),
-        String(compatAuth?.user?.username || '').trim(),
-        String(compatAuth?.record?.username || '').trim(),
-        String(nativeAuth?.user?.login_username || '').trim(),
-        String(nativeAuth?.record?.login_username || '').trim(),
-        String(nativeAuth?.user?.username || '').trim(),
-        String(nativeAuth?.record?.username || '').trim()
+        String(authState?.user?.login_username || '').trim(),
+        String(authState?.record?.login_username || '').trim(),
+        String(authState?.user?.username || '').trim(),
+        String(authState?.record?.username || '').trim()
     ].filter(Boolean))];
     const lookupByField = async (table, field, values) => {
         for (const value of values) {
@@ -3538,40 +4094,6 @@ async function __pmLoadModernPdfStyleRecord(profileKey) {
             }
         } catch (_) {}
     }
-    for (const pbClient of clients) {
-        try {
-            const { data, error } = await pbClient
-                .from(__PM_PDF_SETTINGS_COLLECTION)
-                .select('id,config_json,updated,created,updated_at,created_at')
-                .eq('tenant', __PM_PDF_STYLE_TENANT)
-                .eq('generator_type', profileKey === 'order' ? 'orders' : 'quotes');
-            const row = __pmPickLatestRecord(Array.isArray(data) ? data : (data ? [data] : []));
-            if (!error && row) {
-                return { source: 'pdf_generator_settings', id: String(row.id || ''), config: row.config_json || {}, raw: row.config_json || {} };
-            }
-        } catch (_) {}
-    }
-    return null;
-}
-
-async function __pmLoadLegacyPdfStyleRecord() {
-    const clients = [];
-    if (window.tenantPocketBase) clients.push(window.tenantPocketBase);
-    if (window.globalPocketBase && window.globalPocketBase !== window.tenantPocketBase) clients.push(window.globalPocketBase);
-    if (!clients.length) return null;
-    for (const pbClient of clients) {
-        try {
-            const { data, error } = await pbClient
-                .from('configuracion')
-                .select('id,valor_json,updated,created,updated_at,created_at')
-                .eq('clave', __PM_PDF_STYLE_CONFIG_KEY);
-            const row = __pmPickLatestRecord(Array.isArray(data) ? data : (data ? [data] : []));
-            if (!error && row) {
-                const parsed = __pmParseJsonObjectLike(row.valor_json) || {};
-                return { source: 'legacy', id: String(row.id || ''), raw: parsed, config: parsed };
-            }
-        } catch (_) {}
-    }
     return null;
 }
 
@@ -3622,118 +4144,10 @@ async function __pmUpsertModernPdfStyleRecord(profileKey, configJson) {
     return { id: '', config: payload.config_json };
 }
 
-async function __pmUpsertLegacyPdfStyleRecord(configJson) {
-    const clients = [];
-    if (window.tenantPocketBase) clients.push(window.tenantPocketBase);
-    if (window.globalPocketBase && window.globalPocketBase !== window.tenantPocketBase) clients.push(window.globalPocketBase);
-    if (!clients.length) return null;
-    let lastError = null;
-    for (const pbClient of clients) {
-        try {
-            const { data: existing, error: lookupError } = await pbClient
-                .from('configuracion')
-                .select('id,updated,created,updated_at,created_at')
-                .eq('clave', __PM_PDF_STYLE_CONFIG_KEY);
-            if (lookupError) throw lookupError;
-            const existingRow = __pmPickLatestRecord(Array.isArray(existing) ? existing : (existing ? [existing] : []));
-            if (existingRow?.id) {
-                const { error: updError } = await pbClient
-                    .from('configuracion')
-                    .update({ valor_json: configJson || {} })
-                    .eq('clave', __PM_PDF_STYLE_CONFIG_KEY);
-                if (updError) throw updError;
-                return { id: String(existingRow.id || '') };
-            }
-            const { data: inserted, error: insError } = await pbClient
-                .from('configuracion')
-                .insert({ clave: __PM_PDF_STYLE_CONFIG_KEY, valor_json: configJson || {} })
-                .select('id')
-                .single();
-            if (insError) throw insError;
-            return { id: String(inserted?.id || '') };
-        } catch (e) {
-            lastError = e;
-        }
-    }
-    if (lastError) throw lastError;
-    return null;
-}
-
-async function __pmUpsertCompatPdfSettingsRecord(profileKey, configJson) {
-    const clients = [];
-    if (window.tenantPocketBase) clients.push(window.tenantPocketBase);
-    if (window.globalPocketBase && window.globalPocketBase !== window.tenantPocketBase) clients.push(window.globalPocketBase);
-    if (!clients.length) return null;
-    const generatorType = profileKey === 'order' ? 'orders' : 'quotes';
-    const payload = {
-        tenant: __PM_PDF_STYLE_TENANT,
-        generator_type: generatorType,
-        config_json: configJson || {}
-    };
-    let lastError = null;
-    for (const pbClient of clients) {
-        try {
-            const { data: existing, error: lookupError } = await pbClient
-                .from(__PM_PDF_SETTINGS_COLLECTION)
-                .select('id,updated,created,updated_at,created_at')
-                .eq('tenant', __PM_PDF_STYLE_TENANT)
-                .eq('generator_type', generatorType);
-            if (lookupError) throw lookupError;
-            const existingRow = __pmPickLatestRecord(Array.isArray(existing) ? existing : (existing ? [existing] : []));
-            if (existingRow?.id) {
-                const { error: updError } = await pbClient
-                    .from(__PM_PDF_SETTINGS_COLLECTION)
-                    .update(payload)
-                    .eq('tenant', __PM_PDF_STYLE_TENANT)
-                    .eq('generator_type', generatorType);
-                if (updError) throw updError;
-                return { id: String(existingRow.id || '') };
-            }
-            const { data: inserted, error: insError } = await pbClient
-                .from(__PM_PDF_SETTINGS_COLLECTION)
-                .insert(payload)
-                .select('id')
-                .single();
-            if (insError) throw insError;
-            return { id: String(inserted?.id || '') };
-        } catch (e) {
-            lastError = e;
-        }
-    }
-    if (lastError) throw lastError;
-    return null;
-}
-
 async function __pmLoadSharedPdfStyleConfig(profile = 'quote') {
     const profileKey = __pmNormalizePdfStyleProfileKey(profile);
     try {
-        const canMigrate = __pmIsAdminProfile();
-        let record = await __pmLoadModernPdfStyleRecord(profileKey);
-        if (!record) {
-            const legacyRecord = await __pmLoadLegacyPdfStyleRecord();
-            if (legacyRecord?.config) {
-                const legacyPayload = __pmBuildPdfStyleConfigPayload(
-                    legacyRecord.raw || {},
-                    __pmExtractPdfStyleProfile(legacyRecord.config, profileKey),
-                    profileKey
-                );
-                if (canMigrate) {
-                    try {
-                        const saved = await __pmUpsertModernPdfStyleRecord(profileKey, legacyPayload);
-                        record = { source: 'pdf_overlays', id: saved.id, config: saved.config, raw: saved.config };
-                    } catch (_) {
-                        record = { source: 'legacy', id: legacyRecord.id || '', config: legacyPayload, raw: legacyPayload };
-                    }
-                } else {
-                    record = { source: 'legacy', id: legacyRecord.id || '', config: legacyPayload, raw: legacyPayload };
-                }
-            }
-        } else if (record.source !== 'pdf_overlays' && record.config && canMigrate) {
-            try {
-                const saved = await __pmUpsertModernPdfStyleRecord(profileKey, record.config);
-                record = { source: 'pdf_overlays', id: saved.id, config: saved.config, raw: saved.config };
-            } catch (_) {}
-        }
+        const record = await __pmLoadModernPdfStyleRecord(profileKey);
         __pmPdfStyleActiveProfile = profileKey;
         __pmPdfStyleConfigRecordId = record?.id || '';
         __pmPdfStyleConfigStore = record?.source || '';
@@ -3764,8 +4178,6 @@ async function __pmPersistSharedPdfStyleConfig(style, options = {}) {
         __pmPdfStyleConfigRecordId = saved.id;
         __pmPdfStyleConfigStore = 'pdf_overlays';
         __pmPdfStyleRawPayload = saved.config;
-        try { await __pmUpsertCompatPdfSettingsRecord(__pmPdfStyleActiveProfile, configJson); } catch (_) {}
-        try { await __pmUpsertLegacyPdfStyleRecord(configJson); } catch (_) {}
     } catch (e) {
         console.warn('No se pudo guardar la configuracion PDF compartida (PM):', e);
     }
@@ -4342,7 +4754,7 @@ window.getOrderHTML = function(o, type) {
 
     const now = new Date(); const dateStr = now.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' }); const genDateTime = now.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'medium' }); let docTitle = isOrder ? "ORDEN DE COMPRA" : "COTIZACIÓN"; 
     
-    let folio = o.numero_orden || o.id.split('-')[0].toUpperCase(); 
+    let folio = __pmResolveQuoteFolio(o); 
     
     const space = __pmFindSpaceByAnyId(o.espacio_id); const basePrice = parseFloat(space ? space.precio_base : 0); 
     const footerHubHTML = `<div class="w-full text-center mt-10"><p class="pm-pdf-footer-text text-[10px] text-gray-400 font-medium leading-tight" data-base-resource="footer">Generado el ${genDateTime}<br>a través de Marketing Hub - Plaza Mayor</p></div>`; 
@@ -4428,11 +4840,11 @@ window.getOrderHTML = function(o, type) {
             `<tr><td class="py-1 px-3 text-[10px] font-bold text-gray-500 text-right" colspan="4">Subtotal</td><td class="py-1 px-3 text-right text-xs font-bold text-gray-800">${__pmFormatMoneyHtml(subtotal)}</td></tr>`
         ];
         const resolvedTaxes = parseIds(activeTaxIds)
-            .map((tid) => dbTaxes.find((tax) => String(tax.id) === String(tid)))
+            .map((tid) => __pmResolveTaxRecord(tid))
             .filter(Boolean)
             .map((tax) => {
-                const percentage = parseFloat(tax.porcentaje || 0) || 0;
-                const rate = percentage > 1 ? percentage / 100 : percentage;
+                const percentage = __pmResolveTaxDisplayPercent(tax);
+                const rate = __pmResolveTaxRate(tax);
                 return {
                     name: __pmNormalizeTaxName(tax.nombre),
                     percentage,
@@ -4472,10 +4884,10 @@ window.getOrderHTML = function(o, type) {
             const mAncho = detailMaterialMeasure.medida_ancho;
             const mAlto = detailMaterialMeasure.medida_alto;
             const mUnidad = detailMaterialMeasure.medida_unidad || 'M';
-            const mMaterial = String(detailMaterialMeasure.material || '').trim() || '--';
+            const mDetail = __pmResolvePdfSpaceDetail(sp, catalogSpace);
             const measuresStr = (mAncho !== null && mAncho !== undefined && mAlto !== null && mAlto !== undefined) ? `${mAncho}x${mAlto} ${mUnidad}` : '--';
 
-            rowsHtml += `<tr><td class="py-2 px-3 align-top break-words">${__pmRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(mMaterial)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(measuresStr)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${window.safeFormatDate(sp.fecha_inicio)}<br>${window.safeFormatDate(sp.fecha_fin)}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${__pmFormatMoneyHtml(spSubtotal)}</td></tr>`;
+            rowsHtml += `<tr><td class="py-2 px-3 align-top break-words">${__pmRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(mDetail)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(measuresStr)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${window.safeFormatDate(sp.fecha_inicio)}<br>${window.safeFormatDate(sp.fecha_fin)}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${__pmFormatMoneyHtml(spSubtotal)}</td></tr>`;
         });
     } else {
         const identity = __pmResolveSpaceIdentity();
@@ -4483,15 +4895,13 @@ window.getOrderHTML = function(o, type) {
         const mAncho = detailMaterialMeasure.medida_ancho;
         const mAlto = detailMaterialMeasure.medida_alto;
         const mUnidad = detailMaterialMeasure.medida_unidad || 'M';
-        const mMaterial = String(detailMaterialMeasure.material || '').trim() || '--';
+        const mDetail = __pmResolvePdfSpaceDetail(o, space);
         const measuresStr = (mAncho !== null && mAncho !== undefined && mAlto !== null && mAlto !== undefined) ? `${mAncho}x${mAlto} ${mUnidad}` : '--';
         runningSubtotal = rentalTotal;
-        rowsHtml = `<tr><td class="py-2 px-3 align-top break-words">${__pmRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(mMaterial)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(measuresStr)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${window.safeFormatDate(o.fecha_inicio)}<br>${window.safeFormatDate(o.fecha_fin)}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${__pmFormatMoneyHtml(rentalTotal)}</td></tr>`;
+        rowsHtml = `<tr><td class="py-2 px-3 align-top break-words">${__pmRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(mDetail)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(measuresStr)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${window.safeFormatDate(o.fecha_inicio)}<br>${window.safeFormatDate(o.fecha_fin)}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${__pmFormatMoneyHtml(rentalTotal)}</td></tr>`;
     }
     
-    let cArray = [];
-    if(Array.isArray(o.conceptos_adicionales)) cArray = o.conceptos_adicionales;
-    else if(typeof o.conceptos_adicionales === 'string') try{cArray=JSON.parse(o.conceptos_adicionales)}catch(e){}
+    const cArray = __pmNormalizeConceptsArray(o.conceptos_adicionales);
     cArray.forEach(c => { 
         let val = parseFloat(c.amount !== undefined ? c.amount : (c.value || 0));
         let amount = val;
@@ -4522,12 +4932,14 @@ window.getOrderHTML = function(o, type) {
     const __pmFitLineHeight = __pmDensityLevel >= 3 ? '105%' : (__pmDensityLevel >= 2 ? '112%' : '120%');
     const __pmTableFitInline = `--pm-fit-head-size:${__pmFitHeadPx}px;--pm-fit-body-size:${__pmFitBodyPx}px;--pm-fit-cell-py:${__pmFitCellPy}px;--pm-fit-cell-px:${__pmFitCellPx}px;--pm-fit-line-height:${__pmFitLineHeight};`;
     const __pmQuickMarginClass = __pmDensityLevel >= 2 ? 'mb-8' : (__pmDensityLevel === 1 ? 'mb-12' : 'mb-20');
-    let taxIds = [];
-    if (o.desglose_precios && o.desglose_precios.impuestos_detalle) taxIds = o.desglose_precios.impuestos_detalle;
-    else { const s = __pmFindSpaceByAnyId(o.espacio_id); taxIds = s ? parseIds(s.impuestos) : []; }
-    const storedTaxTotal = parseFloat(o?.desglose_precios?.tax_total || 0) || 0;
+    const detailColumnLabel = __pmResolvePdfDetailHeader(detailSpaces, o, space);
+    const pricing = __pmResolveOrderPricing(o);
+    const taxIds = pricing.taxIds;
+    const storedTaxTotal = pricing.taxTotal > 0
+        ? pricing.taxTotal
+        : Math.max(0, __pmRoundMoney(pricing.total - runningSubtotal));
     const taxRows = __pmBuildTaxRows(runningSubtotal, taxIds, storedTaxTotal);
-    const totalsBlock = `<div class="pm-pdf-summary flex justify-end mb-2 pr-4" data-base-resource="summary"><div class="pm-pdf-summary-table-wrap"><table class="w-full border-collapse">${taxRows}<tr><td class="pt-2 border-t-2 border-gray-800 align-middle text-right" colspan="4"><span class="text-[10px] font-bold uppercase text-gray-500 mr-2">Total Neto</span></td><td class="pt-2 border-t-2 border-gray-800 align-middle text-right"><span class="text-xl font-black text-gray-900">${__pmFormatMoneyHtml(o.precio_final)}</span></td></tr></table></div></div>`; 
+    const totalsBlock = `<div class="pm-pdf-summary flex justify-end mb-2 pr-4" data-base-resource="summary"><div class="pm-pdf-summary-table-wrap"><table class="w-full border-collapse">${taxRows}<tr><td class="pt-2 border-t-2 border-gray-800 align-middle text-right" colspan="4"><span class="text-[10px] font-bold uppercase text-gray-500 mr-2">Total Neto</span></td><td class="pt-2 border-t-2 border-gray-800 align-middle text-right"><span class="text-xl font-black text-gray-900">${__pmFormatMoneyHtml(pricing.total)}</span></td></tr></table></div></div>`; 
     
     const quoteApproverTitle = __pmResolvePdfTemplateString(pdfContent.quoteApproverTitle || 'QUIEN APRUEBA', { CLIENT_NAME: clientName });
     const quoteApproverSubtitle = __pmResolvePdfTemplateString(pdfContent.quoteApproverSubtitle || 'Plaza Mayor', { CLIENT_NAME: clientName });
@@ -4544,7 +4956,7 @@ window.getOrderHTML = function(o, type) {
     }
     
     const pageBaseHeight = Number(__pmContentBaseHeightPx().toFixed(2));
-const page1Raw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageBaseHeight}px;height:${pageBaseHeight}px;overflow:visible;position:relative;"><div class="pm-pdf-page-frame" style="${__pmBuildPdfContentFrameStyle(pageBaseHeight, 'display:flex;flex-direction:column;justify-content:space-between;')}"><div>${renderHeader(docTitle)}${clientComponent}${isOrder ? `<div class="mb-2 bg-gray-100 p-2 rounded text-base"><span>Folio de Servicio: <strong class="font-black text-lg">${folio}</strong></span></div>` : ''}<table class="w-full text-left mb-2 mt-3 table-fixed border-separate border-spacing-0"><colgroup><col style="width:38%;"><col style="width:14%;"><col style="width:12%;"><col style="width:14%;"><col style="width:22%;"></colgroup><thead class="pm-pdf-table-head bg-gray-100 text-sm font-black text-gray-500 uppercase"><tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">Material</th><th class="py-2 px-3 text-center">Medidas</th><th class="py-2 px-3 text-center">Fecha</th><th class="py-2 px-3 text-right rounded-r">Importe</th></tr></thead><tbody class="pm-pdf-table-body divide-y divide-gray-50 text-[12px]" data-base-resource="table-body">${rowsHtml}</tbody></table> ${totalsBlock}</div><div class="pb-2">${!isOrder ? `<div class="pm-pdf-quick grid grid-cols-2 gap-4 ${__pmQuickMarginClass} pt-4 border-t border-gray-100" data-base-resource="quick"><div><h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">${__pmSafeHtml(pdfContent.quickLeftTitle || 'Condiciones:')}</h4><ul class="list-none text-xs text-gray-600 space-y-0.5 leading-tight">${quickLeftItemsHtml}</ul></div><div><h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">${__pmSafeHtml(pdfContent.quickRightTitle || 'Vigencia:')}</h4><p class="text-xs text-gray-600">${__pmSafeHtml(pdfContent.quickRightBody || '')}</p></div></div>` : ''}<div class="pm-pdf-sign flex justify-between items-start px-2" data-base-resource="sign">${signBlock}</div>${footerHubHTML}</div></div>${__pmRenderPdfResources(pdfStyle, 1)}</div>`;
+const page1Raw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageBaseHeight}px;height:${pageBaseHeight}px;overflow:visible;position:relative;"><div class="pm-pdf-page-frame" style="${__pmBuildPdfContentFrameStyle(pageBaseHeight, 'display:flex;flex-direction:column;justify-content:space-between;')}"><div>${renderHeader(docTitle)}${clientComponent}${isOrder ? `<div class="mb-2 bg-gray-100 p-2 rounded text-base"><span>Folio de Servicio: <strong class="font-black text-lg">${folio}</strong></span></div>` : ''}<table class="w-full text-left mb-2 mt-3 table-fixed border-separate border-spacing-0"><colgroup><col style="width:38%;"><col style="width:14%;"><col style="width:12%;"><col style="width:14%;"><col style="width:22%;"></colgroup><thead class="pm-pdf-table-head bg-gray-100 text-sm font-black text-gray-500 uppercase"><tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">${__pmSafeHtml(detailColumnLabel)}</th><th class="py-2 px-3 text-center">Medidas</th><th class="py-2 px-3 text-center">Fecha</th><th class="py-2 px-3 text-right rounded-r">Importe</th></tr></thead><tbody class="pm-pdf-table-body divide-y divide-gray-50 text-[12px]" data-base-resource="table-body">${rowsHtml}</tbody></table> ${totalsBlock}</div><div class="pb-2">${!isOrder ? `<div class="pm-pdf-quick grid grid-cols-2 gap-4 ${__pmQuickMarginClass} pt-4 border-t border-gray-100" data-base-resource="quick"><div><h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">${__pmSafeHtml(pdfContent.quickLeftTitle || 'Condiciones:')}</h4><ul class="list-none text-xs text-gray-600 space-y-0.5 leading-tight">${quickLeftItemsHtml}</ul></div><div><h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">${__pmSafeHtml(pdfContent.quickRightTitle || 'Vigencia:')}</h4><p class="text-xs text-gray-600">${__pmSafeHtml(pdfContent.quickRightBody || '')}</p></div></div>` : ''}<div class="pm-pdf-sign flex justify-between items-start px-2" data-base-resource="sign">${signBlock}</div>${footerHubHTML}</div></div>${__pmRenderPdfResources(pdfStyle, 1)}</div>`;
     const pages = [
         __pmWrapLetterheadPage(__pmOrdersBoostPdfTypography(page1Raw), { baseWidth: __PM_PDF_CONTENT_BASE_WIDTH_PX, baseHeight: pageBaseHeight })
     ];
@@ -4595,7 +5007,13 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     return { s, e: start.toISOString().slice(0, 10) };
   };
   const getSpace = (sid) => __pmFindSpaceByAnyId(sid);
-  const defaultTaxIds = (space) => window.parseIds(space?.impuestos_ids || space?.impuestos).map((x) => parseInt(x, 10)).filter(Number.isFinite);
+  const defaultTaxIds = (space) => __pmNormalizeTaxIds(space?.impuestos_ids || space?.impuestos);
+  const resolveCfgTaxIds = (cfg, space) => Array.isArray(cfg?.taxIds) ? __pmNormalizeTaxIds(cfg.taxIds) : defaultTaxIds(space);
+  const renderAutoTaxSummary = (taxIds, space) => {
+    const rows = __pmNormalizeTaxIds(taxIds).map((tid) => __pmResolveTaxRecord(tid, space)).filter(Boolean);
+    if (!rows.length) return '<p class="text-[10px] text-gray-400 italic">Sin impuestos configurados.</p>';
+    return rows.map((tax) => `<div class="text-[10px] text-gray-500 font-bold uppercase">${tax.nombre}</div>`).join("");
+  };
   const detailMeasureNumber = (value) => {
     if (value === null || value === undefined || value === "") return null;
     const n = parseFloat(value);
@@ -4603,7 +5021,9 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
   };
   const detailMeasureUnit = (value) => {
     const u = String(value || "M").trim().toUpperCase();
-    return u === "CM" ? "CM" : "M";
+    if (u === "CM") return "CM";
+    if (u === "M2") return "M2";
+    return "M";
   };
   const detailTagList = (value) => {
     let tags = [];
@@ -4641,6 +5061,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       espacio_etiquetas: espacioEtiquetas,
       etiquetas: item.etiquetas ?? espacioEtiquetas,
       material: String(item.material || ""),
+      ubicacion: __pmNormalizeLocationLabel(item.ubicacion || ""),
       medida_ancho: medidaAncho,
       medida_alto: medidaAlto,
       medida_unidad: medidaUnidad,
@@ -4682,14 +5103,16 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     const seedMedidaUnit = seed.medidaUnit || seed.medida_unidad || seed.unidad_medida || sp?.medida_unidad || sp?.unidad_medida || "M";
     const cfg = {
       spaceId: String(spaceId),
+      spaceType: String(seed.spaceType || seed.espacio_tipo || seed.tipo || sp?.tipo || ""),
       selected: seed.selected !== false,
       customPermanence: !!seed.customPermanence,
       startDate: iso(seed.startDate || ""),
       endDate: iso(seed.endDate || ""),
       customBasePrice: seed.customBasePrice === null || seed.customBasePrice === undefined || seed.customBasePrice === "" ? "" : (parseFloat(seed.customBasePrice) || 0),
-      taxIds: Array.isArray(seed.taxIds) && seed.taxIds.length ? seed.taxIds.map((x) => parseInt(x, 10)).filter(Number.isFinite) : defaultTaxIds(sp),
+      taxIds: Array.isArray(seed.taxIds) ? __pmNormalizeTaxIds(seed.taxIds) : defaultTaxIds(sp),
       concepts: safeArr(seed.concepts).map(normConcept),
       material: String(seed.material || sp?.material || ""),
+      ubicacion: __pmNormalizeLocationLabel(seed.ubicacion || sp?.ubicacion || ""),
       medidaAncho: parseFloat(seedMedidaAncho || 0) || 0,
       medidaAlto: parseFloat(seedMedidaAlto || 0) || 0,
       medidaUnit: String(seedMedidaUnit || "M")
@@ -4698,10 +5121,9 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     return cfg;
   };
   const taxRate = (ids) => ids.reduce((acc, tid) => {
-    const t = dbTaxes.find((x) => String(x.id) === String(tid));
+    const t = __pmResolveTaxRecord(tid);
     if (!t) return acc;
-    const p = parseFloat(t.porcentaje || 0);
-    return acc + (p > 1 ? p / 100 : p);
+    return acc + __pmResolveTaxRate(t);
   }, 0);
   const money = (v) => new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(v || 0);
   const PM_REFRESH_KEY = "pm_orders_refresh_signal";
@@ -4864,6 +5286,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     cfg.medidaAncho = parseFloat(document.getElementById("oed-medida-ancho")?.value || 0) || 0;
     cfg.medidaAlto = parseFloat(document.getElementById("oed-medida-alto")?.value || 0) || 0;
     cfg.medidaUnit = document.getElementById("oed-medida-unit")?.value || "M";
+    cfg.taxIds = resolveCfgTaxIds(cfg, getSpace(cfg.spaceId));
     normDates(cfg);
   }
 
@@ -4872,15 +5295,8 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     const box = document.getElementById("oed-taxes-list");
     if (!cfg || !box) return;
     const sp = getSpace(cfg.spaceId);
-    const mandatory = defaultTaxIds(sp).map(String);
-    const locked = __pmIsLockedOrder();
-    box.innerHTML = "";
-    dbTaxes.forEach((t) => {
-      const tid = String(t.id);
-      const checked = mandatory.includes(tid) || (cfg.taxIds || []).map(String).includes(tid);
-      const disabled = locked || mandatory.includes(tid);
-      box.innerHTML += `<label class="flex items-center gap-1.5 ${disabled ? "cursor-not-allowed opacity-70" : "cursor-pointer"}"><input type="checkbox" value="${t.id}" class="oed-tax-check accent-brand-red w-3 h-3" ${checked ? "checked" : ""} ${disabled ? "disabled" : ""} onchange="window.onOrderTaxSelectionChanged()"><span class="text-[10px] font-bold uppercase text-gray-700">${t.nombre}</span></label>`;
-    });
+    cfg.taxIds = resolveCfgTaxIds(cfg, sp);
+    box.innerHTML = renderAutoTaxSummary(cfg.taxIds, sp);
   }
 
   function loadActiveToForm() {
@@ -5097,7 +5513,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       const sel = !!cfg.selected;
       const active = sel && String(pmActive) === String(sp.id);
       const card = active ? "border-emerald-400 bg-emerald-50 ring-1 ring-emerald-300" : (sel ? "border-yellow-300 bg-yellow-50" : "border-gray-200 bg-white");
-      return `<div onclick="${locked ? "" : `window.selectOrderSpaceCard('${sp.id}')`}" class="text-left rounded-xl border ${card} p-3 transition ${locked ? "cursor-not-allowed opacity-70" : "cursor-pointer"} min-h-[96px]"><div class="min-w-0"><p class="text-[11px] font-black uppercase leading-tight whitespace-normal break-words">${sp.nombre || "--"}</p><p class="text-[10px] font-mono text-gray-500 mt-1 whitespace-normal break-all">ID: ${sp.id || "--"}${sp.clave ? ` · ${sp.clave}` : ""}</p></div></div>`;
+      return `<div onclick="${locked ? "" : `window.selectOrderSpaceCard('${sp.id}')`}" class="text-left rounded-xl border ${card} p-3 transition ${locked ? "cursor-not-allowed opacity-70" : "cursor-pointer"} min-h-[96px]"><div class="min-w-0"><p class="text-[11px] font-black uppercase leading-tight whitespace-normal break-words">${sp.nombre || "--"}</p><p class="text-[10px] font-mono text-gray-500 mt-1 whitespace-normal break-all">${sp.clave ? `Clave: ${sp.clave}` : "--"}</p></div></div>`;
     }).join("");
   };
 
@@ -5208,7 +5624,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
   window.onOrderTaxSelectionChanged = function () {
     const cfg = activeCfg();
     if (!cfg) return;
-    cfg.taxIds = Array.from(document.querySelectorAll(".oed-tax-check:checked")).map((cb) => parseInt(cb.value, 10)).filter(Number.isFinite);
+    cfg.taxIds = resolveCfgTaxIds(cfg, getSpace(cfg.spaceId));
     window.recalcTotal();
   };
 
@@ -5222,7 +5638,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       const concepts = safeArr(cfg.concepts).map(normConcept);
       const conceptsTotal = concepts.reduce((a, c) => a + (parseFloat(c.amount || c.value || 0) || 0), 0);
       const subtotalSpace = base + conceptsTotal;
-      const taxIds = (cfg.taxIds && cfg.taxIds.length) ? cfg.taxIds.slice() : defaultTaxIds(sp);
+      const taxIds = resolveCfgTaxIds(cfg, sp);
       return { cfg, sp, base, concepts, conceptsTotal, subtotalSpace, taxIds, rate: taxRate(taxIds) };
     });
     const subtotalRaw = rows.reduce((a, r) => a + r.subtotalSpace, 0);
@@ -5243,6 +5659,14 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       r.adjustedSubtotal = adjusted * ratio;
       r.tax = r.adjustedSubtotal * r.rate;
       r.total = r.adjustedSubtotal + r.tax;
+      r.taxBreakdown = (r.taxIds || []).map((tid) => {
+        const tax = __pmResolveTaxRecord(tid, r.sp);
+        if (!tax) return null;
+        return {
+          name: tax.nombre || "Impuesto",
+          amount: r.adjustedSubtotal * __pmResolveTaxRate(tax)
+        };
+      }).filter(Boolean);
       tax += r.tax;
     });
     const final = adjusted + tax;
@@ -5250,11 +5674,20 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
 
     const cHtml = [];
     rows.forEach((r) => {
-      cHtml.push(`<div class="flex justify-between text-[10px] text-gray-500"><span>${r.sp?.nombre || r.cfg.spaceId} - Base</span><span>${money(r.base)}</span></div>`);
+      const spaceRef = r.sp?.clave ? `${r.sp?.nombre || r.cfg.spaceId} [${r.sp.clave}]` : (r.sp?.nombre || r.cfg.spaceId);
+      cHtml.push(`<div class="pt-1"><p class="text-[10px] font-black uppercase text-gray-500">${spaceRef}</p></div>`);
+      cHtml.push(`<div class="flex justify-between text-[10px] text-gray-500"><span>Base</span><span>${money(r.base)}</span></div>`);
       r.concepts.forEach((c) => cHtml.push(`<div class="flex justify-between text-[10px] text-gray-500"><span>${r.sp?.nombre || r.cfg.spaceId} - ${c.description}</span><span>+${money(c.amount)}</span></div>`));
+      cHtml.push(`<div class="flex justify-between text-[10px] font-bold text-gray-700 border-t border-dashed border-gray-200 pt-1 mt-1"><span>Subtotal espacio</span><span>${money(r.adjustedSubtotal)}</span></div>`);
     });
     document.getElementById("oed-summary-concepts").innerHTML = cHtml.join("");
-    document.getElementById("oed-tax-summary-display").innerHTML = rows.filter((r) => r.tax > 0).map((r) => `<div class="flex justify-between text-[10px] text-gray-500"><span>${r.sp?.nombre || r.cfg.spaceId}</span><span>+${money(r.tax)}</span></div>`).join("");
+    document.getElementById("oed-tax-summary-display").innerHTML = rows.map((r) => {
+      const spaceRef = r.sp?.clave ? `${r.sp?.nombre || r.cfg.spaceId} [${r.sp.clave}]` : (r.sp?.nombre || r.cfg.spaceId);
+      const taxRows = r.taxBreakdown.length
+        ? r.taxBreakdown.map((taxRow) => `<div class="flex justify-between text-[10px] text-gray-500"><span>${taxRow.name}</span><span>+${money(taxRow.amount)}</span></div>`).join("")
+        : '<div class="text-[10px] text-gray-400 italic">Sin impuestos configurados.</div>';
+      return `<div class="pt-1"><p class="text-[10px] font-black uppercase text-gray-500">${spaceRef}</p></div>${taxRows}<div class="flex justify-between text-[10px] font-bold text-gray-700 border-t border-dashed border-gray-200 pt-1 mt-1"><span>Total impuestos</span><span>${money(r.tax)}</span></div><div class="flex justify-between text-[10px] font-black text-gray-800"><span>Total espacio</span><span>${money(r.total)}</span></div>`;
+    }).join("");
     document.getElementById("lbl-subtotal-base").innerText = money(subtotalBase);
     document.getElementById("lbl-subtotal").innerText = money(adjusted);
     document.getElementById("lbl-adjustment").innerText = `${adjType === "descuento" ? "-" : "+"}${money(adjustment)}`;
@@ -5272,7 +5705,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     if (list) {
       list.innerHTML = rows.map((r) => {
         const active = String(r.cfg.spaceId) === String(pmActive);
-        return `<button type="button" onclick="window.selectOrderSpaceCard('${r.cfg.spaceId}')" class="w-full text-left rounded-lg border ${active ? "border-emerald-300 bg-emerald-50" : "border-gray-200 bg-gray-50 hover:border-brand-red"} p-2 transition"><div class="flex justify-between items-start gap-2"><div class="min-w-0"><p class="text-[10px] font-black uppercase text-gray-800 whitespace-normal break-words leading-tight">${r.sp?.nombre || r.cfg.spaceId}</p><p class="text-[10px] font-mono text-gray-500 mt-0.5 break-all">ID: ${r.cfg.spaceId}${r.sp?.clave ? ` · ${r.sp.clave}` : ""}</p></div><span class="text-[10px] font-bold shrink-0 ${active ? "text-emerald-700" : "text-gray-400"}">${active ? "Editando" : "Editar"}</span></div><p class="text-[10px] text-gray-500 mt-1">${window.safeFormatDate(r.cfg.startDate)} - ${window.safeFormatDate(r.cfg.endDate)}</p><p class="text-[10px] font-bold text-gray-700 mt-1">${money(r.total)}</p></button>`;
+        return `<button type="button" onclick="window.selectOrderSpaceCard('${r.cfg.spaceId}')" class="w-full text-left rounded-lg border ${active ? "border-emerald-300 bg-emerald-50" : "border-gray-200 bg-gray-50 hover:border-brand-red"} p-2 transition"><div class="flex justify-between items-start gap-2"><div class="min-w-0"><p class="text-[10px] font-black uppercase text-gray-800 whitespace-normal break-words leading-tight">${r.sp?.nombre || r.cfg.spaceId}</p><p class="text-[10px] font-mono text-gray-500 mt-0.5 break-all">${r.sp?.clave ? `Clave: ${r.sp.clave}` : "--"}</p></div><span class="text-[10px] font-bold shrink-0 ${active ? "text-emerald-700" : "text-gray-400"}">${active ? "Editando" : "Editar"}</span></div><p class="text-[10px] text-gray-500 mt-1">${window.safeFormatDate(r.cfg.startDate)} - ${window.safeFormatDate(r.cfg.endDate)}</p><p class="text-[10px] font-bold text-gray-700 mt-1">${money(r.total)}</p></button>`;
       }).join("");
     }
   };
@@ -5294,7 +5727,10 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
         impuestos_ids: r.taxIds || [],
         impuestos_total: r.tax || 0,
         total_espacio: r.total || 0,
+        espacio_tipo: r.cfg.spaceType || r.sp?.tipo || "",
+        tipo: r.cfg.spaceType || r.sp?.tipo || "",
         material: r.cfg.material || "",
+        ubicacion: r.cfg.ubicacion || "",
         medida_ancho: r.cfg.medidaAncho || 0,
         medida_alto: r.cfg.medidaAlto || 0,
         medida_unidad: r.cfg.medidaUnit || "M",
@@ -5398,7 +5834,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       formData.status = nextStatus;
       const saveOrderId = String(document.getElementById("oed-id")?.value || currentPreviewOrder?.id || "").trim();
       if (!saveOrderId) throw new Error("Cotización inválida.");
-      if (!formData.numero_orden) formData.numero_orden = currentPreviewOrder?.numero_orden || saveOrderId.split("-")[0].toUpperCase();
+      if (!formData.numero_orden) formData.numero_orden = __pmResolveQuoteFolio(currentPreviewOrder, saveOrderId);
       const approvalSnapshotMeta = approvalTransition ? __pmBuildApprovalSnapshotMeta(saveOrderId, formData) : null;
       if (approvalSnapshotMeta?.path) formData.url_cotizacion_final = approvalSnapshotMeta.path;
       if (approvalTransition) {
@@ -5431,14 +5867,20 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
           await __pmPersistSharedPdfStyleConfig(__pmGetPdfStyleConfig(), { force: true });
         }
 
-        const pdfBlob = (typeof window.generatePdfBlobFromNode === "function")
-          ? await window.generatePdfBlobFromNode(pdfContainer)
-          : await renderPdfBlobFallback(pdfContainer);
-        const { path, folio } = await __pmUploadApprovalSnapshotBlob(saveOrderId, pdfBlob, formData, {
-          persistQuote: false,
-          path: approvalSnapshotMeta?.path,
-          folio: approvalSnapshotMeta?.folio
+        const snapshotResult = await __pmWithBusyOverlay('Guardando cotización...', async () => {
+          const blob = (typeof window.generatePdfBlobFromNode === "function")
+            ? await window.generatePdfBlobFromNode(pdfContainer)
+            : await renderPdfBlobFallback(pdfContainer);
+          const uploaded = await __pmUploadApprovalSnapshotBlob(saveOrderId, blob, formData, {
+            persistQuote: false,
+            path: approvalSnapshotMeta?.path,
+            folio: approvalSnapshotMeta?.folio
+          });
+          return { blob, ...uploaded };
         });
+        const pdfBlob = snapshotResult.blob;
+        const path = snapshotResult.path;
+        const folio = snapshotResult.folio;
         currentPreviewOrder = { ...currentPreviewOrder, url_cotizacion_final: path, status: "aprobada" };
         signalOrdersRefresh("approved_snapshot");
         if (btnDownload) {
@@ -5462,7 +5904,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       }
       __pmClearOrderDetailDirty();
       if (!IS_PM_ORDER_DETAIL_PAGE) window.closeModal("order-edit-modal");
-      await window.loadOrders();
+      if (!IS_PM_ORDER_DETAIL_PAGE) await window.loadOrders();
       if (approvalTransition && IS_PM_ORDER_DETAIL_PAGE) {
         await window.openOrderEditModal(currentPreviewOrder.id);
       }
@@ -5483,18 +5925,25 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       if (__pmIsAdminProfile()) {
         await __pmPersistSharedPdfStyleConfig(__pmGetPdfStyleConfig(), { force: true });
       }
-      const pdfBlob = (typeof window.generatePdfBlobFromNode === "function")
-        ? await window.generatePdfBlobFromNode(element)
-        : await renderPdfBlobFallback(element);
       const snapshotMeta = __pmBuildApprovalSnapshotMeta(currentPreviewOrder.id, formData);
-      const { path, folio } = await __pmUploadApprovalSnapshotBlob(currentPreviewOrder.id, pdfBlob, formData, {
-        persistQuote: false,
-        path: snapshotMeta.path,
-        folio: snapshotMeta.folio
+      const snapshotResult = await __pmWithBusyOverlay('Guardando cotización...', async () => {
+        const blob = (typeof window.generatePdfBlobFromNode === "function")
+          ? await window.generatePdfBlobFromNode(element)
+          : await renderPdfBlobFallback(element);
+        const uploaded = await __pmUploadApprovalSnapshotBlob(currentPreviewOrder.id, blob, formData, {
+          persistQuote: false,
+          path: snapshotMeta.path,
+          folio: snapshotMeta.folio
+        });
+        const payload = { ...formData, status: "aprobada", url_cotizacion_final: uploaded.path };
+        const { error: dbErr } = await __pmQuotesUpdate(currentPreviewOrder.id, payload);
+        if (dbErr) throw dbErr;
+        return { blob, payload, ...uploaded };
       });
-      const payload = { ...formData, status: "aprobada", url_cotizacion_final: path };
-      const { error: dbErr } = await __pmQuotesUpdate(currentPreviewOrder.id, payload);
-      if (dbErr) throw dbErr;
+      const pdfBlob = snapshotResult.blob;
+      const path = snapshotResult.path;
+      const folio = snapshotResult.folio;
+      const payload = snapshotResult.payload || { ...formData, status: "aprobada", url_cotizacion_final: path };
       currentPreviewOrder = { ...currentPreviewOrder, ...payload };
       if (typeof window.downloadBlobAsFile === "function") window.downloadBlobAsFile(pdfBlob, `Cotizacion_Aprobada_${folio}.pdf`);
       else {
@@ -5508,7 +5957,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       }
       window.showToast("¡Cotización aprobada y archivada!", "success");
       window.closeModal("preview-modal");
-      await window.loadOrders();
+      if (!IS_PM_ORDER_DETAIL_PAGE) await window.loadOrders();
       if (IS_PM_ORDER_DETAIL_PAGE) await window.openOrderEditModal(currentPreviewOrder.id);
       else window.closeModal("order-edit-modal");
     } catch (e) {
@@ -5518,10 +5967,11 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
   };
 
   window.openOrderEditModal = async function (id) {
-    const order = allOrders.find((o) => String(o.id) === String(id));
+    const order = await __pmEnsureOrderRecord(id);
     if (!order) return;
     await loadClientProfilesForOrderModal();
     await __pmLoadMaterials();
+    await __pmLoadLocations();
     currentPreviewOrder = { ...order };
 
     document.getElementById("oed-id").value = order.id;
@@ -5549,7 +5999,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
 
     const details = parseDetail(order.espacios_detalle);
     pmSpaces = details.length
-      ? details.map((d) => mkCfg(d.espacio_id || d.space_id, { selected: true, customPermanence: d.permanencia_personalizada === true, startDate: d.fecha_inicio || "", endDate: d.fecha_fin || "", customBasePrice: d.precio_personalizado, taxIds: safeArr(d.impuestos_ids).map((x) => parseInt(x, 10)).filter(Number.isFinite), material: d.material || "", medidaAncho: d.medida_ancho ?? d.ancho ?? 0, medidaAlto: d.medida_alto ?? d.alto ?? 0, medidaUnit: d.medida_unidad || d.unidad_medida || "M" }))
+      ? details.map((d) => mkCfg(d.espacio_id || d.space_id, { selected: true, spaceType: d.espacio_tipo || d.tipo || "", customPermanence: d.permanencia_personalizada === true, startDate: d.fecha_inicio || "", endDate: d.fecha_fin || "", customBasePrice: d.precio_personalizado, taxIds: __pmNormalizeTaxIds(d.impuestos_ids), material: d.material || "", ubicacion: d.ubicacion || "", medidaAncho: d.medida_ancho ?? d.ancho ?? 0, medidaAlto: d.medida_alto ?? d.alto ?? 0, medidaUnit: d.medida_unidad || d.unidad_medida || "M" }))
       : [mkCfg(order.espacio_id, { selected: true, startDate: order.fecha_inicio, endDate: order.fecha_fin })];
 
     const rawConcepts = safeArr(order.conceptos_adicionales).map(normConcept);
@@ -5617,3 +6067,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     viewport.scrollBy({ left: (direction || 1) * delta, behavior: "smooth" });
   };
 })();
+
+
+
+

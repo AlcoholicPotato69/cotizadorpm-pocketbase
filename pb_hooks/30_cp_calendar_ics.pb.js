@@ -154,7 +154,7 @@
         const out = [];
         for (let i = 0; i < details.length; i++) {
           const d = obj(details[i]);
-          const sid = Number(d.espacio_id || data.espacio_id || 0);
+          const sid = String(d.espacio_id || d.space_id || data.espacio_id || "").trim();
           const start = normalizeDate(d.fecha_inicio || data.fecha_inicio);
           const end = normalizeDate(d.fecha_fin || d.fecha_inicio || data.fecha_fin || data.fecha_inicio);
           if (sid && start && end) {
@@ -163,7 +163,7 @@
         }
         return out;
       }
-      const sid = Number(data.espacio_id || 0);
+      const sid = String(data.espacio_id || "").trim();
       const start = normalizeDate(data.fecha_inicio);
       const end = normalizeDate(data.fecha_fin || data.fecha_inicio);
       return sid && start && end ? [{ spaceId: sid, start: start, end: end, detail: null, detailIndex: -1 }] : [];
@@ -207,7 +207,7 @@
         const c = obj(rootConcepts[i]);
         if (String(c.type || "").toLowerCase() !== "b2b_montaje") continue;
         const meta = obj(c.meta);
-        const sid = Number(meta.space_id || data.espacio_id || 0);
+        const sid = String(meta.space_id || meta.espacio_id || data.espacio_id || "").trim();
         if (!sid) continue;
         const dates = arr(meta.dates);
         for (let j = 0; j < dates.length; j++) {
@@ -281,12 +281,10 @@
       0
     );
 
-    const spaceByLegacy = {};
+    const spaceById = {};
     for (let i = 0; i < spaces.length; i++) {
-      const legacy = Number(spaces[i].get("legacy_id") || 0);
-      if (legacy) {
-        spaceByLegacy[String(legacy)] = spaces[i].getString("nombre");
-      }
+      const sid = String(spaces[i].id || "").trim();
+      if (sid) spaceById[sid] = spaces[i].getString("nombre");
     }
 
     const nowStamp = lib.toIcsTimestamp(new Date());
@@ -327,7 +325,7 @@
         const entry = entries[j];
         const detailIndex = Number(entry.detailIndex);
         const detailKey = detailIndex >= 0 ? detailIndex : j;
-        const spaceName = spaceByLegacy[String(entry.spaceId)] || String(entry.detail && entry.detail.espacio_nombre || data.espacio_nombre || ("Espacio " + entry.spaceId));
+        const spaceName = spaceById[String(entry.spaceId)] || String(entry.detail && entry.detail.espacio_nombre || data.espacio_nombre || ("Espacio " + entry.spaceId));
         const eventUid = "ev-" + record.id + "-" + entry.spaceId + "-" + detailKey + "@casadepiedra";
         const eventEndExclusive = lib.addDays(entry.end, 1);
         const eventDescription =

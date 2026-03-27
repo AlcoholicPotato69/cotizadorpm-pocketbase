@@ -75,6 +75,189 @@ function __cpApplyOrderClientProfileSelection(order = {}) {
     if (hid) hid.value = profileId || '';
     return profileId;
 }
+function __orderNormalizeTaxIds(value) {
+    return window.parseIds(value)
+        .map(v => String(v || '').trim())
+        .filter(Boolean);
+}
+function __orderResolveQuoteFolio(recordOrId, fallbackId = '') {
+    if (recordOrId && typeof recordOrId === 'object') {
+        const current = String(recordOrId.numero_orden || '').trim();
+        if (current) return current.toUpperCase();
+        const rawId = String(recordOrId.id || fallbackId || '').trim().toUpperCase();
+        return rawId ? `CP-${rawId.slice(0, 6)}` : 'CP-PEND';
+    }
+    const rawId = String(recordOrId || fallbackId || '').trim().toUpperCase();
+    return rawId ? `CP-${rawId.slice(0, 6)}` : 'CP-PEND';
+}
+function __orderRoundCurrency(value) {
+    return Math.round(((parseFloat(value) || 0) + Number.EPSILON) * 100) / 100;
+}
+function __orderToFiniteNumber(value, fallback = 0) {
+    const num = parseFloat(value);
+    return Number.isFinite(num) ? num : fallback;
+}
+function __orderHasExplicitValue(value) {
+    return !(value === null || value === undefined || (typeof value === 'string' && value.trim() === ''));
+}
+function __orderParseRecordJson(value) {
+    if (!value) return {};
+    if (typeof value === 'object') return value;
+    if (typeof value === 'string') {
+        try {
+            const parsed = JSON.parse(value);
+            return parsed && typeof parsed === 'object' ? parsed : {};
+        } catch (_) {}
+    }
+    return {};
+}
+function __orderNormalizeConceptsArray(value) {
+    if (!value) return [];
+    if (Array.isArray(value)) return value;
+    const parsed = __orderParseRecordJson(value);
+    if (Array.isArray(parsed)) return parsed;
+    const candidates = [
+        parsed?.items,
+        parsed?.conceptos,
+        parsed?.conceptos_adicionales,
+        parsed?.servicios,
+        parsed?.data
+    ];
+    for (const candidate of candidates) {
+        if (Array.isArray(candidate)) return candidate;
+    }
+    return [];
+}
+function __orderResolveTaxIdsFromDetails(order) {
+    const detailRaw = __orderParseRecordJson(order?.espacios_detalle);
+    const detailList = Array.isArray(detailRaw) ? detailRaw : [];
+    const seen = new Set();
+    const out = [];
+    detailList.forEach((detail) => {
+        __orderNormalizeTaxIds(
+            detail?.impuestos_ids
+            || detail?.impuestos
+            || detail?.tax_ids
+            || detail?.impuestos_detalle
+        ).forEach((taxId) => {
+            if (seen.has(taxId)) return;
+            seen.add(taxId);
+            out.push(taxId);
+        });
+    });
+    return out;
+}
+function __orderResolveTaxTotalFromBreakdown(order, fallback = 0) {
+    const breakdown = __orderParseRecordJson(order?.desglose_impuestos);
+    const direct = [
+        breakdown?.total,
+        breakdown?.tax_total,
+        breakdown?.impuestos_total,
+        breakdown?.total_impuestos
+    ]
+        .map((value) => __orderToFiniteNumber(value, NaN))
+        .find((value) => Number.isFinite(value) && value >= 0);
+    if (Number.isFinite(direct)) return direct;
+    const list = Array.isArray(breakdown)
+        ? breakdown
+        : (Array.isArray(breakdown?.items)
+            ? breakdown.items
+            : (Array.isArray(breakdown?.impuestos) ? breakdown.impuestos : []));
+    const sum = list.reduce((acc, item) => {
+        const amount = __orderToFiniteNumber(
+            item?.monto ?? item?.importe ?? item?.amount ?? item?.valor ?? 0,
+            0
+        );
+        return acc + Math.max(0, amount);
+    }, 0);
+    if (sum > 0) return sum;
+    return Math.max(0, __orderToFiniteNumber(fallback, 0));
+}
+function __orderResolveTaxRecord(taxId, tenantOrSpace = '') {
+    const safeId = String(taxId || '').trim();
+    if (!safeId) return null;
+    const tenant = typeof tenantOrSpace === 'string'
+        ? __orderResolveTenantSlug(tenantOrSpace)
+        : __orderResolveTenantSlug(tenantOrSpace?.tenant || '');
+    const tenantTaxes = __orderFilterRowsByTenant(dbTaxes, tenant);
+    return tenantTaxes.find((tax) => String(tax?.id || '').trim() === safeId)
+        || dbTaxes.find((tax) => String(tax?.id || '').trim() === safeId)
+        || null;
+}
+function __orderResolveTaxRate(tax) {
+    const pct = __orderToFiniteNumber(tax?.porcentaje, 0);
+    return pct > 1 ? pct / 100 : pct;
+}
+function __orderResolveTaxDisplayPercent(tax) {
+    const pct = __orderToFiniteNumber(tax?.porcentaje, 0);
+    return pct > 0 && pct <= 1 ? (pct * 100) : pct;
+}
+function __orderResolveQuoteTaxIds(order) {
+    const breakdown = __orderParseRecordJson(order?.desglose_precios);
+    const breakdownIds = __orderNormalizeTaxIds(breakdown?.impuestos_detalle);
+    if (breakdownIds.length) return breakdownIds;
+    const detailIds = __orderResolveTaxIdsFromDetails(order);
+    if (detailIds.length) return detailIds;
+    const space = allSpaces.find((sp) => String(sp?.id || '') === String(order?.espacio_id || ''));
+    return __orderNormalizeTaxIds(space?.impuestos_ids || space?.impuestos);
+}
+function __orderResolveQuotePricing(order) {
+    const breakdown = __orderParseRecordJson(order?.desglose_precios);
+    const taxIds = __orderResolveQuoteTaxIds(order);
+    const hasSubtotal = __orderHasExplicitValue(breakdown?.subtotal_antes_impuestos);
+    const hasTaxTotal = __orderHasExplicitValue(breakdown?.tax_total);
+    const hasTotal = __orderHasExplicitValue(order?.precio_final);
+
+    let subtotal = hasSubtotal ? __orderToFiniteNumber(breakdown?.subtotal_antes_impuestos, 0) : null;
+    let taxTotal = hasTaxTotal ? __orderToFiniteNumber(breakdown?.tax_total, 0) : null;
+
+    if (subtotal === null && hasTotal && hasTaxTotal) {
+        subtotal = Math.max(0, __orderToFiniteNumber(order?.precio_final, 0) - __orderToFiniteNumber(breakdown?.tax_total, 0));
+    }
+    if (subtotal === null) subtotal = 0;
+
+    if (taxTotal === null) {
+        taxTotal = __orderRoundCurrency(taxIds.reduce((sum, taxId) => {
+            const tax = __orderResolveTaxRecord(taxId, order);
+            return sum + (subtotal * __orderResolveTaxRate(tax));
+        }, 0));
+    }
+    if (!taxTotal || taxTotal <= 0) {
+        taxTotal = __orderRoundCurrency(__orderResolveTaxTotalFromBreakdown(order, taxTotal));
+    }
+    if ((!taxTotal || taxTotal <= 0) && hasTotal) {
+        const inferred = __orderToFiniteNumber(order?.precio_final, 0) - __orderToFiniteNumber(subtotal, 0);
+        if (Number.isFinite(inferred) && inferred > 0) {
+            taxTotal = __orderRoundCurrency(inferred);
+        }
+    }
+
+    const total = hasTotal
+        ? __orderToFiniteNumber(order?.precio_final, 0)
+        : __orderRoundCurrency(subtotal + taxTotal);
+
+    return {
+        breakdown,
+        taxIds,
+        subtotal: __orderRoundCurrency(subtotal),
+        taxTotal: __orderRoundCurrency(taxTotal),
+        total: __orderRoundCurrency(total)
+    };
+}
+function __orderHydrateQuotePricing(order) {
+    if (!order || typeof order !== 'object') return order;
+    const pricing = __orderResolveQuotePricing(order);
+    return {
+        ...order,
+        precio_final: pricing.total,
+        desglose_precios: {
+            ...pricing.breakdown,
+            subtotal_antes_impuestos: pricing.subtotal,
+            impuestos_detalle: pricing.taxIds,
+            tax_total: pricing.taxTotal
+        }
+    };
+}
 
 const _p = (window.location.pathname || '') + ' ' + (window.location.href || '');
 const _isCP = /\/cotizadorcp(\/|$)/.test(window.location.pathname || '') || _p.includes('cotizadorcp');
@@ -212,6 +395,35 @@ const __ORDER_DATE_PICKER = { target: 'start', month: 0, year: 0, start: '', end
 const __ORDER_MONTAJE_PICKER = { month: 0, year: 0, start: '', end: '', reserved: new Set(), maxDate: '' };
 let __orderEventPickerCal = null;
 let __orderMontajePickerCal = null;
+
+function __orderNormalizeTenantSlug(value) {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw) return '';
+    if (raw === 'finanzas' || raw.indexOf('plaza') !== -1) return 'plaza_mayor';
+    if (raw.indexOf('casadepiedra') !== -1 || raw.indexOf('casa_de_piedra') !== -1 || raw.indexOf('casa-de-piedra') !== -1) return 'casa_de_piedra';
+    return raw;
+}
+
+function __orderResolveTenantSlug(fallback = '') {
+    const fromClient = __orderNormalizeTenantSlug(window.tenantPocketBase?.tenant || '');
+    if (fromClient) return fromClient;
+    const fromFallback = __orderNormalizeTenantSlug(fallback);
+    if (fromFallback) return fromFallback;
+    const fromSchema = __orderNormalizeTenantSlug(FIN_SCHEMA);
+    if (fromSchema) return fromSchema;
+    const path = String(window.location.pathname || '').toLowerCase();
+    return path.indexOf('/cotizadorcp/') !== -1 ? 'casa_de_piedra' : 'plaza_mayor';
+}
+
+function __orderFilterRowsByTenant(rows, fallback = '') {
+    const tenant = __orderResolveTenantSlug(fallback);
+    const source = Array.isArray(rows) ? rows : [];
+    if (!tenant) return source.slice();
+    return source.filter((row) => {
+        const rowTenant = __orderNormalizeTenantSlug(row?.tenant || '');
+        return !rowTenant || rowTenant === tenant;
+    });
+}
 
 function __cpNativeCotizaciones() {
     return window.PB_SERVICES && window.PB_SERVICES.cotizaciones ? window.PB_SERVICES.cotizaciones : null;
@@ -381,16 +593,13 @@ function __orderReadAuthState(key) {
 }
 
 function __orderResolveCurrentActorId() {
-    const compatAuth = __orderReadAuthState('pb_compat_auth_v1');
-    const nativeAuth = __orderReadAuthState('pb_native_auth_v1');
+    const authState = __orderReadAuthState('pb_native_auth_v1');
     const candidates = [
         currentUserProfile?.id,
         currentUserProfile?.record?.id,
         currentUserProfile?.user?.id,
-        compatAuth?.user?.id,
-        compatAuth?.record?.id,
-        nativeAuth?.user?.id,
-        nativeAuth?.record?.id
+        authState?.user?.id,
+        authState?.record?.id
     ];
     return candidates.map((v) => String(v || '').trim()).find(Boolean) || '';
 }
@@ -400,21 +609,16 @@ function __orderResolveCurrentActorName() {
     if (fromProfile) return fromProfile;
     const cachedName = __orderSanitizeActorName(localStorage.getItem('hub_user_cache_name') || '');
     if (cachedName) return cachedName;
-    const compatAuth = __orderReadAuthState('pb_compat_auth_v1');
-    const nativeAuth = __orderReadAuthState('pb_native_auth_v1');
+    const authState = __orderReadAuthState('pb_native_auth_v1');
     const username = [
         currentUserProfile?.login_username,
         currentUserProfile?.record?.login_username,
         currentUserProfile?.username,
         currentUserProfile?.record?.username,
-        compatAuth?.user?.login_username,
-        compatAuth?.record?.login_username,
-        compatAuth?.user?.username,
-        compatAuth?.record?.username,
-        nativeAuth?.user?.login_username,
-        nativeAuth?.record?.login_username,
-        nativeAuth?.user?.username,
-        nativeAuth?.record?.username
+        authState?.user?.login_username,
+        authState?.record?.login_username,
+        authState?.user?.username,
+        authState?.record?.username
     ]
         .map((value) => __orderSanitizeActorName(value))
         .find(Boolean);
@@ -422,10 +626,8 @@ function __orderResolveCurrentActorName() {
     const email = [
         currentUserProfile?.email,
         currentUserProfile?.record?.email,
-        compatAuth?.user?.email,
-        compatAuth?.record?.email,
-        nativeAuth?.user?.email,
-        nativeAuth?.record?.email
+        authState?.user?.email,
+        authState?.record?.email
     ].map((v) => String(v || '').trim()).find(Boolean) || '';
     const emailUser = __orderSanitizeActorName(email ? email.split('@')[0] : '');
     return emailUser || 'Usuario';
@@ -435,7 +637,7 @@ function __orderBuildQuoteAuditPayload(payload = {}) {
     const next = payload && typeof payload === 'object' ? { ...payload } : {};
     const actorId = __orderResolveCurrentActorId();
     const actorName = __orderResolveCurrentActorName();
-    if (actorId) next.modificado_por_legacy = actorId;
+    if (actorId) next.modificado_por = actorId;
     if (actorName) next.modificado_por_nombre = actorName;
     return next;
 }
@@ -545,7 +747,85 @@ window.showToast = (msg, type='success') => {
     c.appendChild(e);
     setTimeout(() => e.remove(), 3000);
 };
-window.openStoredDocument = async function(path) { if(!path) return window.showToast("Documento no disponible", "error"); window.showToast("Abriendo documento...", "info"); const { data, error } = await window.globalPocketBase.storage.from('documentos-cp').createSignedUrl(path, 3600); if (error || !data) return window.showToast("Error de acceso al archivo", "error"); window.open(data.signedUrl, '_blank'); };
+function __cpEnsureBusyOverlay() {
+    let overlay = document.getElementById('cp-pdf-busy-overlay');
+    if (overlay) return overlay;
+    overlay = document.createElement('div');
+    overlay.id = 'cp-pdf-busy-overlay';
+    overlay.className = 'fixed inset-0 z-[410] hidden items-center justify-center bg-black/70 backdrop-blur-sm p-4';
+    overlay.innerHTML = `<div class="bg-white rounded-2xl shadow-2xl border border-gray-200 px-8 py-7 flex flex-col items-center text-center max-w-sm w-full"><div class="w-12 h-12 rounded-full border-4 border-gray-200 border-t-brand-red animate-spin mb-4"></div><p id="cp-pdf-busy-title" class="text-sm font-black uppercase tracking-wide text-gray-800">Guardando cotización...</p><p class="text-[11px] text-gray-500 mt-2">Espera un momento mientras se genera y guarda el PDF.</p></div>`;
+    document.body.appendChild(overlay);
+    return overlay;
+}
+let __cpBusyOverlayDepth = 0;
+window.__cpShowBusyOverlay = function(message = 'Guardando cotización...') {
+    const overlay = __cpEnsureBusyOverlay();
+    const title = document.getElementById('cp-pdf-busy-title');
+    if (title) title.innerText = String(message || 'Guardando cotización...');
+    __cpBusyOverlayDepth += 1;
+    overlay.classList.remove('hidden');
+    overlay.classList.add('flex');
+};
+window.__cpHideBusyOverlay = function() {
+    const overlay = document.getElementById('cp-pdf-busy-overlay');
+    if (!overlay) return;
+    __cpBusyOverlayDepth = Math.max(0, __cpBusyOverlayDepth - 1);
+    if (__cpBusyOverlayDepth > 0) return;
+    overlay.classList.add('hidden');
+    overlay.classList.remove('flex');
+};
+async function __cpWithBusyOverlay(message, work) {
+    window.__cpShowBusyOverlay(message);
+    try {
+        return await work();
+    } finally {
+        window.__cpHideBusyOverlay();
+    }
+}
+function __cpOpenBlobInViewer(blob, title = 'Documento', popupRef = null) {
+    const popup = popupRef || window.open('', '_blank');
+    if (!popup) return false;
+    const objectUrl = URL.createObjectURL(blob);
+    const safeTitle = String(title || 'Documento').replace(/[<>&"]/g, '');
+    popup.document.open();
+    popup.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${safeTitle}</title><style>html,body{margin:0;height:100%;background:#111827;}iframe{border:0;width:100%;height:100%;background:#fff;}</style></head><body><iframe src="${objectUrl}" title="${safeTitle}"></iframe></body></html>`);
+    popup.document.close();
+    setTimeout(() => {
+        try { URL.revokeObjectURL(objectUrl); } catch (_) {}
+    }, 300000);
+    return true;
+}
+window.openStoredDocument = async function(path) {
+    const safePath = String(path || '').trim();
+    if (!safePath) return window.showToast("Documento no disponible", "error");
+    window.showToast("Abriendo documento...", "info");
+    const popup = window.open('', '_blank');
+    if (popup) {
+        try {
+            popup.document.open();
+            popup.document.write('<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Cargando documento</title><style>html,body{height:100%;margin:0;font-family:Segoe UI,sans-serif;background:#111827;color:#fff;display:flex;align-items:center;justify-content:center;}</style></head><body>Cargando documento...</body></html>');
+            popup.document.close();
+        } catch (_) {}
+    }
+    try {
+        const { data, error } = await window.globalPocketBase.storage.from('documentos-cp').createSignedUrl(safePath, 3600);
+        if (error || !data?.signedUrl) throw (error || new Error('No se pudo firmar el documento.'));
+        const response = await fetch(data.signedUrl, { method: 'GET', credentials: 'omit' });
+        if (!response.ok) throw new Error(`No se pudo abrir el documento (${response.status}).`);
+        const blob = await response.blob();
+        if (!blob || !blob.size) throw new Error('Documento vacío.');
+        if (!__cpOpenBlobInViewer(blob, safePath.split('/').pop() || 'Documento', popup)) {
+            const objectUrl = URL.createObjectURL(blob);
+            window.open(objectUrl, '_blank');
+            setTimeout(() => {
+                try { URL.revokeObjectURL(objectUrl); } catch (_) {}
+            }, 300000);
+        }
+    } catch (e) {
+        try { if (popup && !popup.closed) popup.close(); } catch (_) {}
+        window.showToast("Error de acceso al archivo", "error");
+    }
+};
 
 let confirmCallback = null;
 let cancelCallback = null;
@@ -712,9 +992,33 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 });
 
-async function loadTaxes() { const { data } = await window.tenantPocketBase.from('impuestos').select('*'); dbTaxes = data || []; }
-async function loadSpaces() { const { data } = await window.tenantPocketBase.from('espacios').select('*'); allSpaces = data || []; }
-async function loadConcepts() { const { data } = await window.tenantPocketBase.from('conceptos_catalogo').select('*').eq('activo', true); catalogConcepts = data || []; }
+async function loadTaxes() {
+    const tenant = __orderResolveTenantSlug();
+    let rows = [];
+    try {
+        const { data } = await window.tenantPocketBase.from('impuestos').select('*').order('nombre', { ascending: true });
+        rows = data || [];
+    } catch (_) {
+        rows = [];
+    }
+    dbTaxes = __orderFilterRowsByTenant(rows, tenant);
+    if (!dbTaxes.length && window.globalPocketBase && tenant) {
+        try {
+            const { data } = await window.globalPocketBase.from('impuestos').select('*').eq('tenant', tenant);
+            dbTaxes = __orderFilterRowsByTenant(data || [], tenant);
+        } catch (_) {}
+    }
+}
+async function loadSpaces() {
+    const tenant = __orderResolveTenantSlug();
+    const { data } = await window.tenantPocketBase.from('espacios').select('*');
+    allSpaces = __orderFilterRowsByTenant(data || [], tenant);
+}
+async function loadConcepts() {
+    const tenant = __orderResolveTenantSlug();
+    const { data } = await window.tenantPocketBase.from('conceptos_catalogo').select('*').eq('activo', true);
+    catalogConcepts = __orderFilterRowsByTenant(data || [], tenant);
+}
 
 function __orderFormatUserNameFromRecord(record) {
     if (!record || typeof record !== 'object') return '';
@@ -783,8 +1087,6 @@ function __orderRegisterUserRecord(record) {
     if (!name) return;
     const aliases = [
         record?.id,
-        record?.legacy_id,
-        record?.legacyId,
         record?.user_id,
         record?.userId,
         record?.login_username,
@@ -804,7 +1106,7 @@ function __orderResolveOrderActorId(order, mode = 'created') {
     if (!order || typeof order !== 'object') return '';
     const candidates = mode === 'updated'
         ? [
-            order.modificado_por_legacy,
+            order.modificado_por,
             order.modificado_por,
             order.updated_by,
             order.updated_by_id,
@@ -814,7 +1116,6 @@ function __orderResolveOrderActorId(order, mode = 'created') {
             order.editor_id
         ]
         : [
-            order.creado_por_legacy,
             order.creado_por,
             order.created_by,
             order.created_by_id,
@@ -955,7 +1256,6 @@ async function __orderPrimeOrderUsers(orders = []) {
     const sources = [window.globalPocketBase, window.tenantPocketBase].filter(Boolean);
     for (let i = 0; i < missing.length; i += 20) {
         const chunk = missing.slice(i, i + 20);
-        const numericChunk = chunk.filter((value) => __orderIsNumericLike(value));
         const textChunk = chunk.filter((value) => !__orderIsNumericLike(value) && !__orderLooksLikeUuid(value));
         if (!chunk.length) continue;
         for (const source of sources) {
@@ -963,17 +1263,6 @@ async function __orderPrimeOrderUsers(orders = []) {
                 const { data } = await source.from('app_users').select('*').in('id', chunk);
                 (data || []).forEach(__orderRegisterUserRecord);
             } catch (_) {}
-            try {
-                const { data } = await source.from('app_users').select('*').in('legacy_id', chunk);
-                (data || []).forEach(__orderRegisterUserRecord);
-            } catch (_) {
-                if (numericChunk.length) {
-                    try {
-                        const { data } = await source.from('app_users').select('*').in('legacy_id', numericChunk);
-                        (data || []).forEach(__orderRegisterUserRecord);
-                    } catch (_) {}
-                }
-            }
             if (textChunk.length) {
                 try {
                     const { data } = await source.from('app_users').select('*').in('login_username', textChunk);
@@ -992,7 +1281,7 @@ async function __orderPrimeOrderUsers(orders = []) {
         try {
             const { data } = await source
                 .from('app_users')
-                .select('id,legacy_id,legacyId,user_id,userId,login_username,user_name,username,full_name,name,email');
+                .select('*');
             (data || []).forEach(__orderRegisterUserRecord);
         } catch (_) {}
     }
@@ -1004,7 +1293,7 @@ window.loadOrders = async function() {
         window.showToast(`No se pudieron cargar cotizaciones: ${error.message || error}`, 'error');
         allOrders = [];
     } else {
-        allOrders = data || [];
+        allOrders = (data || []).map(__orderHydrateQuotePricing);
     }
     await __orderPrimeOrderUsers(allOrders);
     renderOrdersTable(allOrders);
@@ -1024,7 +1313,7 @@ function renderOrdersTable(data) {
         const tr = document.createElement('tr'); tr.className = "border-b hover:bg-gray-50 transition group cursor-pointer";
         tr.onclick = (e) => { if(!e.target.closest('button')) window.openOrderEditorPage(o.id); };
         
-        const folioUnificado = o.numero_orden || o.id.split('-')[0].toUpperCase();
+        const folioUnificado = __orderResolveQuoteFolio(o);
         const details = parseSpacesDetail(o.espacios_detalle);
         const spaceLabel = details.length > 1
             ? `${details[0]?.espacio_nombre || o.espacio_nombre} + ${details.length - 1}`
@@ -1043,7 +1332,8 @@ function renderOrdersTable(data) {
         const deleteCell = canDelete
             ? `<button type="button" onclick="window.askDeleteOrder('${o.id}', event)" class="text-gray-400 hover:text-red-600"><i class="fa-solid fa-trash"></i></button>`
             : `<span class="text-[10px] text-gray-300">—</span>`;
-        tr.innerHTML = `<td class="p-4 font-black text-brand-dark">${folioUnificado}</td><td class="p-4 font-bold text-xs text-gray-700">${quoteName ? `<span class="text-brand-dark block">${quoteName}</span><span class="text-[10px] text-gray-500 font-semibold">${o.cliente_nombre}</span>` : o.cliente_nombre}</td><td class="p-4 text-xs"><span class="font-bold block">${spaceLabel}</span><span class="text-gray-500 font-mono">${dateLabel}</span></td><td class="p-4 text-right font-mono font-bold text-xs">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(o.precio_final)}</td><td class="p-4 text-center"><span class="${sColor} px-2 py-1 rounded text-[9px] font-black uppercase tracking-wider">${sText}</span>${alertsHTML}</td><td class="p-4 text-[10px] font-bold text-gray-600 text-center"${createdTooltipAttr}>${createdBy}</td><td class="p-4 text-[10px] font-bold text-gray-600 text-center"${updatedTooltipAttr}>${updatedBy}</td><td class="p-4 text-center"><button type="button" onclick="event.stopPropagation(); window.openDocsModal('${o.id}')" class="bg-white border border-gray-300 text-gray-600 hover:bg-gray-50 hover:text-brand-dark px-3 py-1.5 rounded-lg text-xs font-bold transition shadow-sm flex items-center gap-2 mx-auto"><i class="fa-solid fa-folder-open text-brand-red"></i> Expediente</button></td><td class="p-4 text-center">${deleteCell}</td>`;
+        const pricing = __orderResolveQuotePricing(o);
+        tr.innerHTML = `<td class="p-4 font-black text-brand-dark">${folioUnificado}</td><td class="p-4 font-bold text-xs text-gray-700">${quoteName ? `<span class="text-brand-dark block">${quoteName}</span><span class="text-[10px] text-gray-500 font-semibold">${o.cliente_nombre}</span>` : o.cliente_nombre}</td><td class="p-4 text-xs"><span class="font-bold block">${spaceLabel}</span><span class="text-gray-500 font-mono">${dateLabel}</span></td><td class="p-4 text-right font-mono font-bold text-xs">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(pricing.total)}</td><td class="p-4 text-center"><span class="${sColor} px-2 py-1 rounded text-[9px] font-black uppercase tracking-wider">${sText}</span>${alertsHTML}</td><td class="p-4 text-[10px] font-bold text-gray-600 text-center"${createdTooltipAttr}>${createdBy}</td><td class="p-4 text-[10px] font-bold text-gray-600 text-center"${updatedTooltipAttr}>${updatedBy}</td><td class="p-4 text-center"><button type="button" onclick="event.stopPropagation(); window.openDocsModal('${o.id}')" class="bg-white border border-gray-300 text-gray-600 hover:bg-gray-50 hover:text-brand-dark px-3 py-1.5 rounded-lg text-xs font-bold transition shadow-sm flex items-center gap-2 mx-auto"><i class="fa-solid fa-folder-open text-brand-red"></i> Expediente</button></td><td class="p-4 text-center">${deleteCell}</td>`;
         t.appendChild(tr);
     });
 }
@@ -1065,7 +1355,7 @@ window.openOrderPreviewTab = function(id, docType = 'quote', action = 'view') {
 function filterOrders(term) { 
     const lower = term.toLowerCase();
     renderOrdersTable(allOrders.filter(o => {
-        const folioUnificado = o.numero_orden || o.id.split('-')[0].toUpperCase();
+        const folioUnificado = __orderResolveQuoteFolio(o);
         const quoteName = (o.nombre_cotizacion || o.detalles_evento?.nombre_cotizacion || '');
         return (o.cliente_nombre || '').toLowerCase().includes(lower) || 
                folioUnificado.toLowerCase().includes(lower) ||
@@ -1217,11 +1507,7 @@ window.openOrderEditModal = async function(id) {
     
     window.updateB2bSelects(true);
     
-    let dbConcepts = [];
-    if (order.conceptos_adicionales) {
-        if (typeof order.conceptos_adicionales === 'string') try { dbConcepts = JSON.parse(order.conceptos_adicionales); } catch(e){}
-        else if (Array.isArray(order.conceptos_adicionales)) dbConcepts = order.conceptos_adicionales;
-    }
+    let dbConcepts = __orderNormalizeConceptsArray(order.conceptos_adicionales);
 
     let pureConcepts = []; let cHorarioText = null, cMontaje = 0, cHoras = 0;
     let isCustomHorario = false, customStart = '', customEnd = '', customHorarioPrice = 0;
@@ -1287,7 +1573,12 @@ window.openOrderEditModal = async function(id) {
     document.getElementById('oed-btn-montaje').disabled = isLocked;
 
     const spaceObj = allSpaces.find(s => s.id == order.espacio_id);
-    if(spaceObj) window.renderTaxesForSpace(spaceObj, order.desglose_precios?.impuestos_detalle);
+    const breakdownForEditor = __orderParseRecordJson(order.desglose_precios);
+    const activeTaxIds = __orderNormalizeTaxIds(
+        breakdownForEditor?.impuestos_detalle
+        || __orderResolveTaxIdsFromDetails(order)
+    );
+    if(spaceObj) window.renderTaxesForSpace(spaceObj, activeTaxIds);
     
     const conceptSel = document.getElementById('new-concept-select'); conceptSel.innerHTML = '<option value="">-- Agregar --</option>'; catalogConcepts.forEach(c => conceptSel.innerHTML += `<option value="${c.id}">${c.nombre}</option>`);
 
@@ -1295,16 +1586,13 @@ window.openOrderEditModal = async function(id) {
 };
 
 window.renderTaxesForSpace = function(spaceObj, activeTaxIds = null) {
-    const container = document.getElementById('oed-taxes-list'); if(!container) return; container.innerHTML = '';
-    const defaultTaxIds = window.parseIds(spaceObj.impuestos_ids || spaceObj.impuestos).map((v) => String(v));
-    const mandatory = new Set(defaultTaxIds);
-    const isLocked = currentPreviewOrder && ['aprobada', 'finalizada'].includes(currentPreviewOrder.status);
-    dbTaxes.forEach(t => {
-        const tid = String(t.id);
-        const isChecked = mandatory.has(tid) || (activeTaxIds ? activeTaxIds.map((v) => String(v)).includes(tid) : false);
-        const isDisabled = isLocked || mandatory.has(tid);
-        container.innerHTML += `<label class="flex items-center gap-1.5 ${isDisabled ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'}"><input type="checkbox" value="${t.id}" class="oed-tax-check accent-brand-red w-3 h-3" ${isChecked ? 'checked' : ''} ${isDisabled ? 'disabled' : ''} onchange="window.recalcTotal()"><span class="text-[10px] font-bold uppercase text-gray-700">${t.nombre}</span></label>`;
-    });
+    const container = document.getElementById('oed-taxes-list'); if(!container) return;
+    const selectedTaxIds = (Array.isArray(activeTaxIds) && activeTaxIds.length ? activeTaxIds : window.parseIds(spaceObj.impuestos_ids || spaceObj.impuestos)).map((v) => String(v));
+    container.dataset.taxIds = JSON.stringify(selectedTaxIds);
+    const taxes = selectedTaxIds.map((taxId) => __orderResolveTaxRecord(taxId, spaceObj)).filter(Boolean);
+    container.innerHTML = taxes.length
+        ? taxes.map((tax) => `<div class="text-[10px] text-gray-500 font-bold uppercase">${tax.nombre}</div>`).join('')
+        : '<p class="text-[10px] text-gray-400 italic">Sin impuestos configurados.</p>';
 };
 
 window.updateConceptAmount = function(index, newVal) { currentConcepts[index].amount = parseFloat(newVal) || 0; currentConcepts[index].value = parseFloat(newVal) || 0; window.recalcTotal(); };
@@ -1391,8 +1679,13 @@ window.recalcTotal = function() {
     const adjType = document.getElementById('oed-adj-type').value; const adjVal = parseFloat(document.getElementById('oed-adj-val').value) || 0; const isPercent = document.getElementById('oed-adj-unit').value === 'percent';
     let adjAmount = 0; if (adjType !== 'ninguno') { adjAmount = isPercent ? sub * (adjVal/100) : adjVal; if (adjType === 'descuento') sub -= adjAmount; else sub += adjAmount; }
 
+    const activeTaxIds = (() => {
+        const box = document.getElementById('oed-taxes-list');
+        const fromBox = box ? window.parseIds(box.dataset.taxIds || '[]').map(String).filter(Boolean) : [];
+        return fromBox.length ? fromBox : window.parseIds(spaceObj?.impuestos_ids || spaceObj?.impuestos).map(String);
+    })();
     let taxTotal = 0; let taxHtml = '';
-    document.querySelectorAll('.oed-tax-check:checked').forEach(cb => { const t = dbTaxes.find(x => x.id == cb.value); if(t) { const taxVal = sub * (t.porcentaje / 100); taxTotal += taxVal; taxHtml += `<div class="flex justify-between text-[10px] text-gray-500"><span>${t.nombre}</span><span>+${taxVal.toLocaleString('es-MX', {style:'currency',currency:'MXN'})}</span></div>`; } });
+    activeTaxIds.forEach(taxId => { const t = __orderResolveTaxRecord(taxId, spaceObj); if(t) { const taxVal = sub * __orderResolveTaxRate(t); taxTotal += taxVal; taxHtml += `<div class="flex justify-between text-[10px] text-gray-500"><span>${t.nombre}</span><span>+${taxVal.toLocaleString('es-MX', {style:'currency',currency:'MXN'})}</span></div>`; } });
 
     document.getElementById('oed-tax-summary-display').innerHTML = taxHtml;
     document.getElementById('lbl-subtotal-base').innerText = (base + b2bCost).toLocaleString('es-MX', {style:'currency',currency:'MXN'});
@@ -1420,7 +1713,7 @@ function __orderPrepareApprovalPreview(formData = {}, options = {}) {
     const opts = (options && typeof options === 'object') ? options : {};
     const baseData = opts.skipModalData ? {} : (typeof window.getFormDataFromModal === 'function' ? window.getFormDataFromModal() : {});
     const merged = { ...baseData, ...(formData || {}) };
-    if (!merged.numero_orden) merged.numero_orden = (currentPreviewOrder?.numero_orden || currentPreviewOrder?.id?.split('-')?.[0] || '').toUpperCase();
+    if (!merged.numero_orden) merged.numero_orden = __orderResolveQuoteFolio(currentPreviewOrder);
     const snapshotMeta = __orderBuildApprovalSnapshotMeta(currentPreviewOrder?.id || document.getElementById('oed-id')?.value, merged);
     if (snapshotMeta?.path && !merged.url_cotizacion_final) merged.url_cotizacion_final = snapshotMeta.path;
     merged.status = 'aprobada';
@@ -1587,8 +1880,7 @@ async function __orderRenderPdfBlob(element, filename) {
 function __orderBuildApprovalSnapshotMeta(orderId, formData = {}) {
     const id = String(orderId || '').trim();
     const folioUnificado = formData?.numero_orden
-        || currentPreviewOrder?.numero_orden
-        || id.split('-')[0].toUpperCase();
+        || __orderResolveQuoteFolio(currentPreviewOrder, id);
     return {
         folioUnificado,
         path: id ? `${id}/cotizacion_aprobada_${folioUnificado}.pdf` : ''
@@ -1635,28 +1927,32 @@ async function __orderFinalizePendingSnapshot(options = {}) {
     if (!orderId) return false;
     __orderSnapshotInFlight = true;
     try {
-        let order = allOrders.find(o => String(o.id) === orderId) || null;
-        if (!order) {
-            const { data, error } = await __cpQuoteGetById(orderId);
-            if (error || !data) throw (error || new Error('No se encontró cotización para snapshot.'));
-            order = data;
-        }
-        currentPreviewOrder = { ...(currentPreviewOrder || {}), ...order, ...(pending.formData || {}), status: 'aprobada' };
-        const element = document.getElementById('pdf-content');
-        if (!element) throw new Error('Contenedor PDF no disponible.');
-        if (__cpIsAdminProfile()) {
-            await __cpPersistSharedPdfStyleConfig(__cpGetPdfStyleConfig(), { force: true });
-        }
-        await __cpEnsurePdfStyleProfile('quote', { forceReload: !__cpIsAdminProfile() });
-        __orderPrepareApprovalPreview(pending.formData || {}, { skipModalData: true });
-        const blob = opts.prebuiltBlob || await __orderRenderPdfBlob(element);
-        const shouldPersistQuote = !String((pending.formData || {}).url_cotizacion_final || order?.url_cotizacion_final || '').trim();
-        await __orderUploadApprovalSnapshotBlob(orderId, blob, pending.formData || {}, { persistQuote: shouldPersistQuote });
-        __orderPendingApprovalSnapshot = null;
-        __orderDequeueSnapshot(orderId);
-        if (!opts.silent) window.showToast('Snapshot guardada correctamente', 'success');
-        __orderBroadcastRefresh('approved_snapshot');
-        return true;
+        const runner = async () => {
+            let order = allOrders.find(o => String(o.id) === orderId) || null;
+            if (!order) {
+                const { data, error } = await __cpQuoteGetById(orderId);
+                if (error || !data) throw (error || new Error('No se encontró cotización para snapshot.'));
+                order = __orderHydrateQuotePricing(data);
+            }
+            currentPreviewOrder = { ...(currentPreviewOrder || {}), ...order, ...(pending.formData || {}), status: 'aprobada' };
+            const element = document.getElementById('pdf-content');
+            if (!element) throw new Error('Contenedor PDF no disponible.');
+            if (__cpIsAdminProfile()) {
+                await __cpPersistSharedPdfStyleConfig(__cpGetPdfStyleConfig(), { force: true });
+            }
+            await __cpEnsurePdfStyleProfile('quote', { forceReload: !__cpIsAdminProfile() });
+            __orderPrepareApprovalPreview(pending.formData || {}, { skipModalData: true });
+            const blob = opts.prebuiltBlob || await __orderRenderPdfBlob(element);
+            const shouldPersistQuote = !String((pending.formData || {}).url_cotizacion_final || order?.url_cotizacion_final || '').trim();
+            await __orderUploadApprovalSnapshotBlob(orderId, blob, pending.formData || {}, { persistQuote: shouldPersistQuote });
+            __orderPendingApprovalSnapshot = null;
+            __orderDequeueSnapshot(orderId);
+            if (!opts.silent) window.showToast('Snapshot guardada correctamente', 'success');
+            __orderBroadcastRefresh('approved_snapshot');
+            return true;
+        };
+        if (opts.silent) return await runner();
+        return await __cpWithBusyOverlay('Guardando cotización...', runner);
     } catch (e) {
         if (opts.enqueueOnFail) __orderQueueSnapshot(orderId);
         if (!opts.silent) window.showToast(`Error snapshot: ${e.message}`, 'error');
@@ -1679,7 +1975,7 @@ async function __orderProcessSnapshotQueue() {
                 if (!order) {
                     const { data, error } = await __cpQuoteGetById(orderId);
                     if (error || !data) throw (error || new Error('No se encontró cotización en cola.'));
-                    order = data;
+                    order = __orderHydrateQuotePricing(data);
                 }
                 currentPreviewOrder = { ...(currentPreviewOrder || {}), ...order, status: 'aprobada' };
                 const element = document.getElementById('pdf-content');
@@ -1774,7 +2070,19 @@ window.getFormDataFromModal = function() {
     const finalConcepts = [...b2bConceptsToSave, ...currentConcepts];
 
     let conceptsSum = 0; finalConcepts.forEach(c => { conceptsSum += parseFloat(c.amount || c.value || 0); }); let sub = base + conceptsSum;
-    const activeTaxIds = Array.from(document.querySelectorAll('.oed-tax-check:checked')).map(cb => parseInt(cb.value)); const priceFinal = parseFloat(document.getElementById('oed-price').value);
+    const activeTaxIds = (() => {
+        const box = document.getElementById('oed-taxes-list');
+        const fromBox = box ? window.parseIds(box.dataset.taxIds || '[]').map(String).filter(Boolean) : [];
+        return fromBox.length ? fromBox : __orderNormalizeTaxIds(spaceObj?.impuestos_ids || spaceObj?.impuestos);
+    })();
+    const taxTotal = __orderRoundCurrency(activeTaxIds.reduce((sum, taxId) => {
+        const tax = __orderResolveTaxRecord(taxId, spaceObj);
+        return sum + (sub * __orderResolveTaxRate(tax));
+    }, 0));
+    const priceInputValue = document.getElementById('oed-price').value;
+    const priceFinal = __orderHasExplicitValue(priceInputValue)
+        ? __orderToFiniteNumber(priceInputValue, __orderRoundCurrency(sub + taxTotal))
+        : __orderRoundCurrency(sub + taxTotal);
     const adjType = document.getElementById('oed-adj-type').value; const adjVal = parseFloat(document.getElementById('oed-adj-val').value) || 0; const isPercent = document.getElementById('oed-adj-unit').value === 'percent';
     const existingDetails = parseSpacesDetail(currentPreviewOrder?.espacios_detalle);
     const detailsToSave = existingDetails.length > 1
@@ -1799,7 +2107,7 @@ window.getFormDataFromModal = function() {
 
     return {
         cliente_nombre: document.getElementById('oed-client').value, cliente_email: document.getElementById('oed-email').value, cliente_contacto: document.getElementById('oed-phone').value, cliente_rfc: document.getElementById('fiscal-rfc-re').value, cliente_id: (document.getElementById('oed-client-id') ? (document.getElementById('oed-client-id').value || null) : null), fecha_inicio: sDate, fecha_fin: eDate, precio_final: priceFinal, espacio_id: spaceId, espacio_nombre: spaceObj ? spaceObj.nombre : '', espacio_clave: spaceObj ? spaceObj.clave : '', tipo_ajuste: adjType, valor_ajuste: adjVal, ajuste_es_porcentaje: isPercent,
-        conceptos_adicionales: finalConcepts, desglose_precios: { subtotal_antes_impuestos: sub, impuestos_detalle: activeTaxIds }, personas: guests, espacios_detalle: detailsToSave, detalles_evento: { multi_espacio: detailsToSave.length > 1, total_espacios: detailsToSave.length } 
+        conceptos_adicionales: finalConcepts, desglose_precios: { subtotal_antes_impuestos: __orderRoundCurrency(sub), impuestos_detalle: activeTaxIds, tax_total: taxTotal }, personas: guests, espacios_detalle: detailsToSave, detalles_evento: { multi_espacio: detailsToSave.length > 1, total_espacios: detailsToSave.length } 
     };
 };
 
@@ -1851,7 +2159,7 @@ window.processSaveOrder = async function(options = {}) {
         if (!orderId) throw new Error('Cotización inválida.');
         if (!formData.numero_orden) {
             const sourceId = String(currentPreviewOrder?.id || orderId);
-            formData.numero_orden = sourceId.split('-')[0].toUpperCase();
+            formData.numero_orden = __orderResolveQuoteFolio(sourceId);
         }
         const approvalSnapshotMeta = approvalTransition ? __orderBuildApprovalSnapshotMeta(orderId, formData) : null;
         if (approvalSnapshotMeta?.path) formData.url_cotizacion_final = approvalSnapshotMeta.path;
@@ -1890,15 +2198,17 @@ window.processSaveOrder = async function(options = {}) {
                     const folioUnificado = String(
                         approvalSnapshotMeta?.folioUnificado
                         || formData.numero_orden
-                        || currentPreviewOrder?.numero_orden
-                        || orderId.split('-')[0].toUpperCase()
+                        || __orderResolveQuoteFolio(currentPreviewOrder, orderId)
                     ).trim();
                     const quoteFileName = `COTIZACION_${folioUnificado}.pdf`;
-                    const snapshotBlob = await __orderRenderPdfBlob(previewNode, quoteFileName);
-                    await __orderUploadApprovalSnapshotBlob(orderId, snapshotBlob, formData, {
-                        path: approvalSnapshotMeta?.path,
-                        folioUnificado,
-                        persistQuote: false
+                    const snapshotBlob = await __cpWithBusyOverlay('Guardando cotización...', async () => {
+                        const blob = await __orderRenderPdfBlob(previewNode, quoteFileName);
+                        await __orderUploadApprovalSnapshotBlob(orderId, blob, formData, {
+                            path: approvalSnapshotMeta?.path,
+                            folioUnificado,
+                            persistQuote: false
+                        });
+                        return blob;
                     });
                     __orderPendingApprovalSnapshot = null;
                     __orderDequeueSnapshot(orderId);
@@ -2025,18 +2335,22 @@ window.confirmAndGeneratePurchaseOrder = async function() {
         const btn = document.getElementById('btn-download-preview');
         if (btn) { btn.disabled = true; btn.innerText = "Generando OC..."; }
         try {
-            const element = document.getElementById('pdf-content');
-            if (!__cpIsAdminProfile() && element && currentPreviewOrder) {
-                await __cpEnsurePdfStyleProfile('order', { forceReload: true });
-                element.innerHTML = window.getOrderHTML(currentPreviewOrder, 'order');
-                __cpApplyPdfStyleToLivePreview();
-            }
-            const pdfBlob = await __orderRenderPdfBlob(element);
-            const folioUnificado = currentPreviewOrder.numero_orden || currentPreviewOrder.id.split('-')[0].toUpperCase();
-            const path = `${currentPreviewOrder.id}/orden_compra_${folioUnificado}.pdf`;
-            await window.globalPocketBase.storage.from('documentos-cp').upload(path, pdfBlob, { upsert: true });
-            const ocUpdate = await __cpQuotesUpdate(currentPreviewOrder.id, { url_orden_compra: path, fecha_orden_compra: new Date().toISOString() });
-            if (ocUpdate.error) throw ocUpdate.error;
+            const pdfBlob = await __cpWithBusyOverlay('Generando orden de compra...', async () => {
+                const element = document.getElementById('pdf-content');
+                if (!__cpIsAdminProfile() && element && currentPreviewOrder) {
+                    await __cpEnsurePdfStyleProfile('order', { forceReload: true });
+                    element.innerHTML = window.getOrderHTML(currentPreviewOrder, 'order');
+                    __cpApplyPdfStyleToLivePreview();
+                }
+                const blob = await __orderRenderPdfBlob(element);
+                const folioUnificado = __orderResolveQuoteFolio(currentPreviewOrder);
+                const path = `${currentPreviewOrder.id}/orden_compra_${folioUnificado}.pdf`;
+                await window.globalPocketBase.storage.from('documentos-cp').upload(path, blob, { upsert: true });
+                const ocUpdate = await __cpQuotesUpdate(currentPreviewOrder.id, { url_orden_compra: path, fecha_orden_compra: new Date().toISOString() });
+                if (ocUpdate.error) throw ocUpdate.error;
+                return blob;
+            });
+            const folioUnificado = __orderResolveQuoteFolio(currentPreviewOrder);
             __orderBroadcastRefresh('purchase_order');
             const link = document.createElement('a');
             link.href = URL.createObjectURL(pdfBlob);
@@ -2046,7 +2360,7 @@ window.confirmAndGeneratePurchaseOrder = async function() {
             link.remove();
             setTimeout(() => URL.revokeObjectURL(link.href), 1500);
             window.showToast("Orden de Compra Generada");
-            if (!(IS_ORDER_PREVIEW_PAGE || __cpIsPreviewOnlyQueryMode())) await window.loadOrders();
+            if (!(IS_ORDER_PREVIEW_PAGE || __cpIsPreviewOnlyQueryMode() || IS_ORDER_DETAIL_PAGE)) await window.loadOrders();
             window.closeModal('preview-modal');
             window.closeModal('docs-modal');
             __cpClosePreviewTabIfNeeded();
@@ -2060,13 +2374,22 @@ window.confirmAndGeneratePurchaseOrder = async function() {
 
 window.openDocsModal = function(id) {
     const order = allOrders.find(o => o.id === id); if(!order) return; document.getElementById('doc-client').innerText = order.cliente_nombre; 
-    const folioUnificado = order.numero_orden || order.id.split('-')[0].toUpperCase();
+    const folioUnificado = __orderResolveQuoteFolio(order);
     document.getElementById('doc-folio').innerText = folioUnificado; 
     const details = parseSpacesDetail(order.espacios_detalle);
-    const docSpace = details.length > 1 ? `${details[0]?.espacio_nombre || order.espacio_nombre} + ${details.length - 1}` : order.espacio_nombre;
+    const firstSpaceRef = details[0]?.espacio_clave || details[0]?.espacio_nombre || order.espacio_clave || order.espacio_nombre || 'Espacio';
+    const docSpace = details.length > 1 ? `${firstSpaceRef} + ${details.length - 1}` : firstSpaceRef;
     document.getElementById('doc-space').innerText = docSpace;
     document.getElementById('doc-dates').innerText = `${window.safeFormatDate(order.fecha_inicio)} - ${window.safeFormatDate(order.fecha_fin)}`; const list = document.getElementById('docs-list'); list.innerHTML = '';
     const createBtn = (label, icon, color, action) => { list.innerHTML += `<button type="button" onclick="${action}" class="w-full text-left px-4 py-3 rounded-xl border border-gray-200 hover:bg-gray-50 flex items-center gap-3 transition shadow-sm group bg-white mb-2"><div class="w-8 h-8 rounded-full bg-${color}-100 text-${color}-600 flex items-center justify-center shrink-0"><i class="${icon}"></i></div><div class="flex-grow"><p class="text-xs font-bold text-gray-700">${label}</p></div><i class="fa-solid fa-arrow-right text-xs text-gray-300"></i></button>`; };
+    const createLocked = (label, icon) => { list.innerHTML += `<div class="w-full px-4 py-3 rounded-xl border border-gray-100 bg-gray-50 flex items-center gap-3 mb-2 opacity-60"><i class="${icon} text-gray-400"></i><span class="text-xs font-bold text-gray-400">${label}</span></div>`; };
+    window.toggleDocsPayments = function(sectionId) {
+        const section = document.getElementById(sectionId);
+        const chevron = document.querySelector(`[data-docs-pay-toggle="${sectionId}"]`);
+        if (!section) return;
+        const hidden = section.classList.toggle('hidden');
+        if (chevron) chevron.classList.toggle('rotate-180', !hidden);
+    };
     // Cotización
     if (order.url_cotizacion_final) {
         createBtn('Ver Cotización Aprobada', 'fa-solid fa-file-circle-check', 'blue', `window.openStoredDocument('${order.url_cotizacion_final}')`);
@@ -2080,7 +2403,14 @@ window.openDocsModal = function(id) {
     } else if (['aprobada', 'finalizada'].includes(order.status)) {
         createBtn('Generar Orden de Compra', 'fa-solid fa-plus', 'purple', `window.openOrderPreviewTab('${order.id}', 'order', 'generate')`);
     } else {
-        list.innerHTML += `<div class="w-full px-4 py-3 rounded-xl border border-gray-100 bg-gray-50 flex items-center gap-3 mb-2 opacity-60"><i class="fa-solid fa-lock text-gray-400"></i><span class="text-xs font-bold text-gray-400">Orden de Compra (Pendiente)</span></div>`;
+        createLocked('Orden de Compra (Pendiente)', 'fa-solid fa-lock');
+    }
+
+    // Contrato
+    if (order.contrato_url) {
+        createBtn('Ver Contrato', 'fa-solid fa-file-signature', 'emerald', `window.openStoredDocument('${order.contrato_url}')`);
+    } else {
+        createLocked('Contrato (Pendiente)', 'fa-solid fa-lock');
     }
 
     // Factura
@@ -2088,24 +2418,43 @@ window.openDocsModal = function(id) {
         createBtn('Ver Factura (PDF)', 'fa-solid fa-file-pdf', 'red', `window.openStoredDocument('${order.factura_pdf_url}')`);
         if (order.factura_xml_url) createBtn('Descargar XML', 'fa-solid fa-file-code', 'orange', `window.openStoredDocument('${order.factura_xml_url}')`);
     } else {
-        list.innerHTML += `<div class="w-full px-4 py-3 rounded-xl border border-gray-100 bg-gray-50 flex items-center gap-3 mb-2 opacity-60"><i class="fa-solid fa-file-invoice-dollar text-gray-400"></i><span class="text-xs font-bold text-gray-400">Factura (Pendiente)</span></div>`;
+        createLocked('Factura (Pendiente)', 'fa-solid fa-file-invoice-dollar');
     }
 
-    // Historial de recibos
-    if (order.historial_pagos?.length > 0) {
-        const divider = document.createElement('div');
-        divider.className = 'border-t border-gray-100 my-2 pt-2 text-[10px] font-bold text-gray-400 uppercase text-center';
-        divider.innerHTML = 'Historial de Recibos';
-        list.appendChild(divider);
+    const payments = (() => {
+        if (Array.isArray(order.historial_pagos)) return order.historial_pagos.filter(Boolean);
+        try {
+            const parsed = JSON.parse(order.historial_pagos || '[]');
+            return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+        } catch (_) {
+            return [];
+        }
+    })();
+
+    // Pagos
+    if (payments.length > 0) {
+        const paymentSectionId = `docs-payments-${String(order.id)}`;
         let recNo = 0;
-        order.historial_pagos.forEach((p) => {
+        const paymentButtons = payments.map((p) => {
             const type = String(p?.type || p?.tipo || '').toLowerCase();
             const isConstancia = type === 'constancia_liquidacion' || p?.closed === true || p?.is_closure === true;
             const label = isConstancia ? 'Constancia de Liquidación' : `Recibo #${++recNo}`;
             const icon = isConstancia ? 'fa-solid fa-circle-check' : 'fa-solid fa-receipt';
-            createBtn(label, icon, 'green', `window.openStoredDocument('${p.file_path}')`);
-        });
-    } window.openModal('docs-modal');
+            const path = String(p?.file_path || p?.path || p?.url || '').trim();
+            return path ? `<button type="button" onclick="window.openStoredDocument('${path}')" class="w-full text-left px-4 py-3 rounded-xl border border-emerald-100 hover:bg-emerald-50 flex items-center gap-3 transition shadow-sm group bg-white mb-2"><div class="w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0"><i class="${icon}"></i></div><div class="flex-grow"><p class="text-xs font-bold text-gray-700">${label}</p></div><i class="fa-solid fa-arrow-right text-xs text-gray-300"></i></button>` : '';
+        }).join('');
+        list.innerHTML += `<div class="mb-2">
+            <button type="button" onclick="window.toggleDocsPayments('${paymentSectionId}')" class="w-full text-left px-4 py-3 rounded-xl border border-gray-200 hover:bg-gray-50 flex items-center gap-3 transition shadow-sm group bg-white">
+                <div class="w-8 h-8 rounded-full bg-green-100 text-green-600 flex items-center justify-center shrink-0"><i class="fa-solid fa-money-bill-wave"></i></div>
+                <div class="flex-grow"><p class="text-xs font-bold text-gray-700">Pagos</p><p class="text-[10px] text-gray-400">${payments.length} documento(s) registrado(s)</p></div>
+                <i data-docs-pay-toggle="${paymentSectionId}" class="fa-solid fa-chevron-down text-xs text-gray-300 transition-transform"></i>
+            </button>
+            <div id="${paymentSectionId}" class="hidden pt-2 pl-3">${paymentButtons}</div>
+        </div>`;
+    } else {
+        createLocked('Pagos (Sin recibos)', 'fa-solid fa-lock');
+    }
+    window.openModal('docs-modal');
 };
 
 window.openPDFPreview = async function(id, type) {
@@ -2117,7 +2466,7 @@ window.openPDFPreview = async function(id, type) {
         if (!order) {
             const { data, error } = await __cpQuoteGetById(safeId);
             if (error || !data) throw (error || new Error('No se encontró la cotización.'));
-            order = data;
+            order = __orderHydrateQuotePricing(data);
             if (!allOrders.some((row) => String(row.id || '') === safeId)) allOrders.push(order);
         }
         currentPreviewOrder = { ...order, docType: type };
@@ -2146,15 +2495,17 @@ window.downloadPDFFromPreview = async function() {
     const element = document.getElementById('pdf-content');
     const orderId = String(currentPreviewOrder?.id || '').trim();
     if (!orderId) return window.showToast("No se pudo identificar la cotización.", "error");
-    const folioUnificado = currentPreviewOrder.numero_orden || orderId.split('-')[0].toUpperCase();
+    const folioUnificado = __orderResolveQuoteFolio(currentPreviewOrder, orderId);
     try {
-        if (!__cpIsAdminProfile() && element && currentPreviewOrder) {
-            const docType = String(currentPreviewOrder.docType || 'quote').toLowerCase() === 'order' ? 'order' : 'quote';
-            await __cpEnsurePdfStyleProfile(docType, { forceReload: true });
-            element.innerHTML = window.getOrderHTML(currentPreviewOrder, docType);
-            __cpApplyPdfStyleToLivePreview();
-        }
-        const pdfBlob = await __orderRenderPdfBlob(element, `Documento_${folioUnificado}.pdf`);
+        const pdfBlob = await __cpWithBusyOverlay('Generando PDF...', async () => {
+            if (!__cpIsAdminProfile() && element && currentPreviewOrder) {
+                const docType = String(currentPreviewOrder.docType || 'quote').toLowerCase() === 'order' ? 'order' : 'quote';
+                await __cpEnsurePdfStyleProfile(docType, { forceReload: true });
+                element.innerHTML = window.getOrderHTML(currentPreviewOrder, docType);
+                __cpApplyPdfStyleToLivePreview();
+            }
+            return await __orderRenderPdfBlob(element, `Documento_${folioUnificado}.pdf`);
+        });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(pdfBlob);
         link.download = `Documento_${folioUnificado}.pdf`;
@@ -2197,10 +2548,8 @@ function __cpOrdersBoostPdfTypography(html) {
         .replace(/__CP_TXT_SM__/g, 'text-base');
 }
 
-const __CP_PDF_STYLE_CONFIG_KEY = 'pdf_typography_style';
 const __CP_PDF_STYLE_TENANT = 'casa_de_piedra';
 const __CP_PDF_OVERLAYS_COLLECTION = 'pdf_overlays';
-const __CP_PDF_SETTINGS_COLLECTION = 'pdf_generator_settings';
 const __CP_PDF_OVERLAY_TYPES = Object.freeze({
     quote: 'generator:quotes',
     order: 'generator:orders'
@@ -2948,6 +3297,10 @@ function __cpBindFloatingPanelDrag(panel, host) {
     };
     handle.addEventListener('pointerdown', (event) => {
         if (event.button !== 0) return;
+        const interactive = event.target instanceof Element
+            ? event.target.closest('button, input, select, textarea, [data-pdf-inspector-action], [data-pdf-inspector-toggle]')
+            : null;
+        if (interactive) return;
         ensureInitialPosition();
         dragState = {
             startX: event.clientX,
@@ -3442,7 +3795,6 @@ function __cpEnsurePdfEditingChrome(options = {}) {
         const backdrop = document.createElement('div');
         backdrop.id = 'cp-pdf-inspector-backdrop';
         backdrop.className = 'hidden absolute inset-0 z-[96] bg-gray-950/45 backdrop-blur-[1px]';
-        backdrop.addEventListener('click', () => __cpClosePdfInspector());
         container.appendChild(backdrop);
     }
     if (!document.getElementById('cp-pdf-inspector')) {
@@ -3470,9 +3822,6 @@ function __cpEnsurePdfEditingChrome(options = {}) {
             event.preventDefault();
         });
         panel.addEventListener('click', __cpHandlePdfInspectorClick);
-        panel.addEventListener('click', (event) => {
-            if (event.target === panel) __cpClosePdfInspector();
-        });
         container.appendChild(panel);
     }
     __cpBindFloatingPanelDrag(document.getElementById('cp-pdf-inspector'), container);
@@ -3652,8 +4001,7 @@ function __cpResolveCurrentUserRole() {
             return null;
         }
     };
-    const compatAuth = parseAuthState('pb_compat_auth_v1');
-    const nativeAuth = parseAuthState('pb_native_auth_v1');
+    const authState = parseAuthState('pb_native_auth_v1');
     const candidates = [
         window.currentUserProfile?.role,
         window.currentUserProfile?.rol,
@@ -3669,10 +4017,8 @@ function __cpResolveCurrentUserRole() {
         window.userProfile?.role,
         Array.isArray(window.currentUserProfile?.roles) ? window.currentUserProfile.roles[0] : '',
         localStorage.getItem('hub_user_cache_role') || '',
-        compatAuth?.user?.role,
-        compatAuth?.record?.role,
-        nativeAuth?.user?.role,
-        nativeAuth?.record?.role
+        authState?.user?.role,
+        authState?.record?.role
     ];
     for (const candidate of candidates) {
         const safe = __cpNormalizeUserRole(candidate);
@@ -3725,37 +4071,28 @@ async function __cpLoadCurrentUserProfile(user) {
             return null;
         }
     };
-    const compatAuth = parseAuthState('pb_compat_auth_v1');
-    const nativeAuth = parseAuthState('pb_native_auth_v1');
+    const authState = parseAuthState('pb_native_auth_v1');
     const idCandidates = [...new Set([
         String(fallback?.id || '').trim(),
         String(fallback?.record?.id || '').trim(),
-        String(compatAuth?.user?.id || '').trim(),
-        String(compatAuth?.record?.id || '').trim(),
-        String(nativeAuth?.user?.id || '').trim(),
-        String(nativeAuth?.record?.id || '').trim()
+        String(authState?.user?.id || '').trim(),
+        String(authState?.record?.id || '').trim()
     ].filter(Boolean))];
     const emailCandidates = [...new Set([
         String(fallback?.email || '').trim().toLowerCase(),
         String(fallback?.record?.email || '').trim().toLowerCase(),
-        String(compatAuth?.user?.email || '').trim().toLowerCase(),
-        String(compatAuth?.record?.email || '').trim().toLowerCase(),
-        String(nativeAuth?.user?.email || '').trim().toLowerCase(),
-        String(nativeAuth?.record?.email || '').trim().toLowerCase()
+        String(authState?.user?.email || '').trim().toLowerCase(),
+        String(authState?.record?.email || '').trim().toLowerCase()
     ].filter(Boolean))];
     const usernameCandidates = [...new Set([
         String(fallback?.login_username || '').trim(),
         String(fallback?.record?.login_username || '').trim(),
         String(fallback?.username || '').trim(),
         String(fallback?.record?.username || '').trim(),
-        String(compatAuth?.user?.login_username || '').trim(),
-        String(compatAuth?.record?.login_username || '').trim(),
-        String(compatAuth?.user?.username || '').trim(),
-        String(compatAuth?.record?.username || '').trim(),
-        String(nativeAuth?.user?.login_username || '').trim(),
-        String(nativeAuth?.record?.login_username || '').trim(),
-        String(nativeAuth?.user?.username || '').trim(),
-        String(nativeAuth?.record?.username || '').trim()
+        String(authState?.user?.login_username || '').trim(),
+        String(authState?.record?.login_username || '').trim(),
+        String(authState?.user?.username || '').trim(),
+        String(authState?.record?.username || '').trim()
     ].filter(Boolean))];
     const lookupByField = async (table, field, values) => {
         for (const value of values) {
@@ -3912,40 +4249,6 @@ async function __cpLoadModernPdfStyleRecord(profileKey) {
             }
         } catch (_) {}
     }
-    for (const pbClient of clients) {
-        try {
-            const { data, error } = await pbClient
-                .from(__CP_PDF_SETTINGS_COLLECTION)
-                .select('id,config_json,updated,created,updated_at,created_at')
-                .eq('tenant', __CP_PDF_STYLE_TENANT)
-                .eq('generator_type', profileKey === 'order' ? 'orders' : 'quotes');
-            const row = __cpPickLatestRecord(Array.isArray(data) ? data : (data ? [data] : []));
-            if (!error && row) {
-                return { source: 'pdf_generator_settings', id: String(row.id || ''), config: row.config_json || {}, raw: row.config_json || {} };
-            }
-        } catch (_) {}
-    }
-    return null;
-}
-
-async function __cpLoadLegacyPdfStyleRecord() {
-    const clients = [];
-    if (window.tenantPocketBase) clients.push(window.tenantPocketBase);
-    if (window.globalPocketBase && window.globalPocketBase !== window.tenantPocketBase) clients.push(window.globalPocketBase);
-    if (!clients.length) return null;
-    for (const pbClient of clients) {
-        try {
-            const { data, error } = await pbClient
-                .from('configuracion')
-                .select('id,valor_json,updated,created,updated_at,created_at')
-                .eq('clave', __CP_PDF_STYLE_CONFIG_KEY);
-            const row = __cpPickLatestRecord(Array.isArray(data) ? data : (data ? [data] : []));
-            if (!error && row) {
-                const parsed = __cpParseJsonObjectLike(row.valor_json) || {};
-                return { source: 'legacy', id: String(row.id || ''), raw: parsed, config: parsed };
-            }
-        } catch (_) {}
-    }
     return null;
 }
 
@@ -3996,118 +4299,10 @@ async function __cpUpsertModernPdfStyleRecord(profileKey, configJson) {
     return { id: '', config: payload.config_json };
 }
 
-async function __cpUpsertLegacyPdfStyleRecord(configJson) {
-    const clients = [];
-    if (window.tenantPocketBase) clients.push(window.tenantPocketBase);
-    if (window.globalPocketBase && window.globalPocketBase !== window.tenantPocketBase) clients.push(window.globalPocketBase);
-    if (!clients.length) return null;
-    let lastError = null;
-    for (const pbClient of clients) {
-        try {
-            const { data: existing, error: lookupError } = await pbClient
-                .from('configuracion')
-                .select('id,updated,created,updated_at,created_at')
-                .eq('clave', __CP_PDF_STYLE_CONFIG_KEY);
-            if (lookupError) throw lookupError;
-            const existingRow = __cpPickLatestRecord(Array.isArray(existing) ? existing : (existing ? [existing] : []));
-            if (existingRow?.id) {
-                const { error: updError } = await pbClient
-                    .from('configuracion')
-                    .update({ valor_json: configJson || {} })
-                    .eq('clave', __CP_PDF_STYLE_CONFIG_KEY);
-                if (updError) throw updError;
-                return { id: String(existingRow.id || '') };
-            }
-            const { data: inserted, error: insError } = await pbClient
-                .from('configuracion')
-                .insert({ clave: __CP_PDF_STYLE_CONFIG_KEY, valor_json: configJson || {} })
-                .select('id')
-                .single();
-            if (insError) throw insError;
-            return { id: String(inserted?.id || '') };
-        } catch (e) {
-            lastError = e;
-        }
-    }
-    if (lastError) throw lastError;
-    return null;
-}
-
-async function __cpUpsertCompatPdfSettingsRecord(profileKey, configJson) {
-    const clients = [];
-    if (window.tenantPocketBase) clients.push(window.tenantPocketBase);
-    if (window.globalPocketBase && window.globalPocketBase !== window.tenantPocketBase) clients.push(window.globalPocketBase);
-    if (!clients.length) return null;
-    const generatorType = profileKey === 'order' ? 'orders' : 'quotes';
-    const payload = {
-        tenant: __CP_PDF_STYLE_TENANT,
-        generator_type: generatorType,
-        config_json: configJson || {}
-    };
-    let lastError = null;
-    for (const pbClient of clients) {
-        try {
-            const { data: existing, error: lookupError } = await pbClient
-                .from(__CP_PDF_SETTINGS_COLLECTION)
-                .select('id,updated,created,updated_at,created_at')
-                .eq('tenant', __CP_PDF_STYLE_TENANT)
-                .eq('generator_type', generatorType);
-            if (lookupError) throw lookupError;
-            const existingRow = __cpPickLatestRecord(Array.isArray(existing) ? existing : (existing ? [existing] : []));
-            if (existingRow?.id) {
-                const { error: updError } = await pbClient
-                    .from(__CP_PDF_SETTINGS_COLLECTION)
-                    .update(payload)
-                    .eq('tenant', __CP_PDF_STYLE_TENANT)
-                    .eq('generator_type', generatorType);
-                if (updError) throw updError;
-                return { id: String(existingRow.id || '') };
-            }
-            const { data: inserted, error: insError } = await pbClient
-                .from(__CP_PDF_SETTINGS_COLLECTION)
-                .insert(payload)
-                .select('id')
-                .single();
-            if (insError) throw insError;
-            return { id: String(inserted?.id || '') };
-        } catch (e) {
-            lastError = e;
-        }
-    }
-    if (lastError) throw lastError;
-    return null;
-}
-
 async function __cpLoadSharedPdfStyleConfig(profile = 'quote') {
     const profileKey = __cpNormalizePdfStyleProfileKey(profile);
     try {
-        const canMigrate = __cpIsAdminProfile();
-        let record = await __cpLoadModernPdfStyleRecord(profileKey);
-        if (!record) {
-            const legacyRecord = await __cpLoadLegacyPdfStyleRecord();
-            if (legacyRecord?.config) {
-                const legacyPayload = __cpBuildPdfStyleConfigPayload(
-                    legacyRecord.raw || {},
-                    __cpExtractPdfStyleProfile(legacyRecord.config, profileKey),
-                    profileKey
-                );
-                if (canMigrate) {
-                    try {
-                        const saved = await __cpUpsertModernPdfStyleRecord(profileKey, legacyPayload);
-                        record = { source: 'pdf_overlays', id: saved.id, config: saved.config, raw: saved.config };
-                    } catch (_) {
-                        record = { source: 'legacy', id: legacyRecord.id || '', config: legacyPayload, raw: legacyPayload };
-                    }
-                } else {
-                    record = { source: 'legacy', id: legacyRecord.id || '', config: legacyPayload, raw: legacyPayload };
-                }
-            }
-        } else if (record.source !== 'pdf_overlays' && record.config && canMigrate) {
-            try {
-                const saved = await __cpUpsertModernPdfStyleRecord(profileKey, record.config);
-                record = { source: 'pdf_overlays', id: saved.id, config: saved.config, raw: saved.config };
-            } catch (_) {}
-        }
+        const record = await __cpLoadModernPdfStyleRecord(profileKey);
         __cpPdfStyleActiveProfile = profileKey;
         __cpPdfStyleConfigRecordId = record?.id || '';
         __cpPdfStyleConfigStore = record?.source || '';
@@ -4138,8 +4333,6 @@ async function __cpPersistSharedPdfStyleConfig(style, options = {}) {
         __cpPdfStyleConfigRecordId = saved.id;
         __cpPdfStyleConfigStore = 'pdf_overlays';
         __cpPdfStyleRawPayload = saved.config;
-        try { await __cpUpsertCompatPdfSettingsRecord(__cpPdfStyleActiveProfile, configJson); } catch (_) {}
-        try { await __cpUpsertLegacyPdfStyleRecord(configJson); } catch (_) {}
     } catch (e) {
         console.warn('No se pudo guardar la configuracion PDF compartida (CP):', e);
     }
@@ -4715,7 +4908,7 @@ window.getOrderHTML = function(o, type) {
     const pdfTableFitTag = `<style>.cp-pdf-root .cp-pdf-table-head th{font-size:var(--cp-fit-head-size,var(--cp-table-head-size))!important;padding-top:var(--cp-fit-cell-py,.5rem)!important;padding-bottom:var(--cp-fit-cell-py,.5rem)!important;padding-left:var(--cp-fit-cell-px,.75rem)!important;padding-right:var(--cp-fit-cell-px,.75rem)!important;}.cp-pdf-root .cp-pdf-table-body td,.cp-pdf-root .cp-pdf-table-body p,.cp-pdf-root .cp-pdf-table-body span{font-size:var(--cp-fit-body-size,var(--cp-table-body-size))!important;line-height:var(--cp-fit-line-height,var(--cp-line-height))!important;}.cp-pdf-root .cp-pdf-table-body td{padding-top:var(--cp-fit-cell-py,.5rem)!important;padding-bottom:var(--cp-fit-cell-py,.5rem)!important;padding-left:var(--cp-fit-cell-px,.75rem)!important;padding-right:var(--cp-fit-cell-px,.75rem)!important;}</style>`;
     const now = new Date(); const dateStr = now.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' }); const genDateTime = now.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'medium' }); let docTitle = isOrder ? "ORDEN DE COMPRA" : "COTIZACIÓN"; 
     
-    const folioUnificado = o.numero_orden || o.id.split('-')[0].toUpperCase();
+    const folioUnificado = __orderResolveQuoteFolio(o);
     const space = allSpaces.find(s=>s.id==o.espacio_id);
     const descHTML = isOrder ? '' : `<p class="text-[9px] text-gray-500 italic mt-0.5 truncate max-w-xs">${space?.descripcion || ''}</p>`;
     const footerHubHTML = `<div class="w-full text-center mt-10"><p class="cp-pdf-footer-text text-[10px] text-gray-400 font-medium leading-tight" data-base-resource="footer">Generado el ${genDateTime}<br>a través de Marketing Hub</p></div>`; 
@@ -4750,11 +4943,7 @@ window.getOrderHTML = function(o, type) {
         return '';
     };
 
-    let cArray = [];
-    if (Array.isArray(o.conceptos_adicionales)) cArray = o.conceptos_adicionales;
-    else if (typeof o.conceptos_adicionales === 'string') {
-        try { cArray = JSON.parse(o.conceptos_adicionales); } catch (e) {}
-    }
+    let cArray = __orderNormalizeConceptsArray(o.conceptos_adicionales);
     cArray = Array.isArray(cArray) ? cArray : [];
 
     const __orderScheduleBySpace = {};
@@ -4835,11 +5024,11 @@ window.getOrderHTML = function(o, type) {
             `<tr><td class="py-1 px-3 text-[10px] font-bold text-gray-500 text-right" colspan="2">Subtotal</td><td class="py-1 px-3 text-right text-xs font-bold text-gray-800">${__orderFormatMoneyHtml(subtotal)}</td></tr>`
         ];
         const resolvedTaxes = parseIds(activeTaxIds)
-            .map((tid) => dbTaxes.find((tax) => String(tax.id) === String(tid)))
+            .map((tid) => __orderResolveTaxRecord(tid))
             .filter(Boolean)
             .map((tax) => {
-                const percentage = parseFloat(tax.porcentaje || 0) || 0;
-                const rate = percentage > 1 ? percentage / 100 : percentage;
+                const percentage = __orderResolveTaxDisplayPercent(tax);
+                const rate = __orderResolveTaxRate(tax);
                 return {
                     name: __orderNormalizeTaxName(tax.nombre),
                     percentage,
@@ -4940,7 +5129,7 @@ window.getOrderHTML = function(o, type) {
     const __orderFitLineHeight = __orderDensityLevel >= 3 ? '105%' : (__orderDensityLevel >= 2 ? '112%' : '120%');
     const __orderTableFitInline = `--cp-fit-head-size:${__orderFitHeadPx}px;--cp-fit-body-size:${__orderFitBodyPx}px;--cp-fit-cell-py:${__orderFitCellPy}px;--cp-fit-cell-px:${__orderFitCellPx}px;--cp-fit-line-height:${__orderFitLineHeight};`;
     const __orderQuickMarginClass = __orderDensityLevel >= 2 ? 'mb-8' : (__orderDensityLevel === 1 ? 'mb-12' : 'mb-20');
-    let taxIds = []; if (o.desglose_precios && o.desglose_precios.impuestos_detalle) taxIds = o.desglose_precios.impuestos_detalle; else { const s = allSpaces.find(sp => sp.id === o.espacio_id); taxIds = s ? parseIds(s.impuestos_ids || s.impuestos) : []; } const storedTaxTotal = parseFloat(o?.desglose_precios?.tax_total || 0) || 0; const taxRows = __orderBuildTaxRows(runningSubtotal, taxIds, storedTaxTotal); const totalsBlock = `<div class="cp-pdf-summary flex justify-end mb-2 pr-4" data-base-resource="summary"><div class="cp-pdf-summary-table-wrap"><table class="w-full border-collapse">${taxRows}<tr><td class="pt-2 border-t-2 border-gray-800 align-middle text-right" colspan="2"><span class="text-[10px] font-bold uppercase text-gray-500 mr-2">Total Neto</span></td><td class="pt-2 border-t-2 border-gray-800 align-middle text-right"><span class="text-xl font-black text-gray-900">${__orderFormatMoneyHtml(o.precio_final)}</span></td></tr></table></div></div>`; 
+    const pricing = __orderResolveQuotePricing(o); const taxIds = pricing.taxIds; const storedTaxTotal = pricing.taxTotal > 0 ? pricing.taxTotal : Math.max(0, __orderRoundMoney(pricing.total - runningSubtotal)); const taxRows = __orderBuildTaxRows(runningSubtotal, taxIds, storedTaxTotal); const totalsBlock = `<div class="cp-pdf-summary flex justify-end mb-2 pr-4" data-base-resource="summary"><div class="cp-pdf-summary-table-wrap"><table class="w-full border-collapse">${taxRows}<tr><td class="pt-2 border-t-2 border-gray-800 align-middle text-right" colspan="2"><span class="text-[10px] font-bold uppercase text-gray-500 mr-2">Total Neto</span></td><td class="pt-2 border-t-2 border-gray-800 align-middle text-right"><span class="text-xl font-black text-gray-900">${__orderFormatMoneyHtml(pricing.total)}</span></td></tr></table></div></div>`; 
     
     const quickLeftItems = String(pdfContent.quickLeftLines || '')
         .split(/\r?\n/)
@@ -5205,7 +5394,16 @@ function __orderCfgHasBlockedDates(cfg) {
 }
 
 function __orderDefaultTaxIds(space) {
-    return window.parseIds(space?.impuestos_ids || space?.impuestos).map(v => parseInt(v, 10)).filter(v => Number.isFinite(v));
+    return __orderNormalizeTaxIds(space?.impuestos_ids || space?.impuestos);
+}
+function __orderResolveCfgTaxIds(cfg, space) {
+    if (Array.isArray(cfg?.taxIds)) return __orderNormalizeTaxIds(cfg.taxIds);
+    return __orderDefaultTaxIds(space);
+}
+function __orderRenderAutoTaxSummary(taxIds, space) {
+    const rows = __orderNormalizeTaxIds(taxIds).map((taxId) => __orderResolveTaxRecord(taxId, space)).filter(Boolean);
+    if (!rows.length) return '<p class="text-[10px] text-gray-400 italic">Sin impuestos configurados.</p>';
+    return rows.map((tax) => `<div class="text-[10px] text-gray-500 font-bold uppercase">${tax.nombre}</div>`).join('');
 }
 
 async function __orderLoadPremontajePctConfig() {
@@ -5213,32 +5411,39 @@ async function __orderLoadPremontajePctConfig() {
     __orderHoraExtraCfg = { mode: 'percent', value: 100, allowCustom: true };
     __CP_LETTERHEAD_URL = (window.HUB_CONFIG && (window.HUB_CONFIG.cpPdfLetterheadUrl || window.HUB_CONFIG.pdfLetterheadCasaPiedraUrl)) || '../public/assets/img/cp-letterhead-default.png';
     try {
+        const tenant = __orderResolveTenantSlug('casa_de_piedra');
         const { data, error } = await window.tenantPocketBase
             .from('configuracion')
-            .select('clave,valor_json,valor_num')
+            .select('clave,valor_json,valor_num,updated,updated_at,created,created_at')
+            .eq('tenant', tenant)
             .in('clave', ['premontaje_pct', 'hora_extra_cfg', __CP_CFG_LETTERHEAD_KEY]);
         if (error) throw error;
         const rows = Array.isArray(data) ? data : [];
-        for (const row of rows) {
+        const resolvedRows = [
+            __cpPickLatestRecord(rows.filter((row) => String(row?.clave || '').toLowerCase() === 'premontaje_pct')),
+            __cpPickLatestRecord(rows.filter((row) => String(row?.clave || '').toLowerCase() === 'hora_extra_cfg')),
+            __cpPickLatestRecord(rows.filter((row) => String(row?.clave || '').toLowerCase() === __CP_CFG_LETTERHEAD_KEY))
+        ].filter(Boolean);
+        for (const row of resolvedRows) {
             const key = String(row?.clave || '').toLowerCase();
+            const cfg = __orderParseRecordJson(row?.valor_json);
             if (key === 'premontaje_pct') {
-                const raw = row?.valor_num ?? row?.valor_json?.value ?? row?.valor_json?.percent;
+                const raw = row?.valor_num ?? cfg?.value ?? cfg?.percent;
                 const parsed = parseFloat(raw);
                 if (Number.isFinite(parsed) && parsed >= 0) __orderPremontajePct = parsed;
                 continue;
             }
             if (key === 'hora_extra_cfg') {
-                const modeRaw = String(row?.valor_json?.mode || '').toLowerCase();
+                const modeRaw = String(cfg?.mode || '').toLowerCase();
                 const mode = (modeRaw === 'fixed' || modeRaw === 'percent') ? modeRaw : 'percent';
-                const rawVal = row?.valor_num ?? row?.valor_json?.value ?? 100;
+                const rawVal = row?.valor_num ?? cfg?.value ?? 100;
                 const parsedVal = parseFloat(rawVal);
                 const value = Number.isFinite(parsedVal) && parsedVal >= 0 ? parsedVal : 100;
-                const allowCustom = row?.valor_json?.allow_custom !== false;
+                const allowCustom = cfg?.allow_custom !== false;
                 __orderHoraExtraCfg = { mode, value, allowCustom };
                 continue;
             }
             if (key === __CP_CFG_LETTERHEAD_KEY) {
-                const cfg = row?.valor_json || {};
                 const rawPath = cfg.path || cfg.file_path || cfg.value || '';
                 const safePath = rawPath || (cfg.file_name ? `${__CP_LETTERHEAD_PATH}/${cfg.file_name}` : '');
                 if (!safePath) continue;
@@ -5310,7 +5515,7 @@ function __orderCreateSpaceCfg(spaceId, seed = {}) {
         horasExtra: parseInt(seed.horasExtra, 10) || 0,
         horasExtraCourtesy: parseInt(seed.horasExtraCourtesy, 10) || 0,
         horasExtraUnit: heCfg.allowCustom ? defaultHoraUnit : __orderResolveHoraExtraUnit(space),
-        taxIds: Array.isArray(seed.taxIds) ? seed.taxIds.map(v => parseInt(v, 10)).filter(Number.isFinite) : __orderDefaultTaxIds(space)
+        taxIds: Array.isArray(seed.taxIds) ? __orderNormalizeTaxIds(seed.taxIds) : __orderDefaultTaxIds(space)
     };
 }
 
@@ -5462,35 +5667,15 @@ function __orderRenderTaxesForActive() {
     const container = document.getElementById('oed-taxes-list');
     if (!cfg || !container) return;
     const space = __orderGetSpaceById(cfg.spaceId);
-    const defaultTaxIds = __orderDefaultTaxIds(space).map((id) => parseInt(id, 10)).filter(Number.isFinite);
-    const mandatoryTaxIds = new Set(defaultTaxIds.map((id) => String(id)));
-    const activeTaxIdsRaw = (cfg.taxIds && cfg.taxIds.length) ? cfg.taxIds : defaultTaxIds;
-    const selectedTaxIds = Array.from(new Set([
-        ...defaultTaxIds,
-        ...activeTaxIdsRaw.map((id) => parseInt(id, 10)).filter(Number.isFinite)
-    ]));
-    const locked = ['aprobada', 'finalizada'].includes(String(currentPreviewOrder?.status || '').toLowerCase());
-    container.innerHTML = '';
-    dbTaxes.forEach(t => {
-        const taxId = parseInt(t.id, 10);
-        const tid = String(t.id);
-        const checked = selectedTaxIds.includes(taxId) || mandatoryTaxIds.has(tid) ? 'checked' : '';
-        const disabled = locked || mandatoryTaxIds.has(tid);
-        container.innerHTML += `<label class="flex items-center gap-1.5 ${disabled ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'}">
-            <input type="checkbox" value="${t.id}" class="oed-tax-check accent-brand-red w-3 h-3" ${checked} ${disabled ? 'disabled' : ''} onchange="window.onActiveOrderTaxesChanged()">
-            <span class="text-[10px] font-bold uppercase text-gray-700">${t.nombre}</span>
-        </label>`;
-    });
-    cfg.taxIds = selectedTaxIds.slice();
+    cfg.taxIds = __orderResolveCfgTaxIds(cfg, space);
+    container.innerHTML = __orderRenderAutoTaxSummary(cfg.taxIds, space);
 }
 
 window.onActiveOrderTaxesChanged = function() {
     const cfg = __orderGetActiveCfg();
     if (!cfg) return;
     const space = __orderGetSpaceById(cfg.spaceId);
-    const mandatory = __orderDefaultTaxIds(space).map((id) => parseInt(id, 10)).filter(Number.isFinite);
-    const selected = Array.from(document.querySelectorAll('.oed-tax-check:checked')).map(cb => parseInt(cb.value, 10)).filter(Number.isFinite);
-    cfg.taxIds = Array.from(new Set([...mandatory, ...selected]));
+    cfg.taxIds = __orderResolveCfgTaxIds(cfg, space);
     window.recalcTotal();
 };
 
@@ -5572,8 +5757,7 @@ function __orderSaveActiveFromForm() {
         cfg.horarioCustomStart = '';
         cfg.horarioCustomEnd = '';
     }
-    const taxes = Array.from(document.querySelectorAll('.oed-tax-check:checked')).map(cb => parseInt(cb.value, 10)).filter(Number.isFinite);
-    if (taxes.length) cfg.taxIds = taxes;
+    cfg.taxIds = __orderResolveCfgTaxIds(cfg, space);
     __orderApplyHoraExtraInputState(cfg);
 }
 
@@ -6435,14 +6619,16 @@ window.recalcTotal = function() {
         if (space.ajuste_tipo === 'aumento') subtotal += subtotal * ((parseFloat(space.ajuste_porcentaje) || 0) / 100);
         if (space.ajuste_tipo === 'descuento') subtotal -= subtotal * ((parseFloat(space.ajuste_porcentaje) || 0) / 100);
 
-        const taxIds = (cfg.taxIds && cfg.taxIds.length) ? cfg.taxIds : __orderDefaultTaxIds(space);
+        const taxIds = __orderResolveCfgTaxIds(cfg, space);
+        const taxBreakdown = [];
         let taxSubtotal = 0;
         taxIds.forEach(tid => {
-            const tax = dbTaxes.find(t => String(t.id) === String(tid));
+            const tax = __orderResolveTaxRecord(tid, space);
             if (!tax) return;
-            const rate = parseFloat(tax.porcentaje || 0) > 1 ? (parseFloat(tax.porcentaje) / 100) : parseFloat(tax.porcentaje || 0);
+            const rate = __orderResolveTaxRate(tax);
             const value = subtotal * rate;
             taxSubtotal += value;
+            taxBreakdown.push({ name: tax.nombre || 'Impuesto', value });
             taxByName[tax.nombre] = (taxByName[tax.nombre] || 0) + value;
         });
 
@@ -6476,7 +6662,9 @@ window.recalcTotal = function() {
             horasExtraTotal: horasCost,
             subtotalSpace: subtotal,
             taxIds,
-            taxTotal: taxSubtotal
+            taxTotal: taxSubtotal,
+            totalSpace: subtotal + taxSubtotal,
+            taxBreakdown
         };
         spacesData.push(cfg.__pricing);
     });
@@ -6484,12 +6672,14 @@ window.recalcTotal = function() {
     let conceptsHtml = '';
     let conceptsSum = 0;
     spacesData.forEach(sp => {
-        const head = `<div class="pt-1"><p class="text-[10px] font-black uppercase text-gray-500">[${sp.spaceName}]</p></div>`;
+        const spaceRef = sp.spaceKey ? `${sp.spaceName} [${sp.spaceKey}]` : (sp.spaceName || 'Espacio');
+        const head = `<div class="pt-1"><p class="text-[10px] font-black uppercase text-gray-500">${spaceRef}</p></div>`;
         const lines = [];
         lines.push(`<div class="flex justify-between text-[10px] text-gray-500"><span>Renta base</span><span>${(parseFloat(sp.base || 0)).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span></div>`);
         if ((parseFloat(sp.horarioCost || 0) || 0) > 0) lines.push(`<div class="flex justify-between text-[10px] text-gray-500"><span>Horario</span><span>${(parseFloat(sp.horarioCost || 0)).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span></div>`);
         if ((parseFloat(sp.premontajeTotal || 0) || 0) > 0) lines.push(`<div class="flex justify-between text-[10px] text-gray-500"><span>Premontaje (${Math.max(0, (parseInt(sp.premontajeDays, 10) || 0) - (parseInt(sp.premontajeCourtesyDays, 10) || 0))} fact.)</span><span>${(parseFloat(sp.premontajeTotal || 0)).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span></div>`);
         if ((parseFloat(sp.horasExtraTotal || 0) || 0) > 0) lines.push(`<div class="flex justify-between text-[10px] text-gray-500"><span>Horas extra (${parseInt(sp.horasExtraBillable, 10) || 0} fact.)</span><span>${(parseFloat(sp.horasExtraTotal || 0)).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span></div>`);
+        lines.push(`<div class="flex justify-between text-[10px] font-bold text-gray-700 border-t border-dashed border-gray-200 pt-1 mt-1"><span>Subtotal espacio</span><span>${(parseFloat(sp.subtotalSpace || 0)).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span></div>`);
         conceptsHtml += head + lines.join('');
     });
     (currentConcepts || []).forEach(c => {
@@ -6510,7 +6700,20 @@ window.recalcTotal = function() {
         if (adjType === 'aumento') subtotal += adjustment;
     }
 
-    const taxHtml = Object.keys(taxByName).map(name => `<div class="flex justify-between text-[10px] text-gray-500"><span>${name}</span><span>+${taxByName[name].toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span></div>`).join('');
+    const taxHtml = spacesData.map(sp => {
+        const spaceRef = sp.spaceKey ? `${sp.spaceName} [${sp.spaceKey}]` : (sp.spaceName || 'Espacio');
+        const rows = [];
+        if (Array.isArray(sp.taxBreakdown) && sp.taxBreakdown.length) {
+            sp.taxBreakdown.forEach((tax) => {
+                rows.push(`<div class="flex justify-between text-[10px] text-gray-500"><span>${tax.name}</span><span>+${(parseFloat(tax.value || 0)).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span></div>`);
+            });
+        } else {
+            rows.push('<div class="text-[10px] text-gray-400 italic">Sin impuestos configurados.</div>');
+        }
+        rows.push(`<div class="flex justify-between text-[10px] font-bold text-gray-700 border-t border-dashed border-gray-200 pt-1 mt-1"><span>Total impuestos</span><span>${(parseFloat(sp.taxTotal || 0)).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span></div>`);
+        rows.push(`<div class="flex justify-between text-[10px] font-black text-gray-800"><span>Total espacio</span><span>${(parseFloat(sp.totalSpace || 0)).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span></div>`);
+        return `<div class="pt-1"><p class="text-[10px] font-black uppercase text-gray-500">${spaceRef}</p></div>${rows.join('')}`;
+    }).join('');
     document.getElementById('oed-tax-summary-display').innerHTML = taxHtml;
 
     const finalTotal = subtotal + taxesTotal;
@@ -6602,7 +6805,8 @@ window.getFormDataFromModal = function() {
             horas_extra_total: sp.horasExtraTotal,
             subtotal_espacio: sp.subtotalSpace,
             impuestos_ids: sp.taxIds,
-            impuestos_total: sp.taxTotal
+            impuestos_total: sp.taxTotal,
+            total_espacio: sp.totalSpace
         };
     });
 
@@ -6629,7 +6833,7 @@ window.getFormDataFromModal = function() {
         valor_ajuste: adjVal,
         ajuste_es_porcentaje: isPercent,
         conceptos_adicionales: finalConcepts,
-        desglose_precios: { subtotal_antes_impuestos: __orderTotals.subtotalBase + __orderTotals.concepts, impuestos_detalle: taxUnion, tax_total: __orderTotals.tax, espacios: spacesDetail },
+        desglose_precios: { subtotal_antes_impuestos: Math.max(0, (__orderTotals.final || 0) - (__orderTotals.tax || 0)), impuestos_detalle: taxUnion, tax_total: __orderTotals.tax, espacios: spacesDetail },
         personas: maxGuests || 1,
         espacios_detalle: spacesDetail,
         detalles_evento: { multi_espacio: spacesDetail.length > 1, total_espacios: spacesDetail.length, nombre_cotizacion: quoteName }
@@ -6675,11 +6879,7 @@ window.openOrderEditModal = async function(id) {
         }
     }
 
-    let dbConcepts = [];
-    if (order.conceptos_adicionales) {
-        if (typeof order.conceptos_adicionales === 'string') { try { dbConcepts = JSON.parse(order.conceptos_adicionales); } catch (e) {} }
-        else if (Array.isArray(order.conceptos_adicionales)) dbConcepts = order.conceptos_adicionales;
-    }
+    let dbConcepts = __orderNormalizeConceptsArray(order.conceptos_adicionales);
     currentConcepts = dbConcepts.filter(c => {
         const type = String(c?.type || '').toLowerCase();
         if (['b2b_horario', 'b2b_montaje', 'b2b_horas'].includes(type)) return false;
@@ -6844,6 +7044,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (window.__HUB_PAGE_ACCESS_DENIED) return;
     await __orderLoadPremontajePctConfig();
 });
+
+
+
+
 
 
 

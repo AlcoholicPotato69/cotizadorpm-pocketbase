@@ -36,6 +36,111 @@ let allSpaces = [], catalogConcepts = [], dbTaxes = [], currentSpace = null, cur
 let adminSelectedConcepts = []; let myPermissions = { access:false, catalog_manage:false };
 let __cpPremontajePct = 25;
 
+function normalizeCpCatalogTenantSlug(value) {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw) return '';
+    if (raw === 'finanzas' || raw.indexOf('plaza') !== -1) return 'plaza_mayor';
+    if (raw.indexOf('casadepiedra') !== -1 || raw.indexOf('casa_de_piedra') !== -1 || raw.indexOf('casa-de-piedra') !== -1) return 'casa_de_piedra';
+    return raw;
+}
+
+function resolveCpCatalogTenantSlug(fallback = '') {
+    const fromClient = normalizeCpCatalogTenantSlug(window.tenantPocketBase?.tenant || '');
+    if (fromClient) return fromClient;
+    const fromFallback = normalizeCpCatalogTenantSlug(fallback);
+    if (fromFallback) return fromFallback;
+    const fromSchema = normalizeCpCatalogTenantSlug(FIN_SCHEMA);
+    if (fromSchema) return fromSchema;
+    const path = String(window.location.pathname || '').toLowerCase();
+    return path.indexOf('/cotizadorcp/') !== -1 ? 'casa_de_piedra' : 'plaza_mayor';
+}
+
+function filterCpCatalogRowsByTenant(rows, fallback = '') {
+    const tenant = resolveCpCatalogTenantSlug(fallback);
+    const source = Array.isArray(rows) ? rows : [];
+    if (!tenant) return source.slice();
+    return source.filter((row) => {
+        const rowTenant = normalizeCpCatalogTenantSlug(row?.tenant || '');
+        return !rowTenant || rowTenant === tenant;
+    });
+}
+
+function pickCpCatalogLatestConfigRow(rows) {
+    const list = Array.isArray(rows) ? rows.filter((row) => row && typeof row === 'object') : [];
+    if (!list.length) return null;
+    list.sort((a, b) => {
+        const aTs = Date.parse(String(a.updated_at || a.updated || a.created_at || a.created || '')) || 0;
+        const bTs = Date.parse(String(b.updated_at || b.updated || b.created_at || b.created || '')) || 0;
+        return bTs - aTs;
+    });
+    return list[0] || null;
+}
+
+function parseCpCatalogConfigJson(value) {
+    if (!value) return {};
+    if (typeof value === 'object') return value;
+    if (typeof value === 'string') {
+        try {
+            const parsed = JSON.parse(value);
+            return parsed && typeof parsed === 'object' ? parsed : {};
+        } catch (_) {
+            return {};
+        }
+    }
+    return {};
+}
+
+function findCpCatalogTaxRecord(taxId, space = null) {
+    const safeId = String(taxId || '').trim();
+    if (!safeId) return null;
+    const tenant = resolveCpCatalogTenantSlug(space?.tenant || '');
+    const tenantTaxes = filterCpCatalogRowsByTenant(dbTaxes, tenant);
+    return tenantTaxes.find((tax) => String(tax?.id || '').trim() === safeId)
+        || dbTaxes.find((tax) => String(tax?.id || '').trim() === safeId)
+        || null;
+}
+
+function cpEspaciosService() {
+    return window.PB_SERVICES && window.PB_SERVICES.espacios ? window.PB_SERVICES.espacios : null;
+}
+
+async function cpEnsureCatalogManageSession(actionLabel = 'guardar cambios') {
+    if (!IS_CATALOG_ADMIN_PAGE) return true;
+    try {
+        const authState = await window.PB_SERVICES.auth.bootstrap({ schema: FIN_SCHEMA, allowCachedUser: false });
+        const session = authState?.session || null;
+        const token = String(session?.access_token || session?.token || '').trim();
+        if (session?.user && token) return true;
+    } catch (_) {}
+    window.showToast?.(`Tu sesión expiró. Inicia sesión de nuevo para ${actionLabel}.`, 'error');
+    return false;
+}
+
+async function cpSaveEspacioRecord(id, payload) {
+    const svc = cpEspaciosService();
+    if (svc) {
+        return id
+            ? svc.update(id, payload, { schema: FIN_SCHEMA })
+            : svc.create(payload, { schema: FIN_SCHEMA });
+    }
+    const result = id
+        ? await window.tenantPocketBase.from('espacios').update(payload).eq('id', id)
+        : await window.tenantPocketBase.from('espacios').insert(payload);
+    if (result?.error) throw result.error;
+    return result?.data || null;
+}
+
+async function cpDeleteEspacioRecord(id) {
+    const svc = cpEspaciosService();
+    if (svc) {
+        await svc.remove(id, { schema: FIN_SCHEMA });
+        return true;
+    }
+    const result = await window.tenantPocketBase.from('espacios').delete().eq('id', id);
+    if (result?.error) throw result.error;
+    return true;
+}
+
 // Evita recargar el mismo documento por una navegación accidental.
 function cpNormalizeUrlForNav(value) {
     try {
@@ -141,6 +246,82 @@ async function cpResolveCurrentUserProfile(sessionUser = {}) {
 
 function parseIds(v){ if(!v) return []; if(Array.isArray(v)) return v; if(typeof v === 'string'){ try { const parsed = JSON.parse(v); return Array.isArray(parsed) ? parsed : []; } catch(e){ return v.split(',').map(x=>x.trim()).filter(Boolean); } } return []; }
 function formatMoney(v){ return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(v || 0); }
+function formatTaxPercent(value){ const raw = parseFloat(value); const pct = Number.isFinite(raw) ? (raw > 0 && raw <= 1 ? raw * 100 : raw) : 0; return Number.isInteger(pct) ? String(pct) : pct.toLocaleString('es-MX', { maximumFractionDigits: 2 }); }
+function getSpaceTaxDetails(space){
+    const taxIds = parseIds(space?.impuestos_ids || space?.impuestos).map(id => String(id || '').trim()).filter(Boolean);
+    return taxIds.map(taxId => findCpCatalogTaxRecord(taxId, space)).filter(Boolean);
+}
+function getSpaceTaxLabel(space){
+    const rows = getSpaceTaxDetails(space);
+    if (!rows.length) return 'Sin impuestos';
+    return rows.map(t => `${t.nombre} ${formatTaxPercent(t.porcentaje)}%`).join(', ');
+}
+function normalizeCpSpaceTag(value) {
+    const raw = String(value || '').trim();
+    const normalized = typeof raw.normalize === 'function' ? raw.normalize('NFD') : raw;
+    return normalized.replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
+function getCpSpaceTags(space) {
+    const tags = new Set();
+    const push = (value) => {
+        const normalized = normalizeCpSpaceTag(value);
+        if (normalized) tags.add(normalized);
+    };
+    push(space?.tipo);
+    let rawTags = [];
+    try {
+        rawTags = typeof space?.etiquetas === 'string' ? JSON.parse(space.etiquetas) : (space?.etiquetas || []);
+    } catch (_) {
+        rawTags = [];
+    }
+    (Array.isArray(rawTags) ? rawTags : []).forEach(push);
+    return tags;
+}
+function cpSpaceHasTag(space, term) {
+    const needle = normalizeCpSpaceTag(term);
+    return Array.from(getCpSpaceTags(space)).some((tag) => tag === needle || tag.includes(needle));
+}
+function isCpAdvertisingSpace(space) {
+    return cpSpaceHasTag(space, 'publicidad');
+}
+function isCpLocalLikeSpace(space) {
+    return cpSpaceHasTag(space, 'local') || cpSpaceHasTag(space, 'isla') || cpSpaceHasTag(space, 'espacio');
+}
+function normalizeCpMeasureValue(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const num = parseFloat(value);
+    return Number.isFinite(num) ? num : null;
+}
+function normalizeCpMeasureUnit(value) {
+    return String(value || 'M').trim().toUpperCase() === 'CM' ? 'CM' : 'M';
+}
+function trimCpMeasureValue(value) {
+    return String(value || '')
+        .replace(/(\.\d*?[1-9])0+$/g, '$1')
+        .replace(/\.0+$/g, '')
+        .trim();
+}
+function getCpSpaceMeasuresLabel(space) {
+    const width = normalizeCpMeasureValue(space?.medida_ancho ?? space?.ancho);
+    const height = normalizeCpMeasureValue(space?.medida_alto ?? space?.alto);
+    const unit = normalizeCpMeasureUnit(space?.medida_unidad || space?.unidad_medida || 'M');
+    if (width === null && height === null) return 'Sin medidas';
+    if (width !== null && height !== null) return `${trimCpMeasureValue(width)} x ${trimCpMeasureValue(height)} ${unit}`;
+    const single = width !== null ? width : height;
+    return `${trimCpMeasureValue(single)} ${unit}`;
+}
+function getCpCardInfoRows(space) {
+    const rows = [];
+    if (isCpAdvertisingSpace(space)) rows.push({ label: 'Medidas', value: getCpSpaceMeasuresLabel(space) });
+    if (!isCpAdvertisingSpace(space) && !isCpLocalLikeSpace(space)) rows.push({ label: 'Impuestos', value: getSpaceTaxLabel(space) });
+    return rows.filter((row) => String(row?.value || '').trim());
+}
+function renderCpCardInfoRows(space) {
+    return getCpCardInfoRows(space).map((row) => `<div class="mb-4 rounded-lg bg-gray-50 border border-gray-100 px-3 py-2 text-[11px] flex justify-between gap-3"><span class="font-black uppercase text-gray-400">${row.label}</span><span class="font-bold text-gray-700 text-right">${row.value}</span></div>`).join('');
+}
+function renderCpPreviewBadges(space) {
+    return getCpCardInfoRows(space).map((row) => `<span class="px-2 py-1 rounded-full bg-white/15 text-white font-bold">${row.label}: ${row.value}</span>`).join('');
+}
 window.safeFormatDate = function(dateStr) { if (!dateStr) return '--'; const parts = dateStr.split('-'); if (parts.length !== 3) return dateStr; return `${parts[2]}/${parts[1]}/${parts[0]}`; };
 function getPremontajePct(){ const n = parseFloat(__cpPremontajePct); return Number.isFinite(n) && n >= 0 ? n : 25; }
 function getSpaceMaxCapacity(space){
@@ -151,10 +332,17 @@ function getSpaceMaxCapacity(space){
     return finite.length ? Math.max(...finite) : 999999;
 }
 async function loadPremontajePctConfig() {
+    const tenant = resolveCpCatalogTenantSlug('casa_de_piedra');
     try {
-        const { data, error } = await window.tenantPocketBase.from('configuracion').select('clave,valor_json,valor_num').eq('clave', 'premontaje_pct').maybeSingle();
+        const { data, error } = await window.tenantPocketBase
+            .from('configuracion')
+            .select('clave,valor_json,valor_num,updated,updated_at,created,created_at')
+            .eq('tenant', tenant)
+            .eq('clave', 'premontaje_pct');
         if (error) throw error;
-        const raw = data?.valor_num ?? data?.valor_json?.value ?? data?.valor_json?.percent;
+        const row = pickCpCatalogLatestConfigRow(Array.isArray(data) ? data : (data ? [data] : []));
+        const cfg = parseCpCatalogConfigJson(row?.valor_json);
+        const raw = row?.valor_num ?? cfg?.value ?? cfg?.percent;
         const parsed = parseFloat(raw);
         if (Number.isFinite(parsed) && parsed >= 0) __cpPremontajePct = parsed;
     } catch (e) {
@@ -233,27 +421,49 @@ document.addEventListener('DOMContentLoaded', async () => {
         const { data } = await window.tenantPocketBase.from('conceptos_catalogo').select('*').eq('activo', true);
         catalogConcepts = data || [];
         const preselect = new URLSearchParams(window.location.search || '').get('space');
-        if (preselect) setTimeout(() => window.openQuoteModal(isNaN(Number(preselect)) ? preselect : Number(preselect)), 150);
+        if (preselect) setTimeout(() => window.openQuoteModal(preselect), 150);
     }
 });
 
-async function loadTaxes() { const { data } = await window.tenantPocketBase.from('impuestos').select('*'); dbTaxes = data || []; }
-async function loadCatalog() { const { data } = await window.tenantPocketBase.from('espacios').select('*').order('id'); allSpaces = data||[]; renderSpaces(allSpaces); }
+async function loadTaxes() {
+    const tenant = resolveCpCatalogTenantSlug();
+    let rows = [];
+    try {
+        const { data } = await window.tenantPocketBase.from('impuestos').select('*').order('nombre', { ascending: true });
+        rows = data || [];
+    } catch (_) {
+        rows = [];
+    }
+    dbTaxes = filterCpCatalogRowsByTenant(rows, tenant);
+    if (!dbTaxes.length && window.globalPocketBase && tenant) {
+        try {
+            const { data } = await window.globalPocketBase.from('impuestos').select('*').eq('tenant', tenant);
+            dbTaxes = filterCpCatalogRowsByTenant(data || [], tenant);
+        } catch (_) {}
+    }
+}
+async function loadCatalog() {
+    const tenant = resolveCpCatalogTenantSlug();
+    const { data } = await window.tenantPocketBase.from('espacios').select('*').order('clave');
+    allSpaces = filterCpCatalogRowsByTenant(data || [], tenant).sort((a, b) => String(a?.clave || a?.nombre || '').localeCompare(String(b?.clave || b?.nombre || ''), 'es', { numeric: true, sensitivity: 'base' }));
+    renderSpaces(allSpaces);
+}
 
 function renderSpaces(list) { 
     const g = document.getElementById('spaces-grid'); g.innerHTML=''; if(list.length === 0) { g.innerHTML = '<div class="col-span-full text-center py-10 text-gray-400 font-bold">No se encontraron espacios.</div>'; return; }
     list.forEach(s => { 
+        const infoRowsHtml = renderCpCardInfoRows(s);
         let allUrls = []; try { if(s.imagen_url && typeof s.imagen_url === 'string' && s.imagen_url.startsWith('[')) allUrls = JSON.parse(s.imagen_url); else if(s.imagen_url) allUrls = [s.imagen_url]; } catch(e){}
         if (allUrls.length === 0) allUrls = ['../../assets/img/placeholder_cp.png'];
         
         let eTags = []; try { eTags = typeof s.etiquetas === 'string' ? JSON.parse(s.etiquetas) : (s.etiquetas || []); } catch(e){}
         let tagsHtml = ''; if(eTags.length > 0) { tagsHtml = `<div class="flex gap-1 mb-2 flex-wrap">` + eTags.map(t => `<span class="bg-gray-100 text-gray-500 border border-gray-200 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase">${t}</span>`).join('') + `</div>`; }
         
-        const editBtn = (myPermissions.catalog_manage && IS_CATALOG_ADMIN_PAGE) ? `<button onclick="event.stopPropagation(); window.openManagerModal(${s.id})" class="absolute top-3 right-3 bg-white/90 text-gray-700 p-2 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-all z-20"><i class="fa-solid fa-pen"></i></button>` : '';
+        const editBtn = (myPermissions.catalog_manage && IS_CATALOG_ADMIN_PAGE) ? `<button onclick="event.stopPropagation(); window.openManagerModal('${String(s.id)}')" class="absolute top-3 right-3 bg-white/90 text-gray-700 p-2 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-all z-20"><i class="fa-solid fa-pen"></i></button>` : '';
         const actionBtn = IS_QUOTE_PAGE
-            ? `<div class="border-t pt-3"><button onclick="event.stopPropagation(); window.openQuoteModal(${s.id})" class="bg-gray-900 text-white w-full py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide hover:bg-brand-red transition-colors duration-300 shadow-lg"><i class="fa-solid fa-calculator mr-2"></i> Cotizar Evento</button></div>`
+            ? `<div class="border-t pt-3"><button onclick="event.stopPropagation(); window.openQuoteModal('${String(s.id)}')" class="bg-gray-900 text-white w-full py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide hover:bg-brand-red transition-colors duration-300 shadow-lg"><i class="fa-solid fa-calculator mr-2"></i> Cotizar Evento</button></div>`
             : (myPermissions.catalog_manage
-                ? `<div class="border-t pt-3"><button onclick="event.stopPropagation(); window.openManagerModal(${s.id})" class="bg-gray-900 text-white w-full py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide hover:bg-brand-red transition-colors duration-300 shadow-lg"><i class="fa-solid fa-sliders mr-2"></i> Administrar Espacio</button></div>`
+                ? `<div class="border-t pt-3"><button onclick="event.stopPropagation(); window.openManagerModal('${String(s.id)}')" class="bg-gray-900 text-white w-full py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide hover:bg-brand-red transition-colors duration-300 shadow-lg"><i class="fa-solid fa-sliders mr-2"></i> Administrar Espacio</button></div>`
                 : '');
 
         // Carousel logic: create multiple img tags and cycle them with data-index
@@ -261,7 +471,7 @@ function renderSpaces(list) {
         
         const cardHtml = `
             <div class="bg-white rounded-xl shadow-md relative group hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 overflow-hidden border border-gray-100 cursor-pointer" 
-                 onclick="window.openPreviewCardModal(${s.id})"
+                 onclick="window.openPreviewCardModal('${String(s.id)}')"
                  onmouseenter="window.startCardCarousel(this)" 
                  onmouseleave="window.stopCardCarousel(this)">
                 <div class="h-48 bg-gray-200 relative overflow-hidden">
@@ -280,6 +490,7 @@ function renderSpaces(list) {
                         <p class="text-xs text-gray-400 font-mono"><i class="fa-solid fa-tag mr-1"></i>${s.clave}</p>
                     </div>
                     <p class="text-xs text-gray-500 line-clamp-2 mb-4 h-8">${s.descripcion || ''}</p>
+                    ${infoRowsHtml}
                     ${actionBtn}
                 </div>
             </div>`;
@@ -311,6 +522,7 @@ window.stopCardCarousel = function(el) {
 window.openPreviewCardModal = function(id) {
     const s = allSpaces.find(x => x.id === id);
     if (!s) return;
+    const previewBadges = renderCpPreviewBadges(s);
     let allUrls = []; try { if(s.imagen_url && typeof s.imagen_url === 'string' && s.imagen_url.startsWith('[')) allUrls = JSON.parse(s.imagen_url); else if(s.imagen_url) allUrls = [s.imagen_url]; } catch(e){}
     if (allUrls.length === 0) allUrls = ['../../assets/img/placeholder_cp.png'];
 
@@ -336,6 +548,7 @@ window.openPreviewCardModal = function(id) {
                 <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-8 pt-20 pointer-events-none">
                     <h3 class="text-white font-black text-3xl uppercase tracking-tighter">${s.nombre}</h3>
                     <p class="text-white/60 text-sm font-bold mt-1 uppercase tracking-widest">${s.tipo} • ${s.clave}</p>
+                    ${previewBadges ? `<div class="mt-3 flex flex-wrap gap-2 text-[11px]">${previewBadges}</div>` : ''}
                 </div>
             </div>
         `;
@@ -412,8 +625,11 @@ window.openManagerModal = function(id){
 window.saveSpace = async function(){ 
     if (!myPermissions.catalog_manage) return; const btn = document.getElementById('btn-save-mgr'); btn.disabled = true; btn.innerText = "Guardando...";
     try {
+        if (!(await cpEnsureCatalogManageSession('guardar cambios'))) return;
         const id = document.getElementById('mgr-id').value; 
-        const selectedTaxes = Array.from(document.querySelectorAll('.tax-check:checked')).map(cb => parseInt(cb.value));
+        const selectedTaxes = Array.from(document.querySelectorAll('.tax-check:checked'))
+            .map(cb => String(cb.value || '').trim())
+            .filter(Boolean);
         const blockedDays = Array.from(document.querySelectorAll('.day-block-check:checked')).map(cb => cb.value);
         const blockedPremontajeDays = Array.from(document.querySelectorAll('.day-block-premontaje-check:checked')).map(cb => cb.value);
 
@@ -449,10 +665,10 @@ window.saveSpace = async function(){
             else if (preview && preview.getAttribute('data-modified') === 'true' && preview.classList.contains('hidden')) fd.append(fieldName, '');
         }
 
-        if(id) { const { error: updErr } = await window.tenantPocketBase.from('espacios').update(fd).eq('id', id); if(updErr) throw updErr; } else { const { error: insErr } = await window.tenantPocketBase.from('espacios').insert(fd); if(insErr) throw insErr; } 
+        await cpSaveEspacioRecord(id, fd);
         window.showToast("Guardado", "success"); window.closeModal('manager-modal'); loadCatalog(); for(let i=1; i<=5; i++){ const fi = document.getElementById(`mgr-file-${i}`); if(fi) fi.value = ''; }
 
-    } catch(e) { console.error("Error al guardar:", e); window.showToast("Error: Verifica la consola", "error"); } finally { btn.disabled = false; btn.innerText = "Guardar"; }
+    } catch(e) { console.error("Error al guardar:", e); window.showToast("Error al guardar: " + (e?.message || e), "error"); } finally { btn.disabled = false; btn.innerText = "Guardar"; }
 }
 
 // LOGICA DE FECHAS DE MONTAJE PARA CATALOG (COTIZACIÓN RÁPIDA)
@@ -584,7 +800,7 @@ window.updateQuoteCalculation = function() {
     if(currentSpace.ajuste_tipo === 'descuento') subtotal -= subtotal * (currentSpace.ajuste_porcentaje/100);
 
     let taxAmt = 0; const sTaxes = parseIds(currentSpace.impuestos_ids || currentSpace.impuestos);
-    if(sTaxes.length && dbTaxes.length) { sTaxes.forEach(tid => { const t = dbTaxes.find(x=>String(x.id)===String(tid)); if(t) { const rate = t.porcentaje > 1 ? t.porcentaje/100 : t.porcentaje; taxAmt += subtotal * rate; } }); }
+    if(sTaxes.length && dbTaxes.length) { sTaxes.forEach(tid => { const t = findCpCatalogTaxRecord(tid, currentSpace); if(t) { const rate = t.porcentaje > 1 ? t.porcentaje/100 : t.porcentaje; taxAmt += subtotal * rate; } }); }
 
     currentPricing = { subtotal: subtotal, taxes: taxAmt, final: subtotal + taxAmt };
     document.getElementById('q-price').innerText = formatMoney(currentPricing.final);
@@ -613,7 +829,7 @@ window.generatePDF = async function() {
     adminSelectedConcepts.forEach(c => conceptosB2B.push(c));
 
     const auditSingle = await cpResolveQuoteActorAudit();
-    const payload = { cliente_id: (document.getElementById('cli-id') ? (document.getElementById('cli-id').value || null) : null), espacio_id: currentSpace.id, espacio_nombre: currentSpace.nombre, espacio_clave: currentSpace.clave, cliente_nombre: cli.name, cliente_rfc: cli.rfc, cliente_contacto: cli.phone, cliente_email: cli.email, fecha_inicio: document.getElementById('date-start').value, fecha_fin: document.getElementById('date-end').value, precio_final: currentPricing.final, desglose_precios: { subtotal_antes_impuestos: currentPricing.subtotal, impuestos_detalle: parseIds(currentSpace.impuestos_ids || currentSpace.impuestos), tax_total: currentPricing.taxes }, conceptos_adicionales: conceptosB2B, status: 'pendiente', creado_por: auditSingle.actorId || null, creado_por_nombre: auditSingle.actorName, modificado_por_legacy: auditSingle.actorId || null, modificado_por_nombre: auditSingle.actorName, personas: guests };
+    const payload = { cliente_id: (document.getElementById('cli-id') ? (document.getElementById('cli-id').value || null) : null), espacio_id: currentSpace.id, espacio_nombre: currentSpace.nombre, espacio_clave: currentSpace.clave, cliente_nombre: cli.name, cliente_rfc: cli.rfc, cliente_contacto: cli.phone, cliente_email: cli.email, fecha_inicio: document.getElementById('date-start').value, fecha_fin: document.getElementById('date-end').value, precio_final: currentPricing.final, desglose_precios: { subtotal_antes_impuestos: currentPricing.subtotal, impuestos_detalle: parseIds(currentSpace.impuestos_ids || currentSpace.impuestos), tax_total: currentPricing.taxes }, conceptos_adicionales: conceptosB2B, status: 'pendiente', creado_por: auditSingle.actorId || null, creado_por_nombre: auditSingle.actorName, modificado_por: auditSingle.actorId || null, modificado_por_nombre: auditSingle.actorName, personas: guests };
     
     const { error, id: createdQuoteId } = await cpCreateQuoteRecord(payload);
     if (error) {
@@ -627,7 +843,7 @@ window.generatePDF = async function() {
 window.filterCatalogLogic = function() { const term = document.getElementById('cat-search').value.toLowerCase(); const type = document.getElementById('cat-filter-type').value; const sort = document.getElementById('cat-sort').value; let filtered = allSpaces.filter(s => (s.nombre.toLowerCase().includes(term) || s.clave.toLowerCase().includes(term)) && (type === 'all' || s.tipo === type)); if (sort === 'price_asc') filtered.sort((a,b) => a.precio_base - b.precio_base); if (sort === 'price_desc') filtered.sort((a,b) => b.precio_base - a.precio_base); renderSpaces(filtered); }
 window.previewImage = function(i, id){ const p = document.getElementById(id || 'mgr-preview'); if(i.files && i.files[0]){ const r=new FileReader(); r.onload=e=>{ p.src=e.target.result; p.classList.remove('hidden'); p.setAttribute('data-modified', 'true'); }; r.readAsDataURL(i.files[0]); } }
 window.checkAvailability = async function() { const s=document.getElementById('date-start').value, e=document.getElementById('date-end').value; if(!s||!e)return; const {data} = await window.tenantPocketBase.from('cotizaciones').select('id').eq('espacio_id',currentSpace.id).in('status',['aprobada','finalizada']).or(`and(fecha_inicio.lte.${e},fecha_fin.gte.${s})`); const msg=document.getElementById('avail-msg'); msg.classList.remove('hidden'); if(data.length){ msg.innerText='OCUPADO'; msg.className='text-red-500 font-bold text-center'; document.getElementById('btn-generate').disabled=true; }else{ msg.innerText='DISPONIBLE'; msg.className='text-green-600 font-bold text-center'; document.getElementById('btn-generate').disabled=false; } }
-window.askDeleteSpace = async function(){ window.openConfirm("¿Eliminar espacio?", async () => { await window.tenantPocketBase.from('espacios').delete().eq('id', document.getElementById('mgr-id').value); window.showToast("Eliminado"); window.closeModal('manager-modal'); loadCatalog(); }); }
+window.askDeleteSpace = async function(){ window.openConfirm("¿Eliminar espacio?", async () => { try { if (!(await cpEnsureCatalogManageSession('eliminar el espacio'))) return; await cpDeleteEspacioRecord(document.getElementById('mgr-id').value); window.showToast("Eliminado"); window.closeModal('manager-modal'); loadCatalog(); } catch(e) { console.error(e); window.showToast("Error al eliminar: " + (e?.message || e), "error"); } }); }
 
 // =========================================================================
 // EXTENSIÓN 2026: MULTI-ESPACIO + PREMONTAJE 25% DÍA BASE + BLOQUEO CRUZADO
@@ -1014,7 +1230,7 @@ window.updateQuoteCalculation = function(){
         }
         let spaceTaxTotal = 0;
         const taxIds = parseIds(space.impuestos_ids || space.impuestos);
-        taxIds.forEach(tid => { const t = dbTaxes.find(x => String(x.id) === String(tid)); if(t){ const rate = parseFloat(t.porcentaje || 0) > 1 ? (parseFloat(t.porcentaje) / 100) : parseFloat(t.porcentaje || 0); spaceTaxTotal += subSpace * rate; } });
+        taxIds.forEach(tid => { const t = findCpCatalogTaxRecord(tid, space); if(t){ const rate = parseFloat(t.porcentaje || 0) > 1 ? (parseFloat(t.porcentaje) / 100) : parseFloat(t.porcentaje || 0); spaceTaxTotal += subSpace * rate; } });
         subtotal += subSpace; taxesTotal += spaceTaxTotal;
         spacesPricing.push({ spaceId: space.id, spaceName: space.nombre, spaceKey: space.clave, startDate: cfg.startDate, endDate: cfg.endDate, guests, maxCapacity, capacityOk, horarioValue: cfg.horarioValue, horarioText: cfg.horarioText || cfg.horarioValue || '', horarioCost, premontajeDays: parseInt(cfg.premontajeDays, 10) || 0, premontajeCourtesyDays: parseInt(cfg.premontajeCourtesyDays, 10) || 0, premontajeDates: __cpSafeArray(cfg.premontajeDates), premontajeCost: prem.total, premontajeBreakdown: prem.breakdown, horasExtra: parseInt(cfg.horasExtra, 10) || 0, horasExtraUnit: horaUnit, horasExtraCost: horasCost, subtotalBeforeTax: subSpace, taxIds, taxTotal: spaceTaxTotal });
     });
@@ -1023,7 +1239,7 @@ window.updateQuoteCalculation = function(){
     if (adminConceptTotal > 0 && spacesPricing.length > 0) {
         const firstTaxes = spacesPricing[0].taxIds || [];
         firstTaxes.forEach(tid => {
-            const t = dbTaxes.find(x => String(x.id) === String(tid));
+            const t = findCpCatalogTaxRecord(tid, { tenant: resolveCpCatalogTenantSlug() });
             if (!t) return;
             const rate = parseFloat(t.porcentaje || 0) > 1 ? (parseFloat(t.porcentaje) / 100) : parseFloat(t.porcentaje || 0);
             taxesTotal += adminConceptTotal * rate;
@@ -1109,7 +1325,7 @@ window.generatePDF = async function(){
     const maxGuests = Math.max(...spaces.map(s => parseInt(s.guests, 10) || 0), 0);
     const taxIdsUnion = Array.from(new Set(spaces.flatMap(s => s.taxIds || []).map(x => String(x))));
     const auditMulti = await cpResolveQuoteActorAudit();
-    const payload = { cliente_id: (document.getElementById('cli-id') ? (document.getElementById('cli-id').value || null) : null), nombre_cotizacion: quoteName, espacio_id: first.spaceId, espacio_nombre: spaces.length === 1 ? first.spaceName : `${first.spaceName} + ${spaces.length - 1} espacio(s)`, espacio_clave: spaces.length === 1 ? first.spaceKey : 'MULTI', cliente_nombre: cli.name, cliente_rfc: cli.rfc, cliente_contacto: cli.phone, cliente_email: cli.email, fecha_inicio: minStart, fecha_fin: maxEnd, precio_final: currentPricing.final, desglose_precios: { subtotal_antes_impuestos: currentPricing.subtotal, impuestos_detalle: taxIdsUnion, tax_total: currentPricing.taxes, espacios: espaciosDetalle }, detalles_evento: { multi_espacio: spaces.length > 1, total_espacios: spaces.length, nombre_cotizacion: quoteName }, espacios_detalle: espaciosDetalle, conceptos_adicionales: conceptosB2B, status: 'pendiente', creado_por: auditMulti.actorId || null, creado_por_nombre: auditMulti.actorName, modificado_por_legacy: auditMulti.actorId || null, modificado_por_nombre: auditMulti.actorName, personas: maxGuests || 1 };
+    const payload = { cliente_id: (document.getElementById('cli-id') ? (document.getElementById('cli-id').value || null) : null), nombre_cotizacion: quoteName, espacio_id: first.spaceId, espacio_nombre: spaces.length === 1 ? first.spaceName : `${first.spaceName} + ${spaces.length - 1} espacio(s)`, espacio_clave: spaces.length === 1 ? first.spaceKey : 'MULTI', cliente_nombre: cli.name, cliente_rfc: cli.rfc, cliente_contacto: cli.phone, cliente_email: cli.email, fecha_inicio: minStart, fecha_fin: maxEnd, precio_final: currentPricing.final, desglose_precios: { subtotal_antes_impuestos: currentPricing.subtotal, impuestos_detalle: taxIdsUnion, tax_total: currentPricing.taxes, espacios: espaciosDetalle }, detalles_evento: { multi_espacio: spaces.length > 1, total_espacios: spaces.length, nombre_cotizacion: quoteName }, espacios_detalle: espaciosDetalle, conceptos_adicionales: conceptosB2B, status: 'pendiente', creado_por: auditMulti.actorId || null, creado_por_nombre: auditMulti.actorName, modificado_por: auditMulti.actorId || null, modificado_por_nombre: auditMulti.actorName, personas: maxGuests || 1 };
     const { error, id: createdQuoteId } = await cpCreateQuoteRecord(payload);
     if(error){
         console.error(error);
@@ -1123,6 +1339,9 @@ window.generatePDF = async function(){
     const targetUrl = createdQuoteId ? `order_detail.html?quote=${encodeURIComponent(createdQuoteId)}` : 'orders.html';
     setTimeout(() => { cpNavigateSafely(targetUrl); }, 900);
 }
+
+
+
 
 
 

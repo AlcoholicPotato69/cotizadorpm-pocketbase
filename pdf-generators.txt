@@ -1,12 +1,28 @@
-client/cotizador/contracts.html
-client/cotizador/contracts.js
-client/cotizador/order_detail.html
-client/cotizador/orders.html
-client/cotizador/orders.js
-client/cotizadorcp/contracts.html
-client/cotizadorcp/contracts.js
-client/cotizadorcp/order_detail.html
-client/cotizadorcp/orders.html
-client/cotizadorcp/orders.js
-client/public/assets/libs/js/html2pdf.js
-client/public/assets/libs/js/jspdf.js
+PDF GENERATORS - MAPA RAPIDO
+Ultima actualizacion: 2026-03-27
+
+Plaza Mayor
+- client/cotizador/orders.html
+- client/cotizador/orders.js
+- client/cotizador/order_detail.html
+- client/cotizador/contracts.html
+- client/cotizador/contracts.js
+- client/cotizador/receipts.html
+- client/cotizador/receipts.js
+
+Casa de Piedra
+- client/cotizadorcp/orders.html
+- client/cotizadorcp/orders.js
+- client/cotizadorcp/order_detail.html
+- client/cotizadorcp/contracts.html
+- client/cotizadorcp/contracts.js
+- client/cotizadorcp/receipts.html
+- client/cotizadorcp/receipts.js
+
+Librerias base
+- client/public/assets/libs/js/html2pdf.js
+- client/public/assets/libs/js/jspdf.js
+
+Referencia principal
+- docs/60-pdfs-y-documentos.md
+

@@ -62,6 +62,30 @@
                 --hub-preview-pad:clamp(12px,1.8vw,28px);
                 --hub-preview-modal-width:1280px;
                 --hub-dialog-width:560px;
+                --hub-editor-modal-width:1460px;
+            }
+            html,
+            body{
+                width:100%;
+                max-width:100%;
+                overscroll-behavior-x:none;
+                overscroll-behavior-y:none;
+            }
+            body{
+                overflow-x:hidden;
+            }
+            main,
+            header,
+            nav,
+            footer{
+                max-width:100%;
+            }
+            img,
+            svg,
+            canvas,
+            video,
+            iframe{
+                max-width:100%;
             }
             header .container{
                 max-width:min(1680px,calc(100vw - (var(--hub-shell-pad) * 2)));
@@ -79,10 +103,18 @@
             #apps-grid{
                 grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));
             }
+            [id$="-modal"]{
+                overscroll-behavior:contain;
+            }
+            [id$="-modal"] > div{
+                margin-inline:auto;
+                max-width:min(96vw,var(--hub-editor-modal-width));
+                max-height:min(94vh,calc(100dvh - 20px));
+            }
             #preview-modal > div{
                 width:min(96vw,var(--hub-preview-modal-width))!important;
                 max-width:none!important;
-                height:min(92vh,calc(100vh - 24px))!important;
+                height:min(94vh,calc(100dvh - 20px))!important;
             }
             #docs-modal > div,
             #generic-confirm-modal > div,
@@ -93,6 +125,8 @@
             #receipt-preview-container,
             #contract-preview-container{
                 padding:var(--hub-preview-pad)!important;
+                min-width:0;
+                min-height:0;
             }
             #pdf-content,
             #receipt-preview-box,
@@ -103,11 +137,70 @@
             #contract-preview-box{
                 max-width:min(100%,816px)!important;
             }
+            .custom-scroll,
+            .no-scrollbar,
+            #preview-container,
+            #receipt-preview-container,
+            #contract-preview-container,
+            #docs-list,
+            #payments-history-list,
+            #approved-list,
+            #sidebar-contract,
+            [data-pdf-inspector-body]{
+                overscroll-behavior:contain;
+                -webkit-overflow-scrolling:touch;
+            }
             @media (max-width: 1279px){
                 #sidebar-container{
                     width:100%!important;
                     min-width:0!important;
                     max-height:42vh;
+                }
+            }
+            @media (max-width: 1023px){
+                #order-edit-modal > div,
+                #manager-modal > div,
+                #quote-modal > div,
+                #upload-receipt-modal > div,
+                #missing-data-modal > div,
+                #finalize-modal > div,
+                #pdf-resource-modal > div,
+                #order-date-modal > div,
+                #montaje-modal > div{
+                    width:min(97vw,var(--hub-editor-modal-width))!important;
+                }
+            }
+            @media (max-width: 767px){
+                #preview-modal,
+                #docs-modal,
+                #order-edit-modal,
+                #manager-modal,
+                #quote-modal,
+                #upload-receipt-modal,
+                #missing-data-modal,
+                #finalize-modal,
+                #pdf-resource-modal,
+                #order-date-modal,
+                #montaje-modal,
+                #color-modal,
+                #client-modal,
+                #client-history-modal,
+                #client-quote-docs-modal,
+                #confirm-modal{
+                    padding:12px!important;
+                }
+                #preview-modal > div,
+                #order-edit-modal > div,
+                #manager-modal > div,
+                #quote-modal > div,
+                #upload-receipt-modal > div,
+                #missing-data-modal > div,
+                #finalize-modal > div,
+                #pdf-resource-modal > div,
+                #order-date-modal > div,
+                #montaje-modal > div{
+                    width:min(calc(100vw - 12px),var(--hub-editor-modal-width))!important;
+                    max-height:min(calc(100vh - 12px),calc(100dvh - 12px))!important;
                 }
             }
             @keyframes softFadeIn {
@@ -141,10 +234,89 @@
         root.style.setProperty('--hub-preview-pad', width >= 2560 ? '36px' : (width >= 1920 ? '24px' : 'clamp(12px,1.8vw,24px)'));
         root.style.setProperty('--hub-preview-modal-width', width >= 3200 ? '1800px' : (width >= 2560 ? '1640px' : (width >= 1920 ? '1460px' : '1280px')));
         root.style.setProperty('--hub-dialog-width', width >= 2560 ? '680px' : (width >= 1920 ? '620px' : '560px'));
+        root.style.setProperty('--hub-editor-modal-width', width >= 3200 ? '1920px' : (width >= 2560 ? '1760px' : (width >= 1920 ? '1580px' : '1460px')));
+    }
+
+    function findScrollableAncestor(target) {
+        let node = target instanceof Element ? target : null;
+        while (node && node !== document.body && node !== document.documentElement) {
+            const style = window.getComputedStyle(node);
+            const overflowY = style.overflowY || '';
+            const canScrollY = node.scrollHeight > node.clientHeight + 1;
+            if (canScrollY && (overflowY === 'auto' || overflowY === 'scroll' || node.classList.contains('custom-scroll'))) {
+                return node;
+            }
+            node = node.parentElement;
+        }
+        return null;
+    }
+
+    function installTouchOverscrollGuard() {
+        if (window.__hubTouchOverscrollGuardBound) return;
+        const supportsTouch = (typeof navigator !== 'undefined' && Number(navigator.maxTouchPoints || 0) > 0)
+            || (typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches)
+            || 'ontouchstart' in window;
+        if (!supportsTouch) return;
+        window.__hubTouchOverscrollGuardBound = true;
+
+        let lastTouchX = 0;
+        let lastTouchY = 0;
+        let activeScrollable = null;
+
+        const resetTouchState = () => {
+            lastTouchX = 0;
+            lastTouchY = 0;
+            activeScrollable = null;
+        };
+
+        document.addEventListener('touchstart', (event) => {
+            if (!event.touches || event.touches.length !== 1) return;
+            const touch = event.touches[0];
+            lastTouchX = touch.clientX;
+            lastTouchY = touch.clientY;
+            activeScrollable = findScrollableAncestor(event.target);
+        }, { passive: true, capture: true });
+
+        document.addEventListener('touchmove', (event) => {
+            if (!event.touches || event.touches.length !== 1) return;
+            const touch = event.touches[0];
+            const deltaX = touch.clientX - lastTouchX;
+            const deltaY = touch.clientY - lastTouchY;
+            lastTouchX = touch.clientX;
+            lastTouchY = touch.clientY;
+
+            if (Math.abs(deltaY) <= Math.abs(deltaX)) return;
+
+            const scrollable = findScrollableAncestor(event.target) || activeScrollable;
+            if (!scrollable) {
+                const rootScrollTop = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
+                if (rootScrollTop <= 0 && deltaY > 0 && event.cancelable) {
+                    event.preventDefault();
+                }
+                return;
+            }
+
+            const maxScrollTop = Math.max(0, scrollable.scrollHeight - scrollable.clientHeight);
+            if (maxScrollTop <= 0) {
+                if (event.cancelable) event.preventDefault();
+                return;
+            }
+
+            const scrollTop = scrollable.scrollTop || 0;
+            const pushingPastTop = deltaY > 0 && scrollTop <= 0;
+            const pushingPastBottom = deltaY < 0 && scrollTop >= maxScrollTop - 1;
+            if ((pushingPastTop || pushingPastBottom) && event.cancelable) {
+                event.preventDefault();
+            }
+        }, { passive: false, capture: true });
+
+        document.addEventListener('touchend', resetTouchState, { passive: true, capture: true });
+        document.addEventListener('touchcancel', resetTouchState, { passive: true, capture: true });
     }
 
     ensureResponsiveLayoutStyles();
     syncResponsiveViewport();
+    installTouchOverscrollGuard();
     let responsiveRaf = 0;
     window.addEventListener('resize', () => {
         if (responsiveRaf) cancelAnimationFrame(responsiveRaf);
@@ -362,6 +534,93 @@
         };
     }
 
+    const LAYOUT_LAST_GOOD_AUTH_KEY = 'hub_layout_last_good_auth_v1';
+    const LAYOUT_ROUTE_STABILITY_KEY = 'hub_layout_route_stability_v1';
+
+    function readLayoutSessionState(key) {
+        try {
+            const raw = sessionStorage.getItem(key);
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            return parsed && typeof parsed === 'object' ? parsed : null;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    function writeLayoutSessionState(key, value) {
+        try {
+            if (!value) {
+                sessionStorage.removeItem(key);
+                return;
+            }
+            sessionStorage.setItem(key, JSON.stringify(value));
+        } catch (_) {}
+    }
+
+    function markLayoutRouteLoad(routeCtx) {
+        const now = Date.now();
+        const currentPath = String(routeCtx?.path || window.location.pathname || '').toLowerCase();
+        const prev = readLayoutSessionState(LAYOUT_ROUTE_STABILITY_KEY) || {};
+        const withinWindow = prev.path === currentPath && (now - Number(prev.lastTs || 0)) < 45000;
+        const hits = withinWindow ? (Number(prev.hits || 0) + 1) : 1;
+        const navEntry = (typeof performance !== 'undefined' && typeof performance.getEntriesByType === 'function')
+            ? performance.getEntriesByType('navigation')[0]
+            : null;
+        const state = {
+            path: currentPath,
+            lastTs: now,
+            hits,
+            navType: String(navEntry?.type || 'unknown'),
+            tenant: routeCtx?.tenant || null
+        };
+        writeLayoutSessionState(LAYOUT_ROUTE_STABILITY_KEY, state);
+        return {
+            ...state,
+            suppressAutoRedirects: !!routeCtx?.isCotizadorArea && hits >= 3
+        };
+    }
+
+    function persistLastGoodLayoutAuth(authCtx) {
+        if (!authCtx || !authCtx.session || !authCtx.user) return;
+        writeLayoutSessionState(LAYOUT_LAST_GOOD_AUTH_KEY, {
+            ts: Date.now(),
+            tenant: authCtx.route?.tenant || null,
+            user: authCtx.user || null,
+            profile: authCtx.profile || null,
+            permissions: authCtx.permissions || {},
+            role: authCtx.role || '',
+            tenantAllowed: authCtx.tenantAllowed === true,
+            isAdmin: authCtx.isAdmin === true
+        });
+    }
+
+    function readLastGoodLayoutAuth(routeCtx, maxAgeMs = 15 * 60 * 1000) {
+        const cached = readLayoutSessionState(LAYOUT_LAST_GOOD_AUTH_KEY);
+        if (!cached) return null;
+        if ((Date.now() - Number(cached.ts || 0)) > maxAgeMs) return null;
+        if (!cached.user || typeof cached.user !== 'object') return null;
+        const routeTenant = routeCtx?.tenant || null;
+        if (routeTenant && cached.tenant && cached.tenant !== routeTenant && cached.isAdmin !== true) return null;
+        return cached;
+    }
+
+    function buildStableLayoutFallback(routeCtx, reason = 'transient_auth') {
+        const cached = readLastGoodLayoutAuth(routeCtx);
+        if (!cached) return null;
+        const identity = (cached.profile && typeof cached.profile === 'object') ? cached.profile : cached.user;
+        const authCtx = {
+            route: routeCtx,
+            session: { user: cached.user, __fallback: true, __stable: true, reason },
+            user: cached.user,
+            profile: identity || cached.user,
+            ...buildLayoutPermissions(identity || cached.user, routeCtx)
+        };
+        authCtx.canAccessCurrentRoute = canAccessCurrentRoute(routeCtx, authCtx);
+        if (!authCtx.canAccessCurrentRoute) return null;
+        return authCtx;
+    }
+
     function hasOwn(object, key) {
         return !!object && Object.prototype.hasOwnProperty.call(object, key);
     }
@@ -503,24 +762,18 @@
         };
         let appUser = await lookupOne('app_users', 'id', userId);
         if (!appUser) appUser = await lookupOne('app_users', 'email', userEmail);
-        let profile = await lookupOne('profiles', 'id', userId);
-        if (!profile) profile = await lookupOne('profiles', 'email', userEmail);
         const merged = {
             ...(sessionUser && typeof sessionUser === 'object' ? sessionUser : {}),
-            ...(appUser && typeof appUser === 'object' ? appUser : {}),
-            ...(profile && typeof profile === 'object' ? profile : {})
+            ...(appUser && typeof appUser === 'object' ? appUser : {})
         };
         const resolvedRole = normalizeLayoutRole(
-            profile?.role
-            || appUser?.role
+            appUser?.role
             || sessionUser?.role
             || sessionUser?.rol
             || ''
         );
         const resolvedDefaultTenant = normalizeTenantSlug(
-            profile?.tenant_default
-            || profile?.default_tenant
-            || appUser?.tenant_default
+            appUser?.tenant_default
             || appUser?.default_tenant
             || sessionUser?.tenant_default
             || sessionUser?.default_tenant
@@ -530,15 +783,13 @@
         merged.tenant_default = resolvedDefaultTenant || null;
         merged.default_tenant = resolvedDefaultTenant || null;
         merged.allowed_tenants = normalizeTenantList(
-            profile?.allowed_tenants
-            || appUser?.allowed_tenants
+            appUser?.allowed_tenants
             || sessionUser?.allowed_tenants,
             merged.role,
             merged.tenant_default
         );
         if (!merged.app_metadata && appUser?.app_metadata) merged.app_metadata = appUser.app_metadata;
-        if (profile?.app_metadata) merged.app_metadata = profile.app_metadata;
-        merged.profile = profile || null;
+        merged.profile = null;
         merged.app_user = appUser || null;
         return merged;
     }
@@ -927,7 +1178,7 @@
                 window.globalPocketBase?.authStore?.model || null,
                 window.tenantPocketBase?.authStore?.model || null
             );
-            ['pb_compat_auth_v1', 'pb_native_auth_v1', 'pb_auth'].forEach((key) => {
+            ['pb_native_auth_v1', 'pb_compat_auth_v1', 'pb_auth'].forEach((key) => {
                 const parsed = readAuthLikeStorageEntry(key);
                 if (!parsed) return;
                 pool.push(parsed.user || null, parsed.record || null, parsed.model || null);
@@ -946,6 +1197,8 @@
     document.addEventListener('DOMContentLoaded', async () => {
         installNavigationSafetyGuards();
         const routeCtx = resolveLayoutRouteContext();
+        const routeLoadState = markLayoutRouteLoad(routeCtx);
+        window.__HUB_SUPPRESS_AUTO_REDIRECTS = routeLoadState.suppressAutoRedirects === true;
         
         const nav = document.querySelector('nav[data-master-nav="1"]');
         if (nav) {
@@ -967,6 +1220,7 @@
             try {
                 const authState = await window.PB_SERVICES?.auth?.bootstrap?.({
                     schema: (typeof TENANT_SCHEMA !== 'undefined' && TENANT_SCHEMA) ? TENANT_SCHEMA : FIN_SCHEMA,
+                    allowCachedUser: true,
                     retries: 2,
                     delayMs: 220
                 });
@@ -998,6 +1252,21 @@
             }
             
             if (!session) {
+                const stableFallback = buildStableLayoutFallback(routeCtx, 'missing_session');
+                if (stableFallback) {
+                    let displayName = String(stableFallback?.user?.email || '').split('@')[0] || 'Usuario';
+                    if (stableFallback.profile && (stableFallback.profile.username || stableFallback.profile.login_username)) {
+                        displayName = stableFallback.profile.username || stableFallback.profile.login_username;
+                    } else {
+                        displayName = displayName.charAt(0).toUpperCase() + displayName.slice(1);
+                    }
+                    updateHeaderInfo(displayName, stableFallback?.user?.email || '');
+                    window.currentUserProfile = stableFallback.profile || stableFallback.user || null;
+                    window.currentUserPermissions = stableFallback.permissions || {};
+                    applyLayoutNavPermissions(stableFallback);
+                    publishLayoutReady(stableFallback);
+                    return;
+                }
                 publishLayoutReady({
                     route: routeCtx,
                     session: null,
@@ -1010,7 +1279,7 @@
                     canAccessCurrentRoute: false,
                     deniedReason: 'missing_session'
                 });
-                if (!routeCtx.isLoginPage && pathPrefix !== '') {
+                if (!routeCtx.isLoginPage && pathPrefix !== '' && window.__HUB_SUPPRESS_AUTO_REDIRECTS !== true) {
                     window.__HUB_PAGE_ACCESS_DENIED = true;
                     window.__HUB_PAGE_ACCESS_DENIED_REASON = 'missing_session';
                     try { window.__HUB_ALLOW_NEXT_UNLOAD?.('layout_missing_session'); } catch (_) {}
@@ -1055,9 +1324,18 @@
                 window.currentUserProfile = data || session.user || null;
                 window.currentUserPermissions = authCtx.permissions || {};
                 applyLayoutNavPermissions(authCtx);
+                persistLastGoodLayoutAuth(authCtx);
                 publishLayoutReady(authCtx);
 
                 if (!authCtx.canAccessCurrentRoute && !routeCtx.isLoginPage) {
+                    const stableFallback = buildStableLayoutFallback(routeCtx, 'access_guard');
+                    if (stableFallback) {
+                        window.currentUserProfile = stableFallback.profile || stableFallback.user || null;
+                        window.currentUserPermissions = stableFallback.permissions || {};
+                        applyLayoutNavPermissions(stableFallback);
+                        publishLayoutReady(stableFallback);
+                        return;
+                    }
                     window.__HUB_PAGE_ACCESS_DENIED = true;
                     window.__HUB_PAGE_ACCESS_DENIED_REASON = authCtx.tenantAllowed ? 'insufficient_permissions' : 'tenant_forbidden';
                     try { window.__HUB_ALLOW_NEXT_UNLOAD?.('layout_access_guard'); } catch (_) {}
@@ -1087,8 +1365,17 @@
                 window.currentUserProfile = fallbackProfile || session.user || null;
                 window.currentUserPermissions = authCtx.permissions || {};
                 applyLayoutNavPermissions(authCtx);
+                if (authCtx.canAccessCurrentRoute) persistLastGoodLayoutAuth(authCtx);
                 publishLayoutReady(authCtx);
                 if (!authCtx.canAccessCurrentRoute && !routeCtx.isLoginPage) {
+                    const stableFallback = buildStableLayoutFallback(routeCtx, 'layout_identity_error');
+                    if (stableFallback) {
+                        window.currentUserProfile = stableFallback.profile || stableFallback.user || null;
+                        window.currentUserPermissions = stableFallback.permissions || {};
+                        applyLayoutNavPermissions(stableFallback);
+                        publishLayoutReady(stableFallback);
+                        return;
+                    }
                     window.__HUB_PAGE_ACCESS_DENIED = true;
                     window.__HUB_PAGE_ACCESS_DENIED_REASON = authCtx.tenantAllowed ? 'insufficient_permissions' : 'tenant_forbidden';
                     try { window.__HUB_ALLOW_NEXT_UNLOAD?.('layout_access_guard_fallback'); } catch (_) {}
@@ -1276,6 +1563,7 @@
         if (drop && !drop.contains(e.target) && !e.target.closest('button[onclick*="toggleNotif"]')) { drop.classList.add('hidden'); }
     });
 })();
+
 
 
 

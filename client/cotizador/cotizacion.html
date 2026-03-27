@@ -79,7 +79,7 @@
                     <p class="text-xs text-gray-500">Selecciona uno o varios espacios para construir la cotización.</p>
                 </div>
                 <div class="space-y-3 mb-4">
-                    <div class="relative w-full"><i class="fa-solid fa-search absolute left-3 top-3 text-gray-400 text-xs"></i><input type="text" id="cat-search" onkeyup="window.filterCatalogLogic()" placeholder="Buscar espacio..." class="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-full text-sm outline-none focus:border-brand-red focus:ring-4 focus:ring-red-50 transition"></div>
+                    <div class="relative w-full"><i class="fa-solid fa-search absolute left-3 top-3 text-gray-400 text-xs"></i><input type="text" id="cat-search" onkeyup="window.filterCatalogLogic()" placeholder="Buscar por espacio, material o medidas..." class="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-full text-sm outline-none focus:border-brand-red focus:ring-4 focus:ring-red-50 transition"></div>
                     <div class="flex flex-col sm:flex-row gap-3">
                         <select id="cat-filter-type" onchange="window.filterCatalogLogic()" class="bg-gray-50 border border-gray-200 text-gray-700 text-xs font-bold py-2.5 px-4 rounded-lg outline-none cursor-pointer focus:border-brand-red transition w-full sm:w-auto"><option value="all">Todos los Tipos</option><option value="local">Local</option><option value="isla">Isla</option><option value="evento">Evento</option><option value="publicidad">Publicidad</option><option value="espacio">Espacio</option></select>
                         <select id="cat-sort" onchange="window.filterCatalogLogic()" class="bg-gray-50 border border-gray-200 text-gray-700 text-xs font-bold py-2.5 px-4 rounded-lg outline-none cursor-pointer focus:border-brand-red transition w-full sm:w-auto"><option value="default">Orden: Defecto</option><option value="price_asc">Precio: Menor</option><option value="price_desc">Precio: Mayor</option></select>
@@ -215,7 +215,7 @@
 
     <div id="generic-confirm-modal" class="fixed inset-0 bg-black/80 z-[100] hidden flex items-center justify-center p-4"></div>
     <script>window.__PM_CATALOG_MODE='quote';</script>
-    <script src="catalog.js?v=20260316-pdf-editor1"></script>
+    <script src="catalog.js?v=20260326-native-pb4"></script>
 </body>
 </html>
 

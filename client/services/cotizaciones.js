@@ -1,10 +1,8 @@
 /**
  * =============================================================================
- * cotizaciones.js — Servicio CRUD para la colección "cotizaciones"
+ * cotizaciones.js - Servicio CRUD para la coleccion "cotizaciones"
  * =============================================================================
- * Extiende el CRUD genérico con normalización de payloads legacy.
- * Los campos `cliente_id` y `creado_por` del esquema anterior se renombran
- * a `cliente_legacy_id` y `creado_por_legacy` respectivamente.
+ * Enfoque nativo PocketBase: no traduce ni renombra campos.
  *
  * Expuesto en: window.PB_SERVICES.cotizaciones
  * =============================================================================
@@ -14,41 +12,35 @@
   if (window.PB_SERVICES.cotizaciones) return;
   if (!window.PBServicesShared) throw new Error("PBServicesShared no está cargado.");
 
-  /**
-   * Normaliza campos legacy del payload antes de enviar a PocketBase.
-   * Renombra `cliente_id` → `cliente_legacy_id` y `creado_por` → `creado_por_legacy`
-   * para compatibilidad con el esquema nativo de PocketBase.
-   * @param {Object} payload - Datos de la cotización
-   * @returns {Object} Payload normalizado (copia, no muta el original)
-   */
-  function normalizePayload(payload) {
-    const copy = Object.assign({}, payload || {});
-    if (Object.prototype.hasOwnProperty.call(copy, "cliente_id")) {
-      copy.cliente_legacy_id = copy.cliente_id;
-      delete copy.cliente_id;
-    }
-    if (Object.prototype.hasOwnProperty.call(copy, "creado_por")) {
-      copy.creado_por_legacy = copy.creado_por;
-      delete copy.creado_por;
-    }
-    return copy;
+  function buildNativeQuoteFolio(record) {
+    const current = String((record && record.numero_orden) || "").trim();
+    if (current) return current;
+    const tenant = String((record && record.tenant) || "").trim().toLowerCase();
+    const prefix = tenant === "casa_de_piedra" ? "CP" : (tenant === "plaza_mayor" ? "PM" : "COT");
+    const nativeId = String((record && record.id) || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
+    const shortId = nativeId.slice(0, 6) || "PEND";
+    return prefix + "-" + shortId;
   }
 
   const crud = window.PBServicesShared.createCrudService("cotizaciones");
 
-  /** Servicio de cotizaciones con normalización de payload en create/update. */
   window.PB_SERVICES.cotizaciones = {
     list: crud.list,
     get: crud.get,
     remove: crud.remove,
-    /** Crea una cotización normalizando campos legacy. */
     async create(payload, options) {
-      return crud.create(normalizePayload(payload), options);
+      const created = await crud.create(payload, options);
+      const folio = buildNativeQuoteFolio(created);
+      if (created && !String(created.numero_orden || "").trim() && String(created.id || "").trim()) {
+        try {
+          await crud.update(created.id, { numero_orden: folio }, options);
+          created.numero_orden = folio;
+        } catch (_) {}
+      }
+      return created;
     },
-    /** Actualiza una cotización normalizando campos legacy. */
     async update(id, payload, options) {
-      return crud.update(id, normalizePayload(payload), options);
+      return crud.update(id, payload, options);
     }
   };
 })();
-

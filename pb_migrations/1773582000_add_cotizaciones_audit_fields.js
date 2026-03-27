@@ -34,7 +34,7 @@ migrate((app) => {
   };
 
   ensureTextField("creado_por_nombre", 255);
-  ensureTextField("modificado_por_legacy", 255);
+  ensureTextField("modificado_por", 255);
   ensureTextField("modificado_por_nombre", 255);
 
   app.save(collection);

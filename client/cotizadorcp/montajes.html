@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- DOC: client\cotizadorcp\montajes.html | Proposito: Vista legacy de premontajes (compatibilidad o redireccion). | Ver docs/10-funcionamiento-general-del-codigo.txt -->
+<!-- DOC: client\cotizadorcp\montajes.html | Proposito: Vista de premontajes (redireccion interna). | Ver docs/10-funcionamiento-general-del-codigo.txt -->
 <html lang="es">
 <head>
     <meta charset="UTF-8">
@@ -19,7 +19,7 @@
             }
             if (window.__HUB_PAGE_ACCESS_DENIED) return;
             const target = 'agenda.html?kind=premontaje';
-            try { window.__HUB_ALLOW_NEXT_UNLOAD?.('cp_montajes_legacy_redirect'); } catch (_) {}
+            try { window.__HUB_ALLOW_NEXT_UNLOAD?.('cp_montajes_redirect'); } catch (_) {}
             if (typeof window.__HUB_SAFE_NAVIGATE === 'function') {
                 window.__HUB_SAFE_NAVIGATE(target, { allowSamePage: true });
             } else {

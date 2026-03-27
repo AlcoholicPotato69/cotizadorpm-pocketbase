@@ -34,8 +34,17 @@ let chartInstances = {
     conceptRevenue: null
 };
 
-function getSpaceColor(i) {
-    return COLORS.palette[i % COLORS.palette.length] || COLORS.brandRed;
+function hashColorKey(value) {
+    const text = String(value || '').trim();
+    if (!text) return 0;
+    let hash = 0;
+    for (let i = 0; i < text.length; i += 1) hash = ((hash * 31) + text.charCodeAt(i)) >>> 0;
+    return hash;
+}
+
+function getSpaceColor(value) {
+    const index = hashColorKey(value) % COLORS.palette.length;
+    return COLORS.palette[index] || COLORS.brandRed;
 }
 
 function safeArray(v) {
@@ -310,7 +319,7 @@ function renderSpaceRevenueChart(spaceRevenueMap, spaceCountMap) {
 
     const labels = entries.map(e => e.label);
     const data = entries.map(e => e.amount);
-    const colors = entries.map((_, i) => getSpaceColor(i));
+    const colors = entries.map(entry => getSpaceColor(entry.id));
 
     const tbody = document.getElementById('rpt-table-spaces');
     if (tbody) {
@@ -590,7 +599,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     const { data: profile } = await window.globalPocketBase
-        .from('profiles')
+        .from('app_users')
         .select('role, app_metadata')
         .eq('id', session.user.id)
         .single();
@@ -627,6 +636,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     fillClientSpaceFilter();
     window.generateReports();
 });
+
+
 
 
 

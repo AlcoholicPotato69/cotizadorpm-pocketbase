@@ -428,7 +428,7 @@ window.openStoredReceipt = async function(filePath) {
         let bestPath = '';
         let bestScore = 0;
         rows.forEach((row) => {
-            const filePathRaw = String(row?.file_path || row?.ruta_legacy || '').trim();
+            const filePathRaw = String(row?.file_path || row?.ruta || '').trim();
             const filePath = normalizeCandidate(filePathRaw);
             if (!filePath) return;
             const filePathLc = filePath.toLowerCase();
@@ -455,7 +455,7 @@ window.openStoredReceipt = async function(filePath) {
         }
         rawPath = rawPath.replace(/^['"]|['"]$/g, '');
         const directUrl = /^(https?:)?\/\//i.test(rawPath) || rawPath.startsWith('data:') || rawPath.startsWith('blob:');
-        const directRelativeUrl = /^\/?(?:api\/files|api\/legacy-file|storage\/v1\/object)\//i.test(rawPath);
+        const directRelativeUrl = /^\/?(?:api\/files|storage\/v1\/object)\//i.test(rawPath);
 
         if (directUrl && /^https?:\/\//i.test(rawPath)) {
             try {
@@ -731,9 +731,7 @@ function __pmContractsBoostPdfTypography(html) {
         .replace(/__PMC_TXT_SM__/g, 'text-base');
 }
 
-const __PM_CONTRACTS_PDF_STYLE_CONFIG_KEY = 'pdf_typography_style';
 const __PM_CONTRACTS_PDF_STYLE_TENANT = 'plaza_mayor';
-const __PM_CONTRACTS_PDF_SETTINGS_COLLECTION = 'pdf_generator_settings';
 const __PM_CONTRACTS_PDF_OVERLAYS_COLLECTION = 'pdf_overlays';
 const __PM_CONTRACTS_PDF_OVERLAY_TYPES = Object.freeze({
     receipts: 'generator:receipts',
@@ -2251,7 +2249,6 @@ function __pmContractsEnsureReceiptEditingChrome(options = {}) {
         const backdrop = document.createElement('div');
         backdrop.id = 'pmc-receipt-inspector-backdrop';
         backdrop.className = 'hidden absolute inset-0 z-[96] bg-gray-950/45 backdrop-blur-[1px]';
-        backdrop.addEventListener('click', () => __pmContractsCloseReceiptInspector());
         container.appendChild(backdrop);
     }
     if (!document.getElementById('pmc-receipt-inspector')) {
@@ -2312,9 +2309,6 @@ function __pmContractsEnsureReceiptEditingChrome(options = {}) {
         panel.addEventListener('input', __pmContractsHandleReceiptInspectorInput);
         panel.addEventListener('change', __pmContractsHandleReceiptInspectorInput);
         panel.addEventListener('click', __pmContractsHandleReceiptInspectorClick);
-        panel.addEventListener('click', (event) => {
-            if (event.target === panel) __pmContractsCloseReceiptInspector();
-        });
         container.appendChild(panel);
     }
     if (container.dataset.pmContractsReceiptInspectorBound !== '1') {
@@ -2509,31 +2503,24 @@ async function __pmContractsLoadCurrentUserProfile(user) {
             return null;
         }
     };
-    const compatAuth = parseAuthState('pb_compat_auth_v1');
-    const nativeAuth = parseAuthState('pb_native_auth_v1');
+    const authState = parseAuthState('pb_native_auth_v1');
     const idCandidates = [...new Set([
         String(fallback?.id || '').trim(),
         String(fallback?.record?.id || '').trim(),
-        String(compatAuth?.user?.id || '').trim(),
-        String(compatAuth?.record?.id || '').trim(),
-        String(nativeAuth?.user?.id || '').trim(),
-        String(nativeAuth?.record?.id || '').trim()
+        String(authState?.user?.id || '').trim(),
+        String(authState?.record?.id || '').trim()
     ].filter(Boolean))];
     const emailCandidates = [...new Set([
         String(fallback?.email || '').trim().toLowerCase(),
         String(fallback?.record?.email || '').trim().toLowerCase(),
-        String(compatAuth?.user?.email || '').trim().toLowerCase(),
-        String(compatAuth?.record?.email || '').trim().toLowerCase(),
-        String(nativeAuth?.user?.email || '').trim().toLowerCase(),
-        String(nativeAuth?.record?.email || '').trim().toLowerCase()
+        String(authState?.user?.email || '').trim().toLowerCase(),
+        String(authState?.record?.email || '').trim().toLowerCase()
     ].filter(Boolean))];
     const usernameCandidates = [...new Set([
         String(fallback?.username || '').trim(),
         String(fallback?.record?.username || '').trim(),
-        String(compatAuth?.user?.username || '').trim(),
-        String(compatAuth?.record?.username || '').trim(),
-        String(nativeAuth?.user?.username || '').trim(),
-        String(nativeAuth?.record?.username || '').trim()
+        String(authState?.user?.username || '').trim(),
+        String(authState?.record?.username || '').trim()
     ].filter(Boolean))];
     const lookupByField = async (table, field, values) => {
         for (const value of values) {
@@ -2547,20 +2534,12 @@ async function __pmContractsLoadCurrentUserProfile(user) {
     let appUser = await lookupByField('app_users', 'id', idCandidates);
     if (!appUser) appUser = await lookupByField('app_users', 'email', emailCandidates);
     if (!appUser) appUser = await lookupByField('app_users', 'username', usernameCandidates);
-    let profile = null;
-    if (!appUser) {
-        profile = await lookupByField('profiles', 'id', idCandidates);
-        if (!profile) profile = await lookupByField('profiles', 'email', emailCandidates);
-        if (!profile) profile = await lookupByField('profiles', 'username', usernameCandidates);
-    }
     const merged = {
-        ...(profile || {}),
         ...(appUser || {}),
         ...fallback
     };
     const role = normalizeRole(
         appUser?.role
-        || profile?.role
         || fallback?.role
         || fallback?.record?.role
     );
@@ -2568,7 +2547,7 @@ async function __pmContractsLoadCurrentUserProfile(user) {
         merged.role = role;
         localStorage.setItem('hub_user_cache_role', role);
     }
-    if (!merged.username) merged.username = appUser?.username || appUser?.login_username || profile?.username || profile?.login_username || fallback?.username || fallback?.email?.split('@')[0] || '';
+    if (!merged.username) merged.username = appUser?.username || appUser?.login_username || fallback?.username || fallback?.email?.split('@')[0] || '';
     return merged;
 }
 
@@ -2642,50 +2621,12 @@ async function __pmContractsLoadModernPdfStyleRecord(generatorType) {
             .eq('tenant', __PM_CONTRACTS_PDF_STYLE_TENANT)
             .eq('document_type', overlayDocumentType)
             .maybeSingle();
-        if (!error && data) {
-            return {
-                source: 'pdf_overlays',
-                id: String(data.id || ''),
-                config: __pmContractsResolvePdfOverlayConfigPayload(data),
-                raw: data.config_json || data.elements || {}
-            };
-        }
-    } catch (_) {
-        // fall through to compatibility storage
-    }
-    try {
-        const { data, error } = await pbClient
-            .from(__PM_CONTRACTS_PDF_SETTINGS_COLLECTION)
-            .select('id,config_json')
-            .eq('tenant', __PM_CONTRACTS_PDF_STYLE_TENANT)
-            .eq('generator_type', generatorType)
-            .maybeSingle();
         if (error || !data) return null;
-        return { source: 'pdf_generator_settings', id: String(data.id || ''), config: data.config_json || {} };
-    } catch (_) {
-        return null;
-    }
-}
-
-async function __pmContractsLoadLegacyPdfStyleRecord(generatorType) {
-    const pbClient = window.tenantPocketBase || window.globalPocketBase;
-    if (!pbClient) return null;
-    try {
-        const { data, error } = await pbClient
-            .from('configuracion')
-            .select('id,valor_json')
-            .eq('clave', __PM_CONTRACTS_PDF_STYLE_CONFIG_KEY)
-            .maybeSingle();
-        if (error || !data) return null;
-        const baseConfig = (data.valor_json && typeof data.valor_json === 'object') ? data.valor_json : {};
         return {
-            source: 'legacy',
+            source: 'pdf_overlays',
             id: String(data.id || ''),
-            raw: baseConfig,
-            config: {
-                ...__PM_CONTRACTS_PDF_STYLE_DEFAULTS,
-                ...baseConfig
-            }
+            config: __pmContractsResolvePdfOverlayConfigPayload(data),
+            raw: data.config_json || data.elements || {}
         };
     } catch (_) {
         return null;
@@ -2724,33 +2665,12 @@ async function __pmContractsUpsertModernPdfStyleRecord(generatorType, configJson
     return { id: String(inserted?.id || ''), config: payload.config_json };
 }
 
-async function __pmContractsSyncLegacyPdfStyleRecordsToModern() {
-    const mappings = ['receipts', 'contracts'];
-    const records = {};
-    for (const generatorType of mappings) {
-        let modernRecord = await __pmContractsLoadModernPdfStyleRecord(generatorType);
-        if (modernRecord?.source !== 'pdf_overlays' && modernRecord?.config) {
-            const saved = await __pmContractsUpsertModernPdfStyleRecord(generatorType, modernRecord.config);
-            modernRecord = { source: 'pdf_overlays', id: saved.id, config: saved.config, raw: saved.config };
-        } else if (!modernRecord) {
-            const legacyRecord = await __pmContractsLoadLegacyPdfStyleRecord(generatorType);
-            if (legacyRecord?.config) {
-                const saved = await __pmContractsUpsertModernPdfStyleRecord(generatorType, legacyRecord.config);
-                modernRecord = { source: 'pdf_overlays', id: saved.id, config: saved.config, raw: saved.config };
-            }
-        }
-        if (modernRecord) records[generatorType] = modernRecord;
-    }
-    return records;
-}
-
 async function __pmContractsLoadSharedPdfStyleConfig(profile = 'receipt') {
     if (!window.tenantPocketBase && !window.globalPocketBase) return;
     const profileKey = __pmContractsNormalizeProfileKey(profile);
     try {
         const generatorType = profileKey === 'contract' ? 'contracts' : 'receipts';
-        const syncedRecords = await __pmContractsSyncLegacyPdfStyleRecordsToModern();
-        const record = syncedRecords[generatorType] || null;
+        const record = await __pmContractsLoadModernPdfStyleRecord(generatorType);
 
         if (!record) {
             __pmContractsPdfStyleActiveProfile = profileKey;
@@ -3542,6 +3462,31 @@ function __pmContractsBasename(path) {
     return parts.length ? parts[parts.length - 1] : '';
 }
 
+function __pmContractsParseJsonObjectLike(value) {
+    if (!value) return {};
+    if (typeof value === 'object' && !Array.isArray(value)) return value;
+    if (typeof value === 'string') {
+        try {
+            const parsed = JSON.parse(value);
+            return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+        } catch (_) {
+            return {};
+        }
+    }
+    return {};
+}
+
+function __pmContractsPickLatestConfigRow(rows) {
+    const list = Array.isArray(rows) ? rows.filter((row) => row && typeof row === 'object') : [];
+    if (!list.length) return null;
+    list.sort((a, b) => {
+        const aTs = Date.parse(String(a.updated_at || a.updated || a.created_at || a.created || '')) || 0;
+        const bTs = Date.parse(String(b.updated_at || b.updated || b.created_at || b.created || '')) || 0;
+        return bTs - aTs;
+    });
+    return list[0] || null;
+}
+
 async function __pmContractsSignedUrl(path) {
     const cleanPath = String(path || '').trim();
     if (!cleanPath) return null;
@@ -3557,19 +3502,16 @@ async function __pmContractsLoadPreferences() {
         const { data, error } = await window.tenantPocketBase
             .from('configuracion')
             .select('*')
+            .eq('tenant', __PM_CONTRACTS_PDF_STYLE_TENANT)
             .in('clave', [CFG_TEMPLATE_DEFAULT_KEY, CFG_LETTERHEAD_KEY]);
         if (error) throw error;
         const rows = Array.isArray(data) ? data : [];
-        rows.forEach(row => {
-            const key = String(row?.clave || '').toLowerCase();
-            const cfg = row?.valor_json || {};
-            if (key === CFG_TEMPLATE_DEFAULT_KEY) {
-                const fromPath = cfg.path || cfg.file_path || cfg.value || '';
-                defaultTemplateFile = cfg.file_name || __pmContractsBasename(fromPath) || '';
-            }
-        });
-        const letterheadRow = rows.find(row => String(row?.clave || '').toLowerCase() === CFG_LETTERHEAD_KEY);
-        const letterheadCfg = letterheadRow?.valor_json || {};
+        const templateRow = __pmContractsPickLatestConfigRow(rows.filter((row) => String(row?.clave || '').toLowerCase() === CFG_TEMPLATE_DEFAULT_KEY));
+        const templateCfg = __pmContractsParseJsonObjectLike(templateRow?.valor_json);
+        const templatePath = templateCfg.path || templateCfg.file_path || templateCfg.value || '';
+        defaultTemplateFile = templateCfg.file_name || __pmContractsBasename(templatePath) || '';
+        const letterheadRow = __pmContractsPickLatestConfigRow(rows.filter((row) => String(row?.clave || '').toLowerCase() === CFG_LETTERHEAD_KEY));
+        const letterheadCfg = __pmContractsParseJsonObjectLike(letterheadRow?.valor_json);
         const savedPath = letterheadCfg.path || letterheadCfg.file_path || letterheadCfg.value || '';
         const safePath = savedPath || (letterheadCfg.file_name ? `${LETTERHEAD_PATH}/${letterheadCfg.file_name}` : '');
         if (safePath) {
@@ -4462,4 +4404,6 @@ function getReceiptHTML(isVisual = false) {
 
     return wrapStyledReceipt(receiptRaw, extraPages);
 }
+
+
 

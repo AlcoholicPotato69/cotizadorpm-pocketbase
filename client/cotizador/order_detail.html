@@ -29,11 +29,13 @@
 
     <script>tailwind.config = { theme: { extend: { colors: { brand: { red: '#D32F2F', dark: '#1a1a1a', gray: '#f3f4f6' } } } } }</script>
     <style>
+        html, body { overscroll-behavior-y: none; }
         body { font-family: 'Segoe UI', sans-serif; background-color: #eef2f6; }
         .hidden { display: none !important; }
         .custom-scroll::-webkit-scrollbar { width: 6px; }
         .custom-scroll::-webkit-scrollbar-track { background: #f1f1f1; }
         .custom-scroll::-webkit-scrollbar-thumb { background: #c7ced8; border-radius: 4px; }
+        .custom-scroll { overscroll-behavior: contain; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         input:read-only { background-color: #f8fafc; color: #6b7280; cursor: not-allowed; }
@@ -56,15 +58,6 @@
                 <div class="flex-grow">
                     <p class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Edición de Cotización</p>
                     <input id="oed-quote-name" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm font-black text-gray-800 outline-none focus:border-brand-red" placeholder="Ej. Campaña Abril - Cliente">
-                </div>
-                <div class="w-full lg:w-52">
-                    <p class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Estatus</p>
-                    <select id="oed-status" class="w-full border rounded-xl px-3 py-2 text-xs font-black uppercase outline-none transition">
-                        <option value="pendiente">Pendiente</option>
-                        <option value="aprobada">Aprobada</option>
-                        <option value="rechazada">Rechazada</option>
-                        <option value="finalizada">Finalizada</option>
-                    </select>
                 </div>
             </div>
         </div>
@@ -211,8 +204,11 @@
                                     </div>
                                     <div class="flex justify-between text-xs text-gray-500 font-bold border-b border-dashed pb-2"><span>Total Ajuste</span><span id="lbl-adjustment">$0.00</span></div>
 
-                                    <div class="pt-1"><p class="text-[10px] font-bold uppercase text-gray-400 mb-1">Impuestos</p><div id="oed-taxes-list" class="space-y-1"></div></div>
-                                    <div id="oed-tax-summary-display" class="pt-2 border-t border-gray-100 space-y-1"></div>
+                                    <div id="oed-taxes-list" class="hidden" aria-hidden="true"></div>
+                                    <div class="pt-1 border-t border-gray-100">
+                                        <p class="text-[10px] font-bold uppercase text-gray-400 mb-1">Impuestos Automáticos</p>
+                                        <div id="oed-tax-summary-display" class="space-y-1"></div>
+                                    </div>
 
                                     <div class="pt-4 mt-2 border-t border-gray-200">
                                         <p class="text-[10px] font-black uppercase text-gray-400 text-right">Total Neto</p>
@@ -222,7 +218,16 @@
                             </div>
                         </div>
 
-                        <div class="mt-6">
+                        <div class="mt-6 space-y-3">
+                            <div class="bg-slate-50 border border-gray-200 rounded-xl p-3">
+                                <p class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">Estatus de la cotización</p>
+                                <select id="oed-status" class="w-full border rounded-xl px-3 py-2 text-xs font-black uppercase outline-none transition">
+                                    <option value="pendiente">Pendiente</option>
+                                    <option value="aprobada">Aprobada</option>
+                                    <option value="rechazada">Rechazada</option>
+                                    <option value="finalizada">Finalizada</option>
+                                </select>
+                            </div>
                             <button id="btn-save-progress" onclick="window.processSaveOrder()" class="w-full bg-brand-dark text-white py-3 rounded-xl font-bold uppercase text-xs shadow-lg hover:bg-gray-800 transition">Guardar</button>
                         </div>
                     </div>
@@ -264,7 +269,7 @@
     </div>
 
     <div id="docs-modal" class="fixed inset-0 bg-black/80 z-[60] hidden flex items-center justify-center p-4 backdrop-blur-sm animate-enter">
-        <div class="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden p-6">
+        <div class="bg-white w-full max-w-lg max-h-[86vh] rounded-2xl shadow-2xl overflow-hidden p-6 flex flex-col">
             <div class="flex justify-between items-start mb-6">
                 <div>
                     <h3 class="font-black text-xl text-gray-800" id="doc-client">Cliente</h3>
@@ -276,7 +281,7 @@
                 <div><p class="text-[10px] uppercase text-gray-400 font-bold">Espacio</p><p class="text-xs font-bold text-gray-700" id="doc-space">---</p></div>
                 <div class="text-right"><p class="text-[10px] uppercase text-gray-400 font-bold">Fechas</p><p class="text-xs font-bold text-gray-700" id="doc-dates">---</p></div>
             </div>
-            <div class="space-y-3" id="docs-list"></div>
+            <div class="flex-1 min-h-0 space-y-3 overflow-y-auto custom-scroll pr-1" id="docs-list"></div>
         </div>
     </div>
 
@@ -534,7 +539,7 @@
 
     <div id="toast-container" class="fixed top-20 right-4 z-[310] flex flex-col items-end pointer-events-none"></div>
     <script src="../js/pdf-margin-guides.js"></script>
-    <script src="orders.js?v=20260319-nonadmin-fixes3"></script>
+<script src="orders.js?v=20260326-native-pb4"></script>
 </body>
 </html>
 

@@ -2,8 +2,7 @@
 (function () {
   if (window.PocketBaseCore) return;
 
-  const LEGACY_AUTH_KEY = "pb_compat_auth_v1";
-  const NATIVE_AUTH_KEY = "pb_native_auth_v1";
+  const AUTH_KEYS = ["pb_native_auth_v1", "pb_compat_auth_v1", "pb_auth"];
 
   const TENANT_COLLECTIONS = new Set([
     "clientes",
@@ -59,24 +58,37 @@
   }
 
   function readAuthState() {
-    const nativeState = normalizeAuthState(parseJsonSafe(localStorage.getItem(NATIVE_AUTH_KEY) || "null", null));
-    if (nativeState && nativeState.token) return nativeState;
-    const legacyState = normalizeAuthState(parseJsonSafe(localStorage.getItem(LEGACY_AUTH_KEY) || "null", null));
-    if (legacyState && legacyState.token) return legacyState;
-    return null;
+    let resolved = null;
+    for (let i = 0; i < AUTH_KEYS.length; i += 1) {
+      const state = normalizeAuthState(parseJsonSafe(localStorage.getItem(AUTH_KEYS[i]) || "null", null));
+      if (state && state.token) {
+        resolved = state;
+        break;
+      }
+    }
+    if (!resolved) return null;
+    const raw = JSON.stringify(resolved);
+    AUTH_KEYS.forEach(function (key) {
+      try {
+        if (localStorage.getItem(key) !== raw) localStorage.setItem(key, raw);
+      } catch (_) {}
+    });
+    return resolved;
   }
 
   function writeAuthState(payload) {
     if (!payload) {
-      localStorage.removeItem(NATIVE_AUTH_KEY);
-      localStorage.removeItem(LEGACY_AUTH_KEY);
+      AUTH_KEYS.forEach(function (key) {
+        try { localStorage.removeItem(key); } catch (_) {}
+      });
       return;
     }
     const normalized = normalizeAuthState(payload);
     if (!normalized) return;
     const raw = JSON.stringify(normalized);
-    localStorage.setItem(NATIVE_AUTH_KEY, raw);
-    localStorage.setItem(LEGACY_AUTH_KEY, raw);
+    AUTH_KEYS.forEach(function (key) {
+      try { localStorage.setItem(key, raw); } catch (_) {}
+    });
   }
 
   function normalizeUser(record) {
@@ -350,4 +362,5 @@
     writeAuthState: writeAuthState
   };
 })();
+
 

@@ -339,7 +339,7 @@
    * Extrae las entradas de orden (espacio + fechas) de una cotización.
    * Soporta cotizaciones simples (un espacio) y multi-espacio (espacios_detalle).
    * @param {Object} data - Datos de cotización (objeto plano)
-   * @returns {Array<{spaceId:number, start:string, end:string, detail:Object|null, detailIndex:number}>}
+   * @returns {Array<{spaceId:string, start:string, end:string, detail:Object|null, detailIndex:number}>}
    */
   function getOrderEntries(data) {
     const details = arr(data.espacios_detalle);
@@ -347,7 +347,7 @@
       const out = [];
       for (let i = 0; i < details.length; i++) {
         const d = obj(details[i]);
-        const sid = Number(d.espacio_id || data.espacio_id || 0);
+        const sid = String(d.espacio_id || d.space_id || data.espacio_id || "").trim();
         const start = normalizeDate(d.fecha_inicio || data.fecha_inicio);
         const end = normalizeDate(d.fecha_fin || d.fecha_inicio || data.fecha_fin || data.fecha_inicio);
         if (sid && start && end) {
@@ -356,7 +356,7 @@
       }
       return out;
     }
-    const sid = Number(data.espacio_id || 0);
+    const sid = String(data.espacio_id || "").trim();
     const start = normalizeDate(data.fecha_inicio);
     const end = normalizeDate(data.fecha_fin || data.fecha_inicio);
     return sid && start && end ? [{ spaceId: sid, start: start, end: end, detail: null, detailIndex: -1 }] : [];
@@ -367,7 +367,7 @@
    * Incluye: fechas del evento principal + premontaje + montajes B2B.
    * Usado para bloquear fechas en el calendario público.
    * @param {Object} data - Datos de cotización (objeto plano)
-   * @returns {Array<{espacio_id:number, fecha:string, tipo:string}>} Lista de reservas con tipo ("evento"|"premontaje")
+   * @returns {Array<{espacio_id:string, fecha:string, tipo:string}>} Lista de reservas con tipo ("evento"|"premontaje")
    */
   function getCpReserveDates(data) {
     const entries = getOrderEntries(data);
@@ -412,7 +412,7 @@
       const c = obj(rootConcepts[i]);
       if (String(c.type || "").toLowerCase() !== "b2b_montaje") continue;
       const meta = obj(c.meta);
-      const sid = Number(meta.space_id || data.espacio_id || 0);
+      const sid = String(meta.space_id || meta.espacio_id || data.espacio_id || "").trim();
       if (!sid) continue;
       const dates = arr(meta.dates);
       for (let j = 0; j < dates.length; j++) {

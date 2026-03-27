@@ -3,7 +3,7 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Espacios Comerciales - Plaza Mayor</title>
     
     <link rel="icon" type="image/png" href="assets/img/faviconpm.png">
@@ -34,13 +34,21 @@
         }
     </script>
     <style>
+        html, body { max-width: 100%; overscroll-behavior-y: none; }
+        body { overflow-x: hidden; }
         body.modal-open { overflow: hidden; }
         .custom-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
         .custom-scroll::-webkit-scrollbar-track { background: rgba(0,0,0,0.02); border-radius: 8px; }
         .custom-scroll::-webkit-scrollbar-thumb { background: rgba(204,0,0,0.3); border-radius: 8px; }
         .custom-scroll::-webkit-scrollbar-thumb:hover { background: rgba(204,0,0,0.6); }
+        .custom-scroll { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        img, svg, canvas { max-width: 100%; }
+        #modal-backdrop, #preview-modal { padding: clamp(0.75rem, 2vw, 1.5rem); }
+        #step-1-info, #step-2-contact, #preview-modal > div {
+            max-height: min(94vh, calc(100dvh - 16px));
+        }
         .cal-day { transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
         .cal-day:hover:not(.cal-disabled):not(.cal-occupied) { border-color: #cc0000; background-color: #fff5f5; z-index: 10; transform: scale(1.05); box-shadow: 0 4px 12px rgba(204,0,0,0.1); border-radius: 0.5rem; }
         .cal-selected { background-color: #cc0000 !important; color: #ffffff !important; border-color: #cc0000 !important; border-radius: 0.5rem; transform: scale(1.05); z-index: 10; box-shadow: 0 4px 15px rgba(204,0,0,0.3); }
@@ -48,6 +56,12 @@
         .cal-disabled { opacity: 0.3; pointer-events: none; background-color: #fafafa; }
         .cal-occupied { background-color: #f3f4f6; pointer-events: none; position: relative; color: #9ca3af; }
         .cal-occupied::after { content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(0,0,0,0.03) 10px, rgba(0,0,0,0.03) 20px); }
+        @media (max-width: 767px) {
+            #modal-backdrop, #preview-modal { padding: 0.5rem !important; }
+            #step-1-info, #step-2-contact, #preview-modal > div {
+                max-height: min(calc(100vh - 8px), calc(100dvh - 8px));
+            }
+        }
     </style>
     <!-- Local Animations -->
     <link rel="preload" as="style" href="../../assets/libs/css/animate.min.css">

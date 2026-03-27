@@ -167,7 +167,7 @@
       "desglose_impuestos",     // Detalle de impuestos aplicados
       "historial_pagos",        // Historial de pagos recibidos
       "datos_factura",          // Datos de la factura generada
-      "cliente_legacy_id",      // ID legacy del cliente
+      "cliente_id",      // ID interno del cliente
       "factura_pdf_file",       // Archivo PDF de factura
       "factura_xml_file",       // Archivo XML de factura
       "contrato_file",          // Archivo de contrato
@@ -178,4 +178,5 @@
     e.next();
   }, "cotizaciones");
 })();
+
 

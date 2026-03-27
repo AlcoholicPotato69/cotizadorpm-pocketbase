@@ -67,7 +67,7 @@
     </nav>
     <main class="flex-grow container mx-auto px-4 md:px-6 py-6 md:py-8 max-w-7xl animate__animated animate__fadeInLeft animate__faster">
         <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 mb-6 flex flex-col md:flex-row gap-4 justify-between items-stretch md:items-center">
-            <div class="relative w-full md:w-1/3"><i class="fa-solid fa-search absolute left-3 top-3 text-gray-400 text-xs"></i><input type="text" id="cat-search" onkeyup="window.filterCatalogLogic()" placeholder="Buscar espacio..." class="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-full text-sm outline-none focus:border-brand-red focus:ring-4 focus:ring-red-50 transition"></div>
+            <div class="relative w-full md:w-1/3"><i class="fa-solid fa-search absolute left-3 top-3 text-gray-400 text-xs"></i><input type="text" id="cat-search" onkeyup="window.filterCatalogLogic()" placeholder="Buscar por espacio, material, ubicación o medidas..." class="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-full text-sm outline-none focus:border-brand-red focus:ring-4 focus:ring-red-50 transition"></div>
             <div class="flex flex-col sm:flex-row gap-3">
                 <select id="cat-filter-type" onchange="window.filterCatalogLogic()" class="bg-gray-50 border border-gray-200 text-gray-700 text-xs font-bold py-2.5 px-4 rounded-lg outline-none cursor-pointer focus:border-brand-red transition w-full sm:w-auto"><option value="all">Todos los Tipos</option><option value="local">Local</option><option value="isla">Isla</option><option value="evento">Evento</option><option value="publicidad">Publicidad</option><option value="espacio">Espacio</option></select>
                 <select id="cat-sort" onchange="window.filterCatalogLogic()" class="bg-gray-50 border border-gray-200 text-gray-700 text-xs font-bold py-2.5 px-4 rounded-lg outline-none cursor-pointer focus:border-brand-red transition w-full sm:w-auto"><option value="default">Orden: Defecto</option><option value="price_asc">Precio: Menor</option><option value="price_desc">Precio: Mayor</option></select>
@@ -97,9 +97,10 @@
                     <p class="text-[9px] text-gray-400 mt-1">Estas etiquetas crearán los botones de filtro en la web pública.</p>
                 </div>
 
-                <div class="grid grid-cols-2 gap-4">
-                    <div><label class="text-[10px] font-bold uppercase text-gray-500">Material (Defecto)</label><select id="mgr-material" class="w-full border border-gray-200 rounded-lg p-2.5 text-sm font-bold bg-white focus:border-brand-red outline-none"><option value="">— Ninguno —</option></select></div>
-                    <div><label class="text-[10px] font-bold uppercase text-gray-500">Medidas (A x L)</label><div class="flex gap-1"><input id="mgr-ancho" type="number" step="0.01" min="0" placeholder="Ancho" title="Ancho" class="w-full border border-gray-200 rounded-lg p-2.5 text-xs text-center font-bold bg-white focus:border-brand-red outline-none"><span class="self-center font-bold text-gray-400 text-xs">x</span><input id="mgr-alto" type="number" step="0.01" min="0" placeholder="Largo" title="Largo" class="w-full border border-gray-200 rounded-lg p-2.5 text-xs text-center font-bold bg-white focus:border-brand-red outline-none"><select id="mgr-unidad" class="border border-gray-200 rounded-lg p-2.5 text-xs font-bold bg-white focus:border-brand-red outline-none" title="Unidad"><option value="M">M</option><option value="CM">CM</option></select></div></div>
+                <div id="mgr-attributes-grid" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div id="mgr-material-field"><label class="text-[10px] font-bold uppercase text-gray-500">Material (Defecto)</label><select id="mgr-material" class="w-full border border-gray-200 rounded-lg p-2.5 text-sm font-bold bg-white focus:border-brand-red outline-none"><option value="">— Ninguno —</option></select></div>
+                    <div id="mgr-location-field"><label class="text-[10px] font-bold uppercase text-gray-500">Ubicación</label><select id="mgr-location" class="w-full border border-gray-200 rounded-lg p-2.5 text-sm font-bold bg-white focus:border-brand-red outline-none"><option value="">— Ninguna —</option></select></div>
+                    <div id="mgr-measures-field" class="md:col-span-2"><label class="text-[10px] font-bold uppercase text-gray-500">Medidas (A x L)</label><div class="flex items-stretch gap-2"><input id="mgr-ancho" type="number" step="0.01" min="0" placeholder="Ancho" title="Ancho" class="flex-1 min-w-[5.5rem] border border-gray-200 rounded-lg p-2.5 text-sm text-center font-bold bg-white focus:border-brand-red outline-none"><span class="self-center font-bold text-gray-400 text-xs">x</span><input id="mgr-alto" type="number" step="0.01" min="0" placeholder="Largo" title="Largo" class="flex-1 min-w-[5.5rem] border border-gray-200 rounded-lg p-2.5 text-sm text-center font-bold bg-white focus:border-brand-red outline-none"><select id="mgr-unidad" class="w-20 shrink-0 border border-gray-200 rounded-lg p-2.5 text-sm font-bold bg-white focus:border-brand-red outline-none" title="Unidad"><option value="M">M</option><option value="CM">CM</option><option value="M2">M2</option></select></div></div>
                 </div>
 
                 <div><label class="text-[10px] font-bold uppercase text-gray-500">Precio Base Total</label><input type="number" id="mgr-base" class="w-full border border-gray-200 rounded-lg p-2.5 text-sm font-bold bg-white focus:border-brand-red outline-none"></div>
@@ -142,7 +143,7 @@
     
     <div id="generic-confirm-modal" class="fixed inset-0 bg-black/80 z-[100] hidden flex items-center justify-center p-4"></div>
     <script>window.__PM_CATALOG_MODE='catalog_admin';</script>
-    <script src="catalog.js"></script>
+    <script src="catalog.js?v=20260326-native-pb4"></script>
 </body>
 </html>
 

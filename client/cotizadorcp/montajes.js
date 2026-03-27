@@ -1,12 +1,13 @@
 /**
  * DOC: client\cotizadorcp\montajes.js
- * Proposito: Compatibilidad legacy para premontajes (si aplica redireccion/flujo previo).
+ * Proposito: Soporte de redireccion para la vista de premontajes.
  * Notas: Este archivo forma parte del cotizador. Ver documentacion completa en docs/10-funcionamiento-general-del-codigo.txt.
  */
 
 const PB_URL = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseUrl) || 'http://127.0.0.1:8090';
 const PB_KEY = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseAnonKey) || '';
 const FIN_SCHEMA = 'finanzas_casadepiedra';
+const CP_MONTAJES_CONFIG_TENANT = 'casa_de_piedra';
 const ACTIVE_STATUSES = ['pendiente', 'aprobada', 'finalizada'];
 const WEEK_KEYS = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
 const WEEK_LABELS = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
@@ -54,6 +55,24 @@ function safeObj(v) {
         }
     }
     return {};
+}
+
+function pickLatestConfigRow(rows) {
+    const list = Array.isArray(rows) ? rows.filter((row) => row && typeof row === 'object') : [];
+    if (!list.length) return null;
+    list.sort((a, b) => {
+        const aTs = Date.parse(String(a.updated_at || a.updated || a.created_at || a.created || '')) || 0;
+        const bTs = Date.parse(String(b.updated_at || b.updated || b.created_at || b.created || '')) || 0;
+        return bTs - aTs;
+    });
+    return list[0] || null;
+}
+
+function buildMontajeQuoteFolio(order) {
+    const current = String(order?.numero_orden || '').trim();
+    if (current) return current.toUpperCase();
+    const rawId = String(order?.id || '').trim().toUpperCase();
+    return rawId ? `CP-${rawId.slice(0, 6)}` : 'CP-PEND';
 }
 
 function normalizeDate(s) {
@@ -234,7 +253,7 @@ function buildMontajeEvents() {
             if (!dates.length) return;
             const space = getSpaceById(entry.spaceId);
             const titleSpace = space?.nombre || entry.detail?.espacio_nombre || order.espacio_nombre || `Espacio ${entry.spaceId}`;
-            const folio = order.numero_orden || String(order.id || '').split('-')[0].toUpperCase();
+            const folio = buildMontajeQuoteFolio(order);
             const color = space?.color || '#374151';
             const quoteName = (order.nombre_cotizacion || order.detalles_evento?.nombre_cotizacion || '').trim();
             const start = dates[0];
@@ -352,12 +371,14 @@ async function loadPremontajePctConfig() {
     try {
         const { data, error } = await window.tenantPocketBase
             .from('configuracion')
-            .select('clave,valor_json,valor_num')
+            .select('clave,valor_json,valor_num,updated,updated_at,created,created_at')
+            .eq('tenant', CP_MONTAJES_CONFIG_TENANT)
             .eq('clave', 'premontaje_pct')
-            .maybeSingle();
-        if (error || !data) return;
-        const fromJson = parseFloat((safeObj(data.valor_json).value));
-        const fromNum = parseFloat(data.valor_num);
+        if (error) return;
+        const row = pickLatestConfigRow(Array.isArray(data) ? data : (data ? [data] : []));
+        if (!row) return;
+        const fromJson = parseFloat((safeObj(row.valor_json).value));
+        const fromNum = parseFloat(row.valor_num);
         const pct = Number.isFinite(fromJson) ? fromJson : fromNum;
         if (Number.isFinite(pct) && pct >= 0) premontajePctGlobal = pct;
     } catch (e) {}
