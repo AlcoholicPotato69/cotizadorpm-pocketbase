@@ -67,7 +67,54 @@ function createIndexIfNotExists(app, sql) {
   } catch (_) {}
 }
 
+function hasTableColumn(app, tableName, columnName) {
+  const probe = new DynamicModel({
+    total: 0,
+  });
+  try {
+    app.db()
+      .newQuery("SELECT COUNT(*) AS total FROM pragma_table_info('" + tableName + "') WHERE LOWER(name) = LOWER({:columnName})")
+      .bind({
+        columnName: String(columnName || ""),
+      })
+      .one(probe);
+    return Number(probe.total || 0) > 0;
+  } catch (_) {
+    return false;
+  }
+}
+
+function repairFieldMetadataFromTable(app, collectionName, fromName, toName) {
+  if (!hasTableColumn(app, collectionName, toName) || hasTableColumn(app, collectionName, fromName)) {
+    return false;
+  }
+
+  try {
+    app.db()
+      .newQuery("UPDATE _collections SET fields = REPLACE(fields, {:fromToken}, {:toToken}) WHERE LOWER(name) = LOWER({:collectionName})")
+      .bind({
+        collectionName: String(collectionName || ""),
+        fromToken: '"name":"' + String(fromName || "") + '"',
+        toToken: '"name":"' + String(toName || "") + '"',
+      })
+      .execute();
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 migrate((app) => {
+  let repairedMetadata = false;
+  repairedMetadata = repairFieldMetadataFromTable(app, "cotizaciones", "cliente_legacy_id", "cliente_id") || repairedMetadata;
+  repairedMetadata = repairFieldMetadataFromTable(app, "cotizaciones", "creado_por_legacy", "creado_por") || repairedMetadata;
+  repairedMetadata = repairFieldMetadataFromTable(app, "cotizaciones", "modificado_por_legacy", "modificado_por") || repairedMetadata;
+  repairedMetadata = repairFieldMetadataFromTable(app, "documentos", "cotizacion_legacy_id", "cotizacion_id") || repairedMetadata;
+  repairedMetadata = repairFieldMetadataFromTable(app, "documentos", "ruta_legacy", "ruta") || repairedMetadata;
+  if (repairedMetadata) {
+    app.reloadCachedCollections();
+  }
+
   const appUsers = safeFindCollection(app, "app_users");
   if (appUsers) {
     removeField(appUsers, "legacy_profile_id");
@@ -130,6 +177,16 @@ migrate((app) => {
 
   app.reloadCachedCollections();
 }, (app) => {
+  let repairedMetadata = false;
+  repairedMetadata = repairFieldMetadataFromTable(app, "cotizaciones", "cliente_id", "cliente_legacy_id") || repairedMetadata;
+  repairedMetadata = repairFieldMetadataFromTable(app, "cotizaciones", "creado_por", "creado_por_legacy") || repairedMetadata;
+  repairedMetadata = repairFieldMetadataFromTable(app, "cotizaciones", "modificado_por", "modificado_por_legacy") || repairedMetadata;
+  repairedMetadata = repairFieldMetadataFromTable(app, "documentos", "cotizacion_id", "cotizacion_legacy_id") || repairedMetadata;
+  repairedMetadata = repairFieldMetadataFromTable(app, "documentos", "ruta", "ruta_legacy") || repairedMetadata;
+  if (repairedMetadata) {
+    app.reloadCachedCollections();
+  }
+
   const appUsers = safeFindCollection(app, "app_users");
   if (appUsers) {
     ensureTextField(appUsers, "legacy_profile_id", 64, true);
