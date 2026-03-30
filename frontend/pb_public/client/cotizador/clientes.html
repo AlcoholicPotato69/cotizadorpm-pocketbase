@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<!-- DOC: client\cotizador\clientes.html | Proposito: Vista de clientes y su historial de reservaciones. | Ver docs/10-funcionamiento-general-del-codigo.txt -->
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clientes - Plaza Mayor</title>
+    <link rel="preload" as="script" href="../../assets/libs/js/tailwindcss.js">
+    <script src="../../assets/libs/js/tailwindcss.js"></script>
+    <link rel="preload" as="style" href="../../assets/libs/css/all.min.css">
+    <link rel="stylesheet" href="../../assets/libs/css/all.min.css">
+    <script src="../../assets/libs/js/chart.js"></script>
+    <script src="../js/hub-config.js"></script>
+    <script src="../services/pb-core.js"></script>
+    <script src="../services/_shared.js"></script>
+    <script src="../services/auth.js"></script>
+    <script src="../services/pb-client.js"></script>
+    <script>tailwind.config = { theme: { extend: { colors: { brand: { red: '#D32F2F', dark: '#1a1a1a', gray: '#f3f4f6' } } } } }</script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background-color: #f3f4f6; } 
+        .fade-in { animation: fadeIn 0.5s ease-out; } 
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } } 
+        .scrollbar-hide::-webkit-scrollbar { display: none; } 
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+    <!-- Local Animations -->
+    <link rel="preload" as="style" href="../../assets/libs/css/animate.min.css">
+    <link rel="stylesheet" href="../../assets/libs/css/animate.min.css">
+</head>
+<body class="bg-brand-gray text-gray-800 flex flex-col min-h-screen relative">
+    <div id="toast-container" class="fixed bottom-5 right-5 z-[70] flex flex-col gap-2"></div>
+    <script>const TENANT_SCHEMA='finanzas';</script>
+  <script src="../js/layout.js"></script>
+    
+    <nav class="bg-brand-red shadow-lg sticky top-16 z-40 border-t border-red-800">
+        <div class="container mx-auto px-4 flex h-14 items-center text-white gap-2 overflow-x-auto no-scrollbar">
+            <a href="catalog.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap"><i class="fa-solid fa-store"></i> Catálogo</a>
+            <a href="cotizacion.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap"><i class="fa-solid fa-calculator"></i> Cotización</a>
+            <a href="orders.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap"><i class="fa-solid fa-file-invoice-dollar"></i> Cotizaciones</a>
+            <a href="contracts.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap flex items-center gap-2"><i class="fa-solid fa-file-signature"></i> Contratos</a>
+            <a href="receipts.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap flex items-center gap-2"><i class="fa-solid fa-receipt"></i> Recibos</a>
+            <a href="invoices.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap"><i class="fa-solid fa-file-invoice"></i> Facturas</a>
+            <a href="agenda.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap"><i class="fa-solid fa-calendar-days"></i> Agenda</a>
+            <a href="clientes.html" class="bg-white/20 shadow-inner px-4 py-1.5 rounded-full text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap"><i class="fa-solid fa-users"></i> Clientes</a>
+            <a href="reports.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap flex items-center gap-2"><i class="fa-solid fa-chart-pie"></i> Reportes</a>
+            <div class="flex-grow"></div>
+        </div>
+    </nav>
+    <main class="container mx-auto px-4 py-8 flex-grow animate__animated animate__fadeInLeft animate__faster">
+    <div class="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-6">
+        <div>
+            <h1 class="text-2xl font-black text-brand-dark uppercase flex items-center gap-3">
+                <span class="w-10 h-10 rounded-2xl bg-brand-red text-white flex items-center justify-center shadow-md">
+                    <i class="fa-solid fa-users"></i>
+                </span>
+                Clientes
+            </h1>
+            <p class="text-sm text-gray-500 mt-1">
+                Crea perfiles de clientes para reutilizarlos en cotizaciones y órdenes.
+            </p>
+        </div>
+
+        <div class="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
+            <div class="relative w-full sm:w-80">
+                <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+                <input id="clients-search" type="text"
+                       class="w-full pl-9 pr-3 py-2 rounded-xl border border-gray-200 bg-white text-sm focus:outline-none focus:border-brand-red transition"
+                       placeholder="Buscar por nombre, correo, RFC o teléfono...">
+            </div>
+            <button id="btn-new-client"
+                    class="bg-brand-red hover:bg-brand-dark text-white font-bold text-sm px-4 py-2 rounded-xl shadow-md transition flex items-center justify-center gap-2">
+                <i class="fa-solid fa-plus"></i> Nuevo Cliente
+            </button>
+        </div>
+    </div>
+
+    <div id="clients-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+
+    <div id="clients-empty" class="hidden mt-10 text-center text-gray-500">
+        <i class="fa-regular fa-face-frown text-3xl mb-2"></i>
+        <p class="text-sm font-semibold">No hay clientes para mostrar.</p>
+        <p class="text-xs">Crea tu primer perfil con <span class="font-bold">Nuevo Cliente</span>.</p>
+    </div>
+</main>
+
+<!-- MODAL: Crear / Editar Cliente -->
+<div id="client-modal" class="fixed inset-0 bg-slate-900/90 hidden flex items-center justify-center p-2 md:p-4 backdrop-blur-sm animate-enter z-[80]">
+    <div class="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[95vh]">
+        <div class="bg-brand-red text-white px-5 py-4 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <span class="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center">
+                    <i class="fa-solid fa-id-card-clip"></i>
+                </span>
+                <div>
+                    <h2 id="client-modal-title" class="font-black uppercase text-sm">Nuevo Cliente</h2>
+                    <p class="text-[11px] text-white/80">Los datos se podrán reutilizar en cotizaciones.</p>
+                </div>
+            </div>
+            <button onclick="window.closeModal('client-modal')" class="bg-white/20 hover:bg-white/30 transition px-3 py-2 rounded-xl text-sm">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+
+        <div class="p-5 overflow-auto">
+            <input type="hidden" id="client-id">
+            <div class="space-y-3">
+                <div>
+                    <label class="block text-xs font-bold mb-1 text-gray-700 uppercase">Nombre completo</label>
+                    <input id="client-name" type="text"
+                           class="w-full px-3 py-2 rounded-xl border border-gray-200 bg-white text-sm focus:outline-none focus:border-brand-red transition"
+                           placeholder="Ej. Juan Pérez López">
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-bold mb-1 text-gray-700 uppercase">Teléfono</label>
+                        <input id="client-phone" type="tel"
+                               class="w-full px-3 py-2 rounded-xl border border-gray-200 bg-white text-sm focus:outline-none focus:border-brand-red transition"
+                               placeholder="10 dígitos">
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold mb-1 text-gray-700 uppercase">Correo</label>
+                        <input id="client-email" type="email"
+                               class="w-full px-3 py-2 rounded-xl border border-gray-200 bg-white text-sm focus:outline-none focus:border-brand-red transition"
+                               placeholder="correo@dominio.com">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold mb-1 text-gray-700 uppercase">RFC</label>
+                    <input id="client-rfc" type="text"
+                           class="w-full px-3 py-2 rounded-xl border border-gray-200 bg-white text-sm focus:outline-none focus:border-brand-red transition uppercase"
+                           placeholder="RFC (opcional)">
+                </div>
+            </div>
+        </div>
+
+        <div class="p-4 border-t bg-gray-50 flex items-center justify-end gap-2">
+            <button onclick="window.closeModal('client-modal')"
+                    class="bg-white border border-gray-200 hover:bg-gray-100 text-gray-700 font-bold text-sm px-4 py-2 rounded-xl transition">
+                Cancelar
+            </button>
+            <button id="btn-save-client"
+                    class="bg-brand-red hover:bg-brand-dark text-white font-bold text-sm px-4 py-2 rounded-xl shadow-md transition flex items-center gap-2">
+                <i class="fa-solid fa-floppy-disk"></i> Guardar
+            </button>
+        </div>
+    </div>
+</div>
+
+<div id="client-history-modal" class="fixed inset-0 bg-slate-900/90 hidden flex items-center justify-center p-2 md:p-4 backdrop-blur-sm animate-enter z-[86]">
+    <div class="bg-white w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[95vh]">
+        <div class="bg-brand-dark text-white px-5 py-4 flex items-center justify-between">
+            <div>
+                <h3 class="font-black uppercase text-sm">Historial de Cliente</h3>
+                <p id="history-client-sub" class="text-[11px] text-white/70">Cotizaciones recientes y expediente.</p>
+            </div>
+            <button onclick="window.closeModal('client-history-modal')" class="bg-white/20 hover:bg-white/30 transition px-3 py-2 rounded-xl text-sm">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+        <div class="p-5 overflow-auto custom-scroll">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4 bg-gray-50 border border-gray-100 rounded-xl p-3 text-xs">
+                <div><span class="text-gray-400 uppercase font-bold">Cliente</span><p id="history-client-name" class="font-black text-gray-800"></p></div>
+                <div><span class="text-gray-400 uppercase font-bold">Teléfono</span><p id="history-client-phone" class="font-bold text-gray-700"></p></div>
+                <div><span class="text-gray-400 uppercase font-bold">Correo</span><p id="history-client-email" class="font-bold text-gray-700 break-all"></p></div>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead class="bg-gray-100 text-[10px] uppercase font-black text-gray-500">
+                        <tr>
+                            <th class="p-3 rounded-tl-lg">Folio</th>
+                            <th class="p-3">Cotización</th>
+                            <th class="p-3">Espacio / Fechas</th>
+                            <th class="p-3 text-right">Total</th>
+                            <th class="p-3 text-center rounded-tr-lg">Expediente</th>
+                        </tr>
+                    </thead>
+                    <tbody id="client-history-list" class="text-xs text-gray-700 divide-y divide-gray-100"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="client-quote-docs-modal" class="fixed inset-0 bg-slate-900/90 hidden flex items-center justify-center p-2 md:p-4 backdrop-blur-sm animate-enter z-[87]">
+    <div class="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden">
+        <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+            <div>
+                <h3 id="qdocs-title" class="font-black text-gray-800 text-sm uppercase">Expediente</h3>
+                <p id="qdocs-sub" class="text-[11px] text-gray-500">Documentos de la cotización.</p>
+            </div>
+            <button onclick="window.closeModal('client-quote-docs-modal')" class="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+        <div id="client-quote-docs-list" class="p-4 space-y-2 max-h-[60vh] overflow-auto custom-scroll"></div>
+    </div>
+</div>
+
+<!-- MODAL: Confirmación -->
+<div id="confirm-modal" class="fixed inset-0 bg-slate-900/90 hidden flex items-center justify-center p-2 md:p-4 backdrop-blur-sm animate-enter z-[85]">
+    <div class="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden">
+        <div class="p-5">
+            <h3 class="font-black uppercase text-sm text-gray-800 flex items-center gap-2">
+                <i class="fa-solid fa-triangle-exclamation text-brand-red"></i> Confirmar
+            </h3>
+            <p id="confirm-text" class="text-sm text-gray-600 mt-2">¿Estás seguro?</p>
+        </div>
+        <div class="p-4 border-t bg-gray-50 flex items-center justify-end gap-2">
+            <button id="btn-confirm-cancel" class="bg-white border border-gray-200 hover:bg-gray-100 text-gray-700 font-bold text-sm px-4 py-2 rounded-xl transition">Cancelar</button>
+            <button id="btn-confirm-ok" class="bg-brand-red hover:bg-brand-dark text-white font-bold text-sm px-4 py-2 rounded-xl shadow-md transition">Sí, continuar</button>
+        </div>
+    </div>
+</div>
+<script src="clientes.js?v=20260326-native-pb2"></script>
+</body>
+</html>
+
+

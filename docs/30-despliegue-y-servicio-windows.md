@@ -1,59 +1,59 @@
 # Despliegue y Servicio Windows
 
-Ultima actualizacion: 2026-03-27
+Ultima actualizacion: 2026-03-28
 
-Este documento cubre el uso del servicio `CotizadorPocketBase` y los archivos que
-participan en despliegue local o interno.
+Este documento cubre la operación del servicio `CotizadorPocketBase` y la estructura de despliegue en Windows.
 
 ## 1. Piezas involucradas
 
-- `backend-service.bat`
-- `deploy/backend-service.local.conf`
-- `deploy/CotizadorServiceHost.exe`
-- `deploy/run-pocketbase-service.bat`
-- `deploy/run-pocketbase-service.ps1`
-- `deploy/https-reverse-proxy.ps1`
-- `deploy/configure-https-selfsigned.ps1`
+- `production/backend-service.bat`
+- `production/deploy/backend-service.local.conf`
+- `production/deploy/CotizadorServiceHost.exe`
+- `production/deploy/run-pocketbase-service.bat`
+- `production/deploy/run-pocketbase-service.ps1`
+- `production/deploy/https-reverse-proxy.ps1`
+- `frontend/pb_public/`
+- `frontend/client/`
+- `frontend/assets/`
+- `backend/`
 
-## 2. Servicio Windows
+## 2. Servicio
 
-Nombre:
+Nombre del servicio:
 
 - `CotizadorPocketBase`
 
 Comandos soportados:
 
 ```bat
-backend-service.bat help
-backend-service.bat show
-backend-service.bat install
-backend-service.bat start
-backend-service.bat stop
-backend-service.bat restart
-backend-service.bat status
-backend-service.bat uninstall
-backend-service.bat cleanup-orphans
-backend-service.bat set-url http://127.0.0.1:8090
-backend-service.bat set-bind 127.0.0.1:8090
-backend-service.bat set-ics /api/cotizador/cp-calendar-ics TOKEN_OPCIONAL
-backend-service.bat enable-https localhost 9443
-backend-service.bat disable-https
+production\backend-service.bat help
+production\backend-service.bat show
+production\backend-service.bat install
+production\backend-service.bat start
+production\backend-service.bat stop
+production\backend-service.bat restart
+production\backend-service.bat status
+production\backend-service.bat uninstall
+production\backend-service.bat cleanup-orphans
+production\backend-service.bat set-url http://127.0.0.1:8090
+production\backend-service.bat set-bind 127.0.0.1:8090
+production\backend-service.bat enable-https localhost 9443
+production\backend-service.bat disable-https
 ```
 
-## 3. Configuracion local del servicio
+## 3. Configuracion
 
-Archivo:
+Archivo principal:
 
-- `deploy/backend-service.local.conf`
+- `production/deploy/backend-service.local.conf`
 
-Claves:
+Claves principales:
 
 - `SERVICE_NAME`
 - `DISPLAY_NAME`
 - `BIND_ADDR`
 - `BACKEND_URL`
-- `CP_CALENDAR_ICS_URL`
-- `CP_CALENDAR_ICS_TOKEN`
+- `PUBLIC_DIR`
 - `HTTPS_ENABLED`
 - `HTTPS_HOST`
 - `HTTPS_PORT`
@@ -62,70 +62,63 @@ Claves:
 
 ## 4. Relacion con el frontend
 
-`backend-service.bat set-url`, `set-ip` y `set-ics` actualizan el runtime del frontend.
+PocketBase puede servir el frontend estático desde:
 
-Archivo impactado:
+- `PUBLIC_DIR=frontend\pb_public`
 
-- `client/config/hub-runtime.json`
+El runtime del frontend se sincroniza hacia:
 
-Esto es importante porque muchas incidencias aparentes del frontend son en realidad un
-runtime viejo apuntando a otra IP o puerto.
+- `frontend/client/config/hub-runtime.json`
+
+Eso mantiene al frontend apuntando al backend correcto cuando cambia IP, hostname o protocolo.
 
 ## 5. HTTPS local
-
-El flujo soportado es con certificado autofirmado y proxy local.
 
 Uso:
 
 ```bat
-backend-service.bat enable-https localhost 9443
+production\backend-service.bat enable-https localhost 9443
 ```
 
-Consideraciones:
-
-- requiere permisos de administrador
-- genera o exporta certificado en `deploy/certs/`
-- actualiza `BACKEND_URL` a `https://HOST:PUERTO`
-- puede requerir instalar el `.cer` en equipos cliente para quitar advertencias
-
-Desactivacion:
+Desactivar:
 
 ```bat
-backend-service.bat disable-https
+production\backend-service.bat disable-https
 ```
 
-## 6. Recomendaciones de despliegue
+Notas:
 
-- mantener `pb_data/` fuera de sincronizacion agresiva mientras el servicio corre
-- no editar manualmente `pb_data/`
-- aplicar cambios de `pb_hooks/` y `pb_migrations/` con backup previo
-- confirmar `BACKEND_URL` despues de cambios de IP, hostname o HTTPS
+- requiere privilegios de administrador
+- exporta certificado en `production/deploy/certs/`
+- actualiza `BACKEND_URL`
+
+## 6. Recomendaciones
+
+- no editar manualmente `backend/pb_data/`
+- respaldar `backend/pb_data/` antes de aplicar hooks o migraciones
+- confirmar `BACKEND_URL` después de cambiar IP o dominio
+- mantener `PUBLIC_DIR=frontend\pb_public` salvo que cambie la estrategia pública
 - validar siempre:
   - `/api/health`
+  - `/index.html`
   - login
   - preview PDF
   - apertura de documentos
 
-## 7. Estrategia de actualizacion
+## 7. Actualizacion
 
-Cuando se actualiza codigo:
-
-1. backup del repo y `pb_data/`
+1. respaldar repo y `backend/pb_data/`
 2. detener servicio
 3. actualizar archivos
-4. revisar `client/config/hub-runtime.json`
-5. revisar `deploy/backend-service.local.conf`
+4. revisar `frontend/client/config/hub-runtime.json`
+5. revisar `production/deploy/backend-service.local.conf`
 6. iniciar servicio
 7. validar health y frontend
 
-## 8. Exposicion de frontend
+## 8. Exposicion del frontend
 
-El frontend es estatico.
-Opciones comunes:
+La opción recomendada es que PocketBase sirva el frontend desde `frontend/pb_public/`.
 
-- `python -m http.server`
-- IIS o servidor interno equivalente
-- cualquier static host interno
+Acceso esperado:
 
-No existe build step obligatorio.
-
+- `http://HOST:PUERTO/index.html`

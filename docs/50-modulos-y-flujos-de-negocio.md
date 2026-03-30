@@ -1,112 +1,77 @@
 # Modulos y Flujos de Negocio
 
-Ultima actualizacion: 2026-03-27
+Ultima actualizacion: 2026-03-28
 
 ## 1. Plaza Mayor
 
 Ruta base:
 
-- `client/cotizador/`
+- `frontend/client/cotizador/`
 
-Modulos:
+Módulos:
 
 - `catalog.*`
-  alta y mantenimiento de espacios
 - `orders.*`
-  cotizaciones y documentos principales
 - `order_detail.html`
-  edicion extendida
 - `contracts.*`
-  contratos
 - `receipts.*`
-  recibos, pagos y expediente
 - `invoices.*`
-  facturas
 - `clientes.*`
-  gestion e historial
 - `reports.*`
-  indicadores
-- `agenda.html`, `calendar.js`
-  vista calendario
+- `agenda.html`
+- `calendar.js`
 
-Reglas funcionales recientes:
+Reglas visibles:
 
 - `publicidad`: Material + Medidas
 - `local`, `isla`, `espacio`: Ubicacion + Medidas
-- ubicaciones y materiales se configuran desde `users1.html`
 
 ## 2. Casa de Piedra
 
 Ruta base:
 
-- `client/cotizadorcp/`
+- `frontend/client/cotizadorcp/`
 
-Diferencias funcionales:
+Diferencias:
 
-- usa logica de eventos y salones
-- maneja personas, horarios, horas extra y premontaje
-- expone feed ICS para calendario
-- contempla flujo de montaje separado del evento principal
-
-Regla importante:
-
-- puede haber dias bloqueados para reserva pero disponibles para premontaje
+- lógica de eventos y salones
+- horarios, horas extra y premontaje
+- flujo de montaje separado del evento principal
 
 ## 3. Publico
 
 Rutas:
 
-- `client/public/public_plazamayor.html`
-- `client/public/public_casadepiedra.html`
+- `frontend/client/public/public_plazamayor.html`
+- `frontend/client/public/public_casadepiedra.html`
 
 Flujo:
 
-1. visitante consulta catalogo
-2. selecciona fechas o configuracion
-3. sistema calcula precio base
-4. se crea cotizacion publica `pendiente`
-5. admin la retoma desde modulo autenticado
+1. visitante consulta catálogo
+2. configura fechas o espacio
+3. se calcula el precio base
+4. se crea una cotización `pendiente`
+5. el área administrativa la continúa
 
 ## 4. Sistema
 
 Ruta:
 
-- `client/system/users1.html`
+- `frontend/client/system/users1.html`
 
 Responsabilidades:
 
-- administracion de usuarios
+- usuarios
 - conceptos
 - impuestos
 - configuraciones PDF
-- materiales y ubicaciones de Plaza Mayor
+- materiales y ubicaciones
 
-## 5. Flujo administrativo tipico
+## 5. Flujo administrativo típico
 
-1. abrir cotizacion
-2. ajustar espacios, fechas, conceptos e impuestos
+1. abrir cotización
+2. editar espacios, fechas, conceptos e impuestos
 3. guardar
 4. abrir preview PDF
-5. generar snapshot/documento
+5. generar documento
 6. avanzar a contrato, recibo o invoice
-
-## 6. Flujo de documentos
-
-Orden sugerido de negocio:
-
-1. cotizacion
-2. orden de compra o aprobacion
-3. contrato
-4. recibo/pagos
-5. factura
-
-## 7. Flujos sensibles
-
-Especial atencion en:
-
-- `espacios_detalle`
-- generadores PDF
-- expediente de pagos
-- documentos almacenados
-- configuracion tenant-aware
-

@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<!-- DOC: client\cotizador\orders.html | Proposito: Vista de cotizaciones existentes y acciones administrativas. | Ver docs/10-funcionamiento-general-del-codigo.txt -->
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cotizaciones - Plaza Mayor</title>
+    
+    <link rel="preload" as="script" href="../../assets/libs/js/tailwindcss.js">
+    <script src="../../assets/libs/js/tailwindcss.js"></script>
+    <link rel="preload" as="style" href="../../assets/libs/css/all.min.css">
+    <link rel="stylesheet" href="../../assets/libs/css/all.min.css">
+    
+    <script src="../js/hub-config.js"></script>
+    <script src="../services/pb-core.js"></script>
+    <script src="../services/_shared.js"></script>
+    <script src="../services/auth.js"></script>
+    <script src="../services/clientes.js"></script>
+    <script src="../services/conceptos.js"></script>
+    <script src="../services/configuracion.js"></script>
+    <script src="../services/impuestos.js"></script>
+    <script src="../services/espacios.js"></script>
+    <script src="../services/cotizaciones.js"></script>
+    <script src="../services/documentos.js"></script>
+    <script src="../services/pb-client.js"></script>
+    <script src="../../assets/libs/js/html2pdf.js"></script>
+    <script src="../../assets/libs/js/chart.js"></script>
+    
+    <script>tailwind.config = { theme: { extend: { colors: { brand: { red: '#D32F2F', dark: '#1a1a1a', gray: '#f3f4f6' } } } } }</script>
+    <style>
+        html, body { overscroll-behavior-y: none; }
+        body { font-family: 'Segoe UI', sans-serif; background-color: #f3f4f6; } 
+        .hidden { display: none !important; } 
+        .fade-in { animation: fadeIn 0.3s ease-out; } 
+        .custom-scroll::-webkit-scrollbar { width: 6px; } 
+        .custom-scroll::-webkit-scrollbar-track { background: #f1f1f1; } 
+        .custom-scroll::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; } 
+        .custom-scroll { overscroll-behavior: contain; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        input:read-only { background-color: #f9fafb; color: #6b7280; cursor: not-allowed; }
+    </style>
+    <!-- Local Animations -->
+    <link rel="preload" as="style" href="../../assets/libs/css/animate.min.css">
+    <link rel="stylesheet" href="../../assets/libs/css/animate.min.css">
+</head>
+<body class="bg-brand-gray text-gray-800 flex flex-col min-h-screen">
+    <script>const TENANT_SCHEMA='finanzas';</script>
+    <script src="../js/layout.js"></script>
+    
+    <nav class="bg-brand-red shadow-lg sticky top-16 z-30 border-t border-red-700 transition-all duration-300">
+        <div class="container mx-auto px-4 flex h-14 items-center text-white gap-2 overflow-x-auto no-scrollbar">
+            <a href="catalog.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 flex items-center gap-2 transition whitespace-nowrap"><i class="fa-solid fa-store"></i> Catálogo</a>
+            <a href="cotizacion.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 flex items-center gap-2 transition whitespace-nowrap"><i class="fa-solid fa-calculator"></i> Cotización</a>
+            <a href="orders.html" class="bg-white/20 shadow-inner px-4 py-1.5 rounded-full text-xs font-bold uppercase flex items-center gap-2 transition whitespace-nowrap"><i class="fa-solid fa-file-invoice-dollar"></i> Cotizaciones</a>
+            <a href="contracts.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 flex items-center gap-2 transition whitespace-nowrap"><i class="fa-solid fa-file-signature"></i> Contratos</a>
+            <a href="receipts.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 flex items-center gap-2 transition whitespace-nowrap"><i class="fa-solid fa-receipt"></i> Recibos</a>
+            <a href="invoices.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 flex items-center gap-2 transition whitespace-nowrap"><i class="fa-solid fa-file-invoice"></i> Facturas</a>
+            <a href="agenda.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 flex items-center gap-2 transition whitespace-nowrap"><i class="fa-solid fa-calendar-days"></i> Agenda</a>
+            <a href="clientes.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap flex items-center gap-2"><i class="fa-solid fa-users"></i> Clientes</a>
+            <a href="reports.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 flex items-center gap-2 transition whitespace-nowrap"><i class="fa-solid fa-chart-pie"></i> Reportes</a>
+        </div>
+    </nav>
+    
+    <main id="orders-list-section" class="flex-grow container mx-auto px-4 py-8 max-w-7xl animate__animated animate__fadeInLeft animate__faster">
+        <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 mb-6 flex flex-col md:flex-row gap-4 justify-between items-center">
+            <h2 class="font-black text-2xl text-gray-800 uppercase tracking-tight">Cotizaciones</h2>
+            <div class="relative w-full md:w-1/2">
+                <i class="fa-solid fa-search absolute left-3 top-3.5 text-gray-400 text-xs"></i>
+                <input type="text" id="search-orders" placeholder="Buscar por cliente, o folio unificado..." class="w-full pl-9 pr-4 py-3 border border-gray-200 rounded-full text-sm outline-none focus:border-brand-red focus:ring-4 focus:ring-red-50 transition">
+            </div>
+        </div>
+        
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            <div class="overflow-x-auto custom-scroll">
+                <table class="w-full text-left border-collapse">
+                    <thead class="bg-gray-100 text-xs uppercase font-black text-gray-500">
+                        <tr>
+                            <th class="p-4 rounded-tl-xl">Folio</th>
+                            <th class="p-4">Cliente</th>
+                            <th class="p-4">Espacio / Fecha</th>
+                            <th class="p-4 text-right">Total</th>
+                            <th class="p-4 text-center">Estatus</th>
+                            <th class="p-4 text-center">Creó</th>
+                            <th class="p-4 text-center">Últ. edición</th>
+                            <th class="p-4 text-center">Documentos</th>
+                            <th class="p-4 text-center rounded-tr-xl">Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody id="orders-table" class="text-sm text-gray-600 divide-y divide-gray-50"></tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+    
+    <div id="order-edit-modal" class="fixed inset-0 bg-black/80 z-50 hidden flex items-center justify-center p-4 backdrop-blur-sm animate-enter">
+        <div class="bg-white w-full max-w-6xl rounded-2xl shadow-2xl overflow-hidden flex flex-col h-[90vh]">
+            <div class="bg-brand-dark p-4 flex justify-between items-center text-white shrink-0">
+                <h3 class="font-bold uppercase text-xs tracking-wider">Detalle de Cotización</h3>
+                <button onclick="window.askCloseEditModal()" class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10 transition"><i class="fa-solid fa-times"></i></button>
+            </div>
+            
+            <div class="flex-grow flex flex-col md:flex-row overflow-hidden">
+                <div class="w-full md:w-2/3 p-6 overflow-y-auto custom-scroll space-y-6">
+                    <input type="hidden" id="oed-id">
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="bg-gray-50 p-4 rounded-xl border border-gray-100">
+                            <h4 class="font-bold text-xs uppercase text-brand-red mb-3 border-b pb-1">Datos del Cliente</h4>
+                            <div class="space-y-3">
+                                <div>
+                                    <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Perfil Guardado</label>
+                                    <select id="oed-client-profile" class="w-full border rounded p-1.5 text-xs bg-white focus:border-brand-red outline-none"></select>
+                                    <input type="hidden" id="oed-client-id">
+                                </div>
+                                <div><label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Nombre / Razón Social</label><input id="oed-client" class="w-full border-b border-gray-200 p-1 text-sm font-bold bg-transparent outline-none focus:border-brand-red"></div>
+                                <div class="grid grid-cols-2 gap-3">
+                                    <div><label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Teléfono</label><input id="oed-phone" class="w-full border-b border-gray-200 p-1 text-xs bg-transparent outline-none focus:border-brand-red"></div>
+                                    <div><label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Email</label><input id="oed-email" class="w-full border-b border-gray-200 p-1 text-xs bg-transparent outline-none focus:border-brand-red"></div>
+                                </div>
+                                <div><label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">RFC</label><input id="fiscal-rfc-re" class="w-full border-b border-gray-200 p-1 text-xs bg-transparent outline-none focus:border-brand-red uppercase"></div>
+                            </div>
+                        </div>
+
+                        <div class="bg-gray-50 p-4 rounded-xl border border-gray-100">
+                            <h4 class="font-bold text-xs uppercase text-brand-red mb-3 border-b pb-1">Configuración del Espacio</h4>
+                            <div class="space-y-3">
+                                <div>
+                                    <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Espacio Rentado</label>
+                                    <div class="flex items-center gap-2">
+                                        <button type="button" onclick="window.scrollOrderSpaceCards(-1)" class="w-8 h-8 rounded-full border border-gray-200 bg-white text-gray-500 hover:text-brand-red hover:border-brand-red transition"><i class="fa-solid fa-chevron-left text-[10px]"></i></button>
+                                        <div id="oed-space-cards" class="flex-1 overflow-x-auto no-scrollbar">
+                                            <div id="oed-space-cards-track" class="flex gap-2 pb-1"></div>
+                                        </div>
+                                        <button type="button" onclick="window.scrollOrderSpaceCards(1)" class="w-8 h-8 rounded-full border border-gray-200 bg-white text-gray-500 hover:text-brand-red hover:border-brand-red transition"><i class="fa-solid fa-chevron-right text-[10px]"></i></button>
+                                    </div>
+                                    <select id="oed-space" class="hidden"></select>
+                                </div>
+                                <div class="grid grid-cols-2 gap-3">
+                                    <div><label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Fecha Inicio</label><input type="date" id="oed-start" class="w-full border rounded p-2 text-xs font-bold bg-white focus:border-brand-red outline-none"></div>
+                                    <div><label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Fecha Fin</label><input type="date" id="oed-end" class="w-full border rounded p-2 text-xs font-bold bg-white focus:border-brand-red outline-none"></div>
+                                </div>
+                                <div class="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Material</label>
+                                        <select id="oed-material" class="w-full border rounded p-2 text-xs font-bold bg-white focus:border-brand-red outline-none">
+                                            <option value="">— Sin material —</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Unidad de Medida</label>
+                                        <select id="oed-medida-unit" class="w-full border rounded p-2 text-xs font-bold bg-white focus:border-brand-red outline-none">
+                                            <option value="M">Metros (M)</option>
+                                            <option value="CM">Centímetros (CM)</option>
+                                            <option value="M2">Metro cuadrado (M2)</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="grid grid-cols-2 gap-3">
+                                    <div><label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Ancho</label><input type="number" id="oed-medida-ancho" min="0" step="0.01" placeholder="0.00" class="w-full border rounded p-2 text-xs font-bold bg-white focus:border-brand-red outline-none"></div>
+                                    <div><label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Alto</label><input type="number" id="oed-medida-alto" min="0" step="0.01" placeholder="0.00" class="w-full border rounded p-2 text-xs font-bold bg-white focus:border-brand-red outline-none"></div>
+                                </div>
+                                
+                            </div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <h4 class="font-bold text-xs uppercase text-gray-600 mb-2 flex justify-between">Conceptos Adicionales
+                            <div class="flex gap-2">
+                                <select id="new-concept-select" class="border rounded text-[10px] px-2 py-1 w-40"></select>
+                                <input id="new-concept-amount" type="number" min="0" placeholder="$" class="border rounded text-[10px] px-2 py-1 w-20">
+                                <button onclick="window.addConceptRow()" class="bg-gray-200 hover:bg-gray-300 px-2 py-1 rounded text-[10px] font-bold"><i class="fa-solid fa-plus"></i></button>
+                            </div>
+                        </h4>
+                        <table class="w-full text-left text-xs border border-gray-200 rounded-lg overflow-hidden">
+                            <thead class="bg-gray-100 text-gray-500 font-bold"><tr><th class="p-2">Concepto</th><th class="p-2 text-right">Monto</th><th class="p-2 text-center w-10"></th></tr></thead>
+                            <tbody id="concepts-list" class="divide-y divide-gray-100 bg-white"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="w-full md:w-1/3 bg-gray-100 border-l border-gray-200 p-6 flex flex-col justify-between shadow-inner overflow-y-auto custom-scroll">
+                    <div class="space-y-6">
+                        
+                        <div>
+                            <h4 class="font-black text-sm uppercase text-gray-700 mb-3"><i class="fa-solid fa-list-check text-brand-red mr-1"></i> Resumen del Evento</h4>
+                            <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm space-y-3 text-xs text-gray-600">
+                                <div class="flex justify-between items-center border-b border-gray-50 pb-2"><span class="font-bold text-gray-400">Espacio</span><span id="sum-space" class="font-bold text-right text-gray-800 truncate max-w-[140px]">--</span></div>
+                                <div class="flex justify-between items-center border-b border-gray-50 pb-2"><span class="font-bold text-gray-400">Fechas</span><span id="sum-dates" class="font-bold text-right text-gray-800">--</span></div>
+                                <div class="flex justify-between items-center"><span class="font-bold text-gray-400">Duración Estimada</span><span id="sum-duration" class="font-bold text-right text-gray-800">--</span></div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <h4 class="font-black text-sm uppercase text-gray-700 mb-3"><i class="fa-solid fa-calculator text-brand-red mr-1"></i> Resumen Financiero</h4>
+                            <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm space-y-2">
+                                <div class="flex justify-between text-xs text-gray-500"><span>Renta Base del Espacio</span><span class="font-bold" id="lbl-subtotal-base">$0.00</span></div>
+                                
+                                <div id="oed-summary-concepts" class="space-y-1 border-b border-dashed border-gray-200 pb-2 mb-2"></div>
+                                
+                                <div class="flex justify-between text-xs text-gray-800 font-bold border-b border-gray-100 pb-2"><span>Subtotal Estimado</span><span id="lbl-subtotal">$0.00</span></div>
+                                
+                                <div class="flex justify-between items-center text-xs text-gray-500 mt-2">
+                                    <span>Ajuste Global</span>
+                                    <div class="flex items-center gap-1">
+                                        <select id="oed-adj-type" onchange="window.recalcTotal()" class="border rounded p-0.5 text-[10px]"><option value="ninguno">-</option><option value="descuento">Desc</option><option value="aumento">Aum</option></select>
+                                        <input id="oed-adj-val" onchange="window.recalcTotal()" type="number" class="w-12 border rounded p-0.5 text-[10px] text-right" placeholder="0">
+                                        <select id="oed-adj-unit" onchange="window.recalcTotal()" class="border rounded p-0.5 text-[10px]"><option value="fixed">$</option><option value="percent">%</option></select>
+                                    </div>
+                                </div>
+                                <div class="flex justify-between text-xs text-gray-500 font-bold border-b border-dashed pb-2"><span>Total Ajuste</span><span id="lbl-adjustment">$0.00</span></div>
+                                
+                                <div class="pt-1"><p class="text-[10px] font-bold uppercase text-gray-400 mb-1">Impuestos</p><div id="oed-taxes-list" class="space-y-1"></div></div>
+                                <div id="oed-tax-summary-display" class="pt-2 border-t border-gray-100 space-y-1"></div>
+                                
+                                <div class="pt-4 mt-2 border-t border-gray-200">
+                                    <p class="text-[10px] font-black uppercase text-gray-400 text-right">Total Neto</p>
+                                    <input id="oed-price" readonly class="w-full text-right text-3xl font-black bg-transparent outline-none text-gray-800" value="0.00">
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                    <div class="mt-6 space-y-3">
+                        <div class="bg-white p-3 rounded-xl border border-gray-200 shadow-sm">
+                            <label class="block text-[10px] font-bold text-gray-400 uppercase mb-2">Estatus de la Cotización</label>
+                            <select id="oed-status" class="w-full border border-gray-300 rounded p-2 text-xs font-bold bg-white focus:border-brand-red outline-none">
+                                <option value="pendiente">Pendiente</option>
+                                <option value="aprobada">Aprobada</option>
+                                <option value="rechazada">Rechazada</option>
+                                <option value="finalizada">Finalizada</option>
+                            </select>
+                        </div>
+                        <button id="btn-save-progress" onclick="window.processSaveOrder()" class="w-full bg-brand-dark text-white py-3 rounded-xl font-bold uppercase text-xs shadow-lg hover:bg-gray-800 transition">Guardar Directamente</button>
+                        <button id="btn-save-approve" onclick="window.attemptSaveOrder()" class="w-full bg-brand-red text-white py-3 rounded-xl font-bold uppercase text-xs shadow-lg hover:bg-red-700 transition">Guardar y Aprobar</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="docs-modal" class="fixed inset-0 bg-black/80 z-[60] hidden flex items-center justify-center p-4 backdrop-blur-sm animate-enter">
+        <div class="bg-white w-full max-w-lg max-h-[86vh] rounded-2xl shadow-2xl overflow-hidden p-6 flex flex-col">
+            <div class="flex justify-between items-start mb-6">
+                <div>
+                    <h3 class="font-black text-xl text-gray-800" id="doc-client">Cliente</h3>
+                    <p class="text-xs text-brand-red font-bold uppercase tracking-wider" id="doc-folio">Folio</p>
+                </div>
+                <button onclick="window.closeModal('docs-modal')" class="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500"><i class="fa-solid fa-times"></i></button>
+            </div>
+            <div class="bg-gray-50 p-4 rounded-xl mb-6 border border-gray-100 flex justify-between items-center">
+                <div><p class="text-[10px] uppercase text-gray-400 font-bold">Espacio</p><p class="text-xs font-bold text-gray-700" id="doc-space">---</p></div>
+                <div class="text-right"><p class="text-[10px] uppercase text-gray-400 font-bold">Fechas</p><p class="text-xs font-bold text-gray-700" id="doc-dates">---</p></div>
+            </div>
+            <div class="flex-1 min-h-0 space-y-3 overflow-y-auto custom-scroll pr-1" id="docs-list"></div>
+        </div>
+    </div>
+
+    <div id="preview-modal" class="fixed inset-0 bg-black/90 z-[70] hidden flex items-center justify-center p-4">
+        <div class="bg-white w-full max-w-4xl h-[90vh] rounded-2xl flex flex-col overflow-hidden">
+            <div class="bg-gray-900 p-3 flex justify-between items-center text-white shrink-0">
+                <div class="flex items-center gap-4">
+                    <h3 class="font-bold text-sm uppercase tracking-widest flex items-center gap-2"><i class="fa-solid fa-eye text-brand-red"></i> Vista Previa</h3>
+                    <div id="pdf-admin-data" class="hidden text-xs bg-gray-800 px-3 py-1 rounded border border-gray-700"><span class="text-gray-400 mr-2">Folio:</span><span class="font-mono font-bold" id="prev-order-num">---</span></div>
+                </div>
+                <div class="flex gap-3">
+                    <button onclick="window.closeModal('preview-modal')" class="text-gray-400 hover:text-white text-xs uppercase font-bold px-3">Cerrar</button>
+                    <button id="btn-download-preview" class="bg-brand-red hover:bg-red-600 text-white px-5 py-2 rounded-full text-xs font-bold uppercase shadow-lg transition flex items-center gap-2"><i class="fa-solid fa-download"></i> <span class="hidden sm:inline">Descargar</span></button>
+                </div>
+            </div>
+            <div id="pdf-style-editor" class="hidden bg-gray-800 border-t border-gray-700 text-[10px] text-gray-200 shrink-0">
+                <div class="px-3 py-2 flex flex-wrap items-center gap-2 border-b border-gray-700">
+                    <p data-pdf-admin-caption="1" class="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Editor PDF por Secciones</p>
+                    <div class="ml-auto flex items-center gap-2">
+                        <button id="btn-pdf-style-pin" type="button" class="bg-gray-700 hover:bg-gray-600 text-white px-2.5 py-1 rounded text-[10px] font-bold uppercase transition">Fijar</button>
+                        <button id="btn-pdf-style-toggle" type="button" class="bg-gray-700 hover:bg-gray-600 text-white px-2.5 py-1 rounded text-[10px] font-bold uppercase transition">Ocultar</button>
+                        <button id="btn-reset-pdf-style" type="button" class="bg-brand-red/90 hover:bg-brand-red text-white px-2.5 py-1 rounded text-[10px] font-bold uppercase transition">Restablecer</button>
+                    </div>
+                </div>
+                <div id="pdf-style-editor-body" class="px-3 py-3 flex flex-col gap-2">
+                    <div class="bg-gray-900/70 border border-gray-700 rounded-lg p-2 space-y-2">
+                        <p class="text-[10px] font-black uppercase tracking-wider text-gray-300">Global</p>
+                        <div class="flex flex-col gap-1">
+                            <label class="uppercase font-bold text-gray-400">Fuente</label>
+                            <select id="pdf-style-font-family" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[11px] font-bold text-white">
+                                <option value="segoe">Segoe UI</option>
+                                <option value="arial">Arial</option>
+                                <option value="verdana">Verdana</option>
+                                <option value="georgia">Georgia</option>
+                                <option value="times">Times New Roman</option>
+                                <option value="trebuchet">Trebuchet MS</option>
+                            </select>
+                        </div>
+                        <div class="flex flex-col gap-1">
+                            <label class="uppercase font-bold text-gray-400">Altura Texto</label>
+                            <input id="pdf-style-line-height" type="range" min="90" max="180" step="5" class="pdf-style-control accent-brand-red">
+                            <span id="pdf-style-line-height-value" class="font-mono text-[10px] text-gray-300">120%</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div class="flex flex-col gap-1">
+                                <label class="uppercase font-bold text-gray-400">Mover X</label>
+                                <input id="pdf-style-offset-x" type="range" min="-120" max="120" step="1" class="pdf-style-control accent-brand-red">
+                                <span id="pdf-style-offset-x-value" class="font-mono text-[10px] text-gray-300">0px</span>
+                            </div>
+                            <div class="flex flex-col gap-1">
+                                <label class="uppercase font-bold text-gray-400">Mover Y</label>
+                                <input id="pdf-style-offset-y" type="range" min="-120" max="120" step="1" class="pdf-style-control accent-brand-red">
+                                <span id="pdf-style-offset-y-value" class="font-mono text-[10px] text-gray-300">0px</span>
+                            </div>
+                        </div>
+                        <div class="flex flex-col gap-1">
+                            <label class="uppercase font-bold text-gray-400">Páginas +/-</label>
+                            <input id="pdf-style-extra-pages" type="range" min="-1" max="6" step="1" class="pdf-style-control accent-brand-red">
+                            <span id="pdf-style-extra-pages-value" class="font-mono text-[10px] text-gray-300">+0</span>
+                        </div>
+                    </div>
+                    <div class="bg-gray-900/70 border border-gray-700 rounded-lg p-2 space-y-2">
+                        <div class="flex items-center justify-between gap-2">
+                            <p class="text-[10px] font-black uppercase tracking-wider text-gray-300">Recursos Canva</p>
+                            <div class="flex items-center gap-1">
+                                <button id="pdf-style-add-bar" type="button" class="bg-gray-700 hover:bg-gray-600 text-white px-2 py-0.5 rounded text-[10px] font-bold">+ Barra</button>
+                                <button id="pdf-style-add-title" type="button" class="bg-gray-700 hover:bg-gray-600 text-white px-2 py-0.5 rounded text-[10px] font-bold">+ Título</button>
+                                <button id="pdf-style-add-text" type="button" class="bg-gray-700 hover:bg-gray-600 text-white px-2 py-0.5 rounded text-[10px] font-bold">+ Texto</button>
+                                <button id="pdf-style-add-logo" type="button" class="hidden"></button>
+                                <button id="pdf-style-add-sign-line" type="button" class="hidden"></button>
+                                <button id="pdf-style-add-sign-block" type="button" class="hidden"></button>
+                            </div>
+                        </div>
+                        <p class="text-[9px] text-gray-400">Arrastra los recursos sobre el PDF. Para redimensionar usa esquina inferior derecha o mantén Shift.</p>
+                        <div id="pdf-style-resources-list" class="space-y-2 max-h-72 overflow-y-auto pr-1 custom-scroll"></div>
+                    </div>
+                    <div class="bg-gray-900/70 border border-gray-700 rounded-lg p-2 space-y-2">
+                        <p class="text-[10px] font-black uppercase tracking-wider text-gray-300">Encabezado</p>
+                        <div class="flex flex-col gap-1">
+                            <label class="uppercase font-bold text-gray-400">Línea Enc.</label>
+                            <input id="pdf-style-header-line" type="range" min="1" max="8" step="1" class="pdf-style-control accent-brand-red">
+                            <span id="pdf-style-header-line-value" class="font-mono text-[10px] text-gray-300">4px</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div class="flex flex-col gap-1">
+                                <label class="uppercase font-bold text-gray-400">Título</label>
+                                <input id="pdf-style-title-size" type="range" min="20" max="42" step="1" class="pdf-style-control accent-brand-red">
+                                <span id="pdf-style-title-size-value" class="font-mono text-[10px] text-gray-300">30px</span>
+                            </div>
+                            <div class="flex flex-col gap-1">
+                                <label class="uppercase font-bold text-gray-400">Meta Enc.</label>
+                                <input id="pdf-style-meta-size" type="range" min="8" max="18" step="1" class="pdf-style-control accent-brand-red">
+                                <span id="pdf-style-meta-size-value" class="font-mono text-[10px] text-gray-300">13px</span>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div class="flex flex-col gap-1">
+                                <label class="uppercase font-bold text-gray-400">Alineación Título</label>
+                                <select id="pdf-style-align-header" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white">
+                                    <option value="left">Izquierda</option>
+                                    <option value="center">Centro</option>
+                                    <option value="right">Derecha</option>
+                                </select>
+                            </div>
+                            <div class="flex flex-col gap-1">
+                                <label class="uppercase font-bold text-gray-400">Alineación Meta</label>
+                                <select id="pdf-style-align-meta" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white">
+                                    <option value="left">Izquierda</option>
+                                    <option value="center">Centro</option>
+                                    <option value="right">Derecha</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-gray-900/70 border border-gray-700 rounded-lg p-2 space-y-2">
+                        <p class="text-[10px] font-black uppercase tracking-wider text-gray-300">Tabla y Resumen</p>
+                        <div class="flex flex-col gap-1">
+                            <label class="uppercase font-bold text-gray-400">Tabla</label>
+                            <input id="pdf-style-table-size" type="range" min="9" max="16" step="1" class="pdf-style-control accent-brand-red">
+                            <span id="pdf-style-table-size-value" class="font-mono text-[10px] text-gray-300">12px</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div class="flex flex-col gap-1">
+                                <label class="uppercase font-bold text-gray-400">Alineación Tabla</label>
+                                <select id="pdf-style-align-table" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white">
+                                    <option value="left">Izquierda</option>
+                                    <option value="center">Centro</option>
+                                    <option value="right">Derecha</option>
+                                </select>
+                            </div>
+                            <div class="flex flex-col gap-1">
+                                <label class="uppercase font-bold text-gray-400">Alineación Resumen</label>
+                                <select id="pdf-style-align-summary" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white">
+                                    <option value="left">Izquierda</option>
+                                    <option value="center">Centro</option>
+                                    <option value="right">Derecha</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-gray-900/70 border border-gray-700 rounded-lg p-2 space-y-2">
+                        <p class="text-[10px] font-black uppercase tracking-wider text-gray-300">Notas y Condiciones</p>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div class="flex flex-col gap-1">
+                                <label class="uppercase font-bold text-gray-400">Notas</label>
+                                <input id="pdf-style-quick-size" type="range" min="9" max="16" step="1" class="pdf-style-control accent-brand-red">
+                                <span id="pdf-style-quick-size-value" class="font-mono text-[10px] text-gray-300">12px</span>
+                            </div>
+                            <div class="flex flex-col gap-1">
+                                <label class="uppercase font-bold text-gray-400">Condiciones</label>
+                                <input id="pdf-style-conditions-size" type="range" min="9" max="18" step="1" class="pdf-style-control accent-brand-red">
+                                <span id="pdf-style-conditions-size-value" class="font-mono text-[10px] text-gray-300">14px</span>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div class="flex flex-col gap-1">
+                                <label class="uppercase font-bold text-gray-400">Alineación Notas</label>
+                                <select id="pdf-style-align-quick" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white">
+                                    <option value="left">Izquierda</option>
+                                    <option value="center">Centro</option>
+                                    <option value="right">Derecha</option>
+                                </select>
+                            </div>
+                            <div class="flex flex-col gap-1">
+                                <label class="uppercase font-bold text-gray-400">Alineación Condiciones</label>
+                                <select id="pdf-style-align-conditions" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white">
+                                    <option value="left">Izquierda</option>
+                                    <option value="center">Centro</option>
+                                    <option value="right">Derecha</option>
+                                    <option value="justify">Justificado</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-gray-900/70 border border-gray-700 rounded-lg p-2 space-y-2">
+                        <p class="text-[10px] font-black uppercase tracking-wider text-gray-300">Firmas y Pie</p>
+                        <div class="flex flex-col gap-1">
+                            <label class="uppercase font-bold text-gray-400">Firmas</label>
+                            <input id="pdf-style-sign-size" type="range" min="9" max="16" step="1" class="pdf-style-control accent-brand-red">
+                            <span id="pdf-style-sign-size-value" class="font-mono text-[10px] text-gray-300">12px</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div class="flex flex-col gap-1">
+                                <label class="uppercase font-bold text-gray-400">Alineación Firmas</label>
+                                <select id="pdf-style-align-sign" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white">
+                                    <option value="left">Izquierda</option>
+                                    <option value="center">Centro</option>
+                                    <option value="right">Derecha</option>
+                                </select>
+                            </div>
+                            <div class="flex flex-col gap-1">
+                                <label class="uppercase font-bold text-gray-400">Alineación Pie</label>
+                                <select id="pdf-style-align-footer" class="pdf-style-control bg-gray-900 border border-gray-600 rounded px-2 py-1 text-[10px] font-bold text-white">
+                                    <option value="left">Izquierda</option>
+                                    <option value="center">Centro</option>
+                                    <option value="right">Derecha</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div id="preview-container" class="flex-grow bg-gray-200 overflow-y-auto custom-scroll flex justify-center items-start p-8">
+                <div id="pdf-content" class="bg-white shadow-2xl relative text-gray-800 hidden"></div>
+                <embed id="doc-preview" type="application/pdf" class="w-full h-full hidden rounded shadow-lg">
+            </div>
+        </div>
+    </div>
+    <div id="pdf-resource-modal" class="fixed inset-0 z-[320] hidden bg-gray-900/80 backdrop-blur-sm items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col">
+            <div class="bg-gray-50 border-b border-gray-100 p-4 flex justify-between items-center">
+                <h2 class="text-lg font-black text-brand-dark uppercase tracking-tighter">Añadir Recurso</h2>
+                <button type="button" onclick="window.closeModal('pdf-resource-modal')" class="text-gray-400 hover:text-brand-red transition"><i class="fa-solid fa-xmark text-xl"></i></button>
+            </div>
+            <div class="p-6">
+                <div class="grid grid-cols-2 gap-4">
+                    <button type="button" onclick="document.getElementById('pdf-style-add-bar').click(); window.closeModal('pdf-resource-modal')" class="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-xl border border-gray-200 hover:border-brand-red hover:bg-red-50 hover:text-brand-red transition text-gray-700">
+                        <i class="fa-solid fa-minus text-2xl mb-2"></i>
+                        <span class="text-xs font-bold uppercase tracking-wider">Barra</span>
+                    </button>
+                    <button type="button" onclick="document.getElementById('pdf-style-add-logo').click(); window.closeModal('pdf-resource-modal')" class="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-xl border border-gray-200 hover:border-brand-red hover:bg-red-50 hover:text-brand-red transition text-gray-700">
+                        <i class="fa-solid fa-image text-2xl mb-2"></i>
+                        <span class="text-xs font-bold uppercase tracking-wider">Logo</span>
+                    </button>
+                    <button type="button" onclick="document.getElementById('pdf-style-add-title').click(); window.closeModal('pdf-resource-modal')" class="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-xl border border-gray-200 hover:border-brand-red hover:bg-red-50 hover:text-brand-red transition text-gray-700">
+                        <i class="fa-solid fa-heading text-2xl mb-2"></i>
+                        <span class="text-xs font-bold uppercase tracking-wider">Título</span>
+                    </button>
+                    <button type="button" onclick="document.getElementById('pdf-style-add-text').click(); window.closeModal('pdf-resource-modal')" class="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-xl border border-gray-200 hover:border-brand-red hover:bg-red-50 hover:text-brand-red transition text-gray-700">
+                        <i class="fa-solid fa-font text-2xl mb-2"></i>
+                        <span class="text-xs font-bold uppercase tracking-wider">Texto</span>
+                    </button>
+                    <button type="button" onclick="document.getElementById('pdf-style-add-sign-line').click(); window.closeModal('pdf-resource-modal')" class="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-xl border border-gray-200 hover:border-brand-red hover:bg-red-50 hover:text-brand-red transition text-gray-700">
+                        <i class="fa-solid fa-signature text-2xl mb-2"></i>
+                        <span class="text-xs font-bold uppercase tracking-wider">Línea Firma</span>
+                    </button>
+                    <button type="button" onclick="document.getElementById('pdf-style-add-sign-block').click(); window.closeModal('pdf-resource-modal')" class="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-xl border border-gray-200 hover:border-brand-red hover:bg-red-50 hover:text-brand-red transition text-gray-700">
+                        <i class="fa-solid fa-pen-nib text-2xl mb-2"></i>
+                        <span class="text-xs font-bold uppercase tracking-wider">Bloque Firma</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div id="generic-confirm-modal" class="fixed inset-0 bg-black/80 z-[300] hidden flex items-center justify-center p-4">
+        <div class="bg-white w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden p-6 text-center">
+            <h3 class="font-bold text-lg mb-2 text-gray-800" id="confirm-title">¿Confirmar Acción?</h3>
+            <div class="flex justify-center gap-3 mt-6">
+                <button id="btn-cancel-action" class="text-gray-500 hover:text-gray-800 text-xs font-bold px-4 transition">Cancelar</button>
+                <button id="btn-confirm-action" class="bg-brand-dark text-white px-6 py-2 rounded-xl font-bold text-xs uppercase shadow-lg hover:bg-black transition">Confirmar</button>
+            </div>
+        </div>
+    </div>
+    <div id="toast-container" class="fixed top-20 right-4 z-[310] flex flex-col items-end pointer-events-none"></div>
+    <script src="../js/pdf-margin-guides.js"></script>
+<script src="orders.js?v=20260329-native-pb14"></script>
+</body>
+</html>
+
+

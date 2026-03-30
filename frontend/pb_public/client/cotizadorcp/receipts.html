@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<!-- DOC: client\cotizadorcp\receipts.html | Proposito: Vista de recibos asociados a cotizaciones aprobadas. | Ver docs/10-funcionamiento-general-del-codigo.txt -->
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Recibos - Casa de Piedra</title>
+    
+    <link rel="preload" as="script" href="../../assets/libs/js/tailwindcss.js">
+    <script src="../../assets/libs/js/tailwindcss.js"></script>
+    <link rel="preload" as="style" href="../../assets/libs/css/all.min.css">
+    <link rel="stylesheet" href="../../assets/libs/css/all.min.css">
+    <script src="../../assets/libs/js/jspdf.js"></script>
+    <script src="../../assets/libs/js/html2pdf.js"></script>
+    <script src="../js/hub-config.js"></script>
+    <script src="../services/pb-core.js"></script>
+    <script src="../services/_shared.js"></script>
+    <script src="../services/auth.js"></script>
+    <script src="../services/pb-client.js"></script>
+    <script src="../../assets/libs/js/chart.js"></script>
+
+    <script>
+        tailwind.config = { theme: { extend: { colors: { brand: { red: '#c1621e', dark: '#1a1a1a', gray: '#f3f4f6' } } } } }
+    </script>
+
+    <style>
+        /* BODY SIN SCROLL GENERAL PARA QUE SE SIENTA COMO APP NATIVA */
+        body { font-family: 'Segoe UI', sans-serif; background-color: #f3f4f6; overflow: hidden; height: 100vh; } 
+        .hidden { display: none !important; } 
+        .fade-in { animation: fadeIn 0.3s ease-out; } 
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } } 
+        
+        /* SCROLLBARS PERSONALIZADAS */
+        .custom-scroll::-webkit-scrollbar { width: 6px; height: 6px; } 
+        .custom-scroll::-webkit-scrollbar-track { background: #f1f1f1; } 
+        .custom-scroll::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; } 
+        .custom-scroll::-webkit-scrollbar-thumb:hover { background: #999; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        /* HOJA CARTA BASE */
+        .paper-sheet { width: min(816px, 100%) !important; min-height: 1056px !important; background: white; box-shadow: 0 10px 30px rgba(0,0,0,0.15); padding: 0 !important; font-size: clamp(11px, 0.75vw, 12px); line-height: 1.6; color: #111827; margin: 0 auto; transform-origin: top center; }
+        
+        .var-highlight { font-weight: 800; background-color: #fef08a; padding: 0 2px; border-radius: 2px; }
+        .var-tag { background-color: #f3f4f6; border: 1px solid #d1d5db; color: #374151; padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 10px; cursor: pointer; transition: all 0.2s; display: inline-block; margin: 2px; }
+        .var-tag:hover { background-color: #e5e7eb; border-color: #9ca3af; }
+        .active-tab { color: #c1621e !important; border-bottom-color: #c1621e !important; background-color: #fff !important; }
+
+        /* PREVIEW RESPONSIVO */
+        #receipt-preview-container, #contract-preview-container {
+            width: 100%;
+            height: 100%;
+            overflow: auto; /* Scroll interno si es necesario */
+            display: flex;
+            justify-content: center;
+            align-items: flex-start; /* Alineado arriba para empezar */
+            padding: clamp(12px, 2vw, 40px);
+            background-color: #e5e7eb;
+        }
+
+        #receipt-preview-box {
+            width: min(816px, 100%) !important; 
+            min-height: 1056px !important; 
+            background-color: white;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+            transform-origin: top center;
+            transition: transform 0.2s ease; /* Suavizar el resize */
+        }
+    
+        #contract-preview-box {
+            width: min(816px, 100%) !important;
+            height: 1056px !important;
+            background-color: white;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+            transform-origin: top center;
+            transition: transform 0.2s ease;
+            overflow: hidden;
+        }
+
+        #contract-preview-iframe {
+            width: 100%;
+            height: 100%;
+            border: 0;
+            background: white;
+        }
+</style>
+    <!-- Local Animations -->
+    <link rel="preload" as="style" href="../../assets/libs/css/animate.min.css">
+    <link rel="stylesheet" href="../../assets/libs/css/animate.min.css">
+</head>
+<body data-page-mode="receipts" class="bg-brand-gray text-gray-800 flex flex-col h-screen overflow-hidden">
+    <div id="toast-container" class="fixed bottom-5 right-5 z-[70] flex flex-col gap-2"></div>
+    <script>const TENANT_SCHEMA='finanzas_casadepiedra';</script>
+  <script src="../js/layout.js"></script>
+    
+    <nav class="bg-brand-red shadow-lg z-40 border-t border-red-800 shrink-0 h-16 flex items-center">
+        <div class="container mx-auto px-4 flex items-center text-white gap-2 overflow-x-auto no-scrollbar w-full">
+            <a href="catalog.html" class="px-4 py-1.5 rounded-full font-bold text-xs uppercase hover:bg-white/20 transition whitespace-nowrap"><i class="fa-solid fa-store"></i> Catálogo</a>
+            <a href="cotizacion.html" class="px-4 py-1.5 rounded-full font-bold text-xs uppercase hover:bg-white/20 transition whitespace-nowrap"><i class="fa-solid fa-calculator"></i> Cotización</a>
+            <a href="orders.html" class="px-4 py-1.5 rounded-full font-bold text-xs uppercase hover:bg-white/20 transition whitespace-nowrap"><i class="fa-solid fa-file-invoice-dollar"></i> Cotizaciones</a>
+            <a href="contracts.html" class="px-4 py-1.5 rounded-full font-bold text-xs uppercase hover:bg-white/20 transition whitespace-nowrap"><i class="fa-solid fa-file-signature"></i> Contratos</a>
+            <a href="receipts.html" class="bg-white/20 shadow-inner px-4 py-1.5 rounded-full font-bold text-xs uppercase flex items-center gap-2 whitespace-nowrap"><i class="fa-solid fa-receipt"></i> Recibos</a>
+            <a href="invoices.html" class="px-4 py-1.5 rounded-full font-bold text-xs uppercase hover:bg-white/20 transition whitespace-nowrap"><i class="fa-solid fa-file-invoice"></i> Facturas</a>
+            <a href="agenda.html" class="px-4 py-1.5 rounded-full font-bold text-xs uppercase hover:bg-white/20 transition whitespace-nowrap"><i class="fa-solid fa-calendar-days"></i> Agenda</a>
+            <a href="clientes.html" class="px-4 py-1.5 rounded-full font-bold text-xs uppercase hover:bg-white/20 transition whitespace-nowrap"><i class="fa-solid fa-users"></i> Clientes</a>
+            <div class="flex-grow"></div>
+</div>
+    </nav>
+
+    <main class="flex-grow container mx-auto px-2 md:px-6 py-4 h-[calc(100vh-64px)] max-w-[98%]  overflow-hidden animate__animated animate__fadeInLeft animate__faster">
+        
+        <div class="flex flex-col lg:flex-row gap-4 h-full">
+            
+            <div class="w-full lg:w-[22%] flex flex-col bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden h-full lg:h-auto shrink-0">
+                <div class="p-3 border-b border-gray-100 bg-gray-50 flex flex-col gap-2 shrink-0">
+                    <h2 class="font-black text-gray-700 uppercase text-xs tracking-wide flex items-center gap-2"><i class="fa-solid fa-list-check text-brand-red"></i> Órdenes Aprobadas</h2>
+                    <input type="text" id="search-approved" placeholder="Buscar..." class="w-full bg-white border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none focus:border-brand-red">
+                </div>
+                <div id="approved-list" class="flex-grow overflow-y-auto custom-scroll p-2 space-y-2">
+                    <div class="p-8 text-center text-gray-400 text-xs italic">Cargando datos...</div>
+                </div>
+            </div>
+
+            <div class="flex-grow flex flex-col bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden relative h-full">
+                
+                <div id="workspace-empty" class="absolute inset-0 bg-white z-50 flex flex-col items-center justify-center text-center opacity-80">
+                    <i class="fa-solid fa-file-pdf text-6xl text-gray-200 mb-4"></i>
+                    <p class="text-sm font-bold uppercase text-gray-400">Selecciona una orden.</p>
+                </div>
+
+                <div id="wk-header" class="bg-brand-dark text-white p-3 flex justify-between items-center shrink-0 hidden">
+                    <div>
+                        <p class="text-[9px] uppercase opacity-70 tracking-widest">Cliente:</p>
+                        <h2 id="wk-client-name" class="font-bold text-base leading-tight truncate max-w-[250px]">---</h2>
+                        <div class="flex items-center gap-2 mt-0.5"><span id="wk-order-id" class="text-[10px] font-mono text-brand-red">ORD-0000</span><span id="wk-paid-indicator" class="hidden text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-300">Pagado completo</span></div>
+                    </div>
+                    <div class="text-right"><p class="text-xl font-black" id="wk-total">$0.00</p><p class="text-[9px] uppercase opacity-80">Monto Total</p></div>
+                </div>
+                
+                <div id="wk-tabs" class="flex border-b border-gray-200 bg-gray-50 shrink-0 hidden">
+                    <button onclick="window.switchTab('receipt')" id="tab-btn-receipt" class="flex-1 py-2 text-xs font-bold uppercase tracking-wider text-gray-500 hover:text-brand-red border-b-2 border-transparent transition active-tab">Recibo</button>
+                    <button onclick="window.switchTab('contract')" id="tab-btn-contract" class="flex-1 py-2 text-xs font-bold uppercase tracking-wider text-gray-500 hover:text-brand-red border-b-2 border-transparent transition">Contrato</button>
+                </div>
+
+                <div class="flex-grow relative bg-gray-200 overflow-hidden hidden" id="wk-content">
+                    <div id="pdf-style-editor" class="hidden absolute top-3 left-3 z-30 bg-gradient-to-b from-gray-800 to-gray-900 border border-gray-700 text-[10px] text-gray-200 rounded-xl shadow-2xl w-full max-w-[760px] max-h-[78vh] overflow-auto backdrop-blur-sm">
+                        <div class="px-4 py-3 flex flex-wrap items-center gap-3 border-b border-gray-700 bg-gray-900/50">
+                            <div class="flex items-center gap-2">
+                                <i class="fa-solid fa-wand-magic-sparkles text-brand-red"></i>
+                                <p class="text-[10px] text-gray-300 font-bold uppercase tracking-wider">Editor PDF Avanzado</p>
+                            </div>
+                            <div class="ml-auto flex items-center gap-2">
+                                <button id="btn-pdf-style-pin" type="button" title="Fijar panel" class="bg-gray-700 hover:bg-brand-red text-white px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition flex items-center gap-1"><i class="fa-solid fa-thumbtack text-xs"></i> Fijar</button>
+                                <button id="btn-pdf-style-toggle" type="button" title="Minimizar/Expandir" class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition flex items-center gap-1"><i class="fa-solid fa-chevron-up text-xs"></i></button>
+                                <button id="btn-reset-pdf-style" type="button" title="Restaurar valores predeterminados" class="bg-gray-700 hover:bg-orange-600 text-white px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition flex items-center gap-1"><i class="fa-solid fa-rotate-left text-xs"></i></button>
+                            </div>
+                        </div>
+                        <div id="pdf-style-editor-body" class="px-4 py-3 flex flex-col gap-3 max-h-[500px] overflow-y-auto custom-scroll">
+                            <div class="bg-gray-900/60 border border-gray-700 rounded-xl p-3 space-y-3 hover:border-gray-600 transition">
+                                <div class="flex items-center gap-2 pb-2 border-b border-gray-700">
+                                    <i class="fa-solid fa-sliders text-brand-red text-sm"></i>
+                                    <p class="text-[10px] font-black uppercase tracking-wider text-gray-200">Configuración Global</p>
+                                </div>
+                                <div class="flex flex-col gap-2">
+                                    <label class="uppercase font-bold text-gray-300 flex items-center gap-1"><i class="fa-solid fa-font text-brand-red text-xs"></i> Fuente</label>
+                                    <select id="pdf-style-font-family" class="pdf-style-control bg-gray-950 border border-gray-600 hover:border-brand-red/50 rounded-lg px-3 py-2 text-[11px] font-bold text-white focus:border-brand-red focus:ring-2 focus:ring-brand-red/20 transition">
+                                        <option value="segoe">Segoe UI</option>
+                                        <option value="arial">Arial</option>
+                                        <option value="verdana">Verdana</option>
+                                        <option value="georgia">Georgia</option>
+                                        <option value="times">Times New Roman</option>
+                                        <option value="trebuchet">Trebuchet MS</option>
+                                    </select>
+                                </div>
+                                <div class="flex flex-col gap-2 pt-2 border-t border-gray-700">
+                                    <label class="uppercase font-bold text-gray-300 flex items-center gap-1"><i class="fa-solid fa-arrows-v text-brand-red text-xs"></i> Altura Línea</label>
+                                    <input id="pdf-style-line-height" type="range" min="90" max="180" step="5" class="pdf-style-control accent-brand-red h-2 rounded-lg">
+                                    <div class="flex items-center justify-between text-[10px]">
+                                        <span class="text-gray-400">90%</span>
+                                        <span class="bg-gray-950 px-2 py-0.5 rounded font-mono text-brand-red font-bold"><span id="pdf-style-line-height-value">120</span>%</span>
+                                        <span class="text-gray-400">180%</span>
+                                    </div>
+                                </div>
+                                <div class="grid grid-cols-2 gap-3 pt-2 border-t border-gray-700">
+                                    <div class="flex flex-col gap-2">
+                                        <label class="uppercase font-bold text-gray-300 flex items-center gap-1"><i class="fa-solid fa-arrow-right text-brand-red text-xs"></i> Mover X</label>
+                                        <input id="pdf-style-offset-x" type="range" min="-120" max="120" step="1" class="pdf-style-control accent-brand-red h-2">
+                                        <div class="flex items-center justify-between text-[10px]">
+                                            <span class="text-gray-400">-120px</span>
+                                            <span class="bg-gray-950 px-2 py-0.5 rounded font-mono text-brand-red font-bold"><span id="pdf-style-offset-x-value">0</span>px</span>
+                                        </div>
+                                    </div>
+                                    <div class="flex flex-col gap-2">
+                                        <label class="uppercase font-bold text-gray-300 flex items-center gap-1"><i class="fa-solid fa-arrow-down text-brand-red text-xs"></i> Mover Y</label>
+                                        <input id="pdf-style-offset-y" type="range" min="-120" max="120" step="1" class="pdf-style-control accent-brand-red h-2">
+                                        <div class="flex items-center justify-between text-[10px]">
+                                            <span class="text-gray-400">-120px</span>
+                                            <span class="bg-gray-950 px-2 py-0.5 rounded font-mono text-brand-red font-bold"><span id="pdf-style-offset-y-value">0</span>px</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="flex flex-col gap-2 pt-2 border-t border-gray-700">
+                                    <label class="uppercase font-bold text-gray-300 flex items-center gap-1"><i class="fa-solid fa-copy text-brand-red text-xs"></i> Páginas Extra</label>
+                                    <input id="pdf-style-extra-pages" type="range" min="0" max="6" step="1" class="pdf-style-control accent-brand-red h-2">
+                                    <div class="flex items-center justify-between text-[10px]">
+                                        <span class="text-gray-400">0</span>
+                                        <span class="bg-gray-950 px-2 py-0.5 rounded font-mono text-brand-red font-bold">+<span id="pdf-style-extra-pages-value">0</span></span>
+                                        <span class="text-gray-400">6</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="bg-gray-900/60 border border-gray-700 rounded-xl p-3 space-y-3 hover:border-gray-600 transition">
+                                <div class="flex items-center gap-2 pb-2 border-b border-gray-700">
+                                    <i class="fa-solid fa-heading text-brand-red text-sm"></i>
+                                    <p class="text-[10px] font-black uppercase tracking-wider text-gray-200">Encabezado y Firmas</p>
+                                </div>
+                                <div class="grid grid-cols-2 gap-3">
+                                    <div class="flex flex-col gap-2">
+                                        <label class="uppercase font-bold text-gray-300 flex items-center gap-1"><i class="fa-solid fa-minus text-brand-red text-xs"></i> Línea Encab.</label>
+                                        <input id="pdf-style-header-line" type="range" min="1" max="8" step="1" class="pdf-style-control accent-brand-red h-2">
+                                        <div class="flex items-center justify-between text-[10px]">
+                                            <span class="text-gray-400">1px</span>
+                                            <span class="bg-gray-950 px-2 py-0.5 rounded font-mono text-brand-red font-bold"><span id="pdf-style-header-line-value">4</span>px</span>
+                                        </div>
+                                    </div>
+                                    <div class="flex flex-col gap-2">
+                                        <label class="uppercase font-bold text-gray-300 flex items-center gap-1"><i class="fa-solid fa-minus text-brand-red text-xs"></i> Línea Firma</label>
+                                        <input id="pdf-style-sign-line" type="range" min="1" max="16" step="1" class="pdf-style-control accent-brand-red h-2">
+                                        <div class="flex items-center justify-between text-[10px]">
+                                            <span class="text-gray-400">1px</span>
+                                            <span class="bg-gray-950 px-2 py-0.5 rounded font-mono text-brand-red font-bold"><span id="pdf-style-sign-line-value">2</span>px</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="grid grid-cols-2 gap-3 pt-2 border-t border-gray-700">
+                                    <div class="flex flex-col gap-2">
+                                        <label class="uppercase font-bold text-gray-300 flex items-center gap-1"><i class="fa-solid fa-text text-brand-red text-xs"></i> Tamaño Título</label>
+                                        <input id="pdf-style-title-size" type="range" min="20" max="42" step="1" class="pdf-style-control accent-brand-red h-2">
+                                        <div class="flex items-center justify-between text-[10px]">
+                                            <span class="text-gray-400">20px</span>
+                                            <span class="bg-gray-950 px-2 py-0.5 rounded font-mono text-brand-red font-bold"><span id="pdf-style-title-size-value">30</span>px</span>
+                                        </div>
+                                    </div>
+                                    <div class="flex flex-col gap-2">
+                                        <label class="uppercase font-bold text-gray-300 flex items-center gap-1"><i class="fa-solid fa-tag text-brand-red text-xs"></i> Tamaño Meta</label>
+                                        <input id="pdf-style-meta-size" type="range" min="8" max="18" step="1" class="pdf-style-control accent-brand-red h-2">
+                                        <div class="flex items-center justify-between text-[10px]">
+                                            <span class="text-gray-400">8px</span>
+                                            <span class="bg-gray-950 px-2 py-0.5 rounded font-mono text-brand-red font-bold"><span id="pdf-style-meta-size-value">13</span>px</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="bg-gray-900/60 border border-gray-700 rounded-xl p-3 space-y-3 hover:border-gray-600 transition">
+                                <div class="flex items-center gap-2 pb-2 border-b border-gray-700">
+                                    <i class="fa-solid fa-table text-brand-red text-sm"></i>
+                                    <p class="text-[10px] font-black uppercase tracking-wider text-gray-200">Tabla y Resumen Financiero</p>
+                                </div>
+                                <div class="grid grid-cols-3 gap-3">
+                                    <div class="flex flex-col gap-2">
+                                        <label class="uppercase font-bold text-gray-300 flex items-center gap-1"><i class="fa-solid fa-grid-2 text-brand-red text-xs"></i> Tabla</label>
+                                        <input id="pdf-style-table-size" type="range" min="9" max="16" step="1" class="pdf-style-control accent-brand-red h-2">
+                                        <div class="flex items-center justify-between text-[10px]">
+                                            <span class="text-gray-400">9px</span>
+                                            <span class="bg-gray-950 px-2 py-0.5 rounded font-mono text-brand-red font-bold"><span id="pdf-style-table-size-value">12</span>px</span>
+                                        </div>
+                                    </div>
+                                    <div class="flex flex-col gap-2">
+                                        <label class="uppercase font-bold text-gray-300 flex items-center gap-1"><i class="fa-solid fa-align-left text-brand-red text-xs"></i> Notas</label>
+                                        <input id="pdf-style-quick-size" type="range" min="9" max="16" step="1" class="pdf-style-control accent-brand-red h-2">
+                                        <div class="flex items-center justify-between text-[10px]">
+                                            <span class="text-gray-400">9px</span>
+                                            <span class="bg-gray-950 px-2 py-0.5 rounded font-mono text-brand-red font-bold"><span id="pdf-style-quick-size-value">12</span>px</span>
+                                        </div>
+                                    </div>
+                                    <div class="flex flex-col gap-2">
+                                        <label class="uppercase font-bold text-gray-300 flex items-center gap-1"><i class="fa-solid fa-file-contract text-brand-red text-xs"></i> Condiciones</label>
+                                        <input id="pdf-style-conditions-size" type="range" min="9" max="18" step="1" class="pdf-style-control accent-brand-red h-2">
+                                        <div class="flex items-center justify-between text-[10px]">
+                                            <span class="text-gray-400">9px</span>
+                                            <span class="bg-gray-950 px-2 py-0.5 rounded font-mono text-brand-red font-bold"><span id="pdf-style-conditions-size-value">14</span>px</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="flex flex-col gap-2 pt-2 border-t border-gray-700">
+                                    <label class="uppercase font-bold text-gray-300 flex items-center gap-1"><i class="fa-solid fa-pen-fancy text-brand-red text-xs"></i> Tamaño Firmas</label>
+                                    <input id="pdf-style-sign-size" type="range" min="9" max="16" step="1" class="pdf-style-control accent-brand-red h-2">
+                                    <div class="flex items-center justify-between text-[10px]">
+                                        <span class="text-gray-400">9px</span>
+                                        <span class="bg-gray-950 px-2 py-0.5 rounded font-mono text-brand-red font-bold"><span id="pdf-style-sign-size-value">12</span>px</span>
+                                        <span class="text-gray-400">16px</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="bg-gray-900/60 border border-gray-700 rounded-xl p-3 space-y-3 hover:border-gray-600 transition">
+                                <div class="flex items-center gap-2 pb-2 border-b border-gray-700">
+                                    <i class="fa-solid fa-align-left text-brand-red text-sm"></i>
+                                    <p class="text-[10px] font-black uppercase tracking-wider text-gray-200">Alineación de Elementos</p>
+                                </div>
+                                <div class="grid grid-cols-2 gap-3">
+                                    <select id="pdf-style-align-header" class="pdf-style-control bg-gray-950 border border-gray-600 hover:border-brand-red/50 rounded-lg px-3 py-2 text-[10px] font-bold text-white focus:border-brand-red focus:ring-2 focus:ring-brand-red/20 transition"><option value="left">← Encabezado Izq</option><option value="center">↔ Encabezado Centro</option><option value="right">Encabezado Der →</option></select>
+                                    <select id="pdf-style-align-meta" class="pdf-style-control bg-gray-950 border border-gray-600 hover:border-brand-red/50 rounded-lg px-3 py-2 text-[10px] font-bold text-white focus:border-brand-red focus:ring-2 focus:ring-brand-red/20 transition"><option value="left">← Meta Izq</option><option value="center">↔ Meta Centro</option><option value="right">Meta Der →</option></select>
+                                    <select id="pdf-style-align-table" class="pdf-style-control bg-gray-950 border border-gray-600 hover:border-brand-red/50 rounded-lg px-3 py-2 text-[10px] font-bold text-white focus:border-brand-red focus:ring-2 focus:ring-brand-red/20 transition"><option value="left">← Tabla Izq</option><option value="center">↔ Tabla Centro</option><option value="right">Tabla Der →</option></select>
+                                    <select id="pdf-style-align-summary" class="pdf-style-control bg-gray-950 border border-gray-600 hover:border-brand-red/50 rounded-lg px-3 py-2 text-[10px] font-bold text-white focus:border-brand-red focus:ring-2 focus:ring-brand-red/20 transition"><option value="left">← Resumen Izq</option><option value="center">↔ Resumen Centro</option><option value="right">Resumen Der →</option></select>
+                                    <select id="pdf-style-align-quick" class="pdf-style-control bg-gray-950 border border-gray-600 hover:border-brand-red/50 rounded-lg px-3 py-2 text-[10px] font-bold text-white focus:border-brand-red focus:ring-2 focus:ring-brand-red/20 transition"><option value="left">← Notas Izq</option><option value="center">↔ Notas Centro</option><option value="right">Notas Der →</option></select>
+                                    <select id="pdf-style-align-conditions" class="pdf-style-control bg-gray-950 border border-gray-600 hover:border-brand-red/50 rounded-lg px-3 py-2 text-[10px] font-bold text-white focus:border-brand-red focus:ring-2 focus:ring-brand-red/20 transition"><option value="left">← Cond Izq</option><option value="center">↔ Cond Centro</option><option value="right">Cond Der →</option><option value="justify">≡ Cond Justificado</option></select>
+                                    <select id="pdf-style-align-sign" class="pdf-style-control bg-gray-950 border border-gray-600 hover:border-brand-red/50 rounded-lg px-3 py-2 text-[10px] font-bold text-white focus:border-brand-red focus:ring-2 focus:ring-brand-red/20 transition"><option value="left">← Firma Izq</option><option value="center">↔ Firma Centro</option><option value="right">Firma Der →</option></select>
+                                    <select id="pdf-style-align-footer" class="pdf-style-control bg-gray-950 border border-gray-600 hover:border-brand-red/50 rounded-lg px-3 py-2 text-[10px] font-bold text-white focus:border-brand-red focus:ring-2 focus:ring-brand-red/20 transition"><option value="left">← Footer Izq</option><option value="center">↔ Footer Centro</option><option value="right">Footer Der →</option></select>
+                                </div>
+                            </div>
+                            <div class="bg-gray-900/60 border border-gray-700 rounded-xl p-3 space-y-3 hover:border-gray-600 transition">
+                                <div class="flex items-center justify-between gap-2 pb-2 border-b border-gray-700">
+                                    <div class="flex items-center gap-2">
+                                        <i class="fa-solid fa-paintbrush text-brand-red text-sm"></i>
+                                        <p class="text-[10px] font-black uppercase tracking-wider text-gray-200">Elementos de Diseño</p>
+                                    </div>
+                                    <button type="button" onclick="window.openModal('pdf-resource-modal')" title="Agregar nuevo elemento de diseño" class="bg-brand-red hover:bg-red-600 text-white px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase shadow-lg transition flex items-center gap-1"><i class="fa-solid fa-plus text-xs"></i> Añadir</button>
+                                </div>
+                                <div class="hidden">
+                                    <button id="pdf-style-add-bar" type="button"></button>
+                                    <button id="pdf-style-add-logo" type="button"></button>
+                                    <button id="pdf-style-add-title" type="button"></button>
+                                    <button id="pdf-style-add-text" type="button"></button>
+                                    <button id="pdf-style-add-sign-line" type="button"></button>
+                                    <button id="pdf-style-add-sign-block" type="button"></button>
+                                </div>
+                                <p class="text-[9px] text-gray-400 flex items-center gap-1"><i class="fa-solid fa-circle-info text-brand-red text-xs"></i> Arrastra elementos desde <span class="font-mono bg-gray-950 px-1.5 py-0.5 rounded text-gray-300">Libros</span> para agregar al PDF</p>
+                                <div id="pdf-style-resources-list" class="bg-gray-950/50 rounded-lg p-2 space-y-2 max-h-72 overflow-y-auto custom-scroll"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="view-receipt" class="w-full h-full absolute inset-0">
+                        <div id="receipt-preview-container">
+                            <div id="receipt-preview-box"></div>
+                        </div>
+                    </div>
+                    <div id="view-contract" class="w-full h-full absolute inset-0 hidden">
+                        <div id="contract-preview-container">
+                    <div id="contract-preview-box">
+                        <iframe id="contract-preview-iframe" sandbox="allow-same-origin" title="Vista previa de contrato"></iframe>
+                    </div>
+                </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="w-full lg:w-[25%] min-w-[300px] flex flex-col bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden shrink-0 h-full lg:h-auto" id="sidebar-container">
+                <div class="bg-gray-50 border-b border-gray-200 p-3 text-center shrink-0">
+                    <h4 class="font-black text-xs uppercase text-gray-700 tracking-wide"><i class="fa-solid fa-sliders mr-2"></i> Detalles y Acciones</h4>
+                </div>
+                
+                <div id="sidebar-receipt" class="flex flex-col h-full hidden overflow-hidden">
+                    <div class="p-4 overflow-y-auto custom-scroll shrink-0" style="max-height: 60%;">
+                        
+                        <div class="mb-4">
+                            <button onclick="window.openUploadReceiptModal()" class="w-full bg-blue-50 border border-blue-200 text-blue-700 py-2.5 rounded-xl font-bold text-xs uppercase hover:bg-blue-100 transition flex items-center justify-center gap-2">
+                                <i class="fa-solid fa-cloud-arrow-up"></i> Subir Comprobante Externo
+                            </button>
+                            <div class="flex items-center gap-2 my-3">
+                                <div class="h-px bg-gray-200 flex-grow"></div>
+                                <span class="text-[9px] text-gray-400 font-bold uppercase">O Generar Nuevo</span>
+                                <div class="h-px bg-gray-200 flex-grow"></div>
+                            </div>
+                        </div>
+
+                        <div class="space-y-3">
+                            <div><label class="block text-[10px] font-bold text-gray-400">Banco</label><input id="rcp-bank" value="BBVA Bancomer" class="w-full border border-gray-300 p-2 rounded text-xs font-bold uppercase focus:border-brand-red outline-none bg-white" oninput="window.updateReceiptPreview()"></div>
+                            <div><label class="block text-[10px] font-bold text-gray-400">Cuenta</label><input id="rcp-account" value="0123456789" class="w-full border border-gray-300 p-2 rounded text-xs font-bold uppercase focus:border-brand-red outline-none bg-white" oninput="window.updateReceiptPreview()"></div>
+                            <div><label class="block text-[10px] font-bold text-gray-400">Referencia</label><input id="rcp-ref" class="w-full border border-gray-300 p-2 rounded text-xs font-bold uppercase focus:border-brand-red outline-none bg-white" oninput="window.updateReceiptPreview()"></div>
+                            <div><label class="block text-[10px] font-bold text-gray-400">Concepto</label><input id="rcp-concept" class="w-full border border-gray-300 p-2 rounded text-xs font-bold uppercase focus:border-brand-red outline-none bg-white" oninput="window.updateReceiptPreview()"></div>
+                            
+                            <div class="pt-2 border-t border-gray-100 mt-2 bg-gray-50 p-3 rounded-xl border border-gray-200">
+                                <label class="block text-[10px] font-bold text-gray-800 uppercase mb-1">Monto</label>
+                                <input id="rcp-amount" type="number" class="w-full border-2 border-brand-red/30 rounded-lg p-2 text-lg font-black text-right text-brand-red bg-white outline-none focus:border-brand-red" oninput="window.updateReceiptPreview()">
+                                <div class="flex justify-between text-[10px] text-gray-500 mt-1 font-bold"><span>Restante:</span><span id="lbl-remaining" class="text-red-500">$0.00</span></div>
+                            </div>
+
+                            <button id="btn-gen-receipt" onclick="window.generateAndSaveReceipt()" class="w-full bg-brand-dark text-white py-3 rounded-xl font-bold text-xs uppercase hover:bg-black transition shadow-lg flex items-center justify-center gap-2"><i class="fa-solid fa-floppy-disk"></i> Guardar</button>
+                            <div id="payment-status-message" class="hidden p-3 bg-green-100 text-green-800 rounded-lg text-xs font-bold text-center border border-green-200"><i class="fa-solid fa-check-circle mr-1"></i> LIQUIDADA</div>
+                        </div>
+                    </div>
+
+                    <div class="flex-grow border-t border-gray-200 bg-gray-50 flex flex-col overflow-hidden">
+                        <div class="p-3 pb-0 shrink-0">
+                            <h4 class="font-bold text-[10px] uppercase text-gray-400">Historial de Pagos</h4>
+                        </div>
+                        <div id="payments-history-list" class="flex-grow p-3 overflow-y-auto custom-scroll space-y-2">
+                            </div>
+                    </div>
+                </div>
+
+                <div id="sidebar-contract" class="flex flex-col h-full p-5 overflow-y-auto custom-scroll hidden">
+                    <div class="mb-6 space-y-4">
+                        <div class="bg-white p-3 rounded-xl border border-gray-200 shadow-sm">
+                            <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">1. Plantilla</label>
+                            <div class="flex gap-2">
+                                <select id="template-selector" onchange="window.loadSelectedTemplate()" class="bg-gray-50 border border-gray-200 text-xs font-bold rounded-lg p-2 flex-grow outline-none focus:border-brand-red cursor-pointer"><option value="">-- Seleccionar --</option></select>
+                            </div>
+                        </div>
+
+                        <div class="bg-white p-3 rounded-xl border border-gray-200 shadow-sm">
+                            <label class="block text-[10px] font-bold text-gray-400 uppercase mb-2">2. Membrete</label>
+                            <label class="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                                <span class="text-xs font-bold text-gray-700">Aplicar membrete al imprimir</span>
+                                <input id="contract-letterhead-toggle" type="checkbox" class="h-4 w-4 accent-brand-red">
+                            </label>
+                            <p class="text-[9px] text-gray-400 mt-1 italic leading-tight">Solo activa o desactiva el membrete al imprimir. La plantilla no se edita.</p>
+                        </div>
+
+                        <div class="bg-white p-3 rounded-xl border border-gray-200 shadow-sm">
+                            <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">3. Folio Asignado</label>
+                            <div class="flex gap-2">
+                                <input id="contract-num-assign" placeholder="Ej: CON-2024-001" class="w-full border border-gray-200 rounded-lg p-2 text-xs font-bold outline-none focus:border-brand-red uppercase">
+                                <button id="btn-save-contract-num" onclick="window.saveContractNumber()" class="bg-gray-800 text-white px-3 rounded-lg hover:bg-black transition shadow-sm" title="Guardar Folio"><i class="fa-solid fa-save"></i></button>
+                            </div>
+                            <p class="text-[9px] text-gray-400 mt-1 italic leading-tight">Guarda el folio para habilitar la impresión.</p>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-auto space-y-3 pb-4">
+                        <button onclick="window.printContract()" class="w-full bg-white border border-gray-300 text-gray-700 py-3 rounded-xl text-xs font-bold uppercase hover:bg-gray-50 transition shadow-sm flex items-center justify-center gap-2"><i class="fa-solid fa-print"></i> Imprimir Borrador</button>
+                        <button id="btn-open-finalize" onclick="window.openFinalizeModal()" disabled class="w-full bg-gray-300 text-white py-3 rounded-xl text-xs font-bold uppercase shadow-none cursor-not-allowed transition flex items-center justify-center gap-2"><i class="fa-solid fa-file-contract"></i> Guardar y Finalizar</button>
+                    </div>
+                </div>
+                
+                <div id="sidebar-empty" class="flex-grow flex flex-col items-center justify-center text-gray-300 p-8 text-center h-full">
+                    <i class="fa-solid fa-arrow-left text-2xl mb-2"></i>
+                    <p class="text-xs">Selecciona una orden.</p>
+                </div>
+
+            </div>
+        </div>
+    </main>
+
+    <div id="upload-receipt-modal" class="fixed inset-0 bg-black/80 z-[100] hidden flex items-center justify-center p-4 backdrop-blur-sm animate-enter">
+        <div class="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="bg-brand-dark p-4 flex justify-between items-center text-white shrink-0">
+                <h3 class="font-bold text-sm uppercase tracking-widest flex items-center gap-2"><i class="fa-solid fa-cloud-arrow-up"></i> Subir Recibo Externo</h3>
+                <button onclick="window.closeModal('upload-receipt-modal')" class="text-white/50 hover:text-white transition"><i class="fa-solid fa-times text-lg"></i></button>
+            </div>
+            <div class="p-6 overflow-y-auto custom-scroll bg-gray-50">
+                
+                <label class="block w-full border-2 border-dashed border-gray-300 rounded-xl p-6 text-center hover:bg-white cursor-pointer transition mb-6 group bg-white">
+                    <input type="file" id="ext-receipt-file" accept=".pdf,.jpg,.jpeg,.png" class="hidden" onchange="window.handleReceiptFileSelect(this)">
+                    <i class="fa-solid fa-file-invoice text-3xl text-gray-300 group-hover:text-brand-red mb-2 transition"></i>
+                    <p class="text-xs font-bold text-gray-500 group-hover:text-gray-700" id="lbl-ext-receipt">Seleccionar Archivo (PDF o Imagen)</p>
+                </label>
+
+                <div id="ext-preview-container" class="hidden mb-6 rounded-lg border border-gray-200 overflow-hidden bg-white h-48 relative">
+                    <iframe id="ext-pdf-preview" class="w-full h-full hidden"></iframe>
+                    <img id="ext-img-preview" class="w-full h-full object-contain hidden">
+                </div>
+
+                <div class="space-y-3">
+                    <div class="grid grid-cols-2 gap-3">
+                        <div><label class="block text-[10px] font-bold text-gray-400 uppercase">Banco</label><input id="up-rcp-bank" class="w-full border border-gray-200 p-2 rounded text-xs font-bold outline-none focus:border-brand-red bg-white"></div>
+                        <div><label class="block text-[10px] font-bold text-gray-400 uppercase">Cuenta</label><input id="up-rcp-account" class="w-full border border-gray-200 p-2 rounded text-xs font-bold outline-none focus:border-brand-red bg-white"></div>
+                    </div>
+                    <div><label class="block text-[10px] font-bold text-gray-400 uppercase">Referencia</label><input id="up-rcp-ref" class="w-full border border-gray-200 p-2 rounded text-xs font-bold outline-none focus:border-brand-red bg-white"></div>
+                    <div><label class="block text-[10px] font-bold text-gray-400 uppercase">Concepto</label><input id="up-rcp-concept" class="w-full border border-gray-200 p-2 rounded text-xs font-bold outline-none focus:border-brand-red bg-white"></div>
+                    <div><label class="block text-[10px] font-bold text-gray-400 uppercase">Monto</label><input id="up-rcp-amount" type="number" class="w-full border border-gray-200 p-2 rounded text-xs font-bold outline-none focus:border-brand-red bg-white text-right"></div>
+                </div>
+            </div>
+            <div class="p-4 bg-white border-t border-gray-100 flex justify-end gap-3">
+                <button onclick="window.closeModal('upload-receipt-modal')" class="text-gray-500 hover:text-gray-800 font-bold text-xs px-4">Cancelar</button>
+                <button id="btn-save-ext-receipt" onclick="window.saveExternalReceipt()" disabled class="bg-gray-300 text-white px-6 py-2 rounded-xl font-bold text-xs uppercase shadow-none cursor-not-allowed transition">Guardar</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="missing-data-modal" class="fixed inset-0 bg-black/80 z-[100] hidden flex items-center justify-center p-4 backdrop-blur-sm animate-enter">
+        <div class="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden p-6 border-2 border-brand-red">
+            <h3 class="font-bold text-lg mb-2 flex items-center gap-2 text-brand-red"><i class="fa-solid fa-triangle-exclamation"></i> Información Faltante</h3>
+            <div id="missing-fields-container" class="space-y-3 mb-6"></div>
+            <div class="flex justify-end gap-3"><button onclick="window.closeModal('missing-data-modal')" class="text-gray-500 hover:text-gray-800 text-xs font-bold px-4">Cancelar</button><button onclick="window.saveMissingData()" class="bg-brand-red text-white px-6 py-2 rounded-xl font-bold text-xs uppercase shadow-lg hover:bg-red-700 transition">Guardar y Continuar</button></div>
+        </div>
+    </div>
+
+    <div id="generic-confirm-modal" class="fixed inset-0 bg-black/80 z-[110] hidden flex items-center justify-center p-4 backdrop-blur-sm animate-enter">
+        <div class="bg-white w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden p-6 text-center">
+            <i class="fa-solid fa-circle-question text-4xl text-gray-300 mb-4"></i>
+            <h3 class="font-bold text-lg mb-2 text-gray-800" id="confirm-title">¿Estás seguro?</h3>
+            <div class="flex justify-center gap-3 mt-6">
+                <button onclick="window.closeModal('generic-confirm-modal')" class="text-gray-500 hover:text-gray-800 text-xs font-bold px-4">Cancelar</button>
+                <button id="btn-confirm-action" class="bg-brand-red text-white px-6 py-2 rounded-xl font-bold text-xs uppercase shadow-lg hover:bg-red-700 transition">Confirmar</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="finalize-modal" class="fixed inset-0 bg-black/80 z-[90] hidden flex items-center justify-center p-4 backdrop-blur-sm animate-enter">
+        <div class="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden p-6">
+            <h3 class="font-bold text-lg mb-2 flex items-center gap-2"><i class="fa-solid fa-signature text-green-600"></i> Finalizar Orden</h3>
+            <label class="block w-full border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:bg-gray-50 cursor-pointer transition mb-4 group">
+                <input type="file" id="signed-contract-file" accept=".pdf" class="hidden" onchange="window.handleSignedFile(this)">
+                <i class="fa-solid fa-cloud-arrow-up text-3xl text-gray-300 group-hover:text-brand-red mb-2 transition"></i>
+                <p class="text-xs font-bold text-gray-500 group-hover:text-gray-700" id="lbl-signed-file">Click para subir PDF Firmado</p>
+            </label>
+            <div class="flex justify-end gap-3"><button onclick="window.closeModal('finalize-modal')" class="text-gray-500 hover:text-gray-800 text-xs font-bold px-4">Cancelar</button><button id="btn-confirm-finalize" onclick="window.confirmFinalize()" disabled class="bg-gray-300 text-white px-6 py-2 rounded-xl font-bold text-xs uppercase shadow-none cursor-not-allowed transition">Confirmar</button></div>
+        </div>
+    </div>
+    
+    <div id="pdf-resource-modal" class="fixed inset-0 bg-black/80 z-[400] hidden flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="bg-white w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden p-6 relative animate-enter">
+            <button type="button" onclick="window.closeModal('pdf-resource-modal')" class="absolute top-4 right-4 w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500 transition-colors">
+                <i class="fa-solid fa-times"></i>
+            </button>
+            <h3 class="font-black text-lg text-gray-800 mb-6 flex items-center gap-2"><i class="fa-solid fa-layer-group text-brand-red"></i> Añadir Recurso</h3>
+            <div class="grid grid-cols-2 gap-4">
+                <button type="button" onclick="document.getElementById('pdf-style-add-bar').click(); window.closeModal('pdf-resource-modal')" class="flex flex-col items-center justify-center gap-3 p-4 rounded-xl border border-gray-100 hover:border-brand-red hover:bg-red-50 transition-all group">
+                    <div class="w-10 h-10 rounded-full bg-red-100 text-brand-red flex items-center justify-center text-lg group-hover:scale-110 transition-transform"><i class="fa-solid fa-minus"></i></div>
+                    <span class="font-bold text-xs text-gray-700 uppercase">Barra</span>
+                </button>
+                <button type="button" onclick="document.getElementById('pdf-style-add-logo').click(); window.closeModal('pdf-resource-modal')" class="flex flex-col items-center justify-center gap-3 p-4 rounded-xl border border-gray-100 hover:border-brand-red hover:bg-red-50 transition-all group">
+                    <div class="w-10 h-10 rounded-full bg-red-100 text-brand-red flex items-center justify-center text-lg group-hover:scale-110 transition-transform"><i class="fa-solid fa-image"></i></div>
+                    <span class="font-bold text-xs text-gray-700 uppercase">Logo</span>
+                </button>
+                <button type="button" onclick="document.getElementById('pdf-style-add-title').click(); window.closeModal('pdf-resource-modal')" class="flex flex-col items-center justify-center gap-3 p-4 rounded-xl border border-gray-100 hover:border-brand-red hover:bg-red-50 transition-all group">
+                    <div class="w-10 h-10 rounded-full bg-red-100 text-brand-red flex items-center justify-center text-lg group-hover:scale-110 transition-transform"><i class="fa-solid fa-heading"></i></div>
+                    <span class="font-bold text-xs text-gray-700 uppercase">Título</span>
+                </button>
+                <button type="button" onclick="document.getElementById('pdf-style-add-text').click(); window.closeModal('pdf-resource-modal')" class="flex flex-col items-center justify-center gap-3 p-4 rounded-xl border border-gray-100 hover:border-brand-red hover:bg-red-50 transition-all group">
+                    <div class="w-10 h-10 rounded-full bg-red-100 text-brand-red flex items-center justify-center text-lg group-hover:scale-110 transition-transform"><i class="fa-solid fa-font"></i></div>
+                    <span class="font-bold text-xs text-gray-700 uppercase">Texto</span>
+                </button>
+                <button type="button" onclick="document.getElementById('pdf-style-add-sign-line').click(); window.closeModal('pdf-resource-modal')" class="flex flex-col items-center justify-center gap-3 p-4 rounded-xl border border-gray-100 hover:border-brand-red hover:bg-red-50 transition-all group">
+                    <div class="w-10 h-10 rounded-full bg-red-100 text-brand-red flex items-center justify-center text-lg group-hover:scale-110 transition-transform"><i class="fa-solid fa-pen-nib"></i></div>
+                    <span class="font-bold text-xs text-gray-700 uppercase">Línea Firma</span>
+                </button>
+                <button type="button" onclick="document.getElementById('pdf-style-add-sign-block').click(); window.closeModal('pdf-resource-modal')" class="flex flex-col items-center justify-center gap-3 p-4 rounded-xl border border-gray-100 hover:border-brand-red hover:bg-red-50 transition-all group">
+                    <div class="w-10 h-10 rounded-full bg-red-100 text-brand-red flex items-center justify-center text-lg group-hover:scale-110 transition-transform"><i class="fa-solid fa-file-signature"></i></div>
+                    <span class="font-bold text-xs text-gray-700 uppercase">Bloque Firma</span>
+                </button>
+            </div>
+            <p class="text-[10px] text-gray-400 mt-4 text-center">El recurso se añadirá a la página actual</p>
+        </div>
+    </div>
+
+    <div id="receipt-pdf-render" class="absolute top-0 left-0 -z-50 pointer-events-none opacity-0" style="width: 816px; min-height: 1056px; background: white;"></div>
+    <script src="../js/pdf-margin-guides.js"></script>
+    <script src="receipts.js?v=20260319-nonadmin-fixes3"></script>
+</body>
+</html> 
+
+
+

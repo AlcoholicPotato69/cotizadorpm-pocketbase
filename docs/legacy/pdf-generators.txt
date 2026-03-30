@@ -1,0 +1,27 @@
+PDF GENERATORS - MAPA RAPIDO
+Ultima actualizacion: 2026-03-28
+
+Plaza Mayor
+- frontend/client/cotizador/orders.html
+- frontend/client/cotizador/orders.js
+- frontend/client/cotizador/order_detail.html
+- frontend/client/cotizador/contracts.html
+- frontend/client/cotizador/contracts.js
+- frontend/client/cotizador/receipts.html
+- frontend/client/cotizador/receipts.js
+
+Casa de Piedra
+- frontend/client/cotizadorcp/orders.html
+- frontend/client/cotizadorcp/orders.js
+- frontend/client/cotizadorcp/order_detail.html
+- frontend/client/cotizadorcp/contracts.html
+- frontend/client/cotizadorcp/contracts.js
+- frontend/client/cotizadorcp/receipts.html
+- frontend/client/cotizadorcp/receipts.js
+
+Librerias base
+- frontend/assets/libs/js/html2pdf.js
+- frontend/assets/libs/js/jspdf.js
+
+Referencia principal
+- docs/60-pdfs-y-documentos.md

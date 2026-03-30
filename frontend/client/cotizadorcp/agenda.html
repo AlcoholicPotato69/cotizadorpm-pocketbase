@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<!-- DOC: client\cotizadorcp\agenda.html | Proposito: Vista de calendario unificado de agenda y premontajes. | Ver docs/10-funcionamiento-general-del-codigo.txt -->
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calendario Unificado - Casa de Piedra</title>
+    <link rel="preload" as="script" href="../../assets/libs/js/tailwindcss.js">
+    <script src="../../assets/libs/js/tailwindcss.js"></script>
+    <link rel="preload" as="style" href="../../assets/libs/css/all.min.css">
+    <link rel="stylesheet" href="../../assets/libs/css/all.min.css">
+    <script src="../js/hub-config.js"></script>
+    <script src="../services/pb-core.js"></script>
+    <script src="../services/_shared.js"></script>
+    <script src="../services/auth.js"></script>
+    <script src="../services/pb-client.js"></script>
+    <script src="../../assets/libs/js/fullcalendar.js"></script>
+    <script>
+        tailwind.config = { theme: { extend: { colors: { brand: { red: '#c1621e', dark: '#1a1a1a', gray: '#f3f4f6' } } } } };
+    </script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background-color: #f3f4f6; }
+        .hidden { display: none !important; }
+        .custom-scroll::-webkit-scrollbar { width: 7px; height: 7px; }
+        .custom-scroll::-webkit-scrollbar-track { background: #f3f4f6; border-radius: 9999px; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 9999px; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        #calendar-shell {
+            height: calc(100vh - 210px);
+            min-height: 640px;
+        }
+
+        .fc .fc-toolbar.fc-header-toolbar {
+            margin-bottom: 1rem;
+        }
+        .fc .fc-toolbar-title {
+            font-size: 1.1rem;
+            font-weight: 900;
+            letter-spacing: 0.02em;
+            text-transform: uppercase;
+        }
+        .fc .fc-button {
+            border-radius: 9999px;
+            font-size: 0.7rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            border: 1px solid #e5e7eb;
+            background: #ffffff;
+            color: #374151;
+            box-shadow: none;
+        }
+        .fc .fc-button-primary:not(:disabled).fc-button-active,
+        .fc .fc-button-primary:not(:disabled):active {
+            background: #c1621e;
+            border-color: #c1621e;
+            color: #111827;
+        }
+        .fc .fc-button-primary:hover {
+            background: #f3f4f6;
+            border-color: #d1d5db;
+        }
+        .fc .fc-daygrid-day-number {
+            font-size: 0.75rem;
+            font-weight: 800;
+            color: #374151;
+        }
+        .fc .fc-col-header-cell-cushion {
+            font-size: 0.68rem;
+            font-weight: 900;
+            text-transform: uppercase;
+            color: #6b7280;
+            letter-spacing: 0.03em;
+        }
+        .fc .fc-daygrid-day-frame {
+            min-height: 118px;
+            overflow: visible;
+        }
+        .fc .fc-daygrid-day-events {
+            margin-top: 2px;
+            overflow: visible;
+            max-height: none;
+            padding-right: 0;
+        }
+        .fc .fc-daygrid-event-harness,
+        .fc .fc-daygrid-event-harness-abs {
+            margin-top: 2px;
+        }
+        .fc .fc-daygrid-more-link {
+            display: none !important;
+        }
+
+        .fc-event.cp-cal-pill {
+            border: none !important;
+            background: transparent !important;
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+        .cp-pill {
+            width: 100%;
+            border-radius: 9999px;
+            padding: 2px 8px;
+            font-size: 11px;
+            line-height: 1.25;
+            font-weight: 800;
+            display: flex;
+            gap: 6px;
+            align-items: center;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            box-shadow: 0 1px 0 rgba(0, 0, 0, 0.06);
+        }
+        .cp-pill .cp-pill-label {
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .cp-pill .cp-pill-tag {
+            border-radius: 9999px;
+            font-size: 9px;
+            font-weight: 900;
+            padding: 1px 6px;
+            letter-spacing: 0.03em;
+            flex: 0 0 auto;
+            text-transform: uppercase;
+        }
+        .cp-pill.is-premontaje {
+            opacity: 0.92;
+        }
+
+        @media (max-width: 1024px) {
+            #calendar-shell { height: calc(100vh - 238px); min-height: 560px; }
+            .fc .fc-daygrid-day-frame { min-height: 108px; }
+        }
+        @media (max-width: 768px) {
+            #calendar-shell { height: calc(100vh - 288px); min-height: 520px; }
+            .fc .fc-toolbar { flex-direction: column; gap: 0.65rem; align-items: stretch; }
+            .fc .fc-toolbar-title { text-align: center; }
+            .fc .fc-daygrid-day-frame { min-height: 96px; }
+            .cp-pill { font-size: 10px; padding: 2px 6px; }
+            .cp-pill .cp-pill-tag { font-size: 8px; padding: 1px 4px; }
+        }
+    </style>
+    <!-- Local Animations -->
+    <link rel="preload" as="style" href="../../assets/libs/css/animate.min.css">
+    <link rel="stylesheet" href="../../assets/libs/css/animate.min.css">
+</head>
+<body class="bg-brand-gray text-gray-800 flex flex-col min-h-screen">
+    <div id="toast-container" class="fixed bottom-5 right-5 z-[90] flex flex-col gap-2"></div>
+    <script>const TENANT_SCHEMA='finanzas_casadepiedra';</script>
+    <script src="../js/layout.js"></script>
+
+    <nav class="bg-brand-red shadow-lg sticky top-16 z-40 border-t border-red-800">
+        <div class="container mx-auto px-4 flex h-14 items-center text-white gap-2 overflow-x-auto no-scrollbar">
+            <a href="catalog.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap"><i class="fa-solid fa-store"></i> Catalogo</a>
+            <a href="cotizacion.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap"><i class="fa-solid fa-calculator"></i> Cotizacion</a>
+            <a href="orders.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap"><i class="fa-solid fa-file-invoice-dollar"></i> Cotizaciones</a>
+            <a href="contracts.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap"><i class="fa-solid fa-file-signature"></i> Contratos</a>
+            <a href="receipts.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap"><i class="fa-solid fa-receipt"></i> Recibos</a>
+            <a href="invoices.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap"><i class="fa-solid fa-file-invoice"></i> Facturas</a>
+            <a id="nav-link-agenda" href="agenda.html" class="bg-white/20 shadow-inner px-4 py-1.5 rounded-full text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap"><i class="fa-solid fa-calendar-days"></i> Agenda</a>
+            <a href="clientes.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap"><i class="fa-solid fa-users"></i> Clientes</a>
+        </div>
+    </nav>
+
+    <main class="flex-grow w-full px-4 md:px-6 py-5 md:py-6 animate__animated animate__fadeInLeft animate__faster">
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200 mb-4 flex flex-col gap-3">
+            <div class="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-3">
+                <div class="flex items-center gap-3">
+                    <div class="bg-yellow-100 text-yellow-700 w-10 h-10 rounded-xl flex items-center justify-center shadow-sm"><i class="fa-solid fa-calendar-day text-lg"></i></div>
+                    <div>
+                        <h2 class="font-black text-sm uppercase tracking-wide text-gray-800">Calendario Unificado</h2>
+                        <p class="text-[10px] text-gray-500 font-bold uppercase">Agenda y premontajes en un solo calendario</p>
+                    </div>
+                </div>
+                <div class="flex flex-col sm:flex-row gap-2">
+                    <button onclick="window.openColorModal()" class="bg-gray-900 text-white px-4 py-2 rounded-full text-[11px] font-black uppercase tracking-wide hover:bg-black transition"><i class="fa-solid fa-palette mr-1"></i> Colores</button>
+                </div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2">
+                <input id="cal-search-input" type="text" placeholder="Buscar cliente, folio o cotizacion..." class="xl:col-span-2 bg-gray-50 border border-gray-200 px-3 py-2.5 rounded-full text-xs font-bold outline-none focus:border-blue-500">
+                <select id="cal-space-filter" class="bg-gray-50 border border-gray-200 px-3 py-2.5 rounded-full text-xs font-bold outline-none focus:border-blue-500">
+                    <option value="">Todos los espacios</option>
+                </select>
+                <select id="cal-kind-filter" class="bg-gray-50 border border-gray-200 px-3 py-2.5 rounded-full text-xs font-bold outline-none focus:border-blue-500">
+                    <option value="all">Todo</option>
+                    <option value="evento">Agenda</option>
+                    <option value="premontaje">Premontaje</option>
+                </select>
+            </div>
+        </div>
+
+        <section id="calendar-shell" class="bg-white p-2 md:p-4 rounded-2xl shadow-xl border border-gray-200">
+            <div id="calendar" class="h-full"></div>
+        </section>
+    </main>
+
+    <div id="color-modal" class="fixed inset-0 bg-black/80 z-[100] hidden flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+            <div class="bg-gray-900 p-4 flex justify-between items-center text-white">
+                <h3 class="font-bold uppercase text-xs tracking-widest flex items-center gap-2"><i class="fa-solid fa-palette"></i> Colores por Espacio</h3>
+                <button onclick="window.closeModal('color-modal')" class="hover:text-gray-300 w-8 h-8 flex items-center justify-center rounded-full bg-white/10"><i class="fa-solid fa-times"></i></button>
+            </div>
+            <div class="p-5 overflow-y-auto custom-scroll flex-grow">
+                <p class="text-xs text-gray-500 mb-4 bg-gray-50 p-3 rounded-lg border border-gray-100">Estos colores se usan para las pildoras del calendario.</p>
+                <div id="color-list" class="space-y-2"></div>
+            </div>
+            <div class="p-4 border-t border-gray-100 bg-gray-50 text-right">
+                <button onclick="window.saveAllColors()" id="btn-save-colors" class="bg-brand-red text-white px-6 py-2.5 rounded-xl text-xs font-bold uppercase hover:bg-yellow-600 transition shadow-lg w-full md:w-auto">Guardar Cambios</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="calendar-edit-modal" class="fixed inset-0 bg-black/80 z-[110] hidden flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+            <div class="bg-brand-dark p-4 flex items-center justify-between text-white">
+                <h3 class="font-bold text-sm uppercase tracking-wide flex items-center gap-2"><i class="fa-solid fa-pen-to-square text-brand-red"></i> Editar Registro del Calendario</h3>
+                <button onclick="window.closeCalendarEditModal()" class="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="p-5 space-y-4 overflow-y-auto custom-scroll bg-slate-50">
+                <input type="hidden" id="ce-order-id">
+                <input type="hidden" id="ce-space-id">
+                <input type="hidden" id="ce-kind">
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                    <div class="bg-white border border-gray-200 rounded-xl p-3">
+                        <p class="text-[10px] font-bold uppercase text-gray-400">Tipo</p>
+                        <p id="ce-kind-text" class="font-black text-gray-800 mt-1">--</p>
+                    </div>
+                    <div class="bg-white border border-gray-200 rounded-xl p-3">
+                        <p class="text-[10px] font-bold uppercase text-gray-400">Espacio</p>
+                        <p id="ce-space-name" class="font-black text-gray-800 mt-1">--</p>
+                    </div>
+                    <div class="bg-white border border-gray-200 rounded-xl p-3 md:col-span-2">
+                        <p class="text-[10px] font-bold uppercase text-gray-400">Cliente / Evento</p>
+                        <p id="ce-client-quote" class="font-black text-gray-800 mt-1">--</p>
+                    </div>
+                    <div class="bg-white border border-gray-200 rounded-xl p-3">
+                        <p class="text-[10px] font-bold uppercase text-gray-400">Horario</p>
+                        <p id="ce-horario" class="font-black text-gray-800 mt-1">--</p>
+                    </div>
+                    <div class="bg-white border border-gray-200 rounded-xl p-3">
+                        <p class="text-[10px] font-bold uppercase text-gray-400">Personas</p>
+                        <p id="ce-people" class="font-black text-gray-800 mt-1">--</p>
+                    </div>
+                    <div class="bg-white border border-gray-200 rounded-xl p-3 md:col-span-2">
+                        <p class="text-[10px] font-bold uppercase text-gray-400">Total Cotizacion</p>
+                        <p id="ce-total" class="font-black text-brand-red mt-1">--</p>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-[10px] font-bold uppercase text-gray-400 mb-1">Fecha Inicio</label>
+                        <input type="date" id="ce-start" class="w-full border border-gray-200 rounded-xl p-3 text-sm font-bold outline-none focus:border-brand-red" onchange="window.checkCalendarEditAvailability()">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-bold uppercase text-gray-400 mb-1">Fecha Fin</label>
+                        <input type="date" id="ce-end" class="w-full border border-gray-200 rounded-xl p-3 text-sm font-bold outline-none focus:border-brand-red" onchange="window.checkCalendarEditAvailability()">
+                    </div>
+                </div>
+
+                <div id="ce-avail-msg" class="text-center text-[10px] font-bold p-1 rounded hidden"></div>
+
+                <div class="bg-white border border-gray-200 rounded-xl p-3">
+                    <p class="text-[10px] font-bold uppercase text-gray-400 mb-2">Conceptos y Costos</p>
+                    <div id="ce-concepts" class="text-xs text-gray-600 space-y-1 max-h-40 overflow-y-auto custom-scroll"></div>
+                </div>
+            </div>
+            <div class="bg-white border-t border-gray-100 p-4 flex justify-end gap-2">
+                <button onclick="window.closeCalendarEditModal()" class="text-gray-500 hover:text-gray-800 font-bold text-xs px-4 py-2 uppercase rounded-lg hover:bg-gray-100 transition">Cancelar</button>
+                <button id="btn-ce-save" onclick="window.saveCalendarEdit()" class="bg-brand-red text-white px-6 py-2.5 rounded-xl font-bold hover:bg-yellow-600 transition text-xs uppercase tracking-wider shadow-lg">Guardar</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="calendar.js?v=20260303-unified"></script>
+</body>
+</html>
+
+
+

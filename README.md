@@ -1,74 +1,69 @@
 # cotizadorpm-pocketbase
 
-Proyecto de cotizacion y administracion para dos tenants:
+Repositorio reorganizado para separar claramente frontend, backend, documentación y herramientas operativas.
 
-- `plaza_mayor`
-- `casa_de_piedra`
+## Estructura
 
-Stack actual:
+- `frontend/`
+  HTML, JS, CSS, assets y archivos públicos del sistema.
+- `backend/`
+  `pocketbase.exe`, hooks, migraciones, base de datos y logs.
+- `development/`
+  scripts para levantar backend y frontend en desarrollo local.
+- `production/`
+  scripts y utilidades para servicio Windows, despliegue y carpeta pública de producción.
+- `docs/`
+  documentación técnica y operativa vigente.
 
-- PocketBase como backend
-- frontend HTML + JS vanilla
-- Tailwind por script
-- generadores PDF en frontend
+## Flujo local recomendado
 
-## Documentacion vigente
-
-La documentacion consolidada vive en `docs/`.
-
-Puntos de entrada:
-
-- `docs/README.md`
-- `docs/10-funcionamiento-general-del-codigo.txt`
-- `docs/20-operacion-local-y-soporte.md`
-- `docs/30-despliegue-y-servicio-windows.md`
-- `docs/40-modelo-de-datos-y-colecciones.md`
-- `docs/50-modulos-y-flujos-de-negocio.md`
-- `docs/60-pdfs-y-documentos.md`
-- `docs/70-troubleshooting-y-runbooks.md`
-
-## Arranque local rapido
-
-Ejecutar en CMD como Administrador:
+Backend:
 
 ```bat
 cd /d "C:\Users\johan\OneDrive\Desktop\repos git\cotizadorpm-pocketbase"
-levantar-todo.bat
+development\dev-start.bat
 ```
 
-## Validaciones minimas
-
-Servicio:
+Frontend:
 
 ```bat
-backend-service.bat status
+cd /d "C:\Users\johan\OneDrive\Desktop\repos git\cotizadorpm-pocketbase"
+development\frontend-dev-start.bat
 ```
 
-Health:
-
-```powershell
-Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8090/api/health
-```
-
-Frontend de desarrollo:
-
-```powershell
-cd client
-python -m http.server 8080
-```
-
-Accesos:
+Accesos locales:
 
 - backend: `http://127.0.0.1:8090/_/`
-- frontend: `http://127.0.0.1:8080/index.html`
+- API health: `http://127.0.0.1:8090/api/health`
+- frontend: `http://127.0.0.1:8080/client/index.html`
 
-## Archivos operativos mas importantes
+## Producción
 
-- `client/config/hub-runtime.json`
-- `deploy/backend-service.local.conf`
-- `backend-service.bat`
-- `levantar-todo.bat`
-- `pb_hooks/`
-- `pb_migrations/`
-- `pb_data/`
+La ruta más simple sigue siendo servir HTML y API desde el mismo PocketBase.
 
+Puntos clave:
+
+- configuración del backend: `production/deploy/backend-service.local.conf`
+- runtime del frontend: `frontend/client/config/hub-runtime.json`
+- servicio Windows: `production/backend-service.bat`
+
+Comandos típicos:
+
+```bat
+production\backend-service.bat show
+production\backend-service.bat install
+production\backend-service.bat start
+```
+
+## Archivos importantes
+
+- `frontend/client/config/hub-runtime.json`
+- `frontend/client/js/hub-config.js`
+- `frontend/client/js/layout.js`
+- `backend/pb_hooks/`
+- `backend/pb_migrations/`
+- `backend/pb_data/`
+- `development/dev-start.bat`
+- `development/frontend-dev-start.bat`
+- `production/backend-service.bat`
+- `docs/README.md`
