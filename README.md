@@ -20,7 +20,7 @@ Repositorio reorganizado para separar claramente frontend, backend, documentaci�
 Backend:
 
 ```bat
-cd /d "ruta\a\tu\proyecto\cotizadorpm-pocketbase"
+cd /d "C:\Users\johan\OneDrive\Desktop\repos git\cotizadorpm-pocketbase"
 development\dev-start.bat
 ```
 
@@ -29,7 +29,7 @@ development\dev-start.bat
 Frontend:
 
 ```bat
-cd /d "ruta\a\tu\proyecto\cotizadorpm-pocketbase"
+cd /d "C:\Users\johan\OneDrive\Desktop\repos git\cotizadorpm-pocketbase"
 development\frontend-dev-start.bat
 ```
 
@@ -41,9 +41,7 @@ Accesos locales:
 
 ## Producción
 
-> **IMPORTANTE: Consulta [PRODUCTION.md](PRODUCTION.md) para la guía definitiva de despliegue en un servidor de producción profesional (usando Nginx y un proxy inverso).**
-
-La ruta alternativa simple (desarrollo/local) es servir API, dashboard y frontend desde el mismo PocketBase.
+La ruta recomendada es servir API, dashboard y frontend desde el mismo PocketBase.
 
 Puntos clave:
 
