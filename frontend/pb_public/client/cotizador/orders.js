@@ -46,16 +46,17 @@ function __pmParseConfigJsonValue(value) {
 function __pmBuildMaterialOptions(primaryItems, extraItems = []) {
     const out = [];
     const seen = new Set();
-    const push = (value) => {
-        const label = String(__pmNormalizeMaterialLabel(value) || value || '').trim();
+    const push = (value, doNormalize = true) => {
+        const normalized = doNormalize ? __pmNormalizeMaterialLabel(value) : String(value || '').trim();
+        const label = String(normalized || value || '').trim();
         if (!label) return;
         const key = label.toLowerCase();
         if (seen.has(key)) return;
         seen.add(key);
         out.push(label);
     };
-    (Array.isArray(primaryItems) ? primaryItems : []).forEach(push);
-    (Array.isArray(extraItems) ? extraItems : []).forEach(push);
+    (Array.isArray(primaryItems) ? primaryItems : []).forEach(val => push(val, false));
+    (Array.isArray(extraItems) ? extraItems : []).forEach(val => push(val, true));
     return out;
 }
 function __pmNormalizeTaxIds(value) {
@@ -5389,7 +5390,11 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     if (!cfg || !space) return 0;
     if (cfg.customPriceEnabled) {
       const manual = Math.max(0, parseFloat(cfg.customBasePrice || 0) || 0);
-      return cfg.customPriceMode === "per_day" ? manual * pmSpaceDays(cfg) : manual;
+      if (cfg.customPriceMode === "per_day") {
+        return manual * pmSpaceDays(cfg);
+      } else {
+        return manual;
+      }
     }
     if (cfg.customPermanence) {
       const days = pmSpaceDays(cfg);
@@ -6615,7 +6620,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
   window.pickOrderDate = async function (ds) {
     const day = iso(ds);
     if (!day) return;
-    if (day < today()) return;
+    if (day < today()) return window.showToast("No puedes seleccionar fechas pasadas.", "error");
     if (PM_ORDER_DATE_PICKER.reserved?.has(day)) return window.showToast(`La fecha ${window.safeFormatDate(day)} ya está ocupada para este espacio.`, "error");
     const cfg = activeCfg();
     if (!cfg) return;

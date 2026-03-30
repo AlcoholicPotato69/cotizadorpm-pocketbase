@@ -133,7 +133,7 @@ async function pmEnsureCatalogManageSession(actionLabel = 'guardar cambios') {
     if (!IS_PM_CATALOG_ADMIN_PAGE) return true;
     try {
         const authCtx = window.HUB_SESSION?.ensureAuth
-            ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, allowCachedUser: false, redirectOnFail: false })
+            ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, allowCachedUser: false, redirectOnFail: true })
             : await window.PB_SERVICES.auth.bootstrap({ schema: FIN_SCHEMA, allowCachedUser: false });
         const session = authCtx?.session || null;
         const token = String(session?.access_token || session?.token || '').trim();
@@ -466,8 +466,8 @@ function pickCatalogLatestConfigRow(rows) {
 function buildPmMaterialOptions(primaryItems, extraItems = []) {
     const out = [];
     const seen = new Set();
-    const push = (value) => {
-        const normalized = normalizePmMaterialTag(value);
+    const push = (value, doNormalize = true) => {
+        const normalized = doNormalize ? normalizePmMaterialTag(value) : String(value || '').trim();
         const label = String(normalized || value || '').trim();
         if (!label) return;
         const folded = normalizeCatalogSearchText(label);
@@ -475,8 +475,8 @@ function buildPmMaterialOptions(primaryItems, extraItems = []) {
         seen.add(folded);
         out.push(label);
     };
-    (Array.isArray(primaryItems) ? primaryItems : []).forEach(push);
-    (Array.isArray(extraItems) ? extraItems : []).forEach(push);
+    (Array.isArray(primaryItems) ? primaryItems : []).forEach(val => push(val, false));
+    (Array.isArray(extraItems) ? extraItems : []).forEach(val => push(val, true));
     return out;
 }
 function buildPmLocationOptions(primaryItems, extraItems = []) {
@@ -703,15 +703,34 @@ function createSpaceCfg(spaceId, seed = {}) {
     const endSeed = toDateISO(seed.endDate || '');
     const anchor = startSeed || endSeed || todayISO();
     const month = getMonthBounds(anchor);
+    const hasCustomPriceSeed = seed.customPriceEnabled === true || (seed.customBasePrice !== null && seed.customBasePrice !== undefined && seed.customBasePrice !== '');
     return {
         spaceId: String(spaceId),
         customPermanence,
         startDate: customPermanence ? startSeed : month.start,
         endDate: customPermanence ? endSeed : month.end,
+        customPriceEnabled: !!hasCustomPriceSeed,
+        customPriceMode: String(seed.customPriceMode || 'total'),
         customBasePrice: (seed.customBasePrice === undefined || seed.customBasePrice === null || seed.customBasePrice === '')
             ? ''
             : (parseFloat(seed.customBasePrice) || 0)
     };
+}
+function pmQuoteSpaceDays(cfg) {
+    if (!cfg || !cfg.startDate) return 0;
+    const s = toDateISO(cfg.startDate);
+    const e = toDateISO(cfg.endDate || cfg.startDate);
+    const start = toDateObj(s);
+    const end = toDateObj(e);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return 0;
+    let days = 0;
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        const key = d.toISOString().slice(0, 10);
+        if (!pmQuoteBlockedRanges.some(b => rangesOverlap(key, key, b.start, b.end))) {
+            days++;
+        }
+    }
+    return days;
 }
 function minDate(values) { const arr = values.filter(Boolean).sort(); return arr[0] || ''; }
 function maxDate(values) { const arr = values.filter(Boolean).sort(); return arr[arr.length - 1] || ''; }
@@ -848,9 +867,18 @@ function initQuoteDateCalendar() {
         height: 'auto',
         dayMaxEvents: true,
         headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth' },
+        dayCellDidMount: (arg) => {
+            const ds = toDateISO(arg.date.toISOString().slice(0, 10));
+            const isPast = ds < todayISO();
+            if (isPast) {
+                arg.el.classList.add('opacity-40', 'cursor-not-allowed');
+                arg.el.style.backgroundColor = '#f3f4f6';
+            }
+        },
         dateClick: (info) => {
             const clicked = toDateISO(info.dateStr);
             if (!clicked) return;
+            if (clicked < todayISO()) return window.showToast("No puedes seleccionar fechas pasadas.", "error");
             const cfg = getActiveCfg();
             if (cfg && !cfg.customPermanence) {
                 const month = getMonthBounds(clicked);
@@ -888,23 +916,35 @@ function setActiveQuoteSpaceCard(_spaceId) {
     if (!IS_PM_QUOTE_PAGE) return;
 }
 function syncQuoteCustomUi(cfg) {
-    const chk = document.getElementById('q-custom-permanence');
+    const isCustomPerm = !!cfg?.customPermanence;
+    const isCustomPrice = !!cfg?.customPriceEnabled;
+    const chkPerm = document.getElementById('q-custom-permanence');
+    const chkPrice = document.getElementById('q-custom-price-enabled');
     const wrap = document.getElementById('q-custom-price-wrap');
+    const modeSelect = document.getElementById('q-custom-price-mode');
     const input = document.getElementById('q-custom-price');
-    const isCustom = !!cfg?.customPermanence;
-    if (chk) chk.checked = isCustom;
-    if (wrap) wrap.classList.toggle('hidden', !isCustom);
-    if (input) input.value = (cfg && cfg.customBasePrice !== '' && cfg.customBasePrice !== null && cfg.customBasePrice !== undefined)
-        ? String(cfg.customBasePrice)
-        : '';
+    const label = document.getElementById('q-custom-price-label');
+    const hint = document.getElementById('q-custom-price-hint');
+    const isPerDay = (cfg?.customPriceMode === 'per_day');
+    if (chkPerm) chkPerm.checked = isCustomPerm;
+    if (chkPrice) chkPrice.checked = isCustomPrice;
+    if (wrap) wrap.classList.toggle('hidden', !isCustomPrice);
+    if (modeSelect) modeSelect.value = String(cfg?.customPriceMode || 'total');
+    if (input) {
+        input.value = (cfg && cfg.customBasePrice !== '' && cfg.customBasePrice !== null && cfg.customBasePrice !== undefined) ? String(cfg.customBasePrice) : '';
+    }
+    if (label) label.textContent = isPerDay ? "Precio Personalizado por Día" : "Precio Personalizado del Espacio (antes de impuestos)";
+    if (hint) hint.textContent = isPerDay ? "Se multiplicará por el número de días disponibles en la fecha seleccionada." : "Define el total manual de la estancia seleccionada.";
 }
 function saveActiveCfgFromForm() {
     const cfg = getActiveCfg();
     if (!cfg) return;
     cfg.customPermanence = !!document.getElementById('q-custom-permanence')?.checked;
+    cfg.customPriceEnabled = !!document.getElementById('q-custom-price-enabled')?.checked;
+    cfg.customPriceMode = String(document.getElementById('q-custom-price-mode')?.value || cfg.customPriceMode || 'total');
     cfg.startDate = toDateISO(document.getElementById('date-start')?.value || '');
     cfg.endDate = toDateISO(document.getElementById('date-end')?.value || '');
-    cfg.customBasePrice = cfg.customPermanence
+    cfg.customBasePrice = cfg.customPriceEnabled
         ? (() => {
             const raw = document.getElementById('q-custom-price')?.value;
             if (raw === '' || raw === null || raw === undefined) return '';
@@ -974,15 +1014,27 @@ function loadActiveCfgToForm() {
     }
 }
 
+window.changeQuoteCustomPriceMode = function () {
+    const cfg = getActiveCfg();
+    if (!cfg) return;
+    cfg.customPriceMode = String(document.getElementById('q-custom-price-mode')?.value || 'total');
+    syncQuoteCustomUi(cfg);
+    window.updateQuoteCalculation();
+};
 window.toggleQuoteCustomPermanence = function () {
     const cfg = getActiveCfg();
     if (!cfg) return;
     cfg.customPermanence = !!document.getElementById('q-custom-permanence')?.checked;
-    if (!cfg.customPermanence) cfg.customBasePrice = '';
-    normalizeCfgDates(cfg);
-    loadActiveCfgToForm();
+    syncQuoteCustomUi(cfg);
     window.updateQuoteCalculation();
     window.checkAvailability();
+};
+window.toggleQuoteCustomPrice = function () {
+    const cfg = getActiveCfg();
+    if (!cfg) return;
+    cfg.customPriceEnabled = !!document.getElementById('q-custom-price-enabled')?.checked;
+    syncQuoteCustomUi(cfg);
+    window.updateQuoteCalculation();
 };
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -1001,7 +1053,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     const authCtx = window.HUB_SESSION?.ensureAuth
-        ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, redirectOnFail: false })
+        ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, redirectOnFail: true })
         : await window.PB_SERVICES.auth.bootstrap({ schema: FIN_SCHEMA });
     const session = authCtx?.session || null;
     if (!session?.user) {
@@ -1433,7 +1485,16 @@ window.updateQuoteCalculation = function () {
         const space = getSpaceById(cfg.spaceId);
         if (!space) return;
         normalizeCfgDates(cfg);
-        const customBase = cfg.customPermanence && cfg.customBasePrice !== '' ? cfg.customBasePrice : null;
+        let customBase = null;
+        if (cfg.customPriceEnabled) {
+            const manual = parseFloat(cfg.customBasePrice || 0) || 0;
+            if (cfg.customPriceMode === 'per_day') {
+                const days = pmQuoteSpaceDays(cfg);
+                customBase = manual * days;
+            } else {
+                customBase = manual;
+            }
+        }
         const pricing = buildSpacePrice(space, { customBase });
         subtotal += pricing.subtotal;
         taxes += pricing.taxes;
@@ -1444,6 +1505,8 @@ window.updateQuoteCalculation = function () {
             startDate: cfg.startDate || '',
             endDate: cfg.endDate || '',
             customPermanence: !!cfg.customPermanence,
+            customPriceEnabled: !!cfg.customPriceEnabled,
+            customPriceMode: cfg.customPriceMode || 'total',
             customBasePrice: customBase,
             subtotalBeforeTax: pricing.subtotal,
             taxTotal: pricing.taxes,

@@ -187,6 +187,8 @@
                 <button id="btn-save-progress" onclick="window.attemptSaveOrder()" class="h-10 bg-white px-5 rounded-full font-black uppercase tracking-wide text-xs text-brand-dark shadow-lg hover:bg-slate-100 transition whitespace-nowrap flex items-center justify-center gap-2"><i class="fa-solid fa-floppy-disk"></i><span>Guardar</span></button>
             </div>
         </div>
+
+
     </nav>
 
     <main class="flex-grow container mx-auto px-4 py-5 md:py-8 max-w-[1880px] animate__animated animate__fadeInLeft animate__faster">
@@ -446,7 +448,36 @@
                                 <h4 class="font-black text-sm uppercase text-gray-700">Expediente de la Cotización</h4>
                                 <p class="text-[11px] text-gray-500 mt-1">Consulta previews de documentos, snapshots guardados y genera archivos clave desde aquí.</p>
                             </div>
-                            <div id="oed-expediente-grid" class="order-doc-grid p-4 sm:p-5 min-h-[24rem] max-h-[calc(100vh-18rem)] overflow-y-auto custom-scroll">
+                            <!-- Nuevos botones solicitados -->
+                            <div id="expediente-buttons" class="bg-white border-b border-gray-200 p-4 shadow-sm flex flex-col gap-3">
+                                <div class="flex flex-wrap gap-3 items-center">
+                                    <button id="btn-doc-principal" onclick="window.setCpExpedienteView('main')" class="bg-gray-800 hover:bg-black text-white px-6 py-3 rounded-xl font-bold text-sm uppercase tracking-wide shadow-lg transition flex items-center gap-2">
+                                        <i class="fa-solid fa-folder-open"></i> Principal
+                                    </button>
+                                    <button id="btn-pagos-toggle" onclick="window.togglePaymentsSection()" class="bg-brand-red hover:bg-red-700 text-white px-6 py-3 rounded-xl font-bold text-sm uppercase tracking-wide shadow-lg transition flex items-center gap-2">
+                                        <i class="fa-solid fa-money-bill-wave"></i> Pagos
+                                    </button>
+                                    <button id="btn-factura" class="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3 rounded-xl font-bold text-sm uppercase tracking-wide shadow-lg transition flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                                        <i class="fa-solid fa-file-invoice-dollar"></i> Factura
+                                    </button>
+                                    <button id="btn-contrato" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-bold text-sm uppercase tracking-wide shadow-lg transition flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                                        <i class="fa-solid fa-file-signature"></i> Contrato
+                                    </button>
+                                </div>
+                                <div id="payments-sub-buttons" class="hidden flex flex-wrap gap-2 pt-2 border-t border-gray-100">
+                                    <!-- Aquí se inyectarán los botones de pago -->
+                                </div>
+                            </div>
+<div id="oed-expediente-grid" class="order-doc-grid p-4 sm:p-5 min-h-[24rem] max-h-[calc(100vh-18rem)] overflow-y-auto custom-scroll" data-order-status="pendiente">
+                                <!-- Fila hora aprobación -->
+                                <div class="grid grid-cols-2 gap-4 mb-4 p-4 bg-gray-50 rounded-xl border">
+                                    <div class="text-sm font-bold text-gray-700">Estado Operativo</div>
+                                    <div id="status-indicator" class="text-right font-black text-sm bg-gray-100 px-3 py-1 rounded-full inline-block">Pendiente</div>
+                                </div>
+                                <div class="grid grid-cols-2 gap-4 mb-4 p-4 bg-blue-50/50 rounded-xl border">
+                                    <div class="text-sm font-bold text-gray-700">Hora de Aprobación</div>
+                                    <div id="approval-time" class="text-right font-mono text-sm text-gray-600">--:--</div>
+                                </div>
                                 <div class="rounded-2xl border border-dashed border-gray-200 bg-slate-50 px-5 py-6 text-sm font-bold text-gray-400">Cargando expediente...</div>
                             </div>
                         </div>

@@ -4022,7 +4022,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 3. Verificar Sesión
     const authCtx = window.HUB_SESSION?.ensureAuth
-        ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, redirectOnFail: false })
+        ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, redirectOnFail: true })
         : await window.PB_SERVICES.auth.bootstrap({ schema: FIN_SCHEMA });
     const session = authCtx?.session || null;
     if (!session || !session.user) {

@@ -1049,7 +1049,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if(!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
     }
     const authCtx = window.HUB_SESSION?.ensureAuth
-        ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, redirectOnFail: false })
+        ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, redirectOnFail: true })
         : await window.PB_SERVICES.auth.bootstrap({ schema: FIN_SCHEMA });
     const session = authCtx?.session || null;
     if (!session?.user) {
@@ -1723,6 +1723,9 @@ window.openOrderEditModal = async function(id) {
     const extraConceptsToggle = document.getElementById('oed-has-extra-concepts'); if (extraConceptsToggle) extraConceptsToggle.checked = (currentConcepts || []).length > 0;
 
     window.renderConceptsList(); window.recalcTotal(); window.openModal('order-edit-modal');
+
+    // Nueva lógica para expediente
+    window.updateExpedienteUI(order);
 };
 
 window.renderTaxesForSpace = function(spaceObj, activeTaxIds = null) {
@@ -6029,7 +6032,20 @@ async function __orderBuildPreviewObjectUrl(docType, orderOverride = null) {
     return objectUrl;
 }
 
-async function __orderRenderExpedientePanel() {
+window.currentCpExpedienteView = window.currentCpExpedienteView || "main";
+window.currentCpExpedientePayload = window.currentCpExpedientePayload || null;
+
+window.setCpExpedienteView = async function(view, payload = null) {
+    window.currentCpExpedienteView = view;
+    window.currentCpExpedientePayload = payload;
+    await window.__orderRenderExpedientePanel();
+};
+
+window.togglePaymentsSection = () => {
+    window.setCpExpedienteView("pagos", { page: 1 });
+};
+
+window.__orderRenderExpedientePanel = async function() {
     const grid = document.getElementById('oed-expediente-grid');
     if (!grid) return;
     const renderSeq = ++__orderExpedienteRenderSeq;
@@ -6038,180 +6054,285 @@ async function __orderRenderExpedientePanel() {
     try {
         const order = await __orderComposeExpedienteSourceOrder();
         if (renderSeq !== __orderExpedienteRenderSeq) return;
+
+        // Actualizar hora de aprobación
+        const timeEl = document.getElementById("approval-time");
+        const approvedStatus = ['aprobada', 'finalizada'].includes(String(order.status || '').toLowerCase());
+        if (timeEl) {
+            if (approvedStatus && order.fecha_aprobacion) {
+                timeEl.textContent = new Date(order.fecha_aprobacion).toLocaleString();
+            } else if (approvedStatus && order.updated) {
+                timeEl.textContent = new Date(order.updated).toLocaleString();
+            } else {
+                timeEl.textContent = "--:--";
+            }
+        }
+
+        // Configurar botones superiores
+        const btnContainer = document.getElementById("expediente-buttons");
+        if (btnContainer) btnContainer.classList.remove("hidden");
+        const subButtons = document.getElementById("payments-sub-buttons");
+        if (subButtons) {
+            subButtons.innerHTML = "";
+            subButtons.classList.add("hidden");
+        }
         const details = parseSpacesDetail(order.espacios_detalle);
         const spacesCount = details.length || (order.espacio_id ? 1 : 0);
         const totalNet = __orderExpedienteMoney(order.precio_final || __orderTotals?.final || 0);
         const draftMeta = __orderResolveDraftSnapshotMeta(order);
         const draftSnapshotUrl = draftMeta.path ? await __orderCreateSignedStorageUrl(draftMeta.path) : '';
-        const approvedStatus = ['aprobada', 'finalizada'].includes(String(order.status || '').toLowerCase());
         const draftPreviewSrc = draftSnapshotUrl || await __orderBuildPreviewObjectUrl('quote', order);
         const docs = [];
 
-        docs.push({
-            title: 'Borrador de Cotización',
-            description: draftSnapshotUrl ? 'Documento archivado actualmente en el expediente.' : 'Vista previa viva del documento actual editable.',
-            badge: draftSnapshotUrl ? 'Archivado' : 'Editable',
-            badgeTone: draftSnapshotUrl ? 'emerald' : 'amber',
-            metaRows: [
-                { label: 'Folio', value: draftMeta.folio || '--' },
-                { label: 'Estado', value: String(order.status || 'pendiente').toUpperCase() },
-                { label: 'Espacios', value: String(spacesCount || 0) },
-                { label: 'Total Neto', value: totalNet },
-                { label: 'Snapshot', value: draftSnapshotUrl ? 'Guardada' : 'Pendiente' }
-            ],
-            previewType: 'iframe',
-            previewSrc: draftPreviewSrc,
-            actions: [
-                { label: draftSnapshotUrl ? 'Actualizar Snapshot' : 'Guardar Snapshot', icon: 'fa-solid fa-floppy-disk', tone: 'brand', onclick: 'window.saveCpDraftSnapshot(this)' },
-                { label: 'Vista Completa', icon: 'fa-solid fa-expand', tone: 'slate', onclick: `window.openCpExpedienteLivePreview("quote", ${JSON.stringify('Borrador de Cotización')})` },
-                ...(draftSnapshotUrl ? [{ label: 'Abrir Archivada', icon: 'fa-solid fa-folder-open', tone: 'emerald', onclick: `window.openCpExpedientePreview(${JSON.stringify(draftPreviewSrc)}, ${JSON.stringify('Borrador de Cotización')})` }] : [])
-            ]
-        });
+        const extractTs = (path, fallback) => {
+            if (typeof path === "string") {
+                const match = path.match(/(1[6-9]\d{11})/);
+                if (match) return new Date(parseInt(match[1])).toLocaleString();
+            }
+            return fallback ? new Date(fallback).toLocaleString() : "--";
+        };
 
-        if (order.url_cotizacion_final) {
-            const approvedUrl = await __orderCreateSignedStorageUrl(order.url_cotizacion_final);
-            docs.push({
-                title: 'Cotización Aprobada',
-                description: 'Snapshot oficial almacenada en el expediente.',
-                badge: 'Oficial',
-                badgeTone: 'emerald',
+        if (window.currentCpExpedienteView === "main") {
+            if (!approvedStatus) {
+                docs.push({
+                title: 'Borrador de Cotización',
+                description: draftSnapshotUrl ? 'Documento archivado actualmente en el expediente.' : 'Vista previa viva del documento actual editable.',
+                badge: draftSnapshotUrl ? 'Archivado' : 'Editable',
+                badgeTone: draftSnapshotUrl ? 'emerald' : 'amber',
                 metaRows: [
-                    { label: 'Folio', value: draftMeta.folio || '--' },
-                    { label: 'Estado', value: 'APROBADA' },
-                    { label: 'Archivo', value: order.url_cotizacion_final.split('/').pop() || 'cotizacion_aprobada.pdf' },
-                    { label: 'Total Neto', value: totalNet }
-                ],
-                previewType: approvedUrl ? 'iframe' : 'message',
-                previewSrc: approvedUrl,
-                previewMessage: 'No se pudo generar la vista del archivo aprobado.',
-                actions: [
-                    { label: 'Abrir Documento', icon: 'fa-solid fa-folder-open', tone: 'emerald', onclick: approvedUrl ? `window.openCpExpedientePreview(${JSON.stringify(approvedUrl)}, ${JSON.stringify('Cotización Aprobada')})` : `window.openStoredDocument(${JSON.stringify(order.url_cotizacion_final)})` }
-                ]
-            });
-        }
-
-        if (order.url_orden_compra) {
-            const ocUrl = await __orderCreateSignedStorageUrl(order.url_orden_compra);
-            docs.push({
-                title: 'Orden de Compra',
-                description: 'Orden archivada en storage y vinculada a la cotización.',
-                badge: 'Archivada',
-                badgeTone: 'purple',
-                metaRows: [
+                    { label: 'Generada', value: order.created ? new Date(order.created).toLocaleString() : '--' },
                     { label: 'Folio', value: draftMeta.folio || '--' },
                     { label: 'Estado', value: String(order.status || 'pendiente').toUpperCase() },
-                    { label: 'Archivo', value: order.url_orden_compra.split('/').pop() || 'orden_compra.pdf' },
-                    { label: 'Total Neto', value: totalNet }
+                    { label: 'Espacios', value: String(spacesCount || 0) },
+                    { label: 'Total Neto', value: totalNet },
+                    { label: 'Snapshot', value: draftSnapshotUrl ? 'Guardada' : 'Pendiente' }
                 ],
-                previewType: ocUrl ? 'iframe' : 'message',
-                previewSrc: ocUrl,
-                previewMessage: 'No se pudo cargar la orden almacenada.',
+                previewType: 'iframe',
+                previewSrc: draftPreviewSrc,
                 actions: [
-                    { label: 'Actualizar Snapshot', icon: 'fa-solid fa-floppy-disk', tone: 'purple', onclick: 'window.saveCpPurchaseOrderSnapshot(this)' },
-                    { label: 'Abrir Documento', icon: 'fa-solid fa-folder-open', tone: 'slate', onclick: ocUrl ? `window.openCpExpedientePreview(${JSON.stringify(ocUrl)}, ${JSON.stringify('Orden de Compra')})` : `window.openStoredDocument(${JSON.stringify(order.url_orden_compra)})` }
+                    { label: draftSnapshotUrl ? 'Actualizar Snapshot' : 'Guardar Snapshot', icon: 'fa-solid fa-floppy-disk', tone: 'brand', onclick: 'window.saveCpDraftSnapshot(this)' },
+                    { label: 'Vista Completa', icon: 'fa-solid fa-expand', tone: 'slate', onclick: `window.openCpExpedienteLivePreview("quote", ${JSON.stringify('Borrador de Cotización')})` },
+                    ...(draftSnapshotUrl ? [{ label: 'Abrir Archivada', icon: 'fa-solid fa-folder-open', tone: 'emerald', onclick: `window.openCpExpedientePreview(${JSON.stringify(draftPreviewSrc)}, ${JSON.stringify('Borrador de Cotización')})` }] : [])
                 ]
             });
-        } else {
-            const orderPreviewSrc = approvedStatus ? await __orderBuildPreviewObjectUrl('order', order) : '';
-            docs.push({
-                title: 'Orden de Compra',
-                description: approvedStatus ? 'Genera y archiva la orden oficial desde esta misma vista.' : 'La orden de compra se habilita cuando la cotización ya está aprobada.',
-                badge: approvedStatus ? 'Pendiente' : 'Bloqueada',
-                badgeTone: approvedStatus ? 'amber' : 'red',
-                metaRows: [
-                    { label: 'Folio', value: draftMeta.folio || '--' },
-                    { label: 'Estado', value: String(order.status || 'pendiente').toUpperCase() },
-                    { label: 'Archivo', value: 'Sin generar' },
-                    { label: 'Total Neto', value: totalNet }
-                ],
-                previewType: approvedStatus ? 'iframe' : 'message',
-                previewSrc: orderPreviewSrc,
-                previewMessage: approvedStatus ? '' : 'Aprueba la cotización para habilitar la orden de compra.',
-                actions: approvedStatus
-                    ? [
-                        { label: 'Guardar Snapshot', icon: 'fa-solid fa-floppy-disk', tone: 'purple', onclick: 'window.saveCpPurchaseOrderSnapshot(this)' },
-                        { label: 'Vista Completa', icon: 'fa-solid fa-expand', tone: 'slate', onclick: `window.openCpExpedienteLivePreview("order", ${JSON.stringify('Orden de Compra')})` }
+            } else {
+                const approvedUrl = order.url_cotizacion_final ? await __orderCreateSignedStorageUrl(order.url_cotizacion_final) : "";
+                docs.push({
+                    title: 'Cotización Aprobada',
+                    description: order.url_cotizacion_final ? 'Snapshot oficial almacenada en el expediente.' : 'El documento oficial no ha sido generado o archivado aún.',
+                    badge: order.url_cotizacion_final ? 'Oficial' : 'Pendiente',
+                    badgeTone: order.url_cotizacion_final ? 'emerald' : 'amber',
+                    metaRows: [
+                        { label: 'Aprobada', value: order.fecha_aprobacion ? new Date(order.fecha_aprobacion).toLocaleString() : (order.updated ? new Date(order.updated).toLocaleString() : '--') },
+                        { label: 'Folio', value: draftMeta.folio || '--' },
+                        { label: 'Estado', value: String(order.status || 'aprobada').toUpperCase() },
+                        { label: 'Archivo', value: order.url_cotizacion_final ? (order.url_cotizacion_final.split('/').pop() || 'cotizacion_aprobada.pdf') : 'Sin archivo' },
+                        { label: 'Total Neto', value: totalNet }
+                    ],
+                    previewType: approvedUrl ? 'iframe' : 'message',
+                    previewSrc: approvedUrl,
+                    previewMessage: 'El documento oficial oficial no está disponible. Es necesario guardar un snapshot final.',
+                    actions: approvedUrl ? [
+                        { label: 'Abrir Documento', icon: 'fa-solid fa-folder-open', tone: 'emerald', onclick: `window.openCpExpedientePreview(${JSON.stringify(approvedUrl)}, ${JSON.stringify("Cotización Aprobada")})` }
+                    ] : [
+                        { label: 'Vista en Vivo', icon: 'fa-solid fa-expand', tone: 'slate', onclick: `window.openCpExpedienteLivePreview("quote", ${JSON.stringify("Cotización Aprobada")})` }
                     ]
-                    : []
-            });
-        }
+                });
+            }
 
-        if (order.contrato_url) {
-            const contractUrl = await __orderCreateSignedStorageUrl(order.contrato_url);
+            if (order.url_orden_compra) {
+                const ocUrl = await __orderCreateSignedStorageUrl(order.url_orden_compra);
+                docs.push({
+                    title: 'Orden de Compra',
+                    description: 'Orden archivada en storage y vinculada a la cotización.',
+                    badge: 'Archivada',
+                    badgeTone: 'purple',
+                    metaRows: [
+                        { label: 'Subida el', value: extractTs(order.url_orden_compra, order.fecha_aprobacion || order.updated) },
+                        { label: 'Folio', value: draftMeta.folio || '--' },
+                        { label: 'Estado', value: String(order.status || 'pendiente').toUpperCase() },
+                        { label: 'Archivo', value: order.url_orden_compra.split('/').pop() || 'orden_compra.pdf' },
+                        { label: 'Total Neto', value: totalNet }
+                    ],
+                    previewType: ocUrl ? 'iframe' : 'message',
+                    previewSrc: ocUrl,
+                    previewMessage: 'No se pudo cargar la orden almacenada.',
+                    actions: [
+                        { label: 'Actualizar Snapshot', icon: 'fa-solid fa-floppy-disk', tone: 'purple', onclick: 'window.saveCpPurchaseOrderSnapshot(this)' },
+                        { label: 'Abrir Documento', icon: 'fa-solid fa-folder-open', tone: 'slate', onclick: ocUrl ? `window.openCpExpedientePreview(${JSON.stringify(ocUrl)}, ${JSON.stringify('Orden de Compra')})` : `window.openStoredDocument(${JSON.stringify(order.url_orden_compra)})` }
+                    ]
+                });
+            } else {
+                const orderPreviewSrc = approvedStatus ? await __orderBuildPreviewObjectUrl('order', order) : '';
+                docs.push({
+                    title: 'Orden de Compra',
+                    description: approvedStatus ? 'Genera y archiva la orden oficial desde esta misma vista.' : 'La orden de compra se habilita cuando la cotización ya está aprobada.',
+                    badge: approvedStatus ? 'Pendiente' : 'Bloqueada',
+                    badgeTone: approvedStatus ? 'amber' : 'red',
+                    metaRows: [
+                        { label: 'Folio', value: draftMeta.folio || '--' },
+                        { label: 'Estado', value: String(order.status || 'pendiente').toUpperCase() },
+                        { label: 'Archivo', value: 'Sin generar' },
+                        { label: 'Total Neto', value: totalNet }
+                    ],
+                    previewType: approvedStatus ? 'iframe' : 'message',
+                    previewSrc: orderPreviewSrc,
+                    previewMessage: approvedStatus ? '' : 'Aprueba la cotización para habilitar la orden de compra.',
+                    actions: approvedStatus
+                        ? [
+                            { label: 'Guardar Snapshot', icon: 'fa-solid fa-floppy-disk', tone: 'purple', onclick: 'window.saveCpPurchaseOrderSnapshot(this)' },
+                            { label: 'Vista Completa', icon: 'fa-solid fa-expand', tone: 'slate', onclick: `window.openCpExpedienteLivePreview("order", ${JSON.stringify('Orden de Compra')})` }
+                        ]
+                        : []
+                });
+            }
+        } else if (window.currentCpExpedienteView === "contrato") {
             docs.push({
-                title: 'Contrato',
-                description: 'Documento contractual almacenado para esta cotización.',
-                badge: 'Adjunto',
-                badgeTone: 'emerald',
+                title: "Contrato",
+                description: "Documento oficial del contrato asociado a la orden.",
+                badge: "Archivado",
+                badgeTone: "emerald",
                 metaRows: [
-                    { label: 'Archivo', value: order.contrato_url.split('/').pop() || 'contrato.pdf' },
-                    { label: 'Cliente', value: order.cliente_nombre || '--' }
+                  { label: "Generado el", value: extractTs(order.contrato_url, order.fecha_aprobacion || order.updated) },
+                  { label: "Archivo", value: order.contrato_url?.split("/").pop() || "contrato.pdf" }
                 ],
-                previewType: contractUrl ? 'iframe' : 'message',
-                previewSrc: contractUrl,
-                previewMessage: 'No se pudo cargar el contrato.',
+                previewType: order.contrato_url ? "iframe" : "message",
+                previewSrc: order.contrato_url ? await __orderCreateSignedStorageUrl(order.contrato_url) : "",
+                previewMessage: "El contrato no pudo ser cargado.",
                 actions: [
-                    { label: 'Abrir Documento', icon: 'fa-solid fa-folder-open', tone: 'emerald', onclick: contractUrl ? `window.openCpExpedientePreview(${JSON.stringify(contractUrl)}, ${JSON.stringify('Contrato')})` : `window.openStoredDocument(${JSON.stringify(order.contrato_url)})` }
+                    { label: "Volver a Cotización", icon: "fa-solid fa-arrow-left", tone: "slate", onclick: `window.setCpExpedienteView("main")` },
+                    { label: "Abrir en Pestaña", icon: "fa-solid fa-external-link-alt", tone: "blue", onclick: `window.openStoredDocument(${JSON.stringify(order.contrato_url)})` }
                 ]
             });
-        }
-
-        if (order.factura_pdf_url) {
-            const invoiceUrl = await __orderCreateSignedStorageUrl(order.factura_pdf_url);
+        } else if (window.currentCpExpedienteView === "factura") {
             docs.push({
-                title: 'Factura PDF',
-                description: 'Factura fiscal registrada para la cotización.',
-                badge: 'Fiscal',
-                badgeTone: 'emerald',
+                title: "Factura",
+                description: "Documento oficial de la factura PDF.",
+                badge: "Emitida",
+                badgeTone: "emerald",
                 metaRows: [
-                    { label: 'Archivo', value: order.factura_pdf_url.split('/').pop() || 'factura.pdf' },
-                    { label: 'Cliente', value: order.cliente_nombre || '--' }
+                  { label: "Subida el", value: extractTs(order.factura_pdf_url, order.fecha_aprobacion || order.updated) },
+                  { label: "Archivo", value: order.factura_pdf_url?.split("/").pop() || "factura.pdf" }
                 ],
-                previewType: invoiceUrl ? 'iframe' : 'message',
-                previewSrc: invoiceUrl,
-                previewMessage: 'No se pudo cargar la factura.',
+                previewType: order.factura_pdf_url ? "iframe" : "message",
+                previewSrc: order.factura_pdf_url ? await __orderCreateSignedStorageUrl(order.factura_pdf_url) : "",
+                previewMessage: "La factura no pudo ser cargada.",
                 actions: [
-                    { label: 'Abrir Documento', icon: 'fa-solid fa-folder-open', tone: 'emerald', onclick: invoiceUrl ? `window.openCpExpedientePreview(${JSON.stringify(invoiceUrl)}, ${JSON.stringify('Factura PDF')})` : `window.openStoredDocument(${JSON.stringify(order.factura_pdf_url)})` },
-                    ...(order.factura_xml_url ? [{ label: 'Descargar XML', icon: 'fa-solid fa-file-code', tone: 'slate', onclick: `window.openStoredDocument(${JSON.stringify(order.factura_xml_url)})` }] : [])
+                    { label: "Volver a Cotización", icon: "fa-solid fa-arrow-left", tone: "slate", onclick: `window.setCpExpedienteView("main")` },
+                    { label: "Abrir en Pestaña", icon: "fa-solid fa-external-link-alt", tone: "blue", onclick: `window.openStoredDocument(${JSON.stringify(order.factura_pdf_url)})` }
                 ]
             });
-        } else if (order.factura_xml_url) {
-            docs.push({
-                title: 'XML Factura',
-                description: 'Archivo XML disponible para descarga.',
-                badge: 'XML',
-                badgeTone: 'amber',
-                metaRows: [
-                    { label: 'Archivo', value: order.factura_xml_url.split('/').pop() || 'factura.xml' }
-                ],
-                previewType: 'message',
-                previewMessage: 'El XML no tiene vista previa embebida; usa el botón para descargarlo.',
-                actions: [
-                    { label: 'Descargar XML', icon: 'fa-solid fa-file-code', tone: 'slate', onclick: `window.openStoredDocument(${JSON.stringify(order.factura_xml_url)})` }
-                ]
-            });
+        } else if (window.currentCpExpedienteView === "pagos") {
+            const pagosList = __orderParsePaymentsForExpediente(order).filter(p => String(p?.file_path || p?.path || p?.url || "").trim());
+            
+            if (pagosList.length === 0) {
+                docs.push({
+                    title: "Pagos",
+                    description: "No hay comprobantes de pago registrados.",
+                    badge: "Vacío",
+                    badgeTone: "slate",
+                    previewType: "message",
+                    previewMessage: "No se encontraron recibos de pago con comprobante en esta orden."
+                });
+            } else {
+                const itemsPerPage = 4;
+                const currentPage = window.currentCpExpedientePayload?.page || 1;
+                const totalPages = Math.ceil(pagosList.length / itemsPerPage);
+                const startIndex = (currentPage - 1) * itemsPerPage;
+                const currentPagos = pagosList.slice(startIndex, startIndex + itemsPerPage);
+
+                if (subButtons) {
+                    subButtons.classList.remove("hidden");
+                    subButtons.innerHTML = `<div class="flex items-center gap-3 w-full"><span class="text-xs font-bold text-gray-500 py-2 flex-grow">Mostrando ${startIndex + 1} - ${Math.min(startIndex + itemsPerPage, pagosList.length)} de ${pagosList.length} pagos</span></div>`;
+                    
+                    const paginationControls = document.createElement("div");
+                    paginationControls.className = "flex items-center gap-2";
+                    
+                    if (currentPage > 1) {
+                        const btnPrev = document.createElement("button");
+                        btnPrev.className = "bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1";
+                        btnPrev.innerHTML = `<i class="fa-solid fa-chevron-left"></i> Anterior`;
+                        btnPrev.onclick = () => window.setCpExpedienteView("pagos", { page: currentPage - 1 });
+                        paginationControls.appendChild(btnPrev);
+                    }
+                    
+                    if (currentPage < totalPages) {
+                        const btnNext = document.createElement("button");
+                        btnNext.className = "bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1";
+                        btnNext.innerHTML = `Siguiente <i class="fa-solid fa-chevron-right"></i>`;
+                        btnNext.onclick = () => window.setCpExpedienteView("pagos", { page: currentPage + 1 });
+                        paginationControls.appendChild(btnNext);
+                    }
+                    subButtons.firstElementChild.appendChild(paginationControls);
+                }
+
+                for (let i = 0; i < currentPagos.length; i++) {
+                    const payment = currentPagos[i];
+                    const globalIdx = startIndex + i;
+                    const safePath = String(payment?.file_path || payment?.path || payment?.url || "").trim();
+                    const isClosure = String(payment?.type || payment?.tipo || "").toLowerCase() === "constancia_liquidacion" || payment?.closed === true || payment?.is_closure === true;
+                    
+                    const promiseUrl = __orderCreateSignedStorageUrl(safePath);
+                    
+                    const amt = parseFloat(payment.amount || payment.monto || 0);
+                    const formattedAmt = typeof __orderExpedienteMoney === "function" ? __orderExpedienteMoney(amt) : `$${amt.toFixed(2)}`;
+                    const ref = payment.reference || payment.referencia || "--";
+                    const bank = payment.bank || payment.banco || "--";
+                    const dateStr = payment.date || payment.fecha ? new Date(payment.date || payment.fecha).toLocaleString() : "--";
+
+                    docs.push({
+                        title: `Pago ${globalIdx + 1} - ${isClosure ? 'Liquidación' : 'Recibo'}`,
+                        description: payment.concept || payment.concepto || "Comprobante de pago verificado.",
+                        badge: "Pagado",
+                        badgeTone: "indigo",
+                        metaRows: [
+                            { label: "Monto", value: formattedAmt },
+                            { label: "Fecha", value: dateStr },
+                            { label: "Banco", value: bank },
+                            { label: "Referencia", value: ref },
+                            { label: "Archivo", value: safePath.split("/").pop() || "recibo.pdf" }
+                        ],
+                        previewType: "iframe",
+                        previewSrcPromise: promiseUrl,
+                        path: safePath,
+                        actions: [
+                            { label: "Abrir en Pestaña", icon: "fa-solid fa-external-link-alt", tone: "blue", onclick: `window.openStoredDocument(${JSON.stringify(safePath)})` }
+                        ]
+                    });
+                }
+            }
         }
 
-        __orderParsePaymentsForExpediente(order).forEach((payment, idx) => {
-            const safePath = String(payment?.file_path || payment?.path || payment?.url || '').trim();
-            if (!safePath) return;
-            const type = String(payment?.type || payment?.tipo || '').toLowerCase();
-            const isClosure = type === 'constancia_liquidacion' || payment?.closed === true || payment?.is_closure === true;
-            docs.push({
-                title: isClosure ? 'Constancia de Liquidación' : `Recibo ${idx + 1}`,
-                description: isClosure ? 'Documento final del cierre de pagos.' : 'Comprobante de pago registrado en la cotización.',
-                badge: 'Pago',
-                badgeTone: 'emerald',
-                metaRows: [
-                    { label: 'Archivo', value: safePath.split('/').pop() || 'recibo.pdf' },
-                    { label: 'Tipo', value: isClosure ? 'Liquidación' : 'Recibo' }
-                ],
-                previewType: 'message',
-                previewMessage: 'Cargando vista previa...',
-                previewSrcPromise: __orderCreateSignedStorageUrl(safePath),
-                path: safePath
-            });
-        });
+        const btnContract = document.getElementById("btn-contrato");
+        if (btnContract) {
+            if (order.contrato_url) {
+                btnContract.disabled = false;
+                btnContract.onclick = async () => {
+                    window.setCpExpedienteView("contrato");
+                };
+            } else {
+                btnContract.disabled = true;
+            }
+        }
+
+        const btnInvoice = document.getElementById("btn-factura");
+        if (btnInvoice) {
+            if (order.factura_pdf_url) {
+                btnInvoice.disabled = false;
+                btnInvoice.onclick = async () => {
+                    window.setCpExpedienteView("factura");
+                };
+            } else {
+                btnInvoice.disabled = true;
+            }
+        }
+
+        if (window.currentCpExpedienteView !== "pagos") {
+            if (subButtons) {
+                subButtons.innerHTML = "";
+                subButtons.classList.add("hidden");
+            }
+        }
 
         const resolvedDocs = await Promise.all(docs.map(async (doc) => {
             if (doc.previewSrcPromise) {
@@ -6249,15 +6370,47 @@ window.saveCpDraftSnapshot = async function(btnEl = null) {
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span>Guardando...</span>'; }
     try {
         const order = await __orderComposeExpedienteSourceOrder();
-        const draftMeta = __orderResolveDraftSnapshotMeta(order);
-        if (!draftMeta.orderId || !draftMeta.path) throw new Error('No se pudo identificar la cotización.');
+        const status = String(order?.status || currentPreviewOrder?.status || "").toLowerCase();
+        const isApproved = ["aprobada", "finalizada"].includes(status);
         const { blob } = await __orderBuildDocumentBlob('quote', order);
-        await window.globalPocketBase.storage.from('documentos-cp').upload(draftMeta.path, blob, { upsert: true });
-        currentPreviewOrder = { ...currentPreviewOrder, __draft_snapshot_path: draftMeta.path };
-        window.showToast('Snapshot de borrador guardada en el expediente.', 'success');
+        
+        let downloadName = "";
+        
+        if (isApproved) {
+            const formData = { ...currentPreviewOrder, ...order };
+            const snapshotMeta = window.__cpBuildApprovalSnapshotMeta ? window.__cpBuildApprovalSnapshotMeta(order.id, formData) : { path: `${order.id}/cotizacion_aprobada_${order.numero_orden || order.id}.pdf`, folio: order.numero_orden || order.id };
+            await window.globalPocketBase.storage.from('documentos-cp').upload(snapshotMeta.path, blob, { upsert: true });
+            const { error } = await window.__cpQuotesUpdate(order.id, { url_cotizacion_final: snapshotMeta.path });
+            if (error) throw error;
+            currentPreviewOrder = { ...currentPreviewOrder, ...order, url_cotizacion_final: snapshotMeta.path };
+            downloadName = `Cotizacion_Aprobada_${snapshotMeta.folio}.pdf`;
+            signalOrdersRefresh("approved_snapshot");
+            window.showToast("Cotización Aprobada archivada correctamente.", "success");
+        } else {
+            const draftMeta = __orderResolveDraftSnapshotMeta(order);
+            if (!draftMeta.orderId || !draftMeta.path) throw new Error('No se pudo identificar la cotización.');
+            await window.globalPocketBase.storage.from('documentos-cp').upload(draftMeta.path, blob, { upsert: true });
+            currentPreviewOrder = { ...currentPreviewOrder, __draft_snapshot_path: draftMeta.path };
+            downloadName = `Snapshot_${draftMeta.folio || 'Cotizacion'}.pdf`;
+            window.showToast('Snapshot de borrador guardada en el expediente.', 'success');
+        }
+
+        if (typeof window.downloadBlobAsFile === "function") window.downloadBlobAsFile(blob, downloadName);
+        else {
+            const link = document.createElement("a");
+            link.href = URL.createObjectURL(blob);
+            link.download = downloadName;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            setTimeout(() => URL.revokeObjectURL(link.href), 1500);
+        }
+
         await __orderRenderExpedientePanel();
+        if (typeof window.closeModal === "function") window.closeModal("preview-modal");
+        if (typeof window.switchOrderDetailTab === "function") window.switchOrderDetailTab("expediente");
     } catch (e) {
-        window.showToast(`No se pudo guardar el borrador: ${e?.message || e}`, 'error');
+        window.showToast(`No se pudo guardar el snapshot: ${e?.message || e}`, 'error');
     } finally {
         if (btn) { btn.disabled = false; btn.innerHTML = original; }
     }
@@ -6279,9 +6432,23 @@ window.saveCpPurchaseOrderSnapshot = async function(btnEl = null) {
         const { error } = await __cpQuotesUpdate(order.id, { url_orden_compra: path, fecha_orden_compra: fechaOrden });
         if (error) throw error;
         currentPreviewOrder = { ...currentPreviewOrder, ...order, url_orden_compra: path, fecha_orden_compra: fechaOrden };
-        __orderBroadcastRefresh('purchase_order');
+        
+        if (typeof window.downloadBlobAsFile === "function") window.downloadBlobAsFile(blob, `Orden_Compra_${folio}.pdf`);
+        else {
+            const link = document.createElement("a");
+            link.href = URL.createObjectURL(blob);
+            link.download = `Orden_Compra_${folio}.pdf`;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            setTimeout(() => URL.revokeObjectURL(link.href), 1500);
+        }
+        
+        signalOrdersRefresh('purchase_order');
         window.showToast('Orden de compra archivada correctamente.', 'success');
         await __orderRenderExpedientePanel();
+        if (typeof window.closeModal === "function") window.closeModal("preview-modal");
+        if (typeof window.switchOrderDetailTab === "function") window.switchOrderDetailTab("expediente");
     } catch (e) {
         window.showToast(`No se pudo guardar la orden de compra: ${e?.message || e}`, 'error');
     } finally {

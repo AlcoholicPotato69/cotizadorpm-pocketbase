@@ -108,7 +108,7 @@ async function cpEnsureCatalogManageSession(actionLabel = 'guardar cambios') {
     if (!IS_CATALOG_ADMIN_PAGE) return true;
     try {
         const authCtx = window.HUB_SESSION?.ensureAuth
-            ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, allowCachedUser: false, redirectOnFail: false })
+            ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, allowCachedUser: false, redirectOnFail: true })
             : await window.PB_SERVICES.auth.bootstrap({ schema: FIN_SCHEMA, allowCachedUser: false });
         const session = authCtx?.session || null;
         const token = String(session?.access_token || session?.token || '').trim();
@@ -405,7 +405,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (window.__HUB_PAGE_ACCESS_DENIED) return;
     if (window.PB_CLIENT) { if(!window.tenantPocketBase) window.tenantPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY, { db: { schema: FIN_SCHEMA } }); if(!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY); }
     const authCtx = window.HUB_SESSION?.ensureAuth
-        ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, redirectOnFail: false })
+        ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, redirectOnFail: true })
         : await window.PB_SERVICES.auth.bootstrap({ schema: FIN_SCHEMA });
     const session = authCtx?.session || null;
     if (!session?.user) {

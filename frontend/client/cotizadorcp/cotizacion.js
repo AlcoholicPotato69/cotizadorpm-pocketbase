@@ -37,6 +37,10 @@ let adminSelectedConcepts = []; let myPermissions = { access:false, catalog_mana
 let __cpPremontajePct = 25;
 let __cpHoraExtraCfg = { mode: 'percent', value: 100, allowCustom: true };
 
+// NUEVO: PRECIO PERSONALIZADO
+let precioPersonalizadoEnabled = false;
+let precioPersonalizadoValue = 0;
+
 function normalizeCpQuoteTenantSlug(value) {
     const raw = String(value || '').trim().toLowerCase();
     if (!raw) return '';
@@ -399,7 +403,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (window.__HUB_PAGE_ACCESS_DENIED) return;
     if (window.PB_CLIENT) { if(!window.tenantPocketBase) window.tenantPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY, { db: { schema: FIN_SCHEMA } }); if(!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY); }
     const authCtx = window.HUB_SESSION?.ensureAuth
-        ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, redirectOnFail: false })
+        ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, redirectOnFail: true })
         : await window.PB_SERVICES.auth.bootstrap({ schema: FIN_SCHEMA });
     const session = authCtx?.session || null;
     if (!session?.user) {
@@ -828,64 +832,268 @@ window.addAdminConcept = function() { const sel = document.getElementById('admin
 window.removeAdminConcept = function(index) { adminSelectedConcepts.splice(index, 1); window.updateAdminConceptsSummary(); window.updateQuoteCalculation(); }
 window.updateAdminConceptsSummary = function() { const container = document.getElementById('admin-concepts-summary'); container.innerHTML = ''; adminSelectedConcepts.forEach((c, idx) => { container.innerHTML += `<div class="flex justify-between items-center bg-gray-50 border border-gray-100 p-2 rounded text-xs"><span class="font-bold text-gray-700">${c.description}</span><div class="flex items-center gap-3"><span class="font-black text-brand-dark">$${parseFloat(c.amount).toLocaleString()}</span><button onclick="window.removeAdminConcept(${idx})" class="text-gray-400 hover:text-red-500"><i class="fas fa-times"></i></button></div></div>`; }); }
 
+window.togglePrecioPersonalizado = function() {
+  precioPersonalizadoEnabled = !!document.getElementById('chk-precio-personalizado')?.checked;
+  const section = document.getElementById('precio-personalizado-section');
+  if (section) section.classList.toggle('hidden', !precioPersonalizadoEnabled);
+  if (precioPersonalizadoEnabled) {
+    const input = document.getElementById('precio-personalizado-total');
+    if (input) {
+      input.focus();
+      // Quita cualquier restricción anterior
+      input.removeAttribute('readonly');
+      input.disabled = false;
+    }
+  } else {
+    const input = document.getElementById('precio-personalizado-total');
+    if (input) input.value = '';
+    precioPersonalizadoValue = 0;
+  }
+  window.updateQuoteCalculation();
+};
+
+window.updatePrecioPersonalizado = function() {
+  const val = parseFloat(document.getElementById('precio-personalizado-total')?.value || 0);
+  precioPersonalizadoValue = Number.isFinite(val) && val >= 0 ? val : 0;
+  window.updateQuoteCalculation();
+};
+
 window.updateQuoteCalculation = function() {
-    if(!currentSpace) return;
-    const s = document.getElementById('date-start').value; const e = document.getElementById('date-end').value; const g = document.getElementById('q-guests').value; 
-    let base = 0; if (s && e) { base = calculateDayByDayTotal(currentSpace, s, e, g).total; } 
-
-    let b2b = {}; try { b2b = typeof currentSpace.config_b2b === 'string' ? JSON.parse(currentSpace.config_b2b) : (currentSpace.config_b2b || {}); } catch(ex){}
-    const pMontaje = parseFloat(b2b.precio_montaje) || 0; const pHora = parseFloat(b2b.precio_hora_extra) || 0;
-    const selOpt = document.getElementById('q-horario').options[document.getElementById('q-horario').selectedIndex];
-    const costoHorario = selOpt ? parseFloat(selOpt.getAttribute('data-price')) || 0 : 0;
-    const diasM = parseInt(document.getElementById('q-premontaje').value) || 0; const hrsE = parseInt(document.getElementById('q-horas').value) || 0;
-
-    let subtotal = base + costoHorario + (diasM * pMontaje) + (hrsE * pHora);
-    adminSelectedConcepts.forEach(c => { subtotal += parseFloat(c.amount); });
-
-    if(currentSpace.ajuste_tipo === 'aumento') subtotal += subtotal * (currentSpace.ajuste_porcentaje/100);
-    if(currentSpace.ajuste_tipo === 'descuento') subtotal -= subtotal * (currentSpace.ajuste_porcentaje/100);
-
-    let taxAmt = 0; const sTaxes = parseIds(currentSpace.impuestos_ids || currentSpace.impuestos);
-    if(sTaxes.length && dbTaxes.length) { sTaxes.forEach(tid => { const t = findCpQuoteTaxRecord(tid, currentSpace); if(t) { const rate = t.porcentaje > 1 ? t.porcentaje/100 : t.porcentaje; taxAmt += subtotal * rate; } }); }
-
-    currentPricing = { subtotal: subtotal, taxes: taxAmt, final: subtotal + taxAmt };
+    __cpSaveActiveCfgFromForm();  // Mantiene compatibilidad multi-espacio
+    const spacesPricing = [];
+    let subtotal = 0, taxesTotal = 0;
+    __cpQuoteSpaces.forEach(cfg => {
+        const space = __cpGetSpaceById(cfg.spaceId);
+        if(!space) return;
+        const guests = parseInt(cfg.guests, 10) || 1;
+        const maxCapacity = getSpaceMaxCapacity(space);
+        const capacityOk = !(maxCapacity < 999999 && guests > maxCapacity);
+        const base = (cfg.startDate && cfg.endDate) ? calculateDayByDayTotal(space, cfg.startDate, cfg.endDate, guests).total : 0;
+        const horaUnit = parseFloat(cfg.horasExtraUnit ?? __cpResolveHoraExtraUnit(space) ?? 0) || 0;
+        cfg.horasExtraUnit = horaUnit;
+        const horarioCost = parseFloat(cfg.horarioPrice || 0);
+        cfg.premontajeCourtesyDays = Math.min(parseInt(cfg.premontajeDays, 10) || 0, parseInt(cfg.premontajeCourtesyDays, 10) || 0);
+        const prem = __cpCalcPremCost(space, cfg);
+        const extraHours = parseInt(cfg.horasExtra, 10) || 0;
+        const courtesyHours = Math.min(extraHours, Math.max(0, parseInt(cfg.horasExtraCourtesy, 10) || 0));
+        cfg.horasExtraCourtesy = courtesyHours;
+        const billableHours = Math.max(0, extraHours - courtesyHours);
+        const horasCost = billableHours * horaUnit;
+        const blockedOk = !__cpCfgHasBlockedDates(cfg);
+        let subSpace = 0;
+        if (capacityOk && blockedOk) {
+            subSpace = base + horarioCost + prem.total + horasCost;
+            if(space.ajuste_tipo === 'aumento') subSpace += subSpace * ((parseFloat(space.ajuste_porcentaje) || 0) / 100);
+            if(space.ajuste_tipo === 'descuento') subSpace -= subSpace * ((parseFloat(space.ajuste_porcentaje) || 0) / 100);
+        }
+        let spaceTaxTotal = 0;
+        const taxIds = parseIds(space.impuestos_ids || space.impuestos);
+        taxIds.forEach(tid => { const t = findCpQuoteTaxRecord(tid, space); if(t){ const rate = parseFloat(t.porcentaje || 0) > 1 ? (parseFloat(t.porcentaje) / 100) : parseFloat(t.porcentaje || 0); spaceTaxTotal += subSpace * rate; } });
+        subtotal += subSpace; taxesTotal += spaceTaxTotal;
+        spacesPricing.push({ spaceId: space.id, spaceName: space.nombre, spaceKey: space.clave, startDate: cfg.startDate, endDate: cfg.endDate, guests, maxCapacity, capacityOk, blockedOk, horarioValue: cfg.horarioValue, horarioText: cfg.horarioText || cfg.horarioValue || '', horarioCost, premontajeDays: parseInt(cfg.premontajeDays, 10) || 0, premontajeCourtesyDays: parseInt(cfg.premontajeCourtesyDays, 10) || 0, premontajeDates: __cpSafeArray(cfg.premontajeDates), premontajeCost: prem.total, premontajeBreakdown: prem.breakdown, horasExtra: extraHours, horasExtraCourtesy: courtesyHours, horasExtraBillable: billableHours, horasExtraUnit: horaUnit, horasExtraCost: horasCost, subtotalBeforeTax: subSpace, taxIds, taxTotal: spaceTaxTotal });
+    });
+    let adminConceptTotal = 0; adminSelectedConcepts.forEach(c => { adminConceptTotal += parseFloat(c.amount || 0); });
+    subtotal += adminConceptTotal;
+    if (adminConceptTotal > 0 && spacesPricing.length > 0) {
+        const firstTaxes = spacesPricing[0].taxIds || [];
+        firstTaxes.forEach(tid => {
+            const t = findCpQuoteTaxRecord(tid, { tenant: resolveCpQuoteTenantSlug() });
+            if (!t) return;
+            const rate = parseFloat(t.porcentaje || 0) > 1 ? (parseFloat(t.porcentaje) / 100) : parseFloat(t.porcentaje || 0);
+            taxesTotal += adminConceptTotal * rate;
+        });
+    }
+    // SOBRESCRIBIR CON PRECIO PERSONALIZADO si habilitado
+    const autoFinal = subtotal + taxesTotal;
+    currentPricing = { 
+        subtotal, 
+        taxes: taxesTotal, 
+        autoFinal,  // Guardar cálculo automático
+        final: precioPersonalizadoEnabled ? precioPersonalizadoValue : autoFinal,  // Usar custom o auto
+        spaces: spacesPricing, 
+        adminConceptTotal,
+        customEnabled: precioPersonalizadoEnabled,
+        customValue: precioPersonalizadoValue
+    };
     document.getElementById('q-price').innerText = formatMoney(currentPricing.final);
-}
+    // Visual: Destacar si es custom
+    const priceEl = document.getElementById('q-price');
+    if (priceEl) {
+        priceEl.classList.toggle('ring-2', precioPersonalizadoEnabled);
+        priceEl.classList.toggle('ring-yellow-400', precioPersonalizadoEnabled);
+        priceEl.classList.toggle('bg-yellow-50/50', precioPersonalizadoEnabled);
+    }
+};
 
-window.generatePDF = async function() {
-    const diasM = parseInt(document.getElementById('q-premontaje').value) || 0;
-    if(diasM > 0 && window.finalMontajeDates.length !== diasM) {
-        return window.showToast("Faltan asignar las fechas específicas del montaje.", "error");
+window.generatePDF = async function(){
+    __cpSaveActiveCfgFromForm();
+    window.updateQuoteCalculation();
+    await window.checkAvailability();
+
+    // Verificar premontaje para todos los espacios
+    for (const cfg of __cpQuoteSpaces) {
+        const pmDays = parseInt(cfg.premontajeDays, 10) || 0;
+        if (pmDays > 0 && (!cfg.premontajeDates || cfg.premontajeDates.length !== pmDays)) {
+            const spaceName = (__cpGetSpaceById(cfg.spaceId)?.nombre || cfg.spaceId);
+            return window.showToast(`Faltan fechas de premontaje para ${spaceName}`, "error");
+        }
     }
 
-    const cli = { name: document.getElementById('cli-name').value, rfc: document.getElementById('cli-rfc').value, phone: document.getElementById('cli-phone').value.trim(), email: document.getElementById('cli-email').value.trim() };
-    if(!cli.name) return window.showToast("Falta nombre del cliente", "error"); const phoneRegex = /^\d{10}$/; if (!phoneRegex.test(cli.phone)) return window.showToast("El teléfono debe tener 10 dígitos numéricos.", "error");
+    const cli = { 
+        name: document.getElementById('cli-name').value.trim(), 
+        rfc: document.getElementById('cli-rfc').value.trim(), 
+        phone: document.getElementById('cli-phone').value.trim(), 
+        email: document.getElementById('cli-email').value.trim() 
+    };
+    if(!cli.name) return window.showToast("Falta nombre del cliente", "error");
+    const phoneRegex = /^\d{10}$/;
+    if (!phoneRegex.test(cli.phone)) return window.showToast("El teléfono debe tener 10 dígitos numéricos.", "error");
 
-    window.updateQuoteCalculation(); const guests = parseInt(document.getElementById('q-guests').value) || 1;
-    let b2b = {}; try { b2b = typeof currentSpace.config_b2b === 'string' ? JSON.parse(currentSpace.config_b2b) : (currentSpace.config_b2b || {}); } catch(ex){}
-    const pMontaje = parseFloat(b2b.precio_montaje) || 0; const pHora = parseFloat(b2b.precio_hora_extra) || 0;
-    const selOpt = document.getElementById('q-horario').options[document.getElementById('q-horario').selectedIndex];
-    const costoHorario = selOpt ? parseFloat(selOpt.getAttribute('data-price')) || 0 : 0;
-    const hrsE = parseInt(document.getElementById('q-horas').value) || 0;
+    const today = __cpTodayISO();
+    const invalidPastCfg = __cpQuoteSpaces.find(cfg => cfg.startDate < today || cfg.endDate < today);
+    if (invalidPastCfg) {
+        const sp = __cpGetSpaceById(invalidPastCfg.spaceId);
+        return window.showToast(`Fechas pasadas en ${sp?.nombre || invalidPastCfg.spaceId}`, "error");
+    }
 
-    let conceptosB2B = [];
-    if(selOpt) conceptosB2B.push({ description: `Horario: ${selOpt.text}`, amount: costoHorario, value: costoHorario, unit: 'fixed', type: 'b2b_horario', meta: { selected: selOpt.value, custom_name: selOpt.text } });
-    if(diasM > 0) conceptosB2B.push({ description: `Montaje extra (${diasM} días)${window.finalMontajeDates.length ? ' - ' + window.finalMontajeDates.map(d=>window.safeFormatDate(d)).join(', ') : ''}`, amount: (diasM * pMontaje), value: (diasM * pMontaje), unit: 'fixed', type: 'b2b_montaje', meta: { days: diasM, unit_price: pMontaje, dates: window.finalMontajeDates } });
-    if(hrsE > 0) conceptosB2B.push({ description: `Horas Extras (${hrsE} hrs)`, amount: (hrsE * pHora), value: (hrsE * pHora), unit: 'fixed', type: 'b2b_horas', meta: { hours: hrsE, unit_price: pHora } });
+    // PRECIO PERSONALIZADO: Usar si habilitado
+    const precioFinal = currentPricing.customEnabled ? currentPricing.customValue : currentPricing.final;
+
+    const quoteNameInput = document.getElementById('q-quote-name');
+    const quoteNameRaw = (quoteNameInput?.value || '').trim();
+    const quoteName = quoteNameRaw || `Cotización Multi-Espacio - ${cli.name}`;
+
+    const conceptosB2B = [];
+    const espaciosDetalle = currentPricing.spaces.map(sp => ({
+        espacio_id: sp.spaceId,
+        espacio_nombre: sp.spaceName,
+        espacio_clave: sp.spaceKey,
+        fecha_inicio: sp.startDate,
+        fecha_fin: sp.endDate,
+        personas: sp.guests,
+        horario: { 
+            value: sp.horarioValue, 
+            label: sp.horarioText, 
+            amount: sp.horarioCost 
+        },
+        fechas_evento: __cpDatesBetween(sp.startDate, sp.endDate),
+        premontaje_dias: sp.premontajeDays,
+        premontaje_cortesia_dias: sp.premontajeCourtesyDays || 0,
+        premontaje_fechas: sp.premontajeDates || [],
+        premontaje_total: sp.premontajeCost,
+        premontaje_detalle: sp.premontajeBreakdown || [],
+        horas_extra: sp.horasExtra,
+        horas_extra_cortesia: sp.horasExtraCourtesy || 0,
+        horas_extra_facturables: sp.horasExtraBillable || 0,
+        horas_extra_unitario: sp.horasExtraUnit,
+        horas_extra_total: sp.horasExtraCost,
+        subtotal_espacio: sp.subtotalBeforeTax,
+        impuestos_ids: sp.taxIds || [],
+        impuestos_total: sp.taxTotal
+    }));
+
+    // Agregar conceptos B2B desde spaces
+    currentPricing.spaces.forEach(sp => {
+        if (sp.horarioCost > 0) {
+            conceptosB2B.push({
+                description: `[${sp.spaceName}] Horario: ${sp.horarioText}`,
+                amount: sp.horarioCost,
+                value: sp.horarioCost,
+                unit: 'fixed',
+                type: 'b2b_horario',
+                meta: { space_id: sp.spaceId }
+            });
+        }
+        if (sp.premontajeCost > 0) {
+            conceptosB2B.push({
+                description: `[${sp.spaceName}] Premontaje (${sp.premontajeDays} días)`,
+                amount: sp.premontajeCost,
+                value: sp.premontajeCost,
+                unit: 'fixed',
+                type: 'b2b_montaje',
+                meta: { 
+                    space_id: sp.spaceId, 
+                    days: sp.premontajeDays, 
+                    courtesy_days: sp.premontajeCourtesyDays,
+                    dates: sp.premontajeDates,
+                    percentage: getPremontajePct()
+                }
+            });
+        }
+        if (sp.horasExtraCost > 0) {
+            conceptosB2B.push({
+                description: `[${sp.spaceName}] Horas extras (${sp.horasExtraBillable} hrs)`,
+                amount: sp.horasExtraCost,
+                value: sp.horasExtraCost,
+                unit: 'fixed',
+                type: 'b2b_horas',
+                meta: { 
+                    space_id: sp.spaceId, 
+                    hours: sp.horasExtraBillable,
+                    unit_price: sp.horasExtraUnit
+                }
+            });
+        }
+    });
+    // Admin concepts
     adminSelectedConcepts.forEach(c => conceptosB2B.push(c));
 
-    const auditSingle = await __cpResolveQuoteActorAudit();
-    const payload = { cliente_id: (document.getElementById('cli-id') ? (document.getElementById('cli-id').value || null) : null), espacio_id: currentSpace.id, espacio_nombre: currentSpace.nombre, espacio_clave: currentSpace.clave, cliente_nombre: cli.name, cliente_rfc: cli.rfc, cliente_contacto: cli.phone, cliente_email: cli.email, fecha_inicio: document.getElementById('date-start').value, fecha_fin: document.getElementById('date-end').value, precio_final: currentPricing.final, desglose_precios: { subtotal_antes_impuestos: currentPricing.subtotal, impuestos_detalle: parseIds(currentSpace.impuestos_ids || currentSpace.impuestos), tax_total: currentPricing.taxes }, conceptos_adicionales: conceptosB2B, status: 'pendiente', creado_por: auditSingle.actorId || null, creado_por_nombre: auditSingle.actorName, modificado_por: auditSingle.actorId || null, modificado_por_nombre: auditSingle.actorName, personas: guests };
-    
+    // PRECIO PERSONALIZADO en desglose
+    const desglosePrecios = {
+        subtotal_antes_impuestos: currentPricing.subtotal,
+        auto_calculado: currentPricing.autoFinal,
+        precio_final_usado: precioFinal,
+        custom_aplicado: currentPricing.customEnabled ? true : false,
+        custom_valor: currentPricing.customEnabled ? currentPricing.customValue : null,
+        impuestos_detalle: Array.from(new Set(currentPricing.spaces.flatMap(s => s.taxIds || []))),
+        tax_total: currentPricing.taxes,
+        espacios: currentPricing.spaces
+    };
+
+    const firstSpace = currentPricing.spaces[0];
+    const auditMulti = await __cpResolveQuoteActorAudit();
+    const payload = { 
+        cliente_id: document.getElementById('cli-id')?.value || null,
+        nombre_cotizacion: quoteName,
+        espacio_id: firstSpace?.spaceId,
+        espacio_nombre: currentPricing.spaces.length === 1 ? firstSpace.spaceName : `${firstSpace?.spaceName || ''} + ${currentPricing.spaces.length - 1} espacios`,
+        espacio_clave: currentPricing.spaces.length === 1 ? firstSpace?.spaceKey : 'MULTI',
+        cliente_nombre: cli.name,
+        cliente_rfc: cli.rfc || '',
+        cliente_contacto: cli.phone,
+        cliente_email: cli.email || '',
+        fecha_inicio: firstSpace?.startDate,
+        fecha_fin: firstSpace?.endDate,
+        precio_final: precioFinal,
+        desglose_precios: desglosePrecios,
+        detalles_evento: { 
+            multi_espacio: currentPricing.spaces.length > 1, 
+            total_espacios: currentPricing.spaces.length,
+            nombre_cotizacion: quoteName 
+        },
+        espacios_detalle: espaciosDetalle,
+        conceptos_adicionales: conceptosB2B,
+        status: 'pendiente',
+        creado_por: auditMulti.actorId || null,
+        creado_por_nombre: auditMulti.actorName,
+        modificado_por: auditMulti.actorId || null,
+        modificado_por_nombre: auditMulti.actorName,
+        personas: Math.max(...currentPricing.spaces.map(s => s.guests || 0), 1)
+    };
+
     const { error, id: createdQuoteId } = await __cpCreateQuoteRecord(payload);
     if (error) {
         console.error(error);
+        if (String(error.message || '').toLowerCase().includes('espacios_detalle')) {
+            return window.showToast('Falta aplicar migración de BD para multi-espacio.', 'error');
+        }
         return window.showToast(`Error al guardar: ${error.message}`, "error");
     }
-    window.showToast("Cotización Creada");
+    __cpReservationsCache = null; __cpReservationsAt = 0;
+    window.showToast("✅ Cotización creada con " + (currentPricing.customEnabled ? 'PRECIO PERSONALIZADO' : 'cálculo automático'));
     const targetUrl = createdQuoteId ? `order_detail.html?quote=${encodeURIComponent(createdQuoteId)}` : 'orders.html';
-    setTimeout(() => { __cpNavigateSafely(targetUrl); }, 1000);
-}
+    setTimeout(() => { __cpNavigateSafely(targetUrl); }, 1200);
+};
 
 window.filterCatalogLogic = function() { const term = document.getElementById('cat-search').value.toLowerCase(); const type = document.getElementById('cat-filter-type').value; const sort = document.getElementById('cat-sort').value; let filtered = allSpaces.filter(s => (s.nombre.toLowerCase().includes(term) || s.clave.toLowerCase().includes(term)) && (type === 'all' || s.tipo === type)); if (sort === 'price_asc') filtered.sort((a,b) => a.precio_base - b.precio_base); if (sort === 'price_desc') filtered.sort((a,b) => b.precio_base - a.precio_base); renderSpaces(filtered); }
 window.previewImage = function(i, id){ const p = document.getElementById(id || 'mgr-preview'); if(i.files && i.files[0]){ const r=new FileReader(); r.onload=e=>{ p.src=e.target.result; p.classList.remove('hidden'); p.setAttribute('data-modified', 'true'); }; r.readAsDataURL(i.files[0]); } }

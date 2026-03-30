@@ -73,7 +73,7 @@
         .login-bg::before {
             content: '';
             position: absolute;
-            top: 0; left: 0; right: 0; h-1;
+            top: 0; left: 0; right: 0;
             background: linear-gradient(90deg, #D32F2F, #b71c1c);
             height: 4px;
         }
@@ -297,7 +297,13 @@
                         btn.innerHTML = originalContent;
                         btn.disabled = false;
                     } else {
-                        window.location.reload();
+                        const qs = new URLSearchParams(window.location.search);
+                        const redirectUrl = qs.get('redirect');
+                        if (redirectUrl) {
+                            window.location.replace(redirectUrl);
+                        } else {
+                            window.location.reload();
+                        }
                     }
                 });
             }
@@ -333,7 +339,13 @@
             }
             if (session) {
                 currentUser = session.user;
-                await showDashboard(currentUser);
+                const qs = new URLSearchParams(window.location.search);
+                const redirectUrl = qs.get('redirect');
+                if (redirectUrl) {
+                    window.location.replace(redirectUrl);
+                } else {
+                    await showDashboard(currentUser);
+                }
             } else {
                 showLogin();
             }

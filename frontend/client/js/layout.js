@@ -578,10 +578,14 @@
         window.__HUB_PAGE_ACCESS_DENIED = true;
         window.__HUB_PAGE_ACCESS_DENIED_REASON = String(reason || 'missing_session');
         try { window.__HUB_ALLOW_NEXT_UNLOAD?.(`layout_${reason}`); } catch (_) {}
+        
+        const currentUrl = encodeURIComponent(window.location.pathname + window.location.search + window.location.hash);
+        const destination = route.redirectUrl + '?redirect=' + currentUrl;
+        
         if (typeof window.__HUB_SAFE_NAVIGATE === 'function') {
-            window.__HUB_SAFE_NAVIGATE(route.redirectUrl, { allowSamePage: true });
+            window.__HUB_SAFE_NAVIGATE(destination, { allowSamePage: true });
         } else {
-            window.location.href = route.redirectUrl;
+            window.location.href = destination;
         }
         return true;
     }

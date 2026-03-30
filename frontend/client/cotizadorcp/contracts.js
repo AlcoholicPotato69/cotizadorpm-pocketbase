@@ -3192,7 +3192,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 3. Verificar Sesión
     const authCtx = window.HUB_SESSION?.ensureAuth
-        ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, redirectOnFail: false })
+        ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, redirectOnFail: true })
         : await window.PB_SERVICES.auth.bootstrap({ schema: FIN_SCHEMA });
     const session = authCtx?.session || null;
     if (!session || !session.user) {
@@ -3780,7 +3780,7 @@ window.confirmFinalize = async function() {
         
         // MODIFICADO: Se elimina 'status: finalizada'. 
         // La orden permanece en el estado actual (aprobada) hasta que se suba la factura.
-        const { error: dbErr } = await window.tenantPocketBase.from('cotizaciones').update({ contrato_url: path, numero_contrato: contractNum }).eq('id', selectedOrder.id); 
+        const { error: dbErr } = await window.tenantPocketBase.from('cotizaciones').update({ contrato_url: path, numero_contrato: contractNum, fecha_contrato: new Date().toISOString() }).eq('id', selectedOrder.id); 
         
         if(dbErr) throw dbErr; 
         window.showToast("Contrato Guardado Correctamente", "success"); 
