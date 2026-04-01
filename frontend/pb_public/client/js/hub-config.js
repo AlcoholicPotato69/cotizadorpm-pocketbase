@@ -14,6 +14,14 @@ const __HUB_RUNTIME_CONFIG_CACHE_KEY = 'hub_runtime_config_cache_v2';
 function __hubNormalizeBackendUrl(raw) {
   let text = String(raw || '').trim();
   if (!text) return '';
+  if (/^(\/|\.\/|\.\.\/)/.test(text)) {
+    try {
+      const base = text.startsWith('/') ? window.location.origin : window.location.href;
+      return new URL(text, base).toString().replace(/\/+$/, '');
+    } catch (_) {
+      return text === '/' ? '' : text.replace(/\/+$/, '');
+    }
+  }
   if (!/^[a-zA-Z][a-zA-Z\d+\-.]*:\/\//.test(text)) text = `http://${text}`;
   return text.replace(/\/+$/, '');
 }

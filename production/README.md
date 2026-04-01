@@ -1,13 +1,13 @@
 # Production
 
-Herramientas para instalar y operar el backend y el frontend en producción o entornos internos.
+Herramientas para instalar y operar el backend y dejar el frontend listo para Nginx en producción o entornos internos.
 
 ## Contenido
 
 - `backend-service.bat`
   administra el servicio Windows.
 - `levantar-todo.bat`
-  reparación y arranque rápido del entorno local/interno.
+  deja backend, frontend runtime y artefactos Nginx listos para producción.
 - `deploy/`
   runner, service host, HTTPS local y utilidades de despliegue.
 
@@ -23,13 +23,29 @@ Archivo principal:
 
 En un clon limpio sin datos previos, `backend\pb_data\` puede no existir; PocketBase lo creará al iniciar y aplicará las migraciones del proyecto.
 
+Para el flujo completo de producción, ejecuta primero:
+
+```bat
+production\levantar-todo.bat
+```
+
+Ese script:
+
+- pide la IP/host y puerto reales del backend
+- sincroniza `frontend\client\config\hub-runtime.json`
+- sincroniza `frontend\client\public\assets\libs\js\env.js`
+- deja el frontend en mismo origen (`/`) para Nginx
+- genera la carpeta estática `production\deploy\nginx-site\`
+- genera la plantilla `production\deploy\nginx\cotizador-production.conf`
+- instala/actualiza el servicio Windows y lo deja en `RUNNING`
+
 Primero revisa la configuración activa:
 
 ```bat
 production\backend-service.bat show
 ```
 
-Si necesitas cambiar IP o puerto:
+Si necesitas cambiar IP o puerto manualmente:
 
 ```bat
 production\backend-service.bat set-bind 127.0.0.1:8090
@@ -55,16 +71,25 @@ Si es la primera vez sobre una base vacía, crea un superusuario de PocketBase:
 backend\pocketbase.exe superuser upsert admin@tu-dominio.com TuPasswordSegura123 --dir=backend\pb_data
 ```
 
-### 2. Frontend
+### 2. Frontend y Nginx
 
-La estrategia recomendada es no separar frontend y backend: el mismo servicio de PocketBase publica `frontend\pb_public\`.
+La estrategia recomendada para producción es servir el frontend con Nginx y dejar PocketBase solo como backend/API.
 
-Una vez que el backend quede en `RUNNING`, el frontend debe responder en:
+El comando recomendado es:
 
-- `http://HOST:PUERTO/index.html`
-- `http://HOST:PUERTO/client/index.html`
+```bat
+production\backend-service.bat prepare-nginx
+```
 
-Si necesitas reconstruir la carpeta pública manualmente:
+Eso deja listos:
+
+- site estático: `production\deploy\nginx-site\`
+- configuración Nginx: `production\deploy\nginx\cotizador-production.conf`
+- frontend runtime en mismo origen (`/`), listo para proxear `/api/` y `/_/`
+
+Si todavía quieres que PocketBase publique el frontend directamente, puedes mantener `PUBLIC_DIR=frontend\pb_public`.
+
+Si necesitas reconstruir la carpeta pública de PocketBase manualmente:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File production\deploy\prepare-public-dir.ps1
@@ -74,6 +99,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File production\deploy\prepare-pu
 
 ```bat
 production\backend-service.bat show
+production\backend-service.bat set-frontend-url /
+production\backend-service.bat sync-frontend
+production\backend-service.bat prepare-nginx
 production\backend-service.bat install
 production\backend-service.bat start
 production\backend-service.bat restart

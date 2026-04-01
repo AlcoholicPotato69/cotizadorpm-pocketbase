@@ -14,22 +14,27 @@ El sistema se compone de dos partes principales que deben servirse de manera ind
 
 ## 2. Preparar el Frontend (Archivos Estáticos)
 
-El aspecto más crítico para el paso a producción es actualizar el archivo `frontend/client/hub_config.js` para que apunte a tu dominio de producción, no a un "127.0.0.1" o una IP de red local genérica.
+El flujo recomendado ya no es editar archivos JS a mano. Ejecuta:
 
-**Archivo a Modificar:** `frontend/client/hub_config.js`
+```bat
+production\levantar-todo.bat
+```
 
-```javascript
-window.HUB_CONFIG = {
-    // CAMBIA ESTO por tu dominio de producción. 
-    // Ejemplo si usas un subdominio para la API:
-    pocketbaseUrl: 'https://api.cotizador.tudominio.com',
-    
-    // Si la API se sirve en el mismo dominio bajo la ruta /api/, sería:
-    // pocketbaseUrl: 'https://cotizador.tudominio.com/api',
-    
-    pocketbaseAnonKey: '', 
-    finanzasSchema: 'finanzas'
-};
+Ese script:
+
+- pide la IP/host y puerto reales del backend
+- actualiza `frontend/client/config/hub-runtime.json`
+- actualiza `frontend/client/public/assets/libs/js/env.js`
+- deja el frontend configurado en mismo origen (`/`) para que Nginx proxy `/api/` y `/_/`
+- genera la carpeta estática `production/deploy/nginx-site/`
+- genera la plantilla `production/deploy/nginx/cotizador-production.conf`
+
+Si necesitas rehacer solo la parte del frontend/Nginx:
+
+```bat
+production\backend-service.bat set-frontend-url /
+production\backend-service.bat sync-frontend
+production\backend-service.bat prepare-nginx
 ```
 
 ## 3. Configuración de Nginx (Proxy Inverso y Archivos Estáticos)
@@ -45,7 +50,7 @@ server {
 
     # 1. Servir Frontend (Archivos Estáticos)
     location / {
-        root /ruta/absoluta/a/tu/proyecto/frontend;
+        root /ruta/absoluta/a/tu/proyecto/production/deploy/nginx-site;
         index index.html;
         try_files $uri $uri/ /index.html;
     }

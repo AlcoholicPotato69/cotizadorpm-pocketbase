@@ -25,7 +25,7 @@ set "RUN_LOG=%LOG_DIR%\levantar-todo-%RUN_TS%.log"
 
 echo.
 echo ============================================================
-echo   COTIZADOR - REPARACION LOCAL ^(127.0.0.1^)
+echo   COTIZADOR - PREPARACION DE PRODUCCION ^+ NGINX
 echo ============================================================
 echo.
 
@@ -48,16 +48,13 @@ set "CUSTOM_PORT=8090"
 
 echo.
 echo ============================================================
-echo   CONFIGURACION DE RED
+echo   CONFIGURACION DE BACKEND
 echo ============================================================
 echo.
-CHOICE /C SN /T 10 /D N /M "Desea cambiar la IP y el Puerto por defecto (127.0.0.1:8090)? [S/N]"
-if errorlevel 2 goto skip_net_cfg
-if errorlevel 1 (
-    set /p "CUSTOM_IP=Escribe la IP del backend (ej: 192.168.1.50) [127.0.0.1]: "
-    set /p "CUSTOM_PORT=Escribe el puerto [8090]: "
-)
-:skip_net_cfg
+echo Este valor se usara para que PocketBase escuche y para generar la plantilla Nginx.
+echo Si Nginx correra en el mismo servidor, puedes dejar 127.0.0.1 y usar el proxy local.
+set /p "CUSTOM_IP=Escribe la IP o hostname del backend [127.0.0.1]: "
+set /p "CUSTOM_PORT=Escribe el puerto del backend [8090]: "
 if "%CUSTOM_IP%"=="" set "CUSTOM_IP=127.0.0.1"
 if "%CUSTOM_PORT%"=="" set "CUSTOM_PORT=8090"
 
@@ -70,7 +67,13 @@ if errorlevel 1 goto :fail
 call :exec_backend_step "Paso: Forzando bind local..." set-bind "%CUSTOM_IP%:%CUSTOM_PORT%"
 if errorlevel 1 goto :fail
 
-call :exec_backend_step "Paso: Forzando URL local para frontend..." set-url "http://%CUSTOM_IP%:%CUSTOM_PORT%"
+call :exec_backend_step "Paso: Configurando URL real del backend..." set-url "http://%CUSTOM_IP%:%CUSTOM_PORT%"
+if errorlevel 1 goto :fail
+
+call :exec_backend_step "Paso: Configurando frontend same-origin para Nginx..." set-frontend-url "/"
+if errorlevel 1 goto :fail
+
+call :exec_backend_step "Paso: Preparando carpeta estatica y nginx.conf..." prepare-nginx
 if errorlevel 1 goto :fail
 
 call :exec_backend_step "Paso: Instalando/actualizando servicio Windows..." install
@@ -108,11 +111,14 @@ call "%BACKEND_SCRIPT%" show >> "%RUN_LOG%" 2>&1
 
 echo.
 echo ============================================================
-echo   REPARACION LOCAL COMPLETADA
+echo   PREPARACION DE PRODUCCION COMPLETADA
 echo ============================================================
-echo   BACKEND_URL: http://%CUSTOM_IP%:%CUSTOM_PORT%
+echo   BACKEND_REAL: http://%CUSTOM_IP%:%CUSTOM_PORT%
+echo   FRONTEND_RUNTIME: /
 echo   Servicio: CotizadorPocketBase
 echo   Estado esperado: RUNNING
+echo   Site Nginx: production\deploy\nginx-site
+echo   nginx.conf: production\deploy\nginx\cotizador-production.conf
 echo   Log: %RUN_LOG%
 echo ============================================================
 echo.
@@ -174,11 +180,14 @@ exit /b 0
 
 :help
 echo.
-echo levantar-todo.bat - Repara y deja TODO en modo LOCAL o el configurado.
+echo levantar-todo.bat - Deja backend, frontend y artefactos Nginx listos para produccion.
 echo.
-echo Fuerza:
-echo   - BIND_ADDR=127.0.0.1:8090 (o el personalizado)
-echo   - BACKEND_URL=http://127.0.0.1:8090 (o el personalizado)
+echo Configura:
+echo   - BIND_ADDR=IP:PUERTO
+echo   - BACKEND_URL real del servicio
+echo   - FRONTEND_BACKEND_URL=/ ^(mismo origen via Nginx^)
+echo   - carpeta estatica production\deploy\nginx-site
+echo   - plantilla production\deploy\nginx\cotizador-production.conf
 echo   - servicio CotizadorPocketBase en RUNNING
 echo.
 echo Uso:
