@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="es-MX">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Contrato de Arrendamiento - Casa de Piedra</title>
+  <style>
+    :root{
+      --ink:#111827;
+      --muted:#6b7280;
+      --line:#e5e7eb;
+      --soft:#f9fafb;
+      --accent:#991b1b; /* vino */
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      padding:24px;
+      font-family: Arial, Helvetica, sans-serif;
+      color:var(--ink);
+      background:#ffffff;
+      line-height:1.45;
+      font-size:12.5px;
+    }
+    .page{
+      max-width:900px;
+      margin:0 auto;
+      border:1px solid var(--line);
+      border-radius:12px;
+      overflow:hidden;
+    }
+    header{
+      padding:18px 22px;
+      background:linear-gradient(90deg, var(--accent), #7f1d1d);
+      color:#fff;
+    }
+    header .top{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:16px;
+    }
+    .brand{
+      font-size:18px;
+      font-weight:700;
+      letter-spacing:.4px;
+    }
+    .subtitle{
+      margin-top:4px;
+      font-size:12px;
+      opacity:.95;
+    }
+    .meta{
+      text-align:right;
+      font-size:11.5px;
+      opacity:.95;
+      white-space:nowrap;
+    }
+    main{ padding:18px 22px 24px; }
+    h1{
+      margin:0 0 10px;
+      font-size:15.5px;
+      color:var(--accent);
+      letter-spacing:.2px;
+    }
+    h2{
+      margin:14px 0 8px;
+      font-size:13px;
+      color:#111827;
+    }
+    p{ margin:8px 0; }
+    .muted{ color:var(--muted); }
+    .box{
+      border:1px solid var(--line);
+      border-radius:10px;
+      padding:12px;
+      background:var(--soft);
+      margin:10px 0 14px;
+    }
+    table{
+      width:100%;
+      border-collapse:collapse;
+      margin-top:8px;
+      font-size:12px;
+    }
+    th, td{
+      border:1px solid var(--line);
+      padding:8px;
+      vertical-align:top;
+    }
+    th{
+      background:#f3f4f6;
+      text-align:left;
+      font-weight:700;
+    }
+    .clause{
+      border-left:3px solid var(--accent);
+      padding-left:10px;
+      margin:10px 0;
+    }
+    .signatures{
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:18px;
+      margin-top:18px;
+    }
+    .sig{
+      border:1px solid var(--line);
+      border-radius:10px;
+      padding:12px;
+      min-height:120px;
+    }
+    .sig .line{
+      margin-top:54px;
+      border-top:1px solid #9ca3af;
+      padding-top:6px;
+      font-size:12px;
+    }
+    footer{
+      padding:12px 22px 16px;
+      border-top:1px solid var(--line);
+      background:#fff;
+      font-size:10.8px;
+      color:var(--muted);
+    }
+    .small{ font-size:11px; }
+    .badge{
+      display:inline-block;
+      padding:3px 8px;
+      border-radius:999px;
+      background:rgba(255,255,255,.16);
+      border:1px solid rgba(255,255,255,.28);
+      font-size:11px;
+      margin-top:8px;
+    }
+    .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+  </style>
+</head>
+
+<body>
+  <div class="page">
+    <header>
+      <div class="top">
+        <div>
+          <div class="brand">CASA DE PIEDRA</div>
+          <div class="subtitle">Contrato de Arrendamiento de Salón de Eventos</div>
+          <div class="badge">Documento de prueba / plantilla</div>
+        </div>
+
+        <div class="meta">
+          <div><strong>Fecha:</strong> {{FECHA_HOY}}</div>
+          <div><strong>No. Orden:</strong> <span class="mono">{{NUM_ORDEN}}</span></div>
+          <div><strong>No. Contrato:</strong> <span class="mono">{{NUM_CONTRATO}}</span></div>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <h1>CONTRATO DE ARRENDAMIENTO DE SALÓN DE EVENTOS</h1>
+      <p class="muted small">
+        Esta es una plantilla de prueba. Se recomienda revisión y adecuación por un profesional antes de usar en producción.
+      </p>
+
+      <div class="box">
+        <h2>1) Datos del Cliente (Arrendatario)</h2>
+        <table>
+          <tr>
+            <th style="width:32%;">Cliente</th>
+            <td>{{CLIENTE}}</td>
+          </tr>
+          <tr>
+            <th>RFC</th>
+            <td>{{RFC}}</td>
+          </tr>
+          <tr>
+            <th>Teléfono</th>
+            <td>{{TELEFONO}}</td>
+          </tr>
+          <tr>
+            <th>Email</th>
+            <td>{{EMAIL}}</td>
+          </tr>
+        </table>
+      </div>
+
+      <div class="box">
+        <h2>2) Datos de la Reservación</h2>
+        <table>
+          <tr>
+            <th style="width:32%;">Espacio / Salón</th>
+            <td>{{ESPACIO}}</td>
+          </tr>
+          <tr>
+            <th>Clave / Referencia</th>
+            <td class="mono">{{CLAVE}}</td>
+          </tr>
+          <tr>
+            <th>Fecha y hora de inicio</th>
+            <td>{{FECHA_INICIO}}</td>
+          </tr>
+          <tr>
+            <th>Fecha y hora de término</th>
+            <td>{{FECHA_FIN}}</td>
+          </tr>
+          <tr>
+            <th>Monto total</th>
+            <td><strong>{{MONTO_TOTAL}}</strong></td>
+          </tr>
+        </table>
+      </div>
+
+      <h2>3) Declaraciones</h2>
+      <div class="clause">
+        <p>
+          <strong>3.1 “Casa de Piedra”</strong> (en lo sucesivo, <strong>EL ARRENDADOR</strong>) declara que cuenta con la facultad
+          para otorgar en arrendamiento el espacio descrito en el apartado “Datos de la Reservación”.
+        </p>
+        <p>
+          <strong>3.2 {{CLIENTE}}</strong> (en lo sucesivo, <strong>EL ARRENDATARIO</strong>) declara que tiene interés en utilizar
+          el espacio para la realización de un evento privado y que proporciona datos veraces para la elaboración del presente contrato.
+        </p>
+      </div>
+
+      <h2>4) Objeto</h2>
+      <div class="clause">
+        <p>
+          <strong>EL ARRENDADOR</strong> concede a <strong>EL ARRENDATARIO</strong> el uso temporal del salón <strong>{{ESPACIO}}</strong>,
+          identificado con clave <strong class="mono">{{CLAVE}}</strong>, durante el periodo comprendido entre
+          <strong>{{FECHA_INICIO}}</strong> y <strong>{{FECHA_FIN}}</strong>, conforme a las condiciones establecidas en este contrato.
+        </p>
+      </div>
+
+      <h2>5) Vigencia y horario</h2>
+      <div class="clause">
+        <p>
+          La vigencia del presente contrato se limita al horario contratado:
+          <strong>{{FECHA_INICIO}}</strong> a <strong>{{FECHA_FIN}}</strong>.
+          Cualquier extensión de horario estará sujeta a disponibilidad y a cargos adicionales acordados por escrito.
+        </p>
+      </div>
+
+      <h2>6) Precio y forma de pago</h2>
+      <div class="clause">
+        <p>
+          El monto total acordado por el arrendamiento del espacio es de <strong>{{MONTO_TOTAL}}</strong>.
+        </p>
+        <ul>
+          <li>Anticipo: (indicar porcentaje/monto) _________</li>
+          <li>Saldo: (indicar fecha límite) _________</li>
+          <li>Forma de pago: (transferencia/efectivo/tarjeta) _________</li>
+        </ul>
+        <p class="muted small">
+          Nota: Esta plantilla no fija porcentajes; déjalos definidos según tus políticas internas.
+        </p>
+      </div>
+
+      <h2>7) Depósito en garantía (si aplica)</h2>
+      <div class="clause">
+        <p>
+          En caso de establecer depósito en garantía, éste será utilizado para cubrir daños al inmueble, mobiliario, equipo,
+          limpieza extraordinaria o incumplimientos. El remanente (si lo hubiera) se reembolsará dentro de ____ días hábiles
+          posteriores al evento, previa verificación.
+        </p>
+      </div>
+
+      <h2>8) Uso del espacio y reglas generales</h2>
+      <div class="clause">
+        <ul>
+          <li>El uso del espacio será exclusivamente para el evento convenido y dentro del horario contratado.</li>
+          <li>Queda prohibido subarrendar, ceder o permitir el uso a terceros sin autorización escrita del ARRRENDADOR.</li>
+          <li>No se permite alterar instalaciones, perforar muros o realizar modificaciones sin autorización.</li>
+          <li>EL ARRENDATARIO se compromete a respetar aforo, normativas internas y disposiciones de seguridad.</li>
+          <li>En caso de música/sonido, el volumen deberá respetar límites y horarios establecidos por el ARRRENDADOR.</li>
+        </ul>
+      </div>
+
+      <h2>9) Responsabilidad por daños</h2>
+      <div class="clause">
+        <p>
+          EL ARRENDATARIO será responsable por los daños ocasionados por él, sus invitados, proveedores o cualquier persona
+          que ingrese bajo su autorización. Los costos de reparación y/o reposición serán cubiertos por EL ARRENDATARIO.
+        </p>
+      </div>
+
+      <h2>10) Proveedores externos</h2>
+      <div class="clause">
+        <p>
+          En caso de ingresar proveedores externos (banquete, DJ, decoración, etc.), EL ARRENDATARIO deberá asegurar que
+          cumplan las reglas del recinto (horarios de montaje/desmontaje, cuidado de instalaciones, limpieza y seguridad).
+        </p>
+      </div>
+
+      <h2>11) Cancelaciones y reprogramaciones</h2>
+      <div class="clause">
+        <p>
+          Las políticas de cancelación y/o reprogramación deberán establecerse conforme a las condiciones comerciales vigentes
+          de Casa de Piedra, indicando por escrito porcentajes de penalización y plazos.
+        </p>
+        <ul>
+          <li>Cancelación con más de ___ días: _________</li>
+          <li>Cancelación con ___ a ___ días: _________</li>
+          <li>Cancelación con menos de ___ días: _________</li>
+          <li>Reprogramación (condiciones): _________</li>
+        </ul>
+      </div>
+
+      <h2>12) Caso fortuito o fuerza mayor</h2>
+      <div class="clause">
+        <p>
+          Ninguna de las partes será responsable por incumplimientos derivados de caso fortuito o fuerza mayor, siempre que
+          se notifique oportunamente y se busque una solución razonable (reprogramación, ajustes o, en su caso, devolución
+          conforme a políticas aplicables).
+        </p>
+      </div>
+
+      <h2>13) Datos de contacto y notificaciones</h2>
+      <div class="clause">
+        <p>
+          Las notificaciones relacionadas con este contrato se podrán realizar al correo <strong>{{EMAIL}}</strong> y al teléfono
+          <strong>{{TELEFONO}}</strong> del ARRENDATARIO, así como a los medios oficiales definidos por Casa de Piedra.
+        </p>
+      </div>
+
+      <h2>14) Aceptación</h2>
+      <div class="clause">
+        <p>
+          Leído que fue el presente contrato y enteradas las partes de su contenido y alcance, lo firman por duplicado en la
+          fecha <strong>{{FECHA_HOY}}</strong>, quedando un ejemplar en poder de cada una.
+        </p>
+      </div>
+
+      <div class="signatures">
+        <div class="sig">
+          <strong>EL ARRENDADOR</strong>
+          <div class="muted small">Casa de Piedra</div>
+          <div class="line">
+            Nombre y firma: ____________________________
+          </div>
+          <div class="muted small">Cargo: ____________________________</div>
+        </div>
+
+        <div class="sig">
+          <strong>EL ARRENDATARIO</strong>
+          <div class="muted small">{{CLIENTE}}</div>
+          <div class="line">
+            Nombre y firma: ____________________________
+          </div>
+          <div class="muted small">RFC: {{RFC}}</div>
+        </div>
+      </div>
+
+      <p class="muted small" style="margin-top:14px;">
+        Referencias internas: Orden <span class="mono">{{NUM_ORDEN}}</span> · Contrato <span class="mono">{{NUM_CONTRATO}}</span> · Clave <span class="mono">{{CLAVE}}</span>
+      </p>
+    </main>
+
+    <footer>
+      <div>
+        Este documento es una plantilla de prueba en HTML para uso interno. Ajusta las cláusulas, datos del arrendador,
+        políticas y anexos según tus procesos y requisitos legales aplicables.
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

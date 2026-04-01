@@ -98,6 +98,48 @@ Si necesitas regenerar la carpeta pública manualmente:
 powershell -NoProfile -ExecutionPolicy Bypass -File production\deploy\prepare-public-dir.ps1
 ```
 
+### 3. Configuración de IP (Acceso en Red Local o Producción)
+
+Para que otros equipos de la red puedan acceder al sistema, debes asignar la IP del servidor (ej. `192.168.1.100`) en lugar de `127.0.0.1`.
+
+**1. Configurar la IP en el Backend:**
+Usa los scripts de producción para que PocketBase escuche en la IP correcta o en todas las interfaces (`0.0.0.0`):
+
+```bat
+production\backend-service.bat set-bind 0.0.0.0:8090
+production\backend-service.bat set-url http://TU_IP_LOCAL:8090
+production\backend-service.bat restart
+```
+*(Reemplaza `TU_IP_LOCAL` por la IP real del servidor, por ejemplo `192.168.1.100`)*
+
+**2. Actualizar la IP en el Frontend:**
+Debes indicar al frontend dónde encontrar al backend. Tienes que modificar estos **dos archivos principales**:
+
+1. **`frontend/client/config/hub-runtime.json`**
+   Cambia `BACKEND_URL` por la IP del servidor.
+   ```json
+   {
+       "BACKEND_URL": "http://TU_IP_LOCAL:8090",
+       "FINANZAS_SCHEMA": "finanzas",
+       ...
+   }
+   ```
+
+2. **`frontend/client/public/assets/libs/js/env.js`**
+   Cambia `POCKETBASE_URL` por la IP del servidor.
+   *(Este archivo controla la conexión de las páginas públicas de los catálogos).*
+   ```javascript
+   window.ENV = {
+       POCKETBASE_URL: 'http://TU_IP_LOCAL:8090',
+       ...
+   };
+   ```
+
+**(Importante)**: Si el frontend falla al cargar la nueva configuración porque la caché del navegador quedó con la IP vieja de `hub-runtime.json`, deberás borrar la caché o usar modo incógnito.
+
+Después de realizar estos cambios, los usuarios en la red podrán acceder al sistema ingresando en su navegador a:
+`http://TU_IP_LOCAL:8090/index.html`
+
 Nota de recuperación:
 
 - si el backend falló en un clon limpio sin datos reales, elimina `backend\pb_data\` y vuelve a iniciar para recrear la base desde cero

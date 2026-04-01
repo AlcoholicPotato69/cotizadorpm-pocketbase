@@ -133,11 +133,10 @@ async function pmEnsureCatalogManageSession(actionLabel = 'guardar cambios') {
     if (!IS_PM_CATALOG_ADMIN_PAGE) return true;
     try {
         const authCtx = window.HUB_SESSION?.ensureAuth
-            ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, allowCachedUser: false, redirectOnFail: true })
-            : await window.PB_SERVICES.auth.bootstrap({ schema: FIN_SCHEMA, allowCachedUser: false });
+            ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, allowCachedUser: false, redirectOnFail: true, forceRefresh: true })
+            : { session: await window.PB_SERVICES.auth.ensureFreshSession({ schema: FIN_SCHEMA, allowStaleOnError: false, forceRefresh: true }) };
         const session = authCtx?.session || null;
-        const token = String(session?.access_token || session?.token || '').trim();
-        if (session?.user && (token || authCtx?.profile || authCtx?.user)) return true;
+        if (session?.user) return true;
     } catch (_) { }
     window.showToast?.(`Tu sesión expiró. Inicia sesión de nuevo para ${actionLabel}.`, 'error');
     return false;
@@ -421,6 +420,19 @@ function normalizeSpaceMeasureUnit(value) {
     if (unit === 'M2') return 'M2';
     return 'M';
 }
+function normalizeCatalogAdjustmentType(value) {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw || raw === 'ninguno') return 'ninguno';
+    if (raw === 'porcentaje') return 'aumento';
+    if (raw === 'aumento' || raw === 'descuento' || raw === 'monto_fijo') return raw;
+    return 'ninguno';
+}
+function parseCatalogNumberInput(value, fallback = 0) {
+    const normalized = String(value ?? '').trim().replace(',', '.');
+    if (!normalized) return fallback;
+    const num = parseFloat(normalized);
+    return Number.isFinite(num) ? num : fallback;
+}
 function normalizePmMaterialTag(value) {
     const text = String(value || '').trim();
     const folded = normalizeCatalogSearchText(text);
@@ -675,10 +687,11 @@ function normalizeCfgDates(cfg) {
 function buildSpacePrice(space, opts = {}) {
     if (!space) return { subtotal: 0, taxes: 0, total: 0, taxIds: [] };
     const hasCustom = opts.customBase !== undefined && opts.customBase !== null && opts.customBase !== '';
+    const adjustmentType = normalizeCatalogAdjustmentType(space.ajuste_tipo);
     let subtotal = hasCustom ? (parseFloat(opts.customBase) || 0) : (parseFloat(space.precio_base || 0) || 0);
     if (!hasCustom) {
-        if (String(space.ajuste_tipo || '') === 'aumento') subtotal += subtotal * ((parseFloat(space.ajuste_porcentaje || 0) || 0) / 100);
-        if (String(space.ajuste_tipo || '') === 'descuento') subtotal -= subtotal * ((parseFloat(space.ajuste_porcentaje || 0) || 0) / 100);
+        if (adjustmentType === 'aumento') subtotal += subtotal * ((parseFloat(space.ajuste_porcentaje || 0) || 0) / 100);
+        if (adjustmentType === 'descuento') subtotal -= subtotal * ((parseFloat(space.ajuste_porcentaje || 0) || 0) / 100);
     }
     const taxIds = parseIds(space.impuestos_ids || space.impuestos);
     let taxes = 0;
@@ -770,8 +783,9 @@ function calculateDayByDayTotal(space, startStr, endStr, guests, options = {}) {
         keys.push(key);
 
         let price = parseFloat(space.precio_base || 0);
-        if (String(space.ajuste_tipo || '') === 'aumento') price += price * ((parseFloat(space.ajuste_porcentaje || 0) || 0) / 100);
-        if (String(space.ajuste_tipo || '') === 'descuento') price -= price * ((parseFloat(space.ajuste_porcentaje || 0) || 0) / 100);
+        const adjustmentType = normalizeCatalogAdjustmentType(space.ajuste_tipo);
+        if (adjustmentType === 'aumento') price += price * ((parseFloat(space.ajuste_porcentaje || 0) || 0) / 100);
+        if (adjustmentType === 'descuento') price -= price * ((parseFloat(space.ajuste_porcentaje || 0) || 0) / 100);
 
         // Check for blocked days
         if (!options.ignoreBlocks && pmQuoteBlockedRanges.some(b => rangesOverlap(key, key, b.start, b.end))) {
@@ -1216,17 +1230,18 @@ function renderSpaces(list) {
 
     list.forEach(s => {
         let adjustedBase = parseFloat(s.precio_base);
+        const adjustmentType = normalizeCatalogAdjustmentType(s.ajuste_tipo);
         let badgeHTML = '';
         const taxDetails = getSpaceTaxDetails(s);
         const taxPriceLabel = taxDetails.length === 1 ? taxDetails[0].nombre : 'Impuestos';
         const infoRowsHtml = renderCatalogSpaceInfoRows(s);
         const quoteInfoRows = getCatalogSpaceInfoRows(s, { includeType: true });
 
-        if (s.ajuste_tipo === 'aumento') {
+        if (adjustmentType === 'aumento') {
             adjustedBase += s.precio_base * (s.ajuste_porcentaje / 100);
             badgeHTML = `<div class="absolute top-2 left-2 bg-green-500 text-white text-[10px] font-bold px-2 py-1 rounded shadow-md z-10 flex items-center gap-1"><i class="fa-solid fa-arrow-trend-up"></i> +${s.ajuste_porcentaje}%</div>`;
         }
-        if (s.ajuste_tipo === 'descuento') {
+        if (adjustmentType === 'descuento') {
             adjustedBase -= s.precio_base * (s.ajuste_porcentaje / 100);
             badgeHTML = `<div class="absolute top-2 left-2 bg-red-500 text-white text-[10px] font-bold px-2 py-1 rounded shadow-md z-10 flex items-center gap-1"><i class="fa-solid fa-tag"></i> -${s.ajuste_porcentaje}%</div>`;
         }
@@ -1563,7 +1578,7 @@ window.openManagerModal = function (id) {
         document.getElementById('mgr-unidad').value = s.medida_unidad || s.unidad_medida || 'M';
 
         document.getElementById('mgr-base').value = s.precio_base;
-        document.getElementById('mgr-adj-type').value = s.ajuste_tipo || 'ninguno'; document.getElementById('mgr-adj-pct').value = s.ajuste_porcentaje || 0;
+        document.getElementById('mgr-adj-type').value = normalizeCatalogAdjustmentType(s.ajuste_tipo || 'ninguno'); document.getElementById('mgr-adj-pct').value = s.ajuste_porcentaje || 0;
         document.getElementById('mgr-active').checked = s.activa !== false;
 
         let allUrls = []; try { if (s.imagen_url && typeof s.imagen_url === 'string' && s.imagen_url.startsWith('[')) allUrls = JSON.parse(s.imagen_url); else if (s.imagen_url) allUrls = [s.imagen_url]; } catch (e) { }
@@ -1598,6 +1613,16 @@ window.saveSpace = async function () {
     if (!myPermissions.catalog_manage) return;
     if (!(await pmEnsureCatalogManageSession('guardar cambios'))) return;
     const id = document.getElementById('mgr-id').value;
+    const clave = document.getElementById('mgr-key').value.toUpperCase().trim();
+    const nombre = document.getElementById('mgr-name').value.trim();
+    const precioBase = Math.max(0, parseCatalogNumberInput(document.getElementById('mgr-base').value, 0));
+    const ajusteTipo = normalizeCatalogAdjustmentType(document.getElementById('mgr-adj-type').value);
+    const ajustePorcentaje = ajusteTipo === 'ninguno'
+        ? 0
+        : Math.max(0, parseCatalogNumberInput(document.getElementById('mgr-adj-pct').value, 0));
+    const isActive = !!document.getElementById('mgr-active').checked;
+    if (!clave) return window.showToast('La clave es obligatoria.', 'error');
+    if (!nombre) return window.showToast('El nombre es obligatorio.', 'error');
     const selectedTaxes = Array.from(document.querySelectorAll('.tax-check:checked'))
         .map(cb => String(cb.value || '').trim())
         .filter(Boolean);
@@ -1618,8 +1643,8 @@ window.saveSpace = async function () {
     document.getElementById('mgr-location').value = normalizePmLocationLabel(location);
 
     const payload = {
-        clave: document.getElementById('mgr-key').value.toUpperCase().trim(),
-        nombre: document.getElementById('mgr-name').value,
+        clave,
+        nombre,
         tipo: selectedType,
         descripcion: document.getElementById('mgr-desc').value,
         etiquetas: tagsArray, // Guarda etiquetas en base de datos
@@ -1628,10 +1653,11 @@ window.saveSpace = async function () {
         medida_ancho: medidaAncho ?? 0,
         medida_alto: medidaAlto ?? 0,
         medida_unidad: medidaUnidad,
-        precio_base: parseFloat(document.getElementById('mgr-base').value),
-        ajuste_tipo: document.getElementById('mgr-adj-type').value,
-        ajuste_porcentaje: parseFloat(document.getElementById('mgr-adj-pct').value) || 0,
-        activa: document.getElementById('mgr-active').checked,
+        precio_base: precioBase,
+        ajuste_tipo: ajusteTipo,
+        ajuste_porcentaje: ajustePorcentaje,
+        activo: isActive,
+        activa: isActive,
         impuestos_ids: selectedTaxes
     };
 

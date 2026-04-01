@@ -69,6 +69,19 @@ function filterCpQuoteRowsByTenant(rows, fallback = '') {
         return !rowTenant || rowTenant === tenant;
     });
 }
+function normalizeCpQuoteAdjustmentType(value) {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw || raw === 'ninguno') return 'ninguno';
+    if (raw === 'porcentaje') return 'aumento';
+    if (raw === 'aumento' || raw === 'descuento' || raw === 'monto_fijo') return raw;
+    return 'ninguno';
+}
+function parseCpQuoteNumberInput(value, fallback = 0) {
+    const normalized = String(value ?? '').trim().replace(',', '.');
+    if (!normalized) return fallback;
+    const num = parseFloat(normalized);
+    return Number.isFinite(num) ? num : fallback;
+}
 
 function pickCpQuoteLatestConfigRow(rows) {
     const list = Array.isArray(rows) ? rows.filter((row) => row && typeof row === 'object') : [];
@@ -103,6 +116,16 @@ function findCpQuoteTaxRecord(taxId, space = null) {
     return tenantTaxes.find((tax) => String(tax?.id || '').trim() === safeId)
         || dbTaxes.find((tax) => String(tax?.id || '').trim() === safeId)
         || null;
+}
+async function ensureCpQuoteManageSession(actionLabel = 'guardar cambios') {
+    try {
+        const authCtx = window.HUB_SESSION?.ensureAuth
+            ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, allowCachedUser: false, redirectOnFail: true, forceRefresh: true })
+            : { session: await window.PB_SERVICES.auth.ensureFreshSession({ schema: FIN_SCHEMA, allowStaleOnError: false, forceRefresh: true }) };
+        if (authCtx?.session?.user) return true;
+    } catch (_) {}
+    window.showToast?.(`Tu sesión expiró. Inicia sesión de nuevo para ${actionLabel}.`, 'error');
+    return false;
 }
 
 // Bloquea recargas involuntarias cuando el destino coincide con la URL actual.
@@ -649,7 +672,7 @@ window.openManagerModal = function(id){
         let h = b2b.horarios || []; if (!Array.isArray(h)) { const mapNames = { matutino: 'Matutino', vespertino: 'Vespertino', nocturno: 'Nocturno', todo_dia: 'Todo el día' }; h = Object.keys(h).map(k => ({ nombre: mapNames[k] || k, start: h[k].start, end: h[k].end, price: h[k].price })).filter(item => item.start && item.end); }
         if (h.length > 0) h.forEach(item => window.addHorarioRow(item)); else window.addHorarioRow();
 
-        document.getElementById('mgr-adj-type').value = s.ajuste_tipo || 'ninguno'; document.getElementById('mgr-adj-pct').value = s.ajuste_porcentaje || 0; document.getElementById('mgr-active').checked = s.activa !== false; document.getElementById('btn-delete-mgr').classList.remove('hidden'); 
+        document.getElementById('mgr-adj-type').value = normalizeCpQuoteAdjustmentType(s.ajuste_tipo || 'ninguno'); document.getElementById('mgr-adj-pct').value = s.ajuste_porcentaje || 0; document.getElementById('mgr-active').checked = s.activa !== false; document.getElementById('btn-delete-mgr').classList.remove('hidden'); 
         let allUrls = []; try { if(s.imagen_url && typeof s.imagen_url === 'string' && s.imagen_url.startsWith('[')) allUrls = JSON.parse(s.imagen_url); else if(s.imagen_url) allUrls = [s.imagen_url]; } catch(e){}
         for(let i=1; i<=5; i++){
             const mgrPrev = document.getElementById(`mgr-preview-${i}`);
@@ -669,7 +692,17 @@ window.openManagerModal = function(id){
 window.saveSpace = async function(){ 
     if (!myPermissions.catalog_manage) return; const btn = document.getElementById('btn-save-mgr'); btn.disabled = true; btn.innerText = "Guardando...";
     try {
+        if (!(await ensureCpQuoteManageSession('guardar cambios'))) return;
         const id = document.getElementById('mgr-id').value; 
+        const clave = document.getElementById('mgr-key').value.toUpperCase().trim();
+        const nombre = document.getElementById('mgr-name').value.trim();
+        const ajusteTipo = normalizeCpQuoteAdjustmentType(document.getElementById('mgr-adj-type').value);
+        const ajustePorcentaje = ajusteTipo === 'ninguno'
+            ? 0
+            : Math.max(0, parseCpQuoteNumberInput(document.getElementById('mgr-adj-pct').value, 0));
+        const isActive = !!document.getElementById('mgr-active').checked;
+        if (!clave) return window.showToast('La clave es obligatoria.', 'error');
+        if (!nombre) return window.showToast('El nombre es obligatorio.', 'error');
         const selectedTaxes = Array.from(document.querySelectorAll('.tax-check:checked'))
             .map(cb => String(cb.value || '').trim())
             .filter(Boolean);
@@ -710,15 +743,15 @@ window.saveSpace = async function(){
         }
 
         const payload = { 
-            clave: document.getElementById('mgr-key').value.toUpperCase().trim(), nombre: document.getElementById('mgr-name').value, tipo: document.getElementById('mgr-type').value, descripcion: document.getElementById('mgr-desc').value, precio_base: maxPriceFound, 
+            clave, nombre, tipo: document.getElementById('mgr-type').value, descripcion: document.getElementById('mgr-desc').value, precio_base: Math.max(0, parseCpQuoteNumberInput(maxPriceFound, 0)), 
             precios_por_dia: ranges, dias_bloqueados: blockedDays, config_b2b: b2bConfig, etiquetas: tagsArray, 
-            ajuste_tipo: document.getElementById('mgr-adj-type').value, ajuste_porcentaje: parseFloat(document.getElementById('mgr-adj-pct').value) || 0, activa: document.getElementById('mgr-active').checked, impuestos_ids: selectedTaxes, imagen_url: imgUrl 
+            ajuste_tipo: ajusteTipo, ajuste_porcentaje: ajustePorcentaje, activo: isActive, activa: isActive, impuestos_ids: selectedTaxes, imagen_url: imgUrl 
         }; 
 
         if(id) { const { error: updErr } = await window.tenantPocketBase.from('espacios').update(payload).eq('id', id); if(updErr) throw updErr; } else { const { error: insErr } = await window.tenantPocketBase.from('espacios').insert(payload); if(insErr) throw insErr; } 
         window.showToast("Guardado", "success"); window.closeModal('manager-modal'); loadCatalog(); fileInput.value = '';
 
-    } catch(e) { console.error("Error al guardar:", e); window.showToast("Error: Verifica la consola", "error"); } finally { btn.disabled = false; btn.innerText = "Guardar"; }
+    } catch(e) { console.error("Error al guardar:", e); window.showToast("Error al guardar: " + (e?.message || e), "error"); } finally { btn.disabled = false; btn.innerText = "Guardar"; }
 }
 
 // LOGICA DE FECHAS DE MONTAJE PARA CATALOG (COTIZACIÓN RÁPIDA)
@@ -883,8 +916,9 @@ window.updateQuoteCalculation = function() {
         let subSpace = 0;
         if (capacityOk && blockedOk) {
             subSpace = base + horarioCost + prem.total + horasCost;
-            if(space.ajuste_tipo === 'aumento') subSpace += subSpace * ((parseFloat(space.ajuste_porcentaje) || 0) / 100);
-            if(space.ajuste_tipo === 'descuento') subSpace -= subSpace * ((parseFloat(space.ajuste_porcentaje) || 0) / 100);
+            const adjustmentType = normalizeCpQuoteAdjustmentType(space.ajuste_tipo);
+            if(adjustmentType === 'aumento') subSpace += subSpace * ((parseFloat(space.ajuste_porcentaje) || 0) / 100);
+            if(adjustmentType === 'descuento') subSpace -= subSpace * ((parseFloat(space.ajuste_porcentaje) || 0) / 100);
         }
         let spaceTaxTotal = 0;
         const taxIds = parseIds(space.impuestos_ids || space.impuestos);
@@ -1098,7 +1132,7 @@ window.generatePDF = async function(){
 window.filterCatalogLogic = function() { const term = document.getElementById('cat-search').value.toLowerCase(); const type = document.getElementById('cat-filter-type').value; const sort = document.getElementById('cat-sort').value; let filtered = allSpaces.filter(s => (s.nombre.toLowerCase().includes(term) || s.clave.toLowerCase().includes(term)) && (type === 'all' || s.tipo === type)); if (sort === 'price_asc') filtered.sort((a,b) => a.precio_base - b.precio_base); if (sort === 'price_desc') filtered.sort((a,b) => b.precio_base - a.precio_base); renderSpaces(filtered); }
 window.previewImage = function(i, id){ const p = document.getElementById(id || 'mgr-preview'); if(i.files && i.files[0]){ const r=new FileReader(); r.onload=e=>{ p.src=e.target.result; p.classList.remove('hidden'); p.setAttribute('data-modified', 'true'); }; r.readAsDataURL(i.files[0]); } }
 window.checkAvailability = async function() { const s=document.getElementById('date-start').value, e=document.getElementById('date-end').value; if(!s||!e)return; const {data} = await window.tenantPocketBase.from('cotizaciones').select('id').eq('espacio_id',currentSpace.id).in('status',['aprobada','finalizada']).or(`and(fecha_inicio.lte.${e},fecha_fin.gte.${s})`); const msg=document.getElementById('avail-msg'); msg.classList.remove('hidden'); if(data.length){ msg.innerText='OCUPADO'; msg.className='text-red-500 font-bold text-center'; document.getElementById('btn-generate').disabled=true; }else{ msg.innerText='DISPONIBLE'; msg.className='text-green-600 font-bold text-center'; document.getElementById('btn-generate').disabled=false; } }
-window.askDeleteSpace = async function(){ window.openConfirm("¿Eliminar espacio?", async () => { await window.tenantPocketBase.from('espacios').delete().eq('id', document.getElementById('mgr-id').value); window.showToast("Eliminado"); window.closeModal('manager-modal'); loadCatalog(); }); }
+window.askDeleteSpace = async function(){ window.openConfirm("¿Eliminar espacio?", async () => { if (!(await ensureCpQuoteManageSession('eliminar el espacio'))) return; await window.tenantPocketBase.from('espacios').delete().eq('id', document.getElementById('mgr-id').value); window.showToast("Eliminado"); window.closeModal('manager-modal'); loadCatalog(); }); }
 
 // =========================================================================
 // EXTENSIÓN 2026: MULTI-ESPACIO + PREMONTAJE 25% DÍA BASE + BLOQUEO CRUZADO
@@ -2082,8 +2116,9 @@ window.updateQuoteCalculation = function(){
         let subSpace = 0;
         if (capacityOk && blockedOk) {
             subSpace = base + horarioCost + prem.total + horasCost;
-            if(space.ajuste_tipo === 'aumento') subSpace += subSpace * ((parseFloat(space.ajuste_porcentaje) || 0) / 100);
-            if(space.ajuste_tipo === 'descuento') subSpace -= subSpace * ((parseFloat(space.ajuste_porcentaje) || 0) / 100);
+            const adjustmentType = normalizeCpQuoteAdjustmentType(space.ajuste_tipo);
+            if(adjustmentType === 'aumento') subSpace += subSpace * ((parseFloat(space.ajuste_porcentaje) || 0) / 100);
+            if(adjustmentType === 'descuento') subSpace -= subSpace * ((parseFloat(space.ajuste_porcentaje) || 0) / 100);
         }
         let spaceTaxTotal = 0;
         const taxIds = parseIds(space.impuestos_ids || space.impuestos);

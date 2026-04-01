@@ -64,6 +64,19 @@ function filterCpCatalogRowsByTenant(rows, fallback = '') {
         return !rowTenant || rowTenant === tenant;
     });
 }
+function normalizeCpCatalogAdjustmentType(value) {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw || raw === 'ninguno') return 'ninguno';
+    if (raw === 'porcentaje') return 'aumento';
+    if (raw === 'aumento' || raw === 'descuento' || raw === 'monto_fijo') return raw;
+    return 'ninguno';
+}
+function parseCpCatalogNumberInput(value, fallback = 0) {
+    const normalized = String(value ?? '').trim().replace(',', '.');
+    if (!normalized) return fallback;
+    const num = parseFloat(normalized);
+    return Number.isFinite(num) ? num : fallback;
+}
 
 function pickCpCatalogLatestConfigRow(rows) {
     const list = Array.isArray(rows) ? rows.filter((row) => row && typeof row === 'object') : [];
@@ -108,11 +121,10 @@ async function cpEnsureCatalogManageSession(actionLabel = 'guardar cambios') {
     if (!IS_CATALOG_ADMIN_PAGE) return true;
     try {
         const authCtx = window.HUB_SESSION?.ensureAuth
-            ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, allowCachedUser: false, redirectOnFail: true })
-            : await window.PB_SERVICES.auth.bootstrap({ schema: FIN_SCHEMA, allowCachedUser: false });
+            ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, allowCachedUser: false, redirectOnFail: true, forceRefresh: true })
+            : { session: await window.PB_SERVICES.auth.ensureFreshSession({ schema: FIN_SCHEMA, allowStaleOnError: false, forceRefresh: true }) };
         const session = authCtx?.session || null;
-        const token = String(session?.access_token || session?.token || '').trim();
-        if (session?.user && (token || authCtx?.profile || authCtx?.user)) return true;
+        if (session?.user) return true;
     } catch (_) {}
     window.showToast?.(`Tu sesión expiró. Inicia sesión de nuevo para ${actionLabel}.`, 'error');
     return false;
@@ -469,10 +481,11 @@ function renderSpaces(list) {
     list.forEach(s => { 
         const infoRowsHtml = renderCpCardInfoRows(s);
         let adjustedBase = parseFloat(s.precio_base || 0) || 0;
+        const adjustmentType = normalizeCpCatalogAdjustmentType(s.ajuste_tipo);
         const taxDetails = getSpaceTaxDetails(s);
         const taxPriceLabel = taxDetails.length === 1 ? taxDetails[0].nombre : 'Impuestos';
-        if (s.ajuste_tipo === 'aumento') adjustedBase += adjustedBase * ((parseFloat(s.ajuste_porcentaje || 0) || 0) / 100);
-        if (s.ajuste_tipo === 'descuento') adjustedBase -= adjustedBase * ((parseFloat(s.ajuste_porcentaje || 0) || 0) / 100);
+        if (adjustmentType === 'aumento') adjustedBase += adjustedBase * ((parseFloat(s.ajuste_porcentaje || 0) || 0) / 100);
+        if (adjustmentType === 'descuento') adjustedBase -= adjustedBase * ((parseFloat(s.ajuste_porcentaje || 0) || 0) / 100);
         let totalTax = 0;
         taxDetails.forEach((t) => {
             const rate = parseFloat(t?.porcentaje || 0) > 1 ? (parseFloat(t.porcentaje || 0) / 100) : (parseFloat(t?.porcentaje || 0) || 0);
@@ -634,7 +647,7 @@ window.openManagerModal = function(id){
         let h = b2b.horarios || []; if (!Array.isArray(h)) { const mapNames = { matutino: 'Matutino', vespertino: 'Vespertino', nocturno: 'Nocturno', todo_dia: 'Todo el día' }; h = Object.keys(h).map(k => ({ nombre: mapNames[k] || k, start: h[k].start, end: h[k].end, price: h[k].price })).filter(item => item.start && item.end); }
         if (h.length > 0) h.forEach(item => window.addHorarioRow(item)); else window.addHorarioRow();
 
-        document.getElementById('mgr-adj-type').value = s.ajuste_tipo || 'ninguno'; document.getElementById('mgr-adj-pct').value = s.ajuste_porcentaje || 0; document.getElementById('mgr-active').checked = s.activa !== false; document.getElementById('btn-delete-mgr').classList.remove('hidden'); 
+        document.getElementById('mgr-adj-type').value = normalizeCpCatalogAdjustmentType(s.ajuste_tipo || 'ninguno'); document.getElementById('mgr-adj-pct').value = s.ajuste_porcentaje || 0; document.getElementById('mgr-active').checked = s.activa !== false; document.getElementById('btn-delete-mgr').classList.remove('hidden'); 
         let allUrls = []; try { if(s.imagen_url && typeof s.imagen_url === 'string' && s.imagen_url.startsWith('[')) allUrls = JSON.parse(s.imagen_url); else if(s.imagen_url) allUrls = [s.imagen_url]; } catch(e){}
         for(let i=1; i<=5; i++){
             const mgrPrev = document.getElementById(`mgr-preview-${i}`);
@@ -656,6 +669,15 @@ window.saveSpace = async function(){
     try {
         if (!(await cpEnsureCatalogManageSession('guardar cambios'))) return;
         const id = document.getElementById('mgr-id').value; 
+        const clave = document.getElementById('mgr-key').value.toUpperCase().trim();
+        const nombre = document.getElementById('mgr-name').value.trim();
+        const ajusteTipo = normalizeCpCatalogAdjustmentType(document.getElementById('mgr-adj-type').value);
+        const ajustePorcentaje = ajusteTipo === 'ninguno'
+            ? 0
+            : Math.max(0, parseCpCatalogNumberInput(document.getElementById('mgr-adj-pct').value, 0));
+        const isActive = !!document.getElementById('mgr-active').checked;
+        if (!clave) return window.showToast('La clave es obligatoria.', 'error');
+        if (!nombre) return window.showToast('El nombre es obligatorio.', 'error');
         const selectedTaxes = Array.from(document.querySelectorAll('.tax-check:checked'))
             .map(cb => String(cb.value || '').trim())
             .filter(Boolean);
@@ -675,9 +697,9 @@ window.saveSpace = async function(){
         const b2bConfig = { precio_hora_extra: parseFloat(document.getElementById('cfg-precio-hora').value) || 0, horarios: horariosArray };
 
         const payload = { 
-            clave: document.getElementById('mgr-key').value.toUpperCase().trim(), nombre: document.getElementById('mgr-name').value, tipo: document.getElementById('mgr-type').value, descripcion: document.getElementById('mgr-desc').value, precio_base: maxPriceFound, 
+            clave, nombre, tipo: document.getElementById('mgr-type').value, descripcion: document.getElementById('mgr-desc').value, precio_base: Math.max(0, parseCpCatalogNumberInput(maxPriceFound, 0)), 
             precios_por_dia: ranges, dias_bloqueados: blockedDays, dias_bloqueados_premontaje: blockedPremontajeDays, config_b2b: b2bConfig, etiquetas: tagsArray, 
-            ajuste_tipo: document.getElementById('mgr-adj-type').value, ajuste_porcentaje: parseFloat(document.getElementById('mgr-adj-pct').value) || 0, activa: document.getElementById('mgr-active').checked, impuestos_ids: selectedTaxes 
+            ajuste_tipo: ajusteTipo, ajuste_porcentaje: ajustePorcentaje, activo: isActive, activa: isActive, impuestos_ids: selectedTaxes 
         }; 
         
         const fd = new FormData();
@@ -813,6 +835,7 @@ window.updateAdminConceptsSummary = function() { const container = document.getE
 
 window.updateQuoteCalculation = function() {
     if(!currentSpace) return;
+    const adjustmentType = normalizeCpCatalogAdjustmentType(currentSpace.ajuste_tipo);
     const s = document.getElementById('date-start').value; const e = document.getElementById('date-end').value; const g = document.getElementById('q-guests').value; 
     let base = 0; if (s && e) { base = calculateDayByDayTotal(currentSpace, s, e, g).total; } 
 
@@ -825,8 +848,8 @@ window.updateQuoteCalculation = function() {
     let subtotal = base + costoHorario + (diasM * pMontaje) + (hrsE * pHora);
     adminSelectedConcepts.forEach(c => { subtotal += parseFloat(c.amount); });
 
-    if(currentSpace.ajuste_tipo === 'aumento') subtotal += subtotal * (currentSpace.ajuste_porcentaje/100);
-    if(currentSpace.ajuste_tipo === 'descuento') subtotal -= subtotal * (currentSpace.ajuste_porcentaje/100);
+    if(adjustmentType === 'aumento') subtotal += subtotal * (currentSpace.ajuste_porcentaje/100);
+    if(adjustmentType === 'descuento') subtotal -= subtotal * (currentSpace.ajuste_porcentaje/100);
 
     let taxAmt = 0; const sTaxes = parseIds(currentSpace.impuestos_ids || currentSpace.impuestos);
     if(sTaxes.length && dbTaxes.length) { sTaxes.forEach(tid => { const t = findCpCatalogTaxRecord(tid, currentSpace); if(t) { const rate = t.porcentaje > 1 ? t.porcentaje/100 : t.porcentaje; taxAmt += subtotal * rate; } }); }
@@ -1251,11 +1274,12 @@ window.updateQuoteCalculation = function(){
         const horarioCost = parseFloat(cfg.horarioPrice || 0);
         const prem = __cpCalcPremCost(space, cfg);
         const horasCost = (parseInt(cfg.horasExtra, 10) || 0) * horaUnit;
+        const adjustmentType = normalizeCpCatalogAdjustmentType(space.ajuste_tipo);
         let subSpace = 0;
         if (capacityOk) {
             subSpace = base + horarioCost + prem.total + horasCost;
-            if(space.ajuste_tipo === 'aumento') subSpace += subSpace * ((parseFloat(space.ajuste_porcentaje) || 0) / 100);
-            if(space.ajuste_tipo === 'descuento') subSpace -= subSpace * ((parseFloat(space.ajuste_porcentaje) || 0) / 100);
+            if(adjustmentType === 'aumento') subSpace += subSpace * ((parseFloat(space.ajuste_porcentaje) || 0) / 100);
+            if(adjustmentType === 'descuento') subSpace -= subSpace * ((parseFloat(space.ajuste_porcentaje) || 0) / 100);
         }
         let spaceTaxTotal = 0;
         const taxIds = parseIds(space.impuestos_ids || space.impuestos);
