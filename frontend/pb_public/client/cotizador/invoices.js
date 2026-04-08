@@ -20,6 +20,65 @@ let approvedOrders = [], selectedOrder = null;
 let files = { xml: null, pdf: null };
 let xmlData = null; // Datos extraídos del XML
 let confirmCallback = null;
+let pmInvoicesRestoringViewState = false;
+const PM_INVOICES_VIEW_STATE_SCOPE = 'pm_invoices';
+
+function pmInvoicesParseJson(value) {
+    if (!value) return {};
+    if (typeof value === 'object') return value;
+    if (typeof value === 'string') {
+        try { return JSON.parse(value) || {}; } catch (_) { return {}; }
+    }
+    return {};
+}
+
+function pmInvoicesIsConvenioOrder(order = {}) {
+    const details = pmInvoicesParseJson(order?.detalles_evento);
+    if (details?.convenio?.activo === true) return true;
+    const spaces = pmInvoicesParseJson(order?.espacios_detalle);
+    return Array.isArray(spaces) && spaces.some((item) => item?.convenio_activo === true || item?.convenio_indefinido === true);
+}
+
+function pmInvoicesViewStateApi() {
+    return window.__HUB_VIEW_STATE || null;
+}
+
+function pmInvoicesReadViewState() {
+    const api = pmInvoicesViewStateApi();
+    return api?.read ? (api.read(PM_INVOICES_VIEW_STATE_SCOPE, { maxAgeMs: 30 * 60 * 1000 }) || null) : null;
+}
+
+function pmInvoicesApplyViewStateControls(state = pmInvoicesReadViewState()) {
+    if (!state || typeof state !== 'object') return;
+    const searchEl = document.getElementById('search-orders');
+    if (searchEl && typeof state.search === 'string') searchEl.value = state.search;
+}
+
+function pmInvoicesSaveViewState(extra = {}) {
+    const api = pmInvoicesViewStateApi();
+    if (!api?.write) return null;
+    return api.write(PM_INVOICES_VIEW_STATE_SCOPE, {
+        search: document.getElementById('search-orders')?.value || '',
+        selectedOrderId: String(extra.selectedOrderId || selectedOrder?.id || '').trim(),
+        windowScrollY: api.getWindowScrollY ? api.getWindowScrollY() : (window.scrollY || 0),
+        elementScrolls: {
+            '#orders-list': api.getElementScrollTop ? api.getElementScrollTop('#orders-list') : (document.getElementById('orders-list')?.scrollTop || 0)
+        },
+        ...(extra && typeof extra === 'object' ? extra : {})
+    });
+}
+
+function pmInvoicesRestoreViewStateAfterRender(state = pmInvoicesReadViewState()) {
+    if (!state || typeof state !== 'object') return;
+    const api = pmInvoicesViewStateApi();
+    if (api?.restoreScrollState) api.restoreScrollState(state);
+    const selectedOrderId = String(state.selectedOrderId || '').trim();
+    if (!selectedOrderId) return;
+    window.setTimeout(() => {
+        const target = document.querySelector(`[data-order-id="${selectedOrderId}"]`);
+        if (target && typeof target.click === 'function') target.click();
+    }, 90);
+}
 
 // --- HELPERS GLOBALES ---
 window.openModal = (id) => { document.getElementById(id).classList.remove('hidden'); document.getElementById(id).classList.add('flex'); }
@@ -56,6 +115,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
     }
 
+    pmInvoicesApplyViewStateControls();
     loadOrders();
 
     document.getElementById('search-orders').addEventListener('input', (e) => filterOrders(e.target.value));
@@ -67,6 +127,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 // --- CARGA DE ÓRDENES ---
 async function loadOrders() {
+    pmInvoicesApplyViewStateControls();
     const listContainer = document.getElementById('orders-list');
     listContainer.innerHTML = '<div class="p-8 text-center text-gray-400 text-xs italic">Cargando...</div>';
 
@@ -82,11 +143,14 @@ async function loadOrders() {
         return;
     }
 
-    approvedOrders = data || [];
-    filterOrders('');
+    approvedOrders = (data || []).filter((order) => !pmInvoicesIsConvenioOrder(order));
+    pmInvoicesRestoringViewState = true;
+    filterOrders(document.getElementById('search-orders')?.value || '', { skipSave: true });
+    pmInvoicesRestoringViewState = false;
+    pmInvoicesRestoreViewStateAfterRender();
 }
 
-function filterOrders(term) {
+function filterOrders(term, options = {}) {
     const container = document.getElementById('orders-list');
     container.innerHTML = '';
     
@@ -101,6 +165,7 @@ function filterOrders(term) {
             : '<i class="fa-regular fa-circle text-gray-300 text-lg"></i>';
         
         const item = document.createElement('div');
+        item.setAttribute('data-order-id', String(o.id || ''));
         item.className = 'bg-white border border-gray-100 p-3 rounded-lg hover:bg-gray-50 cursor-pointer transition group shadow-sm mb-2';
         item.onclick = () => selectOrder(o);
         item.innerHTML = `
@@ -115,11 +180,13 @@ function filterOrders(term) {
         `;
         container.appendChild(item);
     });
+    if (!pmInvoicesRestoringViewState && options.skipSave !== true) pmInvoicesSaveViewState();
 }
 
 // --- SELECCIÓN Y LÓGICA DE VISTA ---
 function selectOrder(order) {
     selectedOrder = order;
+    pmInvoicesSaveViewState({ selectedOrderId: String(order?.id || '').trim() });
     files = { xml: null, pdf: null }; xmlData = null;
     
     document.getElementById('workspace-empty').classList.add('hidden');
@@ -237,6 +304,9 @@ function checkReady() {
 // SI EXISTE CONTRATO, SE CAMBIA STATUS A 'FINALIZADA'
 // =========================================================
 window.validateAndSaveInvoice = async function() {
+    if (selectedOrder && pmInvoicesIsConvenioOrder(selectedOrder)) {
+        return window.showToast("Las cotizaciones por convenio no requieren factura.", "error");
+    }
     if (!xmlData || !files.pdf) return;
     
     document.getElementById('loading-overlay').classList.remove('hidden');
@@ -290,6 +360,7 @@ window.validateAndSaveInvoice = async function() {
         }
         
         // Recargar
+        pmInvoicesSaveViewState({ selectedOrderId: String(selectedOrder?.id || '').trim() });
         loadOrders();
         selectedOrder = { ...selectedOrder, ...updatePayload };
         selectOrder(selectedOrder);
@@ -352,6 +423,7 @@ window.deleteInvoice = function() {
             if (error) throw error;
             
             window.showToast("Factura eliminada");
+            pmInvoicesSaveViewState({ selectedOrderId: String(selectedOrder?.id || '').trim() });
             loadOrders();
             // Resetear local
             selectedOrder.factura_xml_url = null;

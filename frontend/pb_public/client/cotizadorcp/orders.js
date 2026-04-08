@@ -8,10 +8,60 @@
 // MÓDULO DE COTIZACIONES ADMIN (EDICIÓN LIBRE DE COSTOS)
 // =========================================================================
 let orderClientProfiles = []; let orderClientProfilesById = {};
+let cpOrdersRestoringViewState = false;
+const CP_ORDERS_VIEW_STATE_SCOPE = 'cp_orders';
 
 window.finalMontajeDates = [];
 window.tempMontajeDates = [];
 window.currentMontajePrefix = 'oed';
+
+function cpOrdersViewStateApi() {
+    return window.__HUB_VIEW_STATE || null;
+}
+
+function cpOrdersReadViewState() {
+    const api = cpOrdersViewStateApi();
+    return api?.read ? (api.read(CP_ORDERS_VIEW_STATE_SCOPE, { maxAgeMs: 30 * 60 * 1000 }) || null) : null;
+}
+
+function cpOrdersApplyViewStateControls(state = cpOrdersReadViewState()) {
+    if (!state || typeof state !== 'object') return;
+    const searchEl = document.getElementById('search-orders');
+    if (searchEl && typeof state.search === 'string') searchEl.value = state.search;
+}
+
+function cpOrdersSaveViewState(extra = {}) {
+    const api = cpOrdersViewStateApi();
+    if (!api?.write) return null;
+    const state = (extra && typeof extra === 'object') ? extra : {};
+    const previousState = cpOrdersReadViewState() || {};
+    const hasSelectedOrderId = Object.prototype.hasOwnProperty.call(state, 'selectedOrderId');
+    return api.write(CP_ORDERS_VIEW_STATE_SCOPE, {
+        search: document.getElementById('search-orders')?.value || '',
+        selectedOrderId: hasSelectedOrderId
+            ? String(state.selectedOrderId || '').trim()
+            : String(previousState.selectedOrderId || '').trim(),
+        windowScrollY: api.getWindowScrollY ? api.getWindowScrollY() : (window.scrollY || 0),
+        ...state
+    });
+}
+
+function cpOrdersRestoreViewStateAfterRender(state = cpOrdersReadViewState()) {
+    if (!state || typeof state !== 'object') return;
+    const api = cpOrdersViewStateApi();
+    window.setTimeout(() => {
+        if (api?.restoreScrollState) api.restoreScrollState(state);
+        const selectedOrderId = String(state.selectedOrderId || '').trim();
+        if (!selectedOrderId) return;
+        const target = document.querySelector(`[data-order-id="${selectedOrderId}"]`);
+        if (!target) return;
+        const rect = target.getBoundingClientRect();
+        const viewportHeight = window.innerHeight || document.documentElement?.clientHeight || 0;
+        if (rect.top < 120 || (viewportHeight && rect.bottom > (viewportHeight - 120))) {
+            target.scrollIntoView({ block: 'center' });
+        }
+    }, 90);
+}
 
 async function loadClientProfilesForOrderModal() {
     const sel = document.getElementById('oed-client-profile');
@@ -1009,6 +1059,7 @@ window.askDeleteOrder = function(id, e) {
             const { error } = await __cpQuotesDelete(id);
             if (error) throw error;
             window.showToast("Cotización eliminada", "success");
+            cpOrdersSaveViewState({ selectedOrderId: '' });
             window.loadOrders();
         } catch (err) {
             window.showToast("Error: " + err.message, "error");
@@ -1064,6 +1115,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     await __cpLoadSharedPdfStyleConfig();
     __cpInitPdfStyleEditor();
+    cpOrdersApplyViewStateControls();
 
     document.getElementById('btn-confirm-action')?.addEventListener('click', () => { if(confirmCallback) confirmCallback(); window.closeModal('generic-confirm-modal'); });
     document.getElementById('btn-cancel-action')?.addEventListener('click', () => { if(cancelCallback) cancelCallback(); window.closeModal('generic-confirm-modal'); });
@@ -1427,6 +1479,8 @@ async function __orderPrimeOrderUsers(orders = []) {
 }
 
 window.loadOrders = async function() {
+    const viewState = cpOrdersSaveViewState();
+    cpOrdersApplyViewStateControls(viewState);
     const { data, error } = await __cpQuotesList({ sort: '-created_at' });
     if (error) {
         window.showToast(`No se pudieron cargar cotizaciones: ${error.message || error}`, 'error');
@@ -1435,7 +1489,14 @@ window.loadOrders = async function() {
         allOrders = (data || []).map(__orderHydrateQuotePricing);
     }
     await __orderPrimeOrderUsers(allOrders);
-    renderOrdersTable(allOrders);
+    const searchTerm = document.getElementById('search-orders')?.value || '';
+    cpOrdersRestoringViewState = true;
+    try {
+        filterOrders(searchTerm, { skipSave: true });
+    } finally {
+        cpOrdersRestoringViewState = false;
+    }
+    cpOrdersRestoreViewStateAfterRender(viewState);
 };
 
 function renderOrdersTable(data) {
@@ -1450,7 +1511,13 @@ function renderOrdersTable(data) {
         let alertsHTML = ''; if (missingIcons.length > 0 && o.status === 'aprobada') alertsHTML = `<div class="flex gap-2 justify-center mt-1.5 text-[10px] text-red-400">${missingIcons.join('')}</div>`;
 
         const tr = document.createElement('tr'); tr.className = "border-b hover:bg-gray-50 transition group cursor-pointer";
-        tr.onclick = (e) => { if(!e.target.closest('button')) window.openOrderEditorPage(o.id); };
+        tr.dataset.orderId = o.id;
+        tr.onclick = (e) => {
+            if (!e.target.closest('button')) {
+                cpOrdersSaveViewState({ selectedOrderId: o.id });
+                window.openOrderEditorPage(o.id);
+            }
+        };
         
         const folioUnificado = __orderResolveQuoteFolio(o);
         const details = parseSpacesDetail(o.espacios_detalle);
@@ -1478,6 +1545,7 @@ function renderOrdersTable(data) {
 }
 
 window.openOrderEditorPage = function(id) {
+    cpOrdersSaveViewState({ selectedOrderId: id });
     const url = `order_detail.html?quote=${encodeURIComponent(id)}`;
     window.open(url, '_blank', 'noopener');
 };
@@ -1491,8 +1559,8 @@ window.openOrderPreviewTab = function(id, docType = 'quote', action = 'view') {
     window.open(url, '_blank', 'noopener');
 };
 
-function filterOrders(term) { 
-    const lower = term.toLowerCase();
+function filterOrders(term = '', options = {}) {
+    const lower = String(term || '').toLowerCase();
     renderOrdersTable(allOrders.filter(o => {
         const folioUnificado = __orderResolveQuoteFolio(o);
         const quoteName = (o.nombre_cotizacion || o.detalles_evento?.nombre_cotizacion || '');
@@ -1500,6 +1568,7 @@ function filterOrders(term) {
                folioUnificado.toLowerCase().includes(lower) ||
                quoteName.toLowerCase().includes(lower);
     })); 
+    if (!options.skipSave && !cpOrdersRestoringViewState) cpOrdersSaveViewState();
 }
 
 window.handleMontajeInput = function(prefix) {
@@ -1841,6 +1910,10 @@ window.recalcTotal = function() {
     activeTaxIds.forEach(taxId => { const t = __orderResolveTaxRecord(taxId, spaceObj); if(t) { const taxVal = sub * __orderResolveTaxRate(t); taxTotal += taxVal; taxHtml += `<div class="flex justify-between text-[10px] text-gray-500"><span>${t.nombre}</span><span>+${taxVal.toLocaleString('es-MX', {style:'currency',currency:'MXN'})}</span></div>`; } });
 
     document.getElementById('oed-tax-summary-display').innerHTML = taxHtml;
+    const taxEl = document.getElementById('lbl-tax-total'); if (taxEl) taxEl.innerText = taxTotal.toLocaleString('es-MX', {style:'currency',currency:'MXN'});
+    const rawEl = document.getElementById('lbl-subtotal-raw'); if (rawEl) rawEl.innerText = (base + b2bCost + conceptsSum).toLocaleString('es-MX', {style:'currency',currency:'MXN'});
+    const catEl = document.getElementById('lbl-catalog-base-total'); if (catEl) catEl.innerText = base.toLocaleString('es-MX', {style:'currency',currency:'MXN'});
+    const subEl = document.getElementById('lbl-subtotal'); if (subEl) subEl.innerText = sub.toLocaleString('es-MX', {style:'currency',currency:'MXN'});
     document.getElementById('lbl-subtotal-base').innerText = (base + b2bCost).toLocaleString('es-MX', {style:'currency',currency:'MXN'});
     document.getElementById('lbl-adjustment').innerText = (adjType==='descuento'?'-':'+') + adjAmount.toLocaleString('es-MX', {style:'currency',currency:'MXN'});
     document.getElementById('oed-price').value = (sub + taxTotal).toFixed(2);
@@ -2402,6 +2475,7 @@ window.processSaveOrder = async function(options = {}) {
             await __orderRenderExpedientePanel();
         }
         if (!keepOpen) window.closeModal('order-edit-modal');
+        cpOrdersSaveViewState({ selectedOrderId: orderId });
         if (!skipReload) await window.loadOrders();
         return true;
     } catch(e) {
@@ -2544,6 +2618,7 @@ window.confirmAndGeneratePurchaseOrder = async function() {
             setTimeout(() => URL.revokeObjectURL(link.href), 1500);
             window.showToast("Orden de Compra Generada");
             if (__orderDetailTab === 'expediente') await __orderRenderExpedientePanel();
+            cpOrdersSaveViewState({ selectedOrderId: currentPreviewOrder?.id || '' });
             if (!(IS_ORDER_PREVIEW_PAGE || __cpIsPreviewOnlyQueryMode() || IS_ORDER_DETAIL_PAGE)) await window.loadOrders();
             window.closeModal('preview-modal');
             window.closeModal('docs-modal');
@@ -2557,6 +2632,7 @@ window.confirmAndGeneratePurchaseOrder = async function() {
 };
 
 window.openDocsModal = function(id) {
+    cpOrdersSaveViewState({ selectedOrderId: id });
     const order = allOrders.find(o => o.id === id); if(!order) return; document.getElementById('doc-client').innerText = order.cliente_nombre; 
     const folioUnificado = __orderResolveQuoteFolio(order);
     document.getElementById('doc-folio').innerText = folioUnificado; 
@@ -5517,8 +5593,8 @@ function __orderApplyHoraExtraInputState(cfg) {
     const shouldLock = !enabled || !heCfg.allowCustom;
     unitInput.disabled = shouldLock;
     unitInput.readOnly = !heCfg.allowCustom;
-    if (hoursInput) hoursInput.title = heCfg.allowCustom ? '' : 'El precio por hora extra se controla desde users1.html';
-    unitInput.title = heCfg.allowCustom ? '' : 'Precio controlado desde users1.html';
+    if (hoursInput) hoursInput.title = heCfg.allowCustom ? '' : 'El precio por hora extra se controla desde config.html';
+    unitInput.title = heCfg.allowCustom ? '' : 'Precio controlado desde config.html';
 }
 
 function __orderGetSpaceById(spaceId) {

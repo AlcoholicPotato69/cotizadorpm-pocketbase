@@ -4,6 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
     <title>Editar Cotización - Plaza Mayor</title>
 
     <link rel="preload" as="script" href="../../assets/libs/js/tailwindcss.js">
@@ -285,6 +286,14 @@
                                                 </div>
                                             </div>
                                         </div>
+                                        <div id="oed-convenio-card" class="xl:col-span-2 rounded-2xl border border-amber-200 bg-amber-50/70 p-4">
+                                            <label class="flex items-center gap-2 text-[11px] font-bold text-gray-700 cursor-pointer">
+                                                <input id="oed-convenio-enabled" type="checkbox" class="accent-brand-red" onchange="window.toggleOrderConvenio()">
+                                                Activar convenio en este espacio
+                                            </label>
+                                            <p class="mt-2 text-[10px] font-semibold text-amber-900/80">Bloquea el precio del espacio al valor base del catálogo y cambia el cierre documental a evidencia fotográfica.</p>
+                                        </div>
+                                        <div id="oed-convenio-host-spaces" class="xl:col-span-2"></div>
                                     </div>
                                     <select id="oed-space" class="hidden"></select>
                                 </div>
@@ -295,12 +304,21 @@
                     <section data-order-panel="financial" class="hidden p-4 sm:p-5 xl:p-6">
                         <div class="grid grid-cols-1 2xl:grid-cols-[minmax(0,1.05fr)_minmax(320px,0.95fr)] gap-6 items-start">
                             <div class="space-y-6 min-w-0">
-                                <div class="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm">
-                                    <label class="flex items-center justify-between gap-3 text-[11px] font-bold text-gray-700 cursor-pointer">
-                                        <span>¿Utilizará conceptos adicionales?</span>
-                                        <input id="oed-has-extra-concepts" type="checkbox" class="accent-brand-red" onchange="window.toggleExtraConceptsSection()">
-                                    </label>
-                                    <p class="text-[10px] text-gray-400 mt-1">Actívalo solo si necesitas agregar conceptos extras a esta cotización.</p>
+                                <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm flex flex-wrap items-center justify-between gap-4">
+                                    <div>
+                                        <label class="flex items-center gap-2 text-[11px] font-bold text-gray-700 cursor-pointer">
+                                            <input id="oed-has-extra-concepts" type="checkbox" class="accent-brand-red w-4 h-4 rounded cursor-pointer" onchange="window.toggleExtraConceptsSection()">
+                                            <span>Conceptos Adicionales Libres</span>
+                                        </label>
+                                    </div>
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-[9px] font-bold uppercase tracking-widest text-gray-400">Ajuste Global</span>
+                                        <div class="flex border border-gray-200 bg-gray-50 rounded-lg overflow-hidden shadow-inner flex-shrink-0">
+                                            <select id="oed-adj-type" onchange="window.recalcTotal()" class="bg-transparent border-r border-gray-200 text-[10px] py-1 px-1.5 font-bold outline-none text-gray-600 focus:bg-gray-100"><option value="ninguno">N/A</option><option value="descuento">Desc (-)</option><option value="aumento">Aum (+)</option></select>
+                                            <input id="oed-adj-val" onchange="window.recalcTotal()" type="number" class="w-16 bg-transparent border-r border-gray-200 text-[10px] py-1 px-1.5 font-bold outline-none text-center focus:bg-gray-100" placeholder="0.00">
+                                            <select id="oed-adj-unit" onchange="window.recalcTotal()" class="bg-transparent text-[10px] py-1 px-1.5 font-bold outline-none text-gray-600 focus:bg-gray-100"><option value="fixed">MXN</option><option value="percent">%</option></select>
+                                        </div>
+                                    </div>
                                 </div>
 
                                 <div id="oed-extra-concepts-section" class="hidden bg-white p-5 rounded-2xl border border-gray-200 shadow-sm">
@@ -316,48 +334,85 @@
                                         <tbody id="concepts-list" class="divide-y divide-gray-100 bg-white"></tbody>
                                     </table>
                                 </div>
+
+                                <div id="oed-convenio-host-financial">
+                                <div id="oed-convenio-section" class="hidden bg-white p-5 rounded-2xl border border-amber-200 shadow-sm">
+                                    <h4 class="font-bold text-xs uppercase text-amber-700 mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">Tratos del Convenio
+                                        <div class="flex flex-wrap gap-2">
+                                            <select id="oed-convenio-select" class="border rounded text-[10px] px-2 py-1 w-44"></select>
+                                            <input id="oed-convenio-qty" type="number" min="1" step="1" value="1" placeholder="Cantidad" class="border rounded text-[10px] px-2 py-1 w-20 text-center">
+                                            <input id="oed-convenio-amount" type="number" min="0" step="0.01" placeholder="$" class="border rounded text-[10px] px-2 py-1 w-24 text-right">
+                                            <button onclick="window.addOrderConvenioItem()" class="bg-amber-100 hover:bg-amber-200 text-amber-800 px-2 py-1 rounded text-[10px] font-bold"><i class="fa-solid fa-plus"></i></button>
+                                        </div>
+                                    </h4>
+                                    <div id="oed-convenio-list" class="space-y-2"></div>
+                                    <p class="mt-3 text-[10px] text-gray-400">Para marcar esta cotización como finalizada se solicitarán de 3 a 5 evidencias fotográficas.</p>
+                                </div>
+                                </div>
                             </div>
 
-                            <div class="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm">
-                                <h4 class="font-black text-sm uppercase text-gray-700 mb-4"><i class="fa-solid fa-calculator text-brand-red mr-1"></i> Resumen Financiero</h4>
-                                <div class="space-y-4">
-                                    <div class="rounded-xl border border-gray-200 bg-slate-50 p-4 space-y-2">
-                                        <div class="flex justify-between text-xs text-gray-500"><span>Referencia catálogo acumulada</span><span class="font-bold" id="lbl-catalog-base-total">$0.00</span></div>
-                                        <div class="flex justify-between text-xs text-gray-500"><span>Base facturable acumulada</span><span class="font-bold" id="lbl-subtotal-base">$0.00</span></div>
-                                        <div class="flex justify-between text-xs text-gray-500"><span>Subtotal antes de ajuste</span><span class="font-bold" id="lbl-subtotal-raw">$0.00</span></div>
-                                        <div class="flex justify-between text-xs text-gray-800 font-bold"><span>Subtotal Ajustado</span><span id="lbl-subtotal">$0.00</span></div>
-                                        <div class="flex justify-between text-xs text-gray-500 font-bold"><span>Total Ajuste</span><span id="lbl-adjustment">$0.00</span></div>
-                                        <div class="flex justify-between text-xs text-gray-500 font-bold"><span>Impuestos Totales</span><span id="lbl-tax-total">$0.00</span></div>
-                                        <div id="oed-financial-overview" class="pt-2 mt-2 border-t border-dashed border-gray-200 space-y-2"></div>
-                                    </div>
+                            <div class="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm flex flex-col h-full">
+                                <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-3">
+                                    <h4 class="font-black text-sm uppercase text-gray-700"><i class="fa-solid fa-calculator text-brand-red mr-1"></i> Resumen Financiero</h4>
+                                </div>
 
-                                    <div class="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
-                                        <div class="flex justify-between items-center text-xs text-gray-500">
-                                            <span class="font-bold uppercase tracking-wide text-gray-400">Ajuste Global</span>
-                                            <div class="flex items-center gap-1">
-                                                <select id="oed-adj-type" onchange="window.recalcTotal()" class="border rounded p-0.5 text-[10px]"><option value="ninguno">-</option><option value="descuento">Desc</option><option value="aumento">Aum</option></select>
-                                                <input id="oed-adj-val" onchange="window.recalcTotal()" type="number" class="w-12 border rounded p-0.5 text-[10px] text-right" placeholder="0">
-                                                <select id="oed-adj-unit" onchange="window.recalcTotal()" class="border rounded p-0.5 text-[10px]"><option value="fixed">$</option><option value="percent">%</option></select>
+                                <div class="space-y-4 flex-grow flex flex-col">
+                                    <!-- Info de subtotales super compacta y en cuadrícula -->
+                                    <div class="grid grid-cols-2 lg:grid-cols-5 gap-2">
+                                        <div class="rounded-lg border border-gray-100 bg-slate-50 p-2 text-center flex flex-col justify-center">
+                                            <p class="text-[9px] uppercase font-bold text-gray-400 mb-0.5 tracking-wider">Base Catálogo</p>
+                                            <p class="text-xs font-black text-gray-600 truncate" id="lbl-catalog-base-total">$0.00</p>
+                                        </div>
+                                        <div class="rounded-lg border border-gray-100 bg-slate-50 p-2 text-center flex flex-col justify-center">
+                                            <p class="text-[9px] uppercase font-bold text-gray-400 mb-0.5 tracking-wider">Base Facturable</p>
+                                            <p class="text-xs font-black text-gray-600 truncate" id="lbl-subtotal-base">$0.00</p>
+                                        </div>
+                                        <div class="rounded-lg border border-gray-100 bg-slate-50 p-2 text-center flex flex-col justify-center">
+                                            <p class="text-[9px] uppercase font-bold text-gray-400 mb-0.5 tracking-wider">Subtotal Bruto</p>
+                                            <p class="text-xs font-black text-gray-600 truncate" id="lbl-subtotal-raw">$0.00</p>
+                                        </div>
+                                        <div class="rounded-lg border border-brand-red/20 bg-red-50 p-2 text-center shadow-inner relative overflow-hidden group flex flex-col justify-center">
+                                            <div class="absolute inset-0 bg-brand-red/5 -translate-y-full group-hover:translate-y-0 transition-transform"></div>
+                                            <p class="text-[9px] uppercase font-bold text-brand-red mb-0.5 tracking-wider relative z-10">Total Ajustado</p>
+                                            <p class="text-xs font-black text-brand-dark truncate relative z-10" id="lbl-subtotal">$0.00</p>
+                                        </div>
+                                        <div class="rounded-lg border border-gray-100 bg-brand-dark p-2 pl-3 text-left flex flex-col justify-center shadow-inner relative overflow-hidden">
+                                            <p class="text-[8px] uppercase font-bold text-gray-300 mb-0.5 tracking-wider">Neto a Cobrar</p>
+                                            <div class="relative">
+                                                <span class="absolute left-0 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-bold pointer-events-none">$</span>
+                                                <input id="oed-price" readonly class="w-full text-left font-black bg-transparent outline-none text-white pointer-events-auto pl-3 text-lg" value="0.00">
                                             </div>
                                         </div>
-                                        <p class="text-[10px] text-gray-400">Puedes aplicar aumentos o descuentos fijos o porcentuales. El resumen de abajo te muestra exactamente cómo se reparte ese ajuste.</p>
+                                        <div id="oed-financial-overview" class="hidden"></div>
                                     </div>
 
-                                    <div class="rounded-xl border border-gray-200 bg-white p-4">
-                                        <p class="text-[10px] font-bold uppercase text-gray-400 mb-2">Desglose por Espacio</p>
-                                        <div id="oed-summary-concepts" class="space-y-2"></div>
+                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 items-start pb-2">
+                                        <!-- Detalles y desgloses, muy compactos -->
+                                        <div class="border border-gray-100 rounded-xl overflow-hidden shadow-sm flex flex-col h-full">
+                                            <div class="bg-gray-50 px-3 py-2 border-b border-gray-100 flex justify-between items-center shrink-0">
+                                                <span class="text-[9px] font-black uppercase tracking-wider text-gray-500"><i class="fa-solid fa-layer-group text-gray-400 mr-1"></i> Desglose Extra</span>
+                                            </div>
+                                            <div id="oed-summary-concepts" class="p-2 flex-grow space-y-1 bg-white custom-scroll max-h-[400px] overflow-y-auto min-h-[3rem] text-xs"></div>
+                                        </div>
+                                        
+                                        <div class="flex flex-col h-full">
+                                            <div id="oed-taxes-list" class="hidden" aria-hidden="true"></div>
+                                            <div class="border border-gray-100 rounded-xl overflow-hidden shadow-sm mb-2 flex flex-col flex-grow">
+                                                <div class="bg-gray-50 px-3 py-2 border-b border-gray-100 flex justify-between items-center shrink-0">
+                                                    <span class="text-[9px] font-black uppercase tracking-wider text-gray-500"><i class="fa-solid fa-percent text-gray-400 mr-1"></i> Impuestos</span>
+                                                    <span class="text-[9px] font-black text-gray-400" id="lbl-tax-total">$0.00</span>
+                                                </div>
+                                                <div id="oed-tax-summary-display" class="p-2 space-y-1.5 bg-white flex-grow custom-scroll max-h-[400px] overflow-y-auto min-h-[2rem] text-xs"></div>
+                                            </div>
+                                            <!-- Indicador del monto de ajuste -->
+                                            <div class="flex justify-between items-center bg-gray-50 rounded-lg px-3 py-2 text-[10px] border border-gray-100 border-dashed shrink-0">
+                                                <span class="font-bold text-gray-400 tracking-wider">Ajuste Valor:</span>
+                                                <span class="font-black text-gray-600 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm" id="lbl-adjustment">$0.00</span>
+                                            </div>
+                                        </div>
                                     </div>
 
-                                    <div id="oed-taxes-list" class="hidden" aria-hidden="true"></div>
-                                    <div class="rounded-xl border border-gray-200 bg-white p-4">
-                                        <p class="text-[10px] font-bold uppercase text-gray-400 mb-2">Impuestos y Totales por Espacio</p>
-                                        <div id="oed-tax-summary-display" class="space-y-2"></div>
-                                    </div>
 
-                                    <div class="pt-4 mt-2 border-t border-gray-200">
-                                        <p class="text-[10px] font-black uppercase text-gray-400 text-right">Total Neto</p>
-                                        <input id="oed-price" readonly class="w-full text-right text-3xl font-black bg-transparent outline-none text-gray-800" value="0.00">
-                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -367,34 +422,34 @@
                         <div class="h-full min-h-0 grid grid-cols-1 xl:grid-cols-[minmax(320px,0.82fr)_minmax(0,1.09fr)_minmax(0,1.09fr)] gap-4 2xl:gap-6 items-stretch">
                             <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden min-h-0 flex flex-col">
                                 <div class="px-5 py-4 border-b border-gray-200">
-                                    <h4 class="font-black text-sm uppercase text-gray-700">Resumen General</h4>
-                                    <p class="text-[11px] text-gray-500 mt-1">Vista consolidada de la cotización completa.</p>
+                                    <h4 id="sum-general-title" class="font-black text-sm uppercase text-gray-700">Resumen General</h4>
+                                    <p id="sum-general-copy" class="text-[11px] text-gray-500 mt-1">Vista consolidada de la cotización completa.</p>
                                 </div>
                                 <div class="grid grid-cols-1 text-xs order-panel-scroll custom-scroll">
-                                    <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100"><span class="font-bold text-gray-400">Cotización</span><span id="sum-quote-name" class="font-bold text-right text-gray-800 max-w-[220px] break-words">--</span></div>
+                                    <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100"><span id="sum-label-name" class="font-bold text-gray-400">Cotización</span><span id="sum-quote-name" class="font-bold text-right text-gray-800 max-w-[220px] break-words">--</span></div>
                                     <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100"><span class="font-bold text-gray-400">Estatus</span><span id="sum-status" class="font-bold text-right text-gray-800 max-w-[220px] break-words">--</span></div>
                                     <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100"><span class="font-bold text-gray-400">Cliente</span><span id="sum-client" class="font-bold text-right text-gray-800 max-w-[220px] break-words">--</span></div>
                                     <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100"><span class="font-bold text-gray-400">Fechas Globales</span><span id="sum-dates" class="font-bold text-right text-gray-800 max-w-[220px] break-words">--</span></div>
                                     <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100"><span class="font-bold text-gray-400">Espacios</span><span id="sum-spaces-count" class="font-bold text-right text-gray-800">0</span></div>
-                                    <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100"><span class="font-bold text-gray-400">Subtotal</span><span id="sum-total-subtotal" class="font-bold text-right text-gray-800">$0.00</span></div>
-                                    <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100"><span class="font-bold text-gray-400">Ajuste</span><span id="sum-total-adjustment" class="font-bold text-right text-gray-800">$0.00</span></div>
-                                    <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100"><span class="font-bold text-gray-400">Impuestos</span><span id="sum-total-tax" class="font-bold text-right text-gray-800">$0.00</span></div>
-                                    <div class="flex items-center justify-between gap-3 px-5 py-3 bg-slate-50 mt-auto"><span class="font-black text-gray-700 uppercase">Total Neto</span><span id="sum-total-net" class="font-black text-right text-gray-900">$0.00</span></div>
+                                    <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100"><span id="sum-label-subtotal" class="font-bold text-gray-400">Subtotal</span><span id="sum-total-subtotal" class="font-bold text-right text-gray-800">$0.00</span></div>
+                                    <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100"><span id="sum-label-adjustment" class="font-bold text-gray-400">Ajuste</span><span id="sum-total-adjustment" class="font-bold text-right text-gray-800">$0.00</span></div>
+                                    <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100"><span id="sum-label-tax" class="font-bold text-gray-400">Impuestos</span><span id="sum-total-tax" class="font-bold text-right text-gray-800">$0.00</span></div>
+                                    <div class="flex items-center justify-between gap-3 px-5 py-3 bg-slate-50 mt-auto"><span id="sum-label-net" class="font-black text-gray-700 uppercase">Total Neto</span><span id="sum-total-net" class="font-black text-right text-gray-900">$0.00</span></div>
                                 </div>
                             </div>
 
                             <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden min-h-0 flex flex-col">
                                 <div class="px-5 py-4 border-b border-gray-200">
-                                    <h4 class="font-black text-sm uppercase text-gray-700">Resumen Financiero</h4>
-                                    <p class="text-[11px] text-gray-500 mt-1">Concentrado total y desglose financiero por espacio.</p>
+                                    <h4 id="sum-financial-title" class="font-black text-sm uppercase text-gray-700">Resumen Financiero</h4>
+                                    <p id="sum-financial-copy" class="text-[11px] text-gray-500 mt-1">Concentrado total y desglose financiero por espacio.</p>
                                 </div>
                                 <div id="sum-financial-list" class="order-panel-scroll custom-scroll p-5 space-y-3 bg-white"></div>
                             </div>
 
                             <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden min-h-0 flex flex-col">
                                 <div class="px-5 py-4 border-b border-gray-200">
-                                    <h4 class="font-black text-sm uppercase text-gray-700">Detalle por Espacio</h4>
-                                    <p class="text-[11px] text-gray-500 mt-1">Consulta cada espacio y su relación con el resumen financiero.</p>
+                                    <h4 id="sum-spaces-title" class="font-black text-sm uppercase text-gray-700">Detalle por Espacio</h4>
+                                    <p id="sum-spaces-copy" class="text-[11px] text-gray-500 mt-1">Consulta cada espacio y su relación con el resumen financiero.</p>
                                 </div>
                                 <div id="sum-spaces-list" class="order-panel-scroll custom-scroll p-5 space-y-2 bg-white"></div>
                             </div>
@@ -404,8 +459,8 @@
                     <section data-order-panel="expediente" class="hidden p-4 sm:p-5 xl:p-6 h-full min-h-0">
                         <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden flex flex-col min-h-0">
                             <div class="px-5 py-4 border-b border-gray-200">
-                                <h4 class="font-black text-sm uppercase text-gray-700">Expediente de la Cotización</h4>
-                                <p class="text-[11px] text-gray-500 mt-1">Consulta previews de documentos, snapshots guardados y genera archivos clave desde aquí.</p>
+                                <h4 id="expediente-title" class="font-black text-sm uppercase text-gray-700">Expediente de la Cotización</h4>
+                                <p id="expediente-copy" class="text-[11px] text-gray-500 mt-1">Consulta previews de documentos, snapshots guardados y genera archivos clave desde aquí.</p>
                             </div>
                             <!-- Nuevos botones solicitados -->
                             <div id="expediente-buttons" class="bg-white border-b border-gray-200 p-4 shadow-sm flex flex-col gap-3">
@@ -426,6 +481,7 @@
                                 <div id="payments-sub-buttons" class="hidden flex flex-wrap gap-2 pt-2 border-t border-gray-100">
                                     <!-- Aquí se inyectarán los botones de pago -->
                                 </div>
+                                <div id="expediente-evidence-buttons" class="hidden flex flex-wrap gap-2 pt-2 border-t border-gray-100"></div>
                             </div>
 <div id="oed-expediente-grid" class="order-doc-grid p-4 sm:p-5 min-h-[24rem] max-h-[calc(100vh-18rem)] overflow-y-auto custom-scroll" data-order-status="pendiente">
                                 <!-- Fila hora aprobación -->
@@ -749,8 +805,6 @@
 
     <div id="toast-container" class="fixed top-20 right-4 z-[310] flex flex-col items-end pointer-events-none"></div>
     <script src="../js/pdf-margin-guides.js"></script>
-<script src="orders.js?v=20260329-native-pb14"></script>
+<script src="orders.js?v=20260407-convenio-v2"></script>
 </body>
 </html>
-
-

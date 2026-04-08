@@ -629,10 +629,75 @@ const AVAILABLE_VARS = [
 ];
 
 let approvedOrders = [], selectedOrder = null, templates = [], signedFileToUpload = null, externalReceiptFile = null;
+
+function pmContractsParseJson(value) {
+    if (!value) return {};
+    if (typeof value === 'object') return value;
+    if (typeof value === 'string') {
+        try { return JSON.parse(value) || {}; } catch (_) { return {}; }
+    }
+    return {};
+}
+
+function pmContractsIsConvenioOrder(order = {}) {
+    const details = pmContractsParseJson(order?.detalles_evento);
+    if (details?.convenio?.activo === true) return true;
+    const spaces = pmContractsParseJson(order?.espacios_detalle);
+    return Array.isArray(spaces) && spaces.some((item) => item?.convenio_activo === true || item?.convenio_indefinido === true);
+}
+let pmContractsRestoringViewState = false;
+const PM_CONTRACTS_VIEW_STATE_SCOPE = `pm_contracts:${__PM_CONTRACTS_PAGE_MODE || 'combined'}`;
 let currentRemainingBalance = 0;
 let pendingAction = null;
 let defaultTemplateFile = '';
 let __pmContractsTemplateLetterheadEnabled = true;
+
+function pmContractsViewStateApi() {
+    return window.__HUB_VIEW_STATE || null;
+}
+
+function pmContractsReadViewState() {
+    const api = pmContractsViewStateApi();
+    return api?.read ? (api.read(PM_CONTRACTS_VIEW_STATE_SCOPE, { maxAgeMs: 30 * 60 * 1000 }) || null) : null;
+}
+
+function pmContractsApplyViewStateControls(state = pmContractsReadViewState()) {
+    if (!state || typeof state !== 'object') return;
+    const searchEl = document.getElementById('search-approved');
+    if (searchEl && typeof state.search === 'string') searchEl.value = state.search;
+}
+
+function pmContractsSaveViewState(extra = {}) {
+    const api = pmContractsViewStateApi();
+    if (!api?.write) return null;
+    return api.write(PM_CONTRACTS_VIEW_STATE_SCOPE, {
+        search: document.getElementById('search-approved')?.value || '',
+        selectedOrderId: String(extra.selectedOrderId || selectedOrder?.id || '').trim(),
+        windowScrollY: api.getWindowScrollY ? api.getWindowScrollY() : (window.scrollY || 0),
+        elementScrolls: {
+            '#approved-list': api.getElementScrollTop ? api.getElementScrollTop('#approved-list') : (document.getElementById('approved-list')?.scrollTop || 0)
+        },
+        ...(extra && typeof extra === 'object' ? extra : {})
+    });
+}
+
+function pmContractsRestoreViewStateAfterRender(state = pmContractsReadViewState()) {
+    if (!state || typeof state !== 'object') return;
+    const api = pmContractsViewStateApi();
+    if (api?.restoreScrollState) api.restoreScrollState(state);
+    const selectedOrderId = String(state.selectedOrderId || '').trim();
+    if (!selectedOrderId) return;
+    window.setTimeout(() => {
+        const target = document.querySelector(`#approved-list [data-order-id="${selectedOrderId}"]`);
+        if (target && typeof target.click === 'function') target.click();
+    }, 90);
+}
+
+function pmContractsFilterApprovedOrders(term, options = {}) {
+    const lower = String(term || '').toLowerCase();
+    renderOrderList(approvedOrders.filter(o => o.cliente_nombre.toLowerCase().includes(lower) || (o.numero_orden && o.numero_orden.toLowerCase().includes(lower))));
+    if (!pmContractsRestoringViewState && options.skipSave !== true) pmContractsSaveViewState();
+}
 
 function __pmContractsIsTemplateLetterheadEnabled() {
     return __pmContractsTemplateLetterheadEnabled !== false;
@@ -3590,6 +3655,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.log("Sistema iniciado correctamente. Cargando módulos...");
 
     // 4. Cargar Datos
+    pmContractsApplyViewStateControls();
     await loadApprovedOrders();
     await __pmContractsLoadPreferences();
 
@@ -3599,8 +3665,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Filtros
     document.getElementById('search-approved').addEventListener('input', (e) => {
-        const term = e.target.value.toLowerCase();
-        renderOrderList(approvedOrders.filter(o => o.cliente_nombre.toLowerCase().includes(term) || (o.numero_orden && o.numero_orden.toLowerCase().includes(term))));
+        pmContractsFilterApprovedOrders(e.target.value);
     });
     
     // Modal Confirm
@@ -3616,6 +3681,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function loadApprovedOrders() {
     const listContainer = document.getElementById('approved-list');
     if(!listContainer) return;
+    pmContractsApplyViewStateControls();
+    if (!pmContractsRestoringViewState) pmContractsSaveViewState();
     
     listContainer.innerHTML = '<div class="p-8 text-center text-gray-400 text-xs italic">Cargando...</div>';
     
@@ -3630,12 +3697,16 @@ async function loadApprovedOrders() {
         if (error) throw error;
 
         console.log(`Órdenes cargadas: ${data?.length || 0}`);
-        approvedOrders = data || [];
-        renderOrderList(approvedOrders);
+        approvedOrders = (data || []).filter((order) => !pmContractsIsConvenioOrder(order));
+        pmContractsRestoringViewState = true;
+        pmContractsFilterApprovedOrders(document.getElementById('search-approved')?.value || '', { skipSave: true });
+        pmContractsRestoringViewState = false;
+        pmContractsRestoreViewStateAfterRender();
 
     } catch (e) {
         console.error("Error al cargar órdenes:", e);
-        listContainer.innerHTML = `<div class="p-8 text-center text-red-400 text-xs">Error de conexión: ${e.message}</div>`;
+        // SEGURIDAD: No exponer e.message al usuario (puede contener rutas internas, versiones, etc.)
+        listContainer.innerHTML = `<div class="p-8 text-center text-red-400 text-xs">Error al cargar órdenes. Intenta recargar la página.</div>`;
     }
 }
 
@@ -3654,6 +3725,7 @@ function renderOrderList(list) {
             ? '<span class="text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-300">Pagado</span>'
             : '';
         const item = document.createElement('div');
+        item.setAttribute('data-order-id', String(o.id || ''));
         item.className = `bg-white border p-3 rounded-lg hover:bg-gray-50 cursor-pointer transition group shadow-sm mb-2 ${paidComplete ? 'border-emerald-200 bg-emerald-50/40' : 'border-gray-100'}`;
         item.onclick = () => selectOrder(o);
         item.innerHTML = `<div class="flex justify-between mb-1"><span class="font-bold text-xs text-gray-800 group-hover:text-brand-red transition truncate w-32">${o.cliente_nombre}</span><div class="flex items-center gap-1">${paidBadge}<span class="text-[9px] font-mono text-gray-400 bg-gray-50 border border-gray-200 px-1 rounded">${o.numero_orden || '---'}</span></div></div><div class="flex justify-between items-center"><span class="text-[10px] text-gray-500 truncate w-24"><i class="fa-solid fa-map-pin mr-1"></i>${o.espacio_nombre}</span><span class="text-xs font-black text-gray-800">${formatMoney(o.precio_final)}</span></div>`;
@@ -3670,6 +3742,7 @@ function __pmContractsSyncPaidIndicator(order) {
 
 function selectOrder(order) {
     selectedOrder = order;
+    pmContractsSaveViewState({ selectedOrderId: String(order?.id || '').trim() });
     
     // UI Updates
     document.getElementById('workspace-empty').classList.add('hidden');

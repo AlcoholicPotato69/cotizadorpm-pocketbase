@@ -627,10 +627,75 @@ const AVAILABLE_VARS = [
 ];
 
 let approvedOrders = [], selectedOrder = null, templates = [], signedFileToUpload = null, externalReceiptFile = null;
+
+function pmReceiptsParseJson(value) {
+    if (!value) return {};
+    if (typeof value === 'object') return value;
+    if (typeof value === 'string') {
+        try { return JSON.parse(value) || {}; } catch (_) { return {}; }
+    }
+    return {};
+}
+
+function pmReceiptsIsConvenioOrder(order = {}) {
+    const details = pmReceiptsParseJson(order?.detalles_evento);
+    if (details?.convenio?.activo === true) return true;
+    const spaces = pmReceiptsParseJson(order?.espacios_detalle);
+    return Array.isArray(spaces) && spaces.some((item) => item?.convenio_activo === true || item?.convenio_indefinido === true);
+}
+let pmReceiptsRestoringViewState = false;
+const PM_RECEIPTS_VIEW_STATE_SCOPE = `pm_receipts:${__PM_CONTRACTS_PAGE_MODE || 'combined'}`;
 let currentRemainingBalance = 0;
 let pendingAction = null;
 let defaultTemplateFile = '';
 let __pmContractsTemplateLetterheadEnabled = true;
+
+function pmReceiptsViewStateApi() {
+    return window.__HUB_VIEW_STATE || null;
+}
+
+function pmReceiptsReadViewState() {
+    const api = pmReceiptsViewStateApi();
+    return api?.read ? (api.read(PM_RECEIPTS_VIEW_STATE_SCOPE, { maxAgeMs: 30 * 60 * 1000 }) || null) : null;
+}
+
+function pmReceiptsApplyViewStateControls(state = pmReceiptsReadViewState()) {
+    if (!state || typeof state !== 'object') return;
+    const searchEl = document.getElementById('search-approved');
+    if (searchEl && typeof state.search === 'string') searchEl.value = state.search;
+}
+
+function pmReceiptsSaveViewState(extra = {}) {
+    const api = pmReceiptsViewStateApi();
+    if (!api?.write) return null;
+    return api.write(PM_RECEIPTS_VIEW_STATE_SCOPE, {
+        search: document.getElementById('search-approved')?.value || '',
+        selectedOrderId: String(extra.selectedOrderId || selectedOrder?.id || '').trim(),
+        windowScrollY: api.getWindowScrollY ? api.getWindowScrollY() : (window.scrollY || 0),
+        elementScrolls: {
+            '#approved-list': api.getElementScrollTop ? api.getElementScrollTop('#approved-list') : (document.getElementById('approved-list')?.scrollTop || 0)
+        },
+        ...(extra && typeof extra === 'object' ? extra : {})
+    });
+}
+
+function pmReceiptsRestoreViewStateAfterRender(state = pmReceiptsReadViewState()) {
+    if (!state || typeof state !== 'object') return;
+    const api = pmReceiptsViewStateApi();
+    if (api?.restoreScrollState) api.restoreScrollState(state);
+    const selectedOrderId = String(state.selectedOrderId || '').trim();
+    if (!selectedOrderId) return;
+    window.setTimeout(() => {
+        const target = document.querySelector(`#approved-list [data-order-id="${selectedOrderId}"]`);
+        if (target && typeof target.click === 'function') target.click();
+    }, 90);
+}
+
+function pmReceiptsFilterApprovedOrders(term, options = {}) {
+    const lower = String(term || '').toLowerCase();
+    renderOrderList(approvedOrders.filter(o => o.cliente_nombre.toLowerCase().includes(lower) || (o.numero_orden && o.numero_orden.toLowerCase().includes(lower))));
+    if (!pmReceiptsRestoringViewState && options.skipSave !== true) pmReceiptsSaveViewState();
+}
 
 function __pmContractsIsTemplateLetterheadEnabled() {
     return __pmContractsTemplateLetterheadEnabled !== false;
@@ -4209,6 +4274,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.log("Sistema iniciado correctamente. Cargando módulos...");
 
     // 4. Cargar Datos
+    pmReceiptsApplyViewStateControls();
     await loadApprovedOrders();
     await __pmContractsLoadPreferences();
 
@@ -4218,8 +4284,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Filtros
     document.getElementById('search-approved').addEventListener('input', (e) => {
-        const term = e.target.value.toLowerCase();
-        renderOrderList(approvedOrders.filter(o => o.cliente_nombre.toLowerCase().includes(term) || (o.numero_orden && o.numero_orden.toLowerCase().includes(term))));
+        pmReceiptsFilterApprovedOrders(e.target.value);
     });
     
     // Modal Confirm
@@ -4235,6 +4300,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function loadApprovedOrders() {
     const listContainer = document.getElementById('approved-list');
     if(!listContainer) return;
+    pmReceiptsApplyViewStateControls();
+    if (!pmReceiptsRestoringViewState) pmReceiptsSaveViewState();
     
     listContainer.innerHTML = '<div class="p-8 text-center text-gray-400 text-xs italic">Cargando...</div>';
     
@@ -4249,8 +4316,11 @@ async function loadApprovedOrders() {
         if (error) throw error;
 
         console.log(`Órdenes cargadas: ${data?.length || 0}`);
-        approvedOrders = data || [];
-        renderOrderList(approvedOrders);
+        approvedOrders = (data || []).filter((order) => !pmReceiptsIsConvenioOrder(order));
+        pmReceiptsRestoringViewState = true;
+        pmReceiptsFilterApprovedOrders(document.getElementById('search-approved')?.value || '', { skipSave: true });
+        pmReceiptsRestoringViewState = false;
+        pmReceiptsRestoreViewStateAfterRender();
 
     } catch (e) {
         console.error("Error al cargar órdenes:", e);
@@ -4273,6 +4343,7 @@ function renderOrderList(list) {
             ? '<span class="text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-300">Pagado</span>'
             : '';
         const item = document.createElement('div');
+        item.setAttribute('data-order-id', String(o.id || ''));
         item.className = `bg-white border p-3 rounded-lg hover:bg-gray-50 cursor-pointer transition group shadow-sm mb-2 ${paidComplete ? 'border-emerald-200 bg-emerald-50/40' : 'border-gray-100'}`;
         item.onclick = () => selectOrder(o);
         item.innerHTML = `<div class="flex justify-between mb-1"><span class="font-bold text-xs text-gray-800 group-hover:text-brand-red transition truncate w-32">${o.cliente_nombre}</span><div class="flex items-center gap-1">${paidBadge}<span class="text-[9px] font-mono text-gray-400 bg-gray-50 border border-gray-200 px-1 rounded">${o.numero_orden || '---'}</span></div></div><div class="flex justify-between items-center"><span class="text-[10px] text-gray-500 truncate w-24"><i class="fa-solid fa-map-pin mr-1"></i>${o.espacio_nombre}</span><span class="text-xs font-black text-gray-800">${formatMoney(o.precio_final)}</span></div>`;
@@ -4289,6 +4360,7 @@ function __pmContractsSyncPaidIndicator(order) {
 
 function selectOrder(order) {
     selectedOrder = order;
+    pmReceiptsSaveViewState({ selectedOrderId: String(order?.id || '').trim() });
     
     // UI Updates
     document.getElementById('workspace-empty').classList.add('hidden');

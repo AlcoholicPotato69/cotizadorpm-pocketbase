@@ -22,6 +22,49 @@ let approvedOrders = [], selectedOrder = null;
 let files = { xml: null, pdf: null };
 let xmlData = null; // Datos extraídos del XML
 let confirmCallback = null;
+let cpInvoicesRestoringViewState = false;
+const CP_INVOICES_VIEW_STATE_SCOPE = 'cp_invoices';
+
+function cpInvoicesViewStateApi() {
+    return window.__HUB_VIEW_STATE || null;
+}
+
+function cpInvoicesReadViewState() {
+    const api = cpInvoicesViewStateApi();
+    return api?.read ? (api.read(CP_INVOICES_VIEW_STATE_SCOPE, { maxAgeMs: 30 * 60 * 1000 }) || null) : null;
+}
+
+function cpInvoicesApplyViewStateControls(state = cpInvoicesReadViewState()) {
+    if (!state || typeof state !== 'object') return;
+    const searchEl = document.getElementById('search-orders');
+    if (searchEl && typeof state.search === 'string') searchEl.value = state.search;
+}
+
+function cpInvoicesSaveViewState(extra = {}) {
+    const api = cpInvoicesViewStateApi();
+    if (!api?.write) return null;
+    return api.write(CP_INVOICES_VIEW_STATE_SCOPE, {
+        search: document.getElementById('search-orders')?.value || '',
+        selectedOrderId: String(extra.selectedOrderId || selectedOrder?.id || '').trim(),
+        windowScrollY: api.getWindowScrollY ? api.getWindowScrollY() : (window.scrollY || 0),
+        elementScrolls: {
+            '#orders-list': api.getElementScrollTop ? api.getElementScrollTop('#orders-list') : (document.getElementById('orders-list')?.scrollTop || 0)
+        },
+        ...(extra && typeof extra === 'object' ? extra : {})
+    });
+}
+
+function cpInvoicesRestoreViewStateAfterRender(state = cpInvoicesReadViewState()) {
+    if (!state || typeof state !== 'object') return;
+    const api = cpInvoicesViewStateApi();
+    if (api?.restoreScrollState) api.restoreScrollState(state);
+    const selectedOrderId = String(state.selectedOrderId || '').trim();
+    if (!selectedOrderId) return;
+    window.setTimeout(() => {
+        const target = document.querySelector(`[data-order-id="${selectedOrderId}"]`);
+        if (target && typeof target.click === 'function') target.click();
+    }, 90);
+}
 
 // --- HELPERS GLOBALES ---
 window.openModal = (id) => { document.getElementById(id).classList.remove('hidden'); document.getElementById(id).classList.add('flex'); }
@@ -58,6 +101,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
     }
 
+    cpInvoicesApplyViewStateControls();
     loadOrders();
 
     document.getElementById('search-orders').addEventListener('input', (e) => filterOrders(e.target.value));
@@ -69,6 +113,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 // --- CARGA DE ÓRDENES ---
 async function loadOrders() {
+    cpInvoicesApplyViewStateControls();
     const listContainer = document.getElementById('orders-list');
     listContainer.innerHTML = '<div class="p-8 text-center text-gray-400 text-xs italic">Cargando...</div>';
 
@@ -85,10 +130,13 @@ async function loadOrders() {
     }
 
     approvedOrders = data || [];
-    filterOrders('');
+    cpInvoicesRestoringViewState = true;
+    filterOrders(document.getElementById('search-orders')?.value || '', { skipSave: true });
+    cpInvoicesRestoringViewState = false;
+    cpInvoicesRestoreViewStateAfterRender();
 }
 
-function filterOrders(term) {
+function filterOrders(term, options = {}) {
     const container = document.getElementById('orders-list');
     container.innerHTML = '';
     
@@ -103,6 +151,7 @@ function filterOrders(term) {
             : '<i class="fa-regular fa-circle text-gray-300 text-lg"></i>';
         
         const item = document.createElement('div');
+        item.setAttribute('data-order-id', String(o.id || ''));
         item.className = 'bg-white border border-gray-100 p-3 rounded-lg hover:bg-gray-50 cursor-pointer transition group shadow-sm mb-2';
         item.onclick = () => selectOrder(o);
         item.innerHTML = `
@@ -117,11 +166,13 @@ function filterOrders(term) {
         `;
         container.appendChild(item);
     });
+    if (!cpInvoicesRestoringViewState && options.skipSave !== true) cpInvoicesSaveViewState();
 }
 
 // --- SELECCIÓN Y LÓGICA DE VISTA ---
 function selectOrder(order) {
     selectedOrder = order;
+    cpInvoicesSaveViewState({ selectedOrderId: String(order?.id || '').trim() });
     files = { xml: null, pdf: null }; xmlData = null;
     
     document.getElementById('workspace-empty').classList.add('hidden');
@@ -292,6 +343,7 @@ window.validateAndSaveInvoice = async function() {
         }
         
         // Recargar
+        cpInvoicesSaveViewState({ selectedOrderId: String(selectedOrder?.id || '').trim() });
         loadOrders();
         selectedOrder = { ...selectedOrder, ...updatePayload };
         selectOrder(selectedOrder);
@@ -354,6 +406,7 @@ window.deleteInvoice = function() {
             if (error) throw error;
             
             window.showToast("Factura eliminada");
+            cpInvoicesSaveViewState({ selectedOrderId: String(selectedOrder?.id || '').trim() });
             loadOrders();
             // Resetear local
             selectedOrder.factura_xml_url = null;

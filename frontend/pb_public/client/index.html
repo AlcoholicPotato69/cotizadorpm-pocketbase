@@ -14,6 +14,7 @@
     <script src="./services/pb-core.js"></script>
     <script src="./services/_shared.js"></script>
     <script src="./services/auth.js"></script>
+    <script src="./services/security.js"></script>
     <script src="./services/clientes.js"></script>
     <script src="./services/conceptos.js"></script>
     <script src="./services/configuracion.js"></script>
@@ -22,8 +23,8 @@
     <script src="./services/cotizaciones.js"></script>
     <script src="./services/documentos.js"></script>
     <script src="./services/pb-client.js"></script>
-    <script src="../assets/libs/js/jquery.js"></script>
     
+
     <script>
         tailwind.config = { 
             theme: { 
@@ -456,10 +457,11 @@
                             function cardHTML(app) {
                                 const colorKey = app.color || 'gray';
                                 const isCPCard = colorKey === 'cp';
+                                const isAdminCard = colorKey === 'admin';
 
-                                const textColor = isCPCard ? 'text-brand-cp' : getTextColorClass(colorKey);
-                                const bgColor   = isCPCard ? 'bg-yellow-50'   : getBgColorClass(colorKey);
-                                const cardClass = 'module-card ' + (isCPCard ? 'cp ' : '') + 'bg-white rounded-2xl p-6 relative overflow-hidden group cursor-pointer block';
+                                const textColor = isAdminCard ? 'text-slate-600' : (isCPCard ? 'text-brand-cp' : getTextColorClass(colorKey));
+                                const bgColor   = isAdminCard ? 'bg-slate-100'   : (isCPCard ? 'bg-yellow-50'   : getBgColorClass(colorKey));
+                                const cardClass = 'module-card ' + (isCPCard ? 'cp ' : '') + 'bg-white rounded-2xl p-6 relative overflow-hidden group cursor-pointer block' + (isAdminCard ? ' border border-slate-200' : '');
 
                                 const logoFallback = isCPCard ? '../assets/logocp.png' : '../assets/logo.png';
                                 const iconHTML = app.logoUrl
@@ -485,6 +487,31 @@
                                 </a>`;
                             }
 
+                                                        function heroCardHTML(prefix, isCP) {
+                                const textColor = isCP ? 'text-brand-cp' : 'text-brand-red';
+                                const bgIcon = isCP ? 'bg-yellow-50' : 'bg-red-50';
+                                const cardClass = 'module-card bg-white rounded-2xl p-5 relative overflow-hidden group cursor-pointer block';
+                                
+                                return `
+                                <div class="col-span-full flex justify-center mb-2">
+                                    <a href="${prefix}/cotizacion.html" class="${cardClass} w-full max-w-xl border border-gray-100/80 shadow-sm flex flex-row items-center gap-5 hover:-translate-y-1 transition-transform">
+                                        <div class="absolute -right-6 -bottom-6 w-24 h-24 rounded-full opacity-10 ${bgIcon} group-hover:scale-150 transition-transform duration-500 ease-out"></div>
+                                        <div class="relative z-10 w-12 h-12 rounded-xl ${bgIcon} flex items-center justify-center text-xl ${textColor} shadow-sm shrink-0">
+                                            <i class="fa-solid fa-file-invoice-dollar"></i>
+                                        </div>
+                                        <div class="relative z-10 flex-grow">
+                                            <h3 class="font-black text-lg text-gray-800 leading-tight mb-1 group-hover:${textColor} transition-colors">Crear Cotización</h3>
+                                            <p class="text-[11px] text-gray-500 font-medium leading-snug">Comenzar una nueva orden, selección de espacios y conceptos para presupuestos.</p>
+                                        </div>
+                                        <div class="relative z-10 shrink-0 opacity-50 group-hover:opacity-100 transition-opacity">
+                                            <div class="w-8 h-8 rounded-full border border-gray-200 flex items-center justify-center text-gray-400 group-hover:border-current group-hover:${textColor} transition-colors bg-white shadow-sm">
+                                                <i class="fa-solid fa-arrow-right -rotate-45 group-hover:rotate-0 transition-transform duration-300"></i>
+                                            </div>
+                                        </div>
+                                    </a>
+                                </div>`;
+                            }
+
                             function buildModules(prefix, colorKey) {
                                 return [
                                     { name: 'Catálogo',  description: 'Catálogo y cotización de conceptos.', icon: 'fa-cart-shopping', url_path: `${prefix}/catalog.html`,  color: colorKey },
@@ -499,26 +526,32 @@
 
                             grid.innerHTML = '';
                             grid.className = defaultGridClass;
-
-                            // Admin (o usuario con ambos tenants): muestra SOLO 2 tarjetas de cotizadores
+                            // Admin (o usuario con ambos tenants): muestra tarjetas de cotizadores + config si es admin
                             if (isAdmin || (hasPM && hasCP)) {
-                                grid.className = dualGridClass;
                                 const cotizadores = [
                                     { name: 'Cotizador - Plaza Mayor', description: 'Acceso al cotizador de Plaza Mayor.', icon: 'fa-store', url_path: 'cotizador/catalog.html', color: 'red', logoUrl: pmLogo },
                                     { name: 'Cotizador - Casa de Piedra', description: 'Acceso al cotizador de Casa de Piedra.', icon: 'fa-gem', url_path: 'cotizadorcp/catalog.html', color: 'cp', logoUrl: cpLogo },
                                 ];
+                                if (isAdmin) {
+                                    grid.className = 'grid grid-cols-1 sm:grid-cols-3 gap-4 md:gap-6 max-w-5xl mx-auto';
+                                    cotizadores.push({ name: 'Configuracion', description: 'Panel de administracion: conceptos, impuestos, documentos y plantillas PDF.', icon: 'fa-gear', url_path: 'system/config.html', color: 'admin' });
+                                } else {
+                                    grid.className = dualGridClass;
+                                }
                                 cotizadores.forEach(app => grid.innerHTML += cardHTML(app));
                                 return;
                             }
 
-                            // Solo Plaza Mayor: muestra módulos individuales
+                            // Solo Plaza Mayor: muestra módulos individuales con hero central
                             if (hasPM) {
+                                grid.innerHTML = heroCardHTML('cotizador', false);
                                 buildModules('cotizador', 'red').forEach(app => grid.innerHTML += cardHTML(app));
                                 return;
                             }
 
-                            // Solo Casa de Piedra: muestra módulos individuales con color CP
+                            // Solo Casa de Piedra: muestra módulos individuales con hero central
                             if (hasCP) {
+                                grid.innerHTML = heroCardHTML('cotizadorcp', true);
                                 buildModules('cotizadorcp', 'cp').forEach(app => grid.innerHTML += cardHTML(app));
                                 return;
                             }

@@ -35,6 +35,60 @@ const IS_CATALOG_ADMIN_PAGE = CP_PAGE_MODE === 'catalog_admin';
 let allSpaces = [], catalogConcepts = [], dbTaxes = [], currentSpace = null, currentPricing = { base:0, final:0 };
 let adminSelectedConcepts = []; let myPermissions = { access:false, catalog_manage:false };
 let __cpPremontajePct = 25;
+let cpCatalogRestoringViewState = false;
+const CP_CATALOG_VIEW_STATE_SCOPE = `cp_catalog:${CP_PAGE_MODE}`;
+
+function cpCatalogViewStateApi() {
+    return window.__HUB_VIEW_STATE || null;
+}
+
+function cpCatalogReadViewState() {
+    const api = cpCatalogViewStateApi();
+    return api?.read ? (api.read(CP_CATALOG_VIEW_STATE_SCOPE, { maxAgeMs: 30 * 60 * 1000 }) || null) : null;
+}
+
+function cpCatalogApplyViewStateControls(state = cpCatalogReadViewState()) {
+    if (!state || typeof state !== 'object') return;
+    const searchEl = document.getElementById('cat-search');
+    const typeEl = document.getElementById('cat-filter-type');
+    const sortEl = document.getElementById('cat-sort');
+    if (searchEl && typeof state.search === 'string') searchEl.value = state.search;
+    if (typeEl && typeof state.type === 'string') typeEl.value = state.type;
+    if (sortEl && typeof state.sort === 'string') sortEl.value = state.sort;
+}
+
+function cpCatalogSaveViewState(extra = {}) {
+    const api = cpCatalogViewStateApi();
+    if (!api?.write) return null;
+    const mgrId = document.getElementById('mgr-id')?.value || '';
+    return api.write(CP_CATALOG_VIEW_STATE_SCOPE, {
+        search: document.getElementById('cat-search')?.value || '',
+        type: document.getElementById('cat-filter-type')?.value || 'all',
+        sort: document.getElementById('cat-sort')?.value || 'default',
+        selectedSpaceId: String(
+            extra.selectedSpaceId
+            || mgrId
+            || currentSpace?.id
+            || ''
+        ).trim(),
+        windowScrollY: api.getWindowScrollY ? api.getWindowScrollY() : (window.scrollY || 0),
+        ...(extra && typeof extra === 'object' ? extra : {})
+    });
+}
+
+function cpCatalogRestoreViewStateAfterRender(state = cpCatalogReadViewState()) {
+    if (!state || typeof state !== 'object') return;
+    const api = cpCatalogViewStateApi();
+    if (api?.restoreScrollState) api.restoreScrollState(state);
+    const selectedSpaceId = String(state.selectedSpaceId || '').trim();
+    if (!selectedSpaceId) return;
+    window.setTimeout(() => {
+        const target = document.querySelector(`[data-space-id="${selectedSpaceId}"]`);
+        if (target && typeof target.scrollIntoView === 'function') {
+            target.scrollIntoView({ block: 'center', inline: 'nearest' });
+        }
+    }, 90);
+}
 
 function normalizeCpCatalogTenantSlug(value) {
     const raw = String(value || '').trim().toLowerCase();
@@ -440,6 +494,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     if (!myPermissions.access) return window.showToast?.('No tienes permisos.', 'error');
     if (myPermissions.catalog_manage && IS_CATALOG_ADMIN_PAGE) { const btn = document.getElementById('btn-new-space'); if(btn) btn.classList.remove('hidden'); }
+    cpCatalogApplyViewStateControls();
     await loadTaxes();
     await loadPremontajePctConfig();
     if (IS_QUOTE_PAGE) await loadClientProfilesForQuoteModal();
@@ -470,10 +525,15 @@ async function loadTaxes() {
     }
 }
 async function loadCatalog() {
+    cpCatalogApplyViewStateControls();
     const tenant = resolveCpCatalogTenantSlug();
     const { data } = await window.tenantPocketBase.from('espacios').select('*').order('clave');
     allSpaces = filterCpCatalogRowsByTenant(data || [], tenant).sort((a, b) => String(a?.clave || a?.nombre || '').localeCompare(String(b?.clave || b?.nombre || ''), 'es', { numeric: true, sensitivity: 'base' }));
-    renderSpaces(allSpaces);
+    cpCatalogRestoringViewState = true;
+    if (typeof window.filterCatalogLogic === 'function') window.filterCatalogLogic({ skipSave: true });
+    else renderSpaces(allSpaces);
+    cpCatalogRestoringViewState = false;
+    cpCatalogRestoreViewStateAfterRender();
 }
 
 function renderSpaces(list) { 
@@ -511,7 +571,7 @@ function renderSpaces(list) {
         const imgsHtml = allUrls.map((url, i) => `<img src="${url}" class="card-img absolute inset-0 w-full h-full object-cover transition-opacity duration-1000 ${i===0?'opacity-100':'opacity-0'}" data-index="${i}">`).join('');
         
         const cardHtml = `
-            <div class="bg-white rounded-xl shadow-md relative group hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 overflow-hidden border border-gray-100 cursor-pointer" 
+            <div data-space-card="1" data-space-id="${s.id}" class="bg-white rounded-xl shadow-md relative group hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 overflow-hidden border border-gray-100 cursor-pointer"
                  onclick="window.openPreviewCardModal('${String(s.id)}')"
                  onmouseenter="window.startCardCarousel(this)" 
                  onmouseleave="window.stopCardCarousel(this)">
@@ -621,6 +681,7 @@ window.clearManagerImage = function(num) { const input = document.getElementById
 
 window.openManagerModal = function(id){
     if (!myPermissions.catalog_manage) return window.showToast("No tienes permisos.", "error"); 
+    cpCatalogSaveViewState({ selectedSpaceId: String(id || '').trim() });
     document.getElementById('mgr-id').value = id || ''; const container = document.getElementById('mgr-taxes-list'); document.querySelectorAll('.day-block-check').forEach(cb => cb.checked = false); document.querySelectorAll('.day-block-premontaje-check').forEach(cb => cb.checked = false);
     if(container) { container.innerHTML = ''; let currentTaxes = []; if(id) { const s = allSpaces.find(x => x.id === id); currentTaxes = parseIds((s && (s.impuestos_ids || s.impuestos)) || []); } dbTaxes.forEach(t => { const isChecked = currentTaxes.some(cid => String(cid) === String(t.id)) ? 'checked' : ''; container.innerHTML += `<label class="flex items-center gap-2 p-2 border rounded bg-white hover:bg-gray-50 cursor-pointer"><input type="checkbox" value="${t.id}" class="tax-check accent-brand-red cursor-pointer" ${isChecked}><span class="text-[10px] font-bold uppercase text-gray-600 cursor-pointer select-none">${t.nombre} (${t.porcentaje}%)</span></label>`; }); }
 
@@ -716,7 +777,8 @@ window.saveSpace = async function(){
             else if (preview && preview.getAttribute('data-modified') === 'true' && preview.classList.contains('hidden')) fd.append(fieldName, '');
         }
 
-        await cpSaveEspacioRecord(id, fd);
+        const savedSpace = await cpSaveEspacioRecord(id, fd);
+        cpCatalogSaveViewState({ selectedSpaceId: String(savedSpace?.id || id || '').trim() });
         window.showToast("Guardado", "success"); window.closeModal('manager-modal'); loadCatalog(); for(let i=1; i<=5; i++){ const fi = document.getElementById(`mgr-file-${i}`); if(fi) fi.value = ''; }
 
     } catch(e) { console.error("Error al guardar:", e); window.showToast("Error al guardar: " + (e?.message || e), "error"); } finally { btn.disabled = false; btn.innerText = "Guardar"; }
@@ -892,10 +954,10 @@ window.generatePDF = async function() {
     setTimeout(() => { cpNavigateSafely(targetUrl); }, 900);
 }
 
-window.filterCatalogLogic = function() { const term = document.getElementById('cat-search').value.toLowerCase(); const type = document.getElementById('cat-filter-type').value; const sort = document.getElementById('cat-sort').value; let filtered = allSpaces.filter(s => (s.nombre.toLowerCase().includes(term) || s.clave.toLowerCase().includes(term)) && (type === 'all' || s.tipo === type)); if (sort === 'price_asc') filtered.sort((a,b) => a.precio_base - b.precio_base); if (sort === 'price_desc') filtered.sort((a,b) => b.precio_base - a.precio_base); renderSpaces(filtered); }
+window.filterCatalogLogic = function(options = {}) { const term = document.getElementById('cat-search').value.toLowerCase(); const type = document.getElementById('cat-filter-type').value; const sort = document.getElementById('cat-sort').value; let filtered = allSpaces.filter(s => (s.nombre.toLowerCase().includes(term) || s.clave.toLowerCase().includes(term)) && (type === 'all' || s.tipo === type)); if (sort === 'price_asc') filtered.sort((a,b) => a.precio_base - b.precio_base); if (sort === 'price_desc') filtered.sort((a,b) => b.precio_base - a.precio_base); renderSpaces(filtered); if (!cpCatalogRestoringViewState && options.skipSave !== true) cpCatalogSaveViewState(); }
 window.previewImage = function(i, id){ const p = document.getElementById(id || 'mgr-preview'); if(i.files && i.files[0]){ const r=new FileReader(); r.onload=e=>{ p.src=e.target.result; p.classList.remove('hidden'); p.setAttribute('data-modified', 'true'); }; r.readAsDataURL(i.files[0]); } }
 window.checkAvailability = async function() { const s=document.getElementById('date-start').value, e=document.getElementById('date-end').value; if(!s||!e)return; const {data} = await window.tenantPocketBase.from('cotizaciones').select('id').eq('espacio_id',currentSpace.id).in('status',['aprobada','finalizada']).or(`and(fecha_inicio.lte.${e},fecha_fin.gte.${s})`); const msg=document.getElementById('avail-msg'); msg.classList.remove('hidden'); if(data.length){ msg.innerText='OCUPADO'; msg.className='text-red-500 font-bold text-center'; document.getElementById('btn-generate').disabled=true; }else{ msg.innerText='DISPONIBLE'; msg.className='text-green-600 font-bold text-center'; document.getElementById('btn-generate').disabled=false; } }
-window.askDeleteSpace = async function(){ window.openConfirm("¿Eliminar espacio?", async () => { try { if (!(await cpEnsureCatalogManageSession('eliminar el espacio'))) return; await cpDeleteEspacioRecord(document.getElementById('mgr-id').value); window.showToast("Eliminado"); window.closeModal('manager-modal'); loadCatalog(); } catch(e) { console.error(e); window.showToast("Error al eliminar: " + (e?.message || e), "error"); } }); }
+window.askDeleteSpace = async function(){ window.openConfirm("¿Eliminar espacio?", async () => { try { if (!(await cpEnsureCatalogManageSession('eliminar el espacio'))) return; await cpDeleteEspacioRecord(document.getElementById('mgr-id').value); cpCatalogSaveViewState({ selectedSpaceId: '' }); window.showToast("Eliminado"); window.closeModal('manager-modal'); loadCatalog(); } catch(e) { console.error(e); window.showToast("Error al eliminar: " + (e?.message || e), "error"); } }); }
 
 // =========================================================================
 // EXTENSIÓN 2026: MULTI-ESPACIO + PREMONTAJE 25% DÍA BASE + BLOQUEO CRUZADO

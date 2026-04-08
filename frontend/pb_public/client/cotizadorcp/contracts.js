@@ -632,10 +632,59 @@ const AVAILABLE_VARS = [
 ];
 
 let approvedOrders = [], selectedOrder = null, templates = [], signedFileToUpload = null, externalReceiptFile = null;
+let cpContractsRestoringViewState = false;
+const CP_CONTRACTS_VIEW_STATE_SCOPE = `cp_contracts:${__CP_CONTRACTS_PAGE_MODE || 'combined'}`;
 let currentRemainingBalance = 0;
 let pendingAction = null;
 let defaultTemplateFile = '';
 let __contractsTemplateLetterheadEnabled = true;
+
+function cpContractsViewStateApi() {
+    return window.__HUB_VIEW_STATE || null;
+}
+
+function cpContractsReadViewState() {
+    const api = cpContractsViewStateApi();
+    return api?.read ? (api.read(CP_CONTRACTS_VIEW_STATE_SCOPE, { maxAgeMs: 30 * 60 * 1000 }) || null) : null;
+}
+
+function cpContractsApplyViewStateControls(state = cpContractsReadViewState()) {
+    if (!state || typeof state !== 'object') return;
+    const searchEl = document.getElementById('search-approved');
+    if (searchEl && typeof state.search === 'string') searchEl.value = state.search;
+}
+
+function cpContractsSaveViewState(extra = {}) {
+    const api = cpContractsViewStateApi();
+    if (!api?.write) return null;
+    return api.write(CP_CONTRACTS_VIEW_STATE_SCOPE, {
+        search: document.getElementById('search-approved')?.value || '',
+        selectedOrderId: String(extra.selectedOrderId || selectedOrder?.id || '').trim(),
+        windowScrollY: api.getWindowScrollY ? api.getWindowScrollY() : (window.scrollY || 0),
+        elementScrolls: {
+            '#approved-list': api.getElementScrollTop ? api.getElementScrollTop('#approved-list') : (document.getElementById('approved-list')?.scrollTop || 0)
+        },
+        ...(extra && typeof extra === 'object' ? extra : {})
+    });
+}
+
+function cpContractsRestoreViewStateAfterRender(state = cpContractsReadViewState()) {
+    if (!state || typeof state !== 'object') return;
+    const api = cpContractsViewStateApi();
+    if (api?.restoreScrollState) api.restoreScrollState(state);
+    const selectedOrderId = String(state.selectedOrderId || '').trim();
+    if (!selectedOrderId) return;
+    window.setTimeout(() => {
+        const target = document.querySelector(`#approved-list [data-order-id="${selectedOrderId}"]`);
+        if (target && typeof target.click === 'function') target.click();
+    }, 90);
+}
+
+function cpContractsFilterApprovedOrders(term, options = {}) {
+    const lower = String(term || '').toLowerCase();
+    renderOrderList(approvedOrders.filter(o => o.cliente_nombre.toLowerCase().includes(lower) || (o.numero_orden && o.numero_orden.toLowerCase().includes(lower))));
+    if (!cpContractsRestoringViewState && options.skipSave !== true) cpContractsSaveViewState();
+}
 
 function __contractsIsTemplateLetterheadEnabled() {
     return __contractsTemplateLetterheadEnabled !== false;
@@ -3220,6 +3269,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.log("Sistema iniciado correctamente. Cargando módulos...");
 
     // 4. Cargar Datos
+    cpContractsApplyViewStateControls();
     await loadApprovedOrders();
     await __contractsLoadPreferences();
 
@@ -3229,8 +3279,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Filtros
     document.getElementById('search-approved').addEventListener('input', (e) => {
-        const term = e.target.value.toLowerCase();
-        renderOrderList(approvedOrders.filter(o => o.cliente_nombre.toLowerCase().includes(term) || (o.numero_orden && o.numero_orden.toLowerCase().includes(term))));
+        cpContractsFilterApprovedOrders(e.target.value);
     });
     
     // Modal Confirm
@@ -3246,6 +3295,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function loadApprovedOrders() {
     const listContainer = document.getElementById('approved-list');
     if(!listContainer) return;
+    cpContractsApplyViewStateControls();
+    if (!cpContractsRestoringViewState) cpContractsSaveViewState();
     
     listContainer.innerHTML = '<div class="p-8 text-center text-gray-400 text-xs italic">Cargando...</div>';
     
@@ -3261,7 +3312,10 @@ async function loadApprovedOrders() {
 
         console.log(`Órdenes cargadas: ${data?.length || 0}`);
         approvedOrders = data || [];
-        renderOrderList(approvedOrders);
+        cpContractsRestoringViewState = true;
+        cpContractsFilterApprovedOrders(document.getElementById('search-approved')?.value || '', { skipSave: true });
+        cpContractsRestoringViewState = false;
+        cpContractsRestoreViewStateAfterRender();
 
     } catch (e) {
         console.error("Error al cargar órdenes:", e);
@@ -3284,6 +3338,7 @@ function renderOrderList(list) {
             ? '<span class="text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-300">Pagado</span>'
             : '';
         const item = document.createElement('div');
+        item.setAttribute('data-order-id', String(o.id || ''));
         item.className = `bg-white border p-3 rounded-lg hover:bg-gray-50 cursor-pointer transition group shadow-sm mb-2 ${paidComplete ? 'border-emerald-200 bg-emerald-50/40' : 'border-gray-100'}`;
         item.onclick = () => selectOrder(o);
         item.innerHTML = `<div class="flex justify-between mb-1"><span class="font-bold text-xs text-gray-800 group-hover:text-brand-red transition truncate w-32">${o.cliente_nombre}</span><div class="flex items-center gap-1">${paidBadge}<span class="text-[9px] font-mono text-gray-400 bg-gray-50 border border-gray-200 px-1 rounded">${o.numero_orden || '---'}</span></div></div><div class="flex justify-between items-center"><span class="text-[10px] text-gray-500 truncate w-24"><i class="fa-solid fa-map-pin mr-1"></i>${o.espacio_nombre}</span><span class="text-xs font-black text-gray-800">${formatMoney(o.precio_final)}</span></div>`;
@@ -3300,6 +3355,7 @@ function __contractsSyncPaidIndicator(order) {
 
 function selectOrder(order) {
     selectedOrder = order;
+    cpContractsSaveViewState({ selectedOrderId: String(order?.id || '').trim() });
     
     // UI Updates
     document.getElementById('workspace-empty').classList.add('hidden');

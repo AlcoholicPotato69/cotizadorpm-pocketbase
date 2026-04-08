@@ -13,12 +13,42 @@
  * ------------------------------------------------------------------------- */
 const PB_URL = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseUrl) || 'http://127.0.0.1:8090';
 const PB_KEY = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseAnonKey) || '';
+const PM_CONVENIO_INDEFINITE_END = '2099-12-31';
 
 // (Opcional) Esquema finanzas configurable
 const FIN_SCHEMA = (window.HUB_CONFIG && window.HUB_CONFIG.finanzasSchema) || 'finanzas';
 let allOrders = [], allSpaces = [], catalogConcepts = [], dbTaxes = [], calendarObj, currentConcepts = [], currentFiscalData = {};
 let myPermissions = { access:false, orders_edit:false };
 let currentTaxIds = [];
+
+function pmCalendarParseJson(value) {
+    if (!value) return {};
+    if (typeof value === 'object') return value;
+    if (typeof value === 'string') {
+        try { return JSON.parse(value) || {}; } catch (_) { return {}; }
+    }
+    return {};
+}
+
+function pmCalendarDetailList(order = {}) {
+    const details = pmCalendarParseJson(order?.espacios_detalle);
+    return Array.isArray(details) ? details : [];
+}
+
+function pmCalendarOrderBlocksIndefinitely(order = {}) {
+    const details = pmCalendarParseJson(order?.detalles_evento);
+    if (details?.convenio?.activo === true && details?.convenio?.bloqueo_indefinido !== false) return true;
+    return pmCalendarDetailList(order).some((item) => item?.convenio_indefinido === true || item?.bloqueo_indefinido === true);
+}
+
+function pmCalendarOrderEffectiveEnd(order = {}) {
+    return pmCalendarOrderBlocksIndefinitely(order) ? PM_CONVENIO_INDEFINITE_END : order.fecha_fin;
+}
+
+function pmCalendarRangesOverlap(startA, endA, startB, endB) {
+    return new Date(`${startA}T00:00:00`) <= new Date(`${endB}T00:00:00`)
+        && new Date(`${startB}T00:00:00`) <= new Date(`${endA}T00:00:00`);
+}
 
 // --- HELPER PARA FECHAS (CRÍTICO PARA DRAG & DROP) ---
 window.getLocalYMD = function(date) {
@@ -137,13 +167,11 @@ async function loadData() {
 
 async function checkDbConflict(orderId, spaceId, start, end) {
     const { data } = await window.tenantPocketBase.from('cotizaciones')
-        .select('id')
+        .select('id,fecha_inicio,fecha_fin,detalles_evento,espacios_detalle')
         .eq('espacio_id', spaceId)
         .in('status', ['aprobada', 'finalizada'])
-        .neq('id', orderId)
-        .or(`and(fecha_inicio.lte.${end},fecha_fin.gte.${start})`);
-    
-    return data && data.length > 0;
+        .neq('id', orderId);
+    return (data || []).some((row) => pmCalendarRangesOverlap(start, end, row.fecha_inicio, pmCalendarOrderEffectiveEnd(row)));
 }
 
 // LÓGICA COMPARTIDA PARA ACTUALIZAR FECHAS (DROP Y RESIZE)
@@ -232,7 +260,8 @@ function getCalendarEventsFromOrders(ordersList = null) {
         const spaceName = space ? space.nombre : (o.espacio_clave || 'Esp');
 
         const startParts = o.fecha_inicio.split('-'); const startObj = new Date(startParts[0], startParts[1]-1, startParts[2]); 
-        const endParts = o.fecha_fin.split('-'); const endObj = new Date(endParts[0], endParts[1]-1, endParts[2]); endObj.setDate(endObj.getDate() + 1); 
+        const effectiveEnd = pmCalendarOrderEffectiveEnd(o);
+        const endParts = effectiveEnd.split('-'); const endObj = new Date(endParts[0], endParts[1]-1, endParts[2]); endObj.setDate(endObj.getDate() + 1); 
         return { 
             id: o.id, 
             title: `${spaceName} - ${o.cliente_nombre}`, 
@@ -380,18 +409,18 @@ window.checkAvailabilityModal = async function() {
     if(!start || !end || !spaceId) return; 
 
     const query = window.tenantPocketBase.from('cotizaciones')
-        .select('id')
+        .select('id,fecha_inicio,fecha_fin,detalles_evento,espacios_detalle')
         .eq('espacio_id', spaceId)
-        .in('status',['aprobada','finalizada'])
-        .or(`and(fecha_inicio.lte.${end},fecha_fin.gte.${start})`); 
+        .in('status',['aprobada','finalizada']); 
     
     if(id) query.neq('id', id); 
     const { data } = await query; 
+    const hasConflict = (data || []).some((row) => pmCalendarRangesOverlap(start, end, row.fecha_inicio, pmCalendarOrderEffectiveEnd(row)));
     
     msg.classList.remove('hidden'); 
     msg.className = "text-center text-[10px] font-bold mt-1 p-1 rounded w-full block";
 
-    if(data && data.length > 0) { 
+    if(hasConflict) { 
         msg.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> OCUPADO'; msg.classList.add('bg-red-100', 'text-red-600'); 
     } else { 
         msg.innerHTML = '<i class="fa-solid fa-check-circle"></i> DISPONIBLE'; msg.classList.add('bg-green-100', 'text-green-700'); 

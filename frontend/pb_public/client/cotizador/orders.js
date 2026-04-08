@@ -10,6 +10,57 @@
 let orderClientProfiles = []; let orderClientProfilesById = {};
 let __pmMaterialsList = [];
 let __pmLocationsList = [];
+let pmOrdersRestoringViewState = false;
+const PM_ORDERS_VIEW_STATE_SCOPE = 'pm_orders';
+
+function pmOrdersViewStateApi() {
+    return window.__HUB_VIEW_STATE || null;
+}
+
+function pmOrdersReadViewState() {
+    const api = pmOrdersViewStateApi();
+    return api?.read ? (api.read(PM_ORDERS_VIEW_STATE_SCOPE, { maxAgeMs: 30 * 60 * 1000 }) || null) : null;
+}
+
+function pmOrdersApplyViewStateControls(state = pmOrdersReadViewState()) {
+    if (!state || typeof state !== 'object') return;
+    const searchEl = document.getElementById('search-orders');
+    if (searchEl && typeof state.search === 'string') searchEl.value = state.search;
+}
+
+function pmOrdersSaveViewState(extra = {}) {
+    const api = pmOrdersViewStateApi();
+    if (!api?.write) return null;
+    const state = (extra && typeof extra === 'object') ? extra : {};
+    const previousState = pmOrdersReadViewState() || {};
+    const hasSelectedOrderId = Object.prototype.hasOwnProperty.call(state, 'selectedOrderId');
+    return api.write(PM_ORDERS_VIEW_STATE_SCOPE, {
+        search: document.getElementById('search-orders')?.value || '',
+        selectedOrderId: hasSelectedOrderId
+            ? String(state.selectedOrderId || '').trim()
+            : String(previousState.selectedOrderId || '').trim(),
+        windowScrollY: api.getWindowScrollY ? api.getWindowScrollY() : (window.scrollY || 0),
+        ...state
+    });
+}
+
+function pmOrdersRestoreViewStateAfterRender(state = pmOrdersReadViewState()) {
+    if (!state || typeof state !== 'object') return;
+    const api = pmOrdersViewStateApi();
+    window.setTimeout(() => {
+        if (api?.restoreScrollState) api.restoreScrollState(state);
+        const selectedOrderId = String(state.selectedOrderId || '').trim();
+        if (!selectedOrderId) return;
+        const target = document.querySelector(`[data-order-id="${selectedOrderId}"]`);
+        if (!target) return;
+        const rect = target.getBoundingClientRect();
+        const viewportHeight = window.innerHeight || document.documentElement?.clientHeight || 0;
+        if (rect.top < 120 || (viewportHeight && rect.bottom > (viewportHeight - 120))) {
+            target.scrollIntoView({ block: 'center' });
+        }
+    }, 90);
+}
+
 function __pmNormalizeMaterialLabel(value) {
     const text = String(value || '').trim();
     const folded = typeof text.normalize === 'function' ? text.normalize('NFD') : text;
@@ -356,6 +407,7 @@ function __pmResolveOrderTaxIds(order) {
 function __pmResolveOrderPricing(order) {
     const breakdown = __pmParseRecordJson(order?.desglose_precios);
     const taxIds = __pmResolveOrderTaxIds(order);
+    const isConvenio = __pmIsConvenioOrder(order);
     const hasSubtotal = __pmHasExplicitValue(breakdown?.subtotal_antes_impuestos);
     const hasTaxTotal = __pmHasExplicitValue(breakdown?.tax_total);
     const hasTotal = __pmHasExplicitValue(order?.precio_final);
@@ -364,10 +416,14 @@ function __pmResolveOrderPricing(order) {
     let taxTotal = hasTaxTotal ? __pmToFiniteNumber(breakdown?.tax_total, 0) : null;
 
     if (subtotal === null && hasTotal && hasTaxTotal) {
-        subtotal = Math.max(0, __pmToFiniteNumber(order?.precio_final, 0) - __pmToFiniteNumber(breakdown?.tax_total, 0));
+        const inferredSubtotal = __pmToFiniteNumber(order?.precio_final, 0) - __pmToFiniteNumber(breakdown?.tax_total, 0);
+        subtotal = isConvenio ? inferredSubtotal : Math.max(0, inferredSubtotal);
     }
     if (subtotal === null) subtotal = 0;
 
+    if (isConvenio) {
+        taxTotal = 0;
+    }
     if (taxTotal === null) {
         taxTotal = __pmRoundCurrency(taxIds.reduce((sum, taxId) => {
             const tax = __pmResolveTaxRecord(taxId, order);
@@ -408,6 +464,66 @@ function __pmHydrateOrderPricing(order) {
             impuestos_detalle: pricing.taxIds,
             tax_total: pricing.taxTotal
         }
+    };
+}
+function __pmOrderPayments(order) {
+    if (Array.isArray(order?.historial_pagos)) return order.historial_pagos.filter(Boolean);
+    try {
+        const parsed = JSON.parse(order?.historial_pagos || '[]');
+        return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+    } catch (_) {
+        return [];
+    }
+}
+function __pmOrderPaymentAmount(item) {
+    const amount = parseFloat(item?.amount ?? item?.monto ?? item?.importe ?? 0);
+    return Number.isFinite(amount) ? amount : 0;
+}
+function __pmOrderClosureEntry(order) {
+    return __pmOrderPayments(order).find((item) => {
+        const t = String(item?.type || item?.tipo || '').toLowerCase();
+        return t === 'constancia_liquidacion' || item?.closed === true || item?.is_closure === true;
+    }) || null;
+}
+function __pmOrderTotalPaid(order) {
+    return __pmOrderPayments(order).reduce((sum, item) => sum + Math.max(0, __pmOrderPaymentAmount(item)), 0);
+}
+function __pmOrderRemainingBalance(order) {
+    if (__pmOrderClosureEntry(order)) return 0;
+    const total = __pmResolveOrderPricing(order).total;
+    const paid = __pmOrderTotalPaid(order);
+    const remaining = __pmRoundCurrency(total - paid);
+    return remaining < 0 ? 0 : remaining;
+}
+function __pmResolveOrderTableAmountState(order) {
+    const isConvenio = __pmIsConvenioOrder(order);
+    const pricing = __pmResolveOrderPricing(order);
+    const status = String(order?.status || '').toLowerCase();
+    if (isConvenio) {
+        const remaining = Math.max(0, parseFloat(pricing?.breakdown?.convenio_balance_total ?? pricing.total ?? 0) || 0);
+        return {
+            amount: remaining,
+            textClass: remaining > 0.01 ? 'text-red-600' : 'text-emerald-600',
+            label: remaining > 0.01 ? 'Faltante' : '',
+            badgeHtml: '<span class="rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-amber-800">Convenio</span>'
+        };
+    }
+    const payments = __pmOrderPayments(order);
+    const shouldShowRemaining = ['aprobada', 'finalizada'].includes(status) && payments.length > 0;
+    if (shouldShowRemaining) {
+        const remaining = __pmOrderRemainingBalance(order);
+        return {
+            amount: remaining,
+            textClass: remaining > 0.01 ? 'text-red-600' : 'text-emerald-600',
+            label: remaining > 0.01 ? 'Faltante' : '',
+            badgeHtml: ''
+        };
+    }
+    return {
+        amount: pricing.total,
+        textClass: 'text-gray-800',
+        label: '',
+        badgeHtml: ''
     };
 }
 function __pmResolveDetailMaterialMeasure(detailSpace, catalogSpace) {
@@ -768,6 +884,8 @@ function __pmClosePreviewTabIfNeeded() {
     }, 40);
 }
 
+const PM_CONVENIOS_CFG_KEY = 'convenios_pm';
+const PM_CONVENIO_INDEFINITE_END = '2099-12-31';
 let allOrders = [], allSpaces = [], catalogConcepts = [], dbTaxes = [], currentPreviewOrder = null;
 let currentConcepts = []; 
 let myPermissions = { access: false, orders_edit: false };
@@ -779,6 +897,169 @@ let __pmOrderDetailDirtyBound = false;
 let __pmOrderDetailAutoSaveTimer = null;
 let __pmOrderDetailAutoSaveBound = false;
 let __pmOrderUsersById = Object.create(null);
+let pmConvenioCatalog = [];
+
+function __pmNormalizeConvenioName(value) {
+    return String(value || '').trim().replace(/\s+/g, ' ');
+}
+
+function __pmConvenioNameKey(value) {
+    return __pmNormalizeConvenioName(value).toLowerCase();
+}
+
+function __pmBuildConvenioCatalog(items = []) {
+    const source = Array.isArray(items) ? items : [];
+    const seen = new Set();
+    const out = [];
+    source.forEach((item, idx) => {
+        const record = (item && typeof item === 'object') ? item : { nombre: item };
+        const nombre = __pmNormalizeConvenioName(record.nombre || record.name || record.label || '');
+        const key = __pmConvenioNameKey(nombre);
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        out.push({
+            id: String(record.id || `conv_${idx}_${key.replace(/\s+/g, '_')}`),
+            nombre
+        });
+    });
+    return out;
+}
+
+function __pmIsConvenioConceptItem(concept = {}) {
+    return !!(concept?.meta && concept.meta.convenio_item === true);
+}
+
+function __pmFormatConvenioConceptDescription(nombre, cantidad) {
+    const label = __pmNormalizeConvenioName(nombre) || 'Convenio';
+    const qty = Math.max(1, parseInt(cantidad, 10) || 1);
+    return `${label} (${qty} ${qty === 1 ? 'entrega' : 'entregas'})`;
+}
+
+function __pmBuildConvenioConcept(option = {}, cantidad, amount) {
+    const qty = Math.max(1, parseInt(cantidad, 10) || 1);
+    const value = Math.max(0, parseFloat(amount || 0) || 0);
+    const nombre = __pmNormalizeConvenioName(option?.nombre || option?.name || option?.label || '');
+    return {
+        description: __pmFormatConvenioConceptDescription(nombre, qty),
+        amount: value,
+        value,
+        unit: 'fixed',
+        type: 'aumento',
+        meta: {
+            convenio_item: true,
+            convenio_option_id: String(option?.id || '').trim(),
+            convenio_nombre: nombre,
+            cantidad_entrega: qty
+        }
+    };
+}
+
+function __pmGetVisibleExtraConceptIndexes() {
+    const out = [];
+    (currentConcepts || []).forEach((concept, idx) => {
+        if (!__pmIsConvenioConceptItem(concept)) out.push(idx);
+    });
+    return out;
+}
+
+function __pmGetVisibleExtraConcepts() {
+    return __pmGetVisibleExtraConceptIndexes().map((idx) => currentConcepts[idx]);
+}
+
+function __pmSanitizeConvenioItems(items = []) {
+    return (Array.isArray(items) ? items : []).map((item) => {
+        const qty = Math.max(1, parseInt(item?.cantidad_entrega || item?.cantidad || 1, 10) || 1);
+        const amount = Math.max(0, parseFloat(item?.monto ?? item?.amount ?? item?.value ?? 0) || 0);
+        return {
+            id: String(item?.id || item?.convenio_option_id || '').trim() || null,
+            nombre: __pmNormalizeConvenioName(item?.nombre || item?.convenio_nombre || item?.description || 'Convenio') || 'Convenio',
+            cantidad_entrega: qty,
+            monto: amount
+        };
+    }).filter((item) => !!item.nombre);
+}
+
+function __pmSanitizeConvenioEvidenceItems(items = []) {
+    return (Array.isArray(items) ? items : []).map((item, idx) => {
+        const path = String(item?.path || item?.file_path || item?.url || '').trim();
+        if (!path) return null;
+        return {
+            id: String(item?.id || `evidence_${idx + 1}`).trim() || `evidence_${idx + 1}`,
+            path,
+            file_name: String(item?.file_name || item?.nombre_archivo || path.split('/').pop() || `evidencia_${idx + 1}.jpg`).trim(),
+            uploaded_at: item?.uploaded_at || item?.created_at || new Date().toISOString(),
+            mime_type: String(item?.mime_type || item?.type || item?.content_type || 'image/jpeg').trim() || 'image/jpeg',
+            size: parseInt(item?.size || item?.bytes || 0, 10) || 0
+        };
+    }).filter(Boolean);
+}
+
+function __pmParseConvenioMeta(source = {}) {
+    const details = (source && typeof source === 'object' && Object.prototype.hasOwnProperty.call(source, 'detalles_evento'))
+        ? __pmParseRecordJson(source.detalles_evento)
+        : __pmParseRecordJson(source);
+    const raw = details?.convenio && typeof details.convenio === 'object' ? details.convenio : {};
+    return {
+        activo: raw?.activo === true,
+        bloqueo_indefinido: raw?.bloqueo_indefinido !== false,
+        requiere_evidencia: raw?.requiere_evidencia !== false,
+        evidencia_minima: Math.max(1, parseInt(raw?.evidencia_minima || 3, 10) || 3),
+        evidencia_maxima: Math.max(1, parseInt(raw?.evidencia_maxima || 5, 10) || 5),
+        requiere_factura: raw?.requiere_factura === true,
+        requiere_recibo: raw?.requiere_recibo === true,
+        requiere_contrato: raw?.requiere_contrato === true,
+        items: __pmSanitizeConvenioItems(raw?.items || raw?.tratos || []),
+        espacios: Array.isArray(raw?.espacios) ? raw.espacios : [],
+        evidencias: __pmSanitizeConvenioEvidenceItems(raw?.evidencias || raw?.evidence || [])
+    };
+}
+
+function __pmGetConvenioEvidence(order = {}) {
+    return __pmParseConvenioMeta(order).evidencias;
+}
+
+function __pmIsConvenioOrder(order = {}) {
+    const meta = __pmParseConvenioMeta(order);
+    if (meta.activo) return true;
+    const details = __pmParseRecordJson(order?.espacios_detalle);
+    if (!Array.isArray(details)) return false;
+    return details.some((detail) => detail?.convenio_activo === true || detail?.convenio_indefinido === true);
+}
+
+function __pmOrderBlocksIndefinitely(order = {}) {
+    const meta = __pmParseConvenioMeta(order);
+    if (meta.activo && meta.bloqueo_indefinido) return true;
+    const details = __pmParseRecordJson(order?.espacios_detalle);
+    return Array.isArray(details) && details.some((detail) => detail?.convenio_indefinido === true || detail?.bloqueo_indefinido === true);
+}
+
+function __pmNormalizeSpaceConvenioFlag(value, fallback = true) {
+    if (value === null || value === undefined || value === '') return !!fallback;
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value !== 0;
+    const raw = String(value).trim().toLowerCase();
+    if (['false', '0', 'no', 'off'].includes(raw)) return false;
+    if (['true', '1', 'si', 'sí', 'yes', 'on'].includes(raw)) return true;
+    return !!fallback;
+}
+
+function __pmSpaceAllowsConvenio(space = {}) {
+    return __pmNormalizeSpaceConvenioFlag(space?.permite_convenio, true);
+}
+
+function __pmGetQuoteDocumentMeta(orderLike = {}) {
+    const isConvenio = __pmIsConvenioOrder(orderLike);
+    return {
+        isConvenio,
+        itemLabel: isConvenio ? 'Convenio' : 'Cotización',
+        draftTitle: isConvenio ? 'Borrador de Convenio' : 'Borrador de Cotización',
+        approvedTitle: isConvenio ? 'Carta Convenio Aprobada' : 'Cotización Aprobada',
+        draftStorageBase: isConvenio ? 'convenio_borrador' : 'cotizacion_borrador',
+        approvedStorageBase: isConvenio ? 'carta_convenio_aprobada' : 'cotizacion_aprobada',
+        draftFileBase: isConvenio ? 'CONVENIO_BORRADOR' : 'COTIZACION_BORRADOR',
+        approvedFileBase: isConvenio ? 'CARTA_CONVENIO_APROBADA' : 'COTIZACION_APROBADA'
+    };
+}
 
 function __pmNormalizeTenantSlug(value) {
     const raw = String(value || '').trim().toLowerCase();
@@ -1028,7 +1309,14 @@ async function __pmQuotesList(params) {
         }
     }
     const query = window.tenantPocketBase.from('cotizaciones').select('*');
-    if (params && params.filter && params.filter.indexOf('status = "aprobada"') !== -1) query.eq('status', 'aprobada');
+    if (params && params.filter) {
+        const rawFilter = String(params.filter);
+        const wantsApproved = rawFilter.indexOf('status = "aprobada"') !== -1;
+        const wantsFinalized = rawFilter.indexOf('status = "finalizada"') !== -1;
+        if (wantsApproved && wantsFinalized) query.in('status', ['aprobada', 'finalizada']);
+        else if (wantsApproved) query.eq('status', 'aprobada');
+        else if (wantsFinalized) query.eq('status', 'finalizada');
+    }
     if (params && params.sort) query.order(String(params.sort).replace('-', ''), { ascending: !String(params.sort).startsWith('-') });
     const result = await query;
     return { data: result.data || [], error: result.error || null };
@@ -1248,8 +1536,9 @@ async function __pmUploadApprovalSnapshotBlob(orderId, blob, formData = {}) {
     const safeOrderId = String(orderId || '').trim();
     if (!safeOrderId) throw new Error('Cotización inválida para snapshot.');
     if (!blob || !(blob.size > 0)) throw new Error('Snapshot PDF vacío.');
+    const docMeta = __pmGetQuoteDocumentMeta({ ...currentPreviewOrder, ...formData });
     const folio = String(formData?.numero_orden || __pmResolveQuoteFolio(currentPreviewOrder, safeOrderId)).trim();
-    const path = `${safeOrderId}/cotizacion_aprobada_${folio}.pdf`;
+    const path = `${safeOrderId}/${docMeta.approvedStorageBase}_${folio}.pdf`;
     const { error: uploadErr } = await window.globalPocketBase.storage.from('documentos').upload(path, blob, { upsert: true });
     if (uploadErr) throw uploadErr;
     const { error: dbErr } = await __pmQuotesUpdate(safeOrderId, { status: 'aprobada', url_cotizacion_final: path });
@@ -1259,10 +1548,11 @@ async function __pmUploadApprovalSnapshotBlob(orderId, blob, formData = {}) {
 
 function __pmBuildApprovalSnapshotMeta(orderId, formData = {}) {
     const safeOrderId = String(orderId || '').trim();
+    const docMeta = __pmGetQuoteDocumentMeta({ ...currentPreviewOrder, ...formData });
     const folio = String(formData?.numero_orden || __pmResolveQuoteFolio(currentPreviewOrder, safeOrderId)).trim();
     return {
         folio,
-        path: safeOrderId ? `${safeOrderId}/cotizacion_aprobada_${folio}.pdf` : ''
+        path: safeOrderId ? `${safeOrderId}/${docMeta.approvedStorageBase}_${folio}.pdf` : ''
     };
 }
 
@@ -1273,7 +1563,7 @@ async function __pmUploadApprovalSnapshotBlob(orderId, blob, formData = {}, opti
     const opts = options && typeof options === 'object' ? options : {};
     const resolved = __pmBuildApprovalSnapshotMeta(safeOrderId, formData);
     const folio = String(opts.folio || resolved.folio).trim();
-    const path = String(opts.path || resolved.path || `${safeOrderId}/cotizacion_aprobada_${folio}.pdf`).trim();
+    const path = String(opts.path || resolved.path || `${safeOrderId}/${__pmGetQuoteDocumentMeta({ ...currentPreviewOrder, ...formData }).approvedStorageBase}_${folio}.pdf`).trim();
     const { error: uploadErr } = await window.globalPocketBase.storage.from('documentos').upload(path, blob, { upsert: true });
     if (uploadErr) throw uploadErr;
     if (opts.persistQuote !== false) {
@@ -1519,6 +1809,7 @@ window.askDeleteOrder = function(id, e) {
             const { error } = await __pmQuotesDelete(id);
             if (error) throw error;
             window.showToast("Cotización eliminada", "success");
+            pmOrdersSaveViewState({ selectedOrderId: '' });
             window.loadOrders();
         } catch (err) {
             window.showToast("Error: " + err.message, "error");
@@ -1570,6 +1861,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     await __pmLoadSharedPdfStyleConfig();
     __pmInitPdfStyleEditor();
+    pmOrdersApplyViewStateControls();
 
     document.getElementById('btn-confirm-action')?.addEventListener('click', () => { if(confirmCallback) confirmCallback(); window.closeModal('generic-confirm-modal'); });
     document.getElementById('btn-cancel-action')?.addEventListener('click', () => { if(cancelCallback) cancelCallback(); window.closeModal('generic-confirm-modal'); });
@@ -1588,7 +1880,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     __pmBindOrderDetailDirtyTracking();
     __pmBindOrderDetailAutoSave();
     
-    await Promise.all([loadTaxes(), loadSpaces(), loadConcepts()]);
+    await Promise.all([loadTaxes(), loadSpaces(), loadConcepts(), loadConvenios()]);
     await __pmLoadLocations();
     if (!IS_PM_ORDER_DETAIL_PAGE && !IS_PM_ORDER_PREVIEW_PAGE) await window.loadOrders();
     if (!IS_PM_ORDER_DETAIL_PAGE && !IS_PM_ORDER_PREVIEW_PAGE) {
@@ -1661,6 +1953,23 @@ async function loadConcepts() {
     const tenant = __pmResolveTenantSlug();
     const { data } = await window.tenantPocketBase.from('conceptos_catalogo').select('*').eq('activo', true);
     catalogConcepts = __pmFilterRowsByTenant(data || [], tenant);
+}
+async function loadConvenios() {
+    try {
+        const { data } = await window.tenantPocketBase
+            .from('configuracion')
+            .select('id,clave,valor_json')
+            .eq('clave', PM_CONVENIOS_CFG_KEY)
+            .limit(1);
+        const raw = Array.isArray(data) ? data[0]?.valor_json : null;
+        let items = [];
+        if (Array.isArray(raw)) items = raw;
+        else if (raw && typeof raw === 'object' && Array.isArray(raw.items)) items = raw.items;
+        pmConvenioCatalog = __pmBuildConvenioCatalog(items);
+    } catch (e) {
+        console.warn('No se pudo cargar el catálogo de convenios:', e);
+        pmConvenioCatalog = [];
+    }
 }
 
 function __pmFormatUserNameFromRecord(record) {
@@ -1924,6 +2233,8 @@ async function __pmPrimeOrderUsers(rows = []) {
 }
 
 window.loadOrders = async function() {
+    const viewState = pmOrdersSaveViewState();
+    pmOrdersApplyViewStateControls(viewState);
     const { data, error } = await __pmQuotesList({ sort: '-created_at' });
     if (error) {
         window.showToast(`No se pudieron cargar cotizaciones: ${error.message || error}`, 'error');
@@ -1932,7 +2243,14 @@ window.loadOrders = async function() {
         allOrders = (data || []).map(__pmHydrateOrderPricing);
     }
     await __pmPrimeOrderUsers(allOrders);
-    renderOrdersTable(allOrders);
+    const searchTerm = document.getElementById('search-orders')?.value || '';
+    pmOrdersRestoringViewState = true;
+    try {
+        filterOrders(searchTerm, { skipSave: true });
+    } finally {
+        pmOrdersRestoringViewState = false;
+    }
+    pmOrdersRestoreViewStateAfterRender(viewState);
 };
 
 function renderOrdersTable(data) {
@@ -1941,13 +2259,30 @@ function renderOrdersTable(data) {
     const canDelete = __pmIsAdminProfile();
     data.forEach(o => {
         let sColor = 'bg-gray-100 text-gray-600', sText = 'Pendiente', missingIcons = []; 
-        if(o.status === 'aprobada') { sColor = 'bg-blue-100 text-blue-700'; sText = 'Aprobada'; if (!o.factura_xml_url) missingIcons.push('<i class="fa-solid fa-file-invoice" title="Falta Factura"></i>'); if (!o.historial_pagos || o.historial_pagos.length === 0) missingIcons.push('<i class="fa-solid fa-money-bill-wave" title="Falta Pago"></i>'); }
+        const isConvenio = __pmIsConvenioOrder(o);
+        const convenioEvidenceCount = __pmGetConvenioEvidence(o).length;
+        if(o.status === 'aprobada') {
+            sColor = 'bg-blue-100 text-blue-700';
+            sText = 'Aprobada';
+            if (isConvenio) {
+                if (convenioEvidenceCount < 3) missingIcons.push('<i class="fa-solid fa-camera" title="Falta Evidencia"></i>');
+            } else {
+                if (!o.factura_xml_url) missingIcons.push('<i class="fa-solid fa-file-invoice" title="Falta Factura"></i>');
+                if (!o.historial_pagos || o.historial_pagos.length === 0) missingIcons.push('<i class="fa-solid fa-money-bill-wave" title="Falta Pago"></i>');
+            }
+        }
         if(o.status === 'finalizada') { sColor = 'bg-green-100 text-green-700 border border-green-200'; sText = 'Finalizada'; }
         if(o.status === 'rechazada') { sColor = 'bg-red-50 text-red-600'; sText = 'Rechazada'; }
         let alertsHTML = ''; if (missingIcons.length > 0 && o.status === 'aprobada') alertsHTML = `<div class="flex gap-2 justify-center mt-1.5 text-[10px] text-red-400">${missingIcons.join('')}</div>`;
 
         const tr = document.createElement('tr'); tr.className = "border-b hover:bg-gray-50 transition group cursor-pointer";
-        tr.onclick = (e) => { if(!e.target.closest('button')) window.openOrderEditorPage(o.id); };
+        tr.dataset.orderId = o.id;
+        tr.onclick = (e) => {
+            if (!e.target.closest('button')) {
+                pmOrdersSaveViewState({ selectedOrderId: o.id });
+                window.openOrderEditorPage(o.id);
+            }
+        };
         
         const folioUnificado = __pmResolveQuoteFolio(o);
         const createdBy = __pmResolveOrderActorName(o, 'created');
@@ -1959,14 +2294,29 @@ function renderOrdersTable(data) {
         const deleteCell = canDelete
             ? `<button type="button" onclick="window.askDeleteOrder('${o.id}', event)" class="text-gray-400 hover:text-red-600"><i class="fa-solid fa-trash"></i></button>`
             : `<span class="text-[10px] text-gray-300">—</span>`;
-        const pricing = __pmResolveOrderPricing(o);
-        
-        tr.innerHTML = `<td class="p-4 font-black text-brand-dark">${folioUnificado}</td><td class="p-4 font-bold text-xs text-gray-700">${o.cliente_nombre}</td><td class="p-4 text-xs"><span class="font-bold block">${o.espacio_nombre}</span><span class="text-gray-500 font-mono">${window.safeFormatDate(o.fecha_inicio)}</span></td><td class="p-4 text-right font-mono font-bold text-xs">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(pricing.total)}</td><td class="p-4 text-center"><span class="${sColor} px-2 py-1 rounded text-[9px] font-black uppercase tracking-wider">${sText}</span>${alertsHTML}</td><td class="p-4 text-[10px] font-bold text-gray-600 text-center"${createdTooltipAttr}>${createdBy}</td><td class="p-4 text-[10px] font-bold text-gray-600 text-center"${updatedTooltipAttr}>${updatedBy}</td><td class="p-4 text-center"><button type="button" onclick="event.stopPropagation(); window.openDocsModal('${o.id}')" class="bg-white border border-gray-300 text-gray-600 hover:bg-gray-50 hover:text-brand-dark px-3 py-1.5 rounded-lg text-xs font-bold transition shadow-sm flex items-center gap-2 mx-auto"><i class="fa-solid fa-folder-open text-brand-red"></i> Expediente</button></td><td class="p-4 text-center">${deleteCell}</td>`;
+        const amountState = __pmResolveOrderTableAmountState(o);
+        const totalDisplayHtml = isConvenio
+            ? `<div class="flex flex-col items-end gap-1">
+                <div class="flex items-center justify-end gap-2">
+                    ${amountState.badgeHtml}
+                    <span class="${amountState.textClass}">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(amountState.amount)}</span>
+                </div>
+                ${amountState.label ? `<span class="text-[10px] font-black ${amountState.textClass} uppercase tracking-wide">${amountState.label}</span>` : ''}
+            </div>`
+            : `<div class="flex flex-col items-end gap-1">
+                <div class="flex items-center justify-end gap-2">
+                    <span class="${amountState.textClass}">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(amountState.amount)}</span>
+                </div>
+                ${amountState.label ? `<span class="text-[10px] font-black ${amountState.textClass} uppercase tracking-wide">${amountState.label}</span>` : ''}
+            </div>`;
+
+        tr.innerHTML = `<td class="p-4 font-black text-brand-dark">${folioUnificado}</td><td class="p-4 font-bold text-xs text-gray-700">${o.cliente_nombre}</td><td class="p-4 text-xs"><span class="font-bold block">${o.espacio_nombre}</span><span class="text-gray-500 font-mono">${window.safeFormatDate(o.fecha_inicio)}</span></td><td class="p-4 text-right font-mono font-bold text-xs">${totalDisplayHtml}</td><td class="p-4 text-center"><span class="${sColor} px-2 py-1 rounded text-[9px] font-black uppercase tracking-wider">${sText}</span>${alertsHTML}</td><td class="p-4 text-[10px] font-bold text-gray-600 text-center"${createdTooltipAttr}>${createdBy}</td><td class="p-4 text-[10px] font-bold text-gray-600 text-center"${updatedTooltipAttr}>${updatedBy}</td><td class="p-4 text-center"><button type="button" onclick="event.stopPropagation(); window.openDocsModal('${o.id}')" class="bg-white border border-gray-300 text-gray-600 hover:bg-gray-50 hover:text-brand-dark px-3 py-1.5 rounded-lg text-xs font-bold transition shadow-sm flex items-center gap-2 mx-auto"><i class="fa-solid fa-folder-open text-brand-red"></i> Expediente</button></td><td class="p-4 text-center">${deleteCell}</td>`;
         t.appendChild(tr);
     });
 }
 
 window.openOrderEditorPage = function(id) {
+    pmOrdersSaveViewState({ selectedOrderId: id });
     const url = `order_detail.html?quote=${encodeURIComponent(id)}`;
     window.open(url, '_blank', 'noopener');
 };
@@ -1980,13 +2330,14 @@ window.openOrderPreviewTab = function(id, docType = 'quote', action = 'view') {
     window.open(url, '_blank', 'noopener');
 };
 
-function filterOrders(term) { 
-    const lower = term.toLowerCase();
+function filterOrders(term = '', options = {}) {
+    const lower = String(term || '').toLowerCase();
     renderOrdersTable(allOrders.filter(o => {
         const folioUnificado = __pmResolveQuoteFolio(o);
         return (o.cliente_nombre || '').toLowerCase().includes(lower) || 
                folioUnificado.toLowerCase().includes(lower);
     })); 
+    if (!options.skipSave && !pmOrdersRestoringViewState) pmOrdersSaveViewState();
 }
 
 window.openOrderEditModal = async function(id) { 
@@ -2095,7 +2446,7 @@ window.toggleExtraConceptsSection = function(forceChecked = null) {
     const section = document.getElementById('oed-extra-concepts-section');
     if (!toggle || !section) return;
     if (typeof forceChecked === 'boolean') toggle.checked = forceChecked;
-    if ((currentConcepts || []).length > 0) toggle.checked = true;
+    if (__pmGetVisibleExtraConcepts().length > 0) toggle.checked = true;
     section.classList.toggle('hidden', !toggle.checked);
 };
 
@@ -2104,14 +2455,16 @@ window.renderConceptsList = function() {
     if(!tbody) return;
     tbody.innerHTML = ''; 
     const isLocked = currentPreviewOrder && ['aprobada', 'finalizada'].includes(currentPreviewOrder.status);
+    const visibleIndexes = __pmGetVisibleExtraConceptIndexes();
+    const visibleConcepts = visibleIndexes.map((idx) => currentConcepts[idx]);
     window.toggleExtraConceptsSection();
 
-    if (!currentConcepts || currentConcepts.length === 0) {
+    if (!visibleConcepts.length) {
         tbody.innerHTML = '<tr><td colspan="3" class="p-3 text-center text-gray-400 italic text-[10px]">Sin conceptos adicionales.</td></tr>';
         return;
     }
 
-    currentConcepts.forEach((c, idx) => {
+    visibleConcepts.forEach((c, idx) => {
         const val = parseFloat(c.amount || c.value || 0);
         const desc = c.description || c.concepto || c.nombre || 'Concepto sin nombre';
         const btn = isLocked ? '' : `<button type="button" onclick="window.removeConceptRow(${idx})" class="text-gray-300 hover:text-red-500"><i class="fa-solid fa-xmark"></i></button>`;
@@ -2150,8 +2503,18 @@ window.updateSummaryUI = function(base) {
     document.getElementById('lbl-subtotal-base').innerText = base.toLocaleString('es-MX', {style:'currency',currency:'MXN'});
 };
 
-window.updateConceptAmount = function(index, newVal) { currentConcepts[index].amount = parseFloat(newVal) || 0; currentConcepts[index].value = parseFloat(newVal) || 0; window.recalcTotal(); };
-window.updateConceptName = function(index, newName) { currentConcepts[index].description = newName; };
+window.updateConceptAmount = function(index, newVal) {
+    const actualIndex = __pmGetVisibleExtraConceptIndexes()[index];
+    if (actualIndex === undefined) return;
+    currentConcepts[actualIndex].amount = parseFloat(newVal) || 0;
+    currentConcepts[actualIndex].value = parseFloat(newVal) || 0;
+    window.recalcTotal();
+};
+window.updateConceptName = function(index, newName) {
+    const actualIndex = __pmGetVisibleExtraConceptIndexes()[index];
+    if (actualIndex === undefined) return;
+    currentConcepts[actualIndex].description = newName;
+};
 
 window.recalcTotal = function() { 
     const spaceId = document.getElementById('oed-space').value; 
@@ -2193,6 +2556,9 @@ window.recalcTotal = function() {
     });
 
     document.getElementById('oed-tax-summary-display').innerHTML = taxHtml;
+    const taxEl = document.getElementById('lbl-tax-total'); if (taxEl) taxEl.innerText = taxTotal.toLocaleString('es-MX', {style:'currency',currency:'MXN'});
+    const rawEl = document.getElementById('lbl-subtotal-raw'); if (rawEl) rawEl.innerText = (base + conceptsSum).toLocaleString('es-MX', {style:'currency',currency:'MXN'});
+    const catEl = document.getElementById('lbl-catalog-base-total'); if (catEl) catEl.innerText = base.toLocaleString('es-MX', {style:'currency',currency:'MXN'});
     document.getElementById('lbl-subtotal').innerText = sub.toLocaleString('es-MX', {style:'currency',currency:'MXN'}); 
     document.getElementById('lbl-adjustment').innerText = (adjType==='descuento'?'-':'+') + adjAmount.toLocaleString('es-MX', {style:'currency',currency:'MXN'});
     document.getElementById('oed-price').value = (sub + taxTotal).toFixed(2);
@@ -2223,8 +2589,10 @@ window.addConceptRow = function() {
 };
 
 window.removeConceptRow = function(index) {
-    currentConcepts.splice(index, 1);
-    if (!currentConcepts.length) window.toggleExtraConceptsSection(false);
+    const actualIndex = __pmGetVisibleExtraConceptIndexes()[index];
+    if (actualIndex === undefined) return;
+    currentConcepts.splice(actualIndex, 1);
+    if (!__pmGetVisibleExtraConcepts().length) window.toggleExtraConceptsSection(false);
     window.renderConceptsList();
     window.recalcTotal();
 };
@@ -2391,6 +2759,7 @@ window.previewOrderForGeneration = async function(id) {
     await __pmEnsurePdfStyleProfile('order', { forceReload: !__pmIsAdminProfile() });
     const order = await __pmEnsureOrderRecord(id);
     if(!order) return;
+    if (__pmIsConvenioOrder(order)) return window.showToast("Los convenios no generan orden de compra.", "error");
     currentPreviewOrder = { ...order, docType: 'order' }; 
     
     const content = await window.getOrderHTML(order, 'order');
@@ -2418,6 +2787,7 @@ window.confirmAndGeneratePurchaseOrder = async function() {
         btn.disabled = true; btn.innerText = "Generando OC...";
         
         try {
+            if (__pmIsConvenioOrder(currentPreviewOrder)) throw new Error("Los convenios no generan orden de compra.");
             const pdfBlob = await __pmWithBusyOverlay('Generando orden de compra...', async () => {
                 const element = document.getElementById('pdf-content');
                 if (!__pmIsAdminProfile() && element && currentPreviewOrder) {
@@ -2442,6 +2812,7 @@ window.confirmAndGeneratePurchaseOrder = async function() {
     
             window.showToast("Orden de Compra Generada");
             if (pmDetailTab === "expediente") await __pmRenderExpedientePanel();
+            pmOrdersSaveViewState({ selectedOrderId: currentPreviewOrder?.id || '' });
             if (!(IS_PM_ORDER_PREVIEW_PAGE || __pmIsPreviewOnlyQueryMode() || IS_PM_ORDER_DETAIL_PAGE)) await window.loadOrders();
             window.closeModal('preview-modal');
             window.closeModal('docs-modal');
@@ -2452,7 +2823,11 @@ window.confirmAndGeneratePurchaseOrder = async function() {
 };
 
 window.openDocsModal = function(id) {
+    pmOrdersSaveViewState({ selectedOrderId: id });
     const order = allOrders.find(o => o.id === id); if(!order) return;
+    const isConvenio = __pmIsConvenioOrder(order);
+    const docMeta = __pmGetQuoteDocumentMeta(order);
+    const convenioEvidence = __pmGetConvenioEvidence(order);
     document.getElementById('doc-client').innerText = order.cliente_nombre;
     const folioUnificado = __pmResolveQuoteFolio(order);
     document.getElementById('doc-folio').innerText = folioUnificado;
@@ -2464,7 +2839,9 @@ window.openDocsModal = function(id) {
     }
     const firstSpaceRef = details[0]?.espacio_clave || details[0]?.espacio_nombre || order.espacio_clave || order.espacio_nombre || 'Espacio';
     document.getElementById('doc-space').innerText = details.length > 1 ? `${firstSpaceRef} + ${details.length - 1}` : firstSpaceRef;
-    document.getElementById('doc-dates').innerText = `${window.safeFormatDate(order.fecha_inicio)} - ${window.safeFormatDate(order.fecha_fin)}`;
+    document.getElementById('doc-dates').innerText = __pmOrderBlocksIndefinitely(order)
+        ? `${window.safeFormatDate(order.fecha_inicio)} - Indefinido`
+        : `${window.safeFormatDate(order.fecha_inicio)} - ${window.safeFormatDate(order.fecha_fin)}`;
     
     const list = document.getElementById('docs-list'); list.innerHTML = '';
 
@@ -2484,33 +2861,48 @@ window.openDocsModal = function(id) {
 
     // Cotización
     if (order.url_cotizacion_final) {
-        createBtn('Ver Cotización Aprobada', 'fa-solid fa-file-circle-check', 'blue', `window.openStoredDocument('${order.url_cotizacion_final}')`);
+        createBtn(`Ver ${docMeta.approvedTitle}`, 'fa-solid fa-file-circle-check', 'blue', `window.openStoredDocument('${order.url_cotizacion_final}')`);
     } else {
-        createBtn('Ver Borrador Cotización', 'fa-solid fa-file-pen', 'gray', `window.openOrderPreviewTab('${order.id}', 'quote', 'view')`);
+        createBtn(`Ver ${docMeta.draftTitle}`, 'fa-solid fa-file-pen', 'gray', `window.openOrderPreviewTab('${order.id}', 'quote', 'view')`);
     }
 
     // Orden de compra
-    if (order.url_orden_compra) {
-        createBtn('Ver Orden de Compra', 'fa-solid fa-file-contract', 'purple', `window.openStoredDocument('${order.url_orden_compra}')`);
-    } else if(['aprobada', 'finalizada'].includes(order.status)) {
-        createBtn('Generar Orden de Compra', 'fa-solid fa-plus', 'purple', `window.openOrderPreviewTab('${order.id}', 'order', 'generate')`);
-    } else {
-        createLocked('Orden de Compra (Pendiente)', 'fa-solid fa-lock');
+    if (!isConvenio) {
+        if (order.url_orden_compra) {
+            createBtn('Ver Orden de Compra', 'fa-solid fa-file-contract', 'purple', `window.openStoredDocument('${order.url_orden_compra}')`);
+        } else if(['aprobada', 'finalizada'].includes(order.status)) {
+            createBtn('Generar Orden de Compra', 'fa-solid fa-plus', 'purple', `window.openOrderPreviewTab('${order.id}', 'order', 'generate')`);
+        } else {
+            createLocked('Orden de Compra (Pendiente)', 'fa-solid fa-lock');
+        }
     }
 
-    // Contrato
-    if (order.contrato_url) {
-        createBtn('Ver Contrato', 'fa-solid fa-file-signature', 'emerald', `window.openStoredDocument('${order.contrato_url}')`);
+    if (isConvenio) {
+        if (String(order.status || '').toLowerCase() === 'aprobada' && convenioEvidence.length < 3) {
+            createBtn('Finalizar con Evidencia', 'fa-solid fa-camera', 'amber', `window.openPmEvidenceUploadModal('${order.id}')`);
+        }
+        if (convenioEvidence.length) {
+            convenioEvidence.forEach((item, idx) => {
+                createBtn(`Evidencia ${idx + 1}`, 'fa-solid fa-image', 'amber', `window.openPmEvidenceGallery('${order.id}', ${idx})`);
+            });
+        } else {
+            createLocked('Evidencias (Pendientes)', 'fa-solid fa-camera');
+        }
     } else {
-        createLocked('Contrato (Pendiente)', 'fa-solid fa-lock');
-    }
+        // Contrato
+        if (order.contrato_url) {
+            createBtn('Ver Contrato', 'fa-solid fa-file-signature', 'emerald', `window.openStoredDocument('${order.contrato_url}')`);
+        } else {
+            createLocked('Contrato (Pendiente)', 'fa-solid fa-lock');
+        }
 
-    // Factura
-    if (order.factura_pdf_url) {
-        createBtn('Ver Factura (PDF)', 'fa-solid fa-file-pdf', 'red', `window.openStoredDocument('${order.factura_pdf_url}')`);
-        if(order.factura_xml_url) createBtn('Descargar XML', 'fa-solid fa-file-code', 'orange', `window.openStoredDocument('${order.factura_xml_url}')`);
-    } else {
-        createLocked('Factura (Pendiente)', 'fa-solid fa-file-invoice-dollar');
+        // Factura
+        if (order.factura_pdf_url) {
+            createBtn('Ver Factura (PDF)', 'fa-solid fa-file-pdf', 'red', `window.openStoredDocument('${order.factura_pdf_url}')`);
+            if(order.factura_xml_url) createBtn('Descargar XML', 'fa-solid fa-file-code', 'orange', `window.openStoredDocument('${order.factura_xml_url}')`);
+        } else {
+            createLocked('Factura (Pendiente)', 'fa-solid fa-file-invoice-dollar');
+        }
     }
 
     const payments = (() => {
@@ -2524,27 +2916,29 @@ window.openDocsModal = function(id) {
     })();
 
     // Pagos
-    if (payments.length > 0) {
-        const paymentSectionId = `docs-payments-${String(order.id)}`;
-        let recNo = 0;
-        const paymentButtons = payments.map((p) => {
-            const type = String(p?.type || p?.tipo || '').toLowerCase();
-            const isConstancia = type === 'constancia_liquidacion' || p?.closed === true || p?.is_closure === true;
-            const label = isConstancia ? 'Constancia de Liquidación' : `Recibo #${++recNo}`;
-            const icon = isConstancia ? 'fa-solid fa-circle-check' : 'fa-solid fa-receipt';
-            const path = String(p?.file_path || p?.path || p?.url || '').trim();
-            return path ? `<button type="button" onclick="window.openStoredDocument('${path}')" class="w-full text-left px-4 py-3 rounded-xl border border-emerald-100 hover:bg-emerald-50 flex items-center gap-3 transition shadow-sm group bg-white mb-2"><div class="w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0"><i class="${icon}"></i></div><div class="flex-grow"><p class="text-xs font-bold text-gray-700">${label}</p></div><i class="fa-solid fa-arrow-right text-xs text-gray-300"></i></button>` : '';
-        }).join('');
-        list.innerHTML += `<div class="mb-2">
-            <button type="button" onclick="window.toggleDocsPayments('${paymentSectionId}')" class="w-full text-left px-4 py-3 rounded-xl border border-gray-200 hover:bg-gray-50 flex items-center gap-3 transition shadow-sm group bg-white">
-                <div class="w-8 h-8 rounded-full bg-green-100 text-green-600 flex items-center justify-center shrink-0"><i class="fa-solid fa-money-bill-wave"></i></div>
-                <div class="flex-grow"><p class="text-xs font-bold text-gray-700">Pagos</p><p class="text-[10px] text-gray-400">${payments.length} documento(s) registrado(s)</p></div>
-                <i data-docs-pay-toggle="${paymentSectionId}" class="fa-solid fa-chevron-down text-xs text-gray-300 transition-transform"></i>
-            </button>
-            <div id="${paymentSectionId}" class="hidden pt-2 pl-3">${paymentButtons}</div>
-        </div>`;
-    } else {
-        createLocked('Pagos (Sin recibos)', 'fa-solid fa-lock');
+    if (!isConvenio) {
+        if (payments.length > 0) {
+            const paymentSectionId = `docs-payments-${String(order.id)}`;
+            let recNo = 0;
+            const paymentButtons = payments.map((p) => {
+                const type = String(p?.type || p?.tipo || '').toLowerCase();
+                const isConstancia = type === 'constancia_liquidacion' || p?.closed === true || p?.is_closure === true;
+                const label = isConstancia ? 'Constancia de Liquidación' : `Recibo #${++recNo}`;
+                const icon = isConstancia ? 'fa-solid fa-circle-check' : 'fa-solid fa-receipt';
+                const path = String(p?.file_path || p?.path || p?.url || '').trim();
+                return path ? `<button type="button" onclick="window.openStoredDocument('${path}')" class="w-full text-left px-4 py-3 rounded-xl border border-emerald-100 hover:bg-emerald-50 flex items-center gap-3 transition shadow-sm group bg-white mb-2"><div class="w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0"><i class="${icon}"></i></div><div class="flex-grow"><p class="text-xs font-bold text-gray-700">${label}</p></div><i class="fa-solid fa-arrow-right text-xs text-gray-300"></i></button>` : '';
+            }).join('');
+            list.innerHTML += `<div class="mb-2">
+                <button type="button" onclick="window.toggleDocsPayments('${paymentSectionId}')" class="w-full text-left px-4 py-3 rounded-xl border border-gray-200 hover:bg-gray-50 flex items-center gap-3 transition shadow-sm group bg-white">
+                    <div class="w-8 h-8 rounded-full bg-green-100 text-green-600 flex items-center justify-center shrink-0"><i class="fa-solid fa-money-bill-wave"></i></div>
+                    <div class="flex-grow"><p class="text-xs font-bold text-gray-700">Pagos</p><p class="text-[10px] text-gray-400">${payments.length} documento(s) registrado(s)</p></div>
+                    <i data-docs-pay-toggle="${paymentSectionId}" class="fa-solid fa-chevron-down text-xs text-gray-300 transition-transform"></i>
+                </button>
+                <div id="${paymentSectionId}" class="hidden pt-2 pl-3">${paymentButtons}</div>
+            </div>`;
+        } else {
+            createLocked('Pagos (Sin recibos)', 'fa-solid fa-lock');
+        }
     }
 
     window.openModal('docs-modal');
@@ -5015,7 +5409,10 @@ window.getOrderHTML = function(o, type) {
     let nameSizeClass = 'text-xl';
     if (clientName.length > 35) nameSizeClass = 'text-xs'; else if (clientName.length > 25) nameSizeClass = 'text-sm';
     const quoteStatus = String(o?.status || '').toLowerCase();
+    const docMeta = __pmGetQuoteDocumentMeta(o);
+    const isConvenio = !isOrder && docMeta.isConvenio;
     const isApprovedQuote = !isOrder && ['aprobada', 'finalizada'].includes(quoteStatus);
+    if (!isOrder && isConvenio) docTitle = isApprovedQuote ? 'CARTA CONVENIO' : 'CONVENIO';
     const clientComponent = (isOrder || isApprovedQuote)
         ? `<div class="pm-pdf-summary flex flex-row justify-between items-center mb-2 p-2 bg-gray-50 rounded border border-gray-100" data-base-resource="summary"><div class="w-1/2 border-r border-gray-200 pr-2"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Cliente / Empresa</p><p class="font-black ${nameSizeClass} text-gray-800 leading-tight">${clientName}</p></div><div class="w-1/2 pl-2"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Contacto / Fiscal</p><p class="font-mono text-xs text-gray-700 truncate">${o.cliente_email || 'Sin correo'}</p>${clientRfc ? `<p class="font-mono text-xs text-gray-700 mt-0.5">RFC: <strong>${clientRfc}</strong></p>` : ''}</div></div>`
         : `<div class="pm-pdf-summary mb-2 p-2 bg-gray-50 rounded border border-gray-100" data-base-resource="summary"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Cliente / Empresa</p><p class="font-black ${nameSizeClass} text-gray-800 leading-tight">${clientName}</p></div>`;
@@ -5110,6 +5507,8 @@ window.getOrderHTML = function(o, type) {
 
     let rentalTotal = calculateSpaceTotal(space, o.fecha_inicio, o.fecha_fin);
     let runningSubtotal = 0;
+    let convenioBaseTotal = 0;
+    let convenioDeliveredTotal = 0;
     let rowsHtml = '';
     if (detailSpaces.length) {
         detailSpaces.forEach(sp => {
@@ -5118,13 +5517,16 @@ window.getOrderHTML = function(o, type) {
             const detailMaterialMeasure = __pmResolveDetailMaterialMeasure(sp, catalogSpace);
             const spSubtotal = parseFloat(sp.subtotal_espacio || sp.total_espacio || 0) || 0;
             runningSubtotal += spSubtotal;
+            convenioBaseTotal += spSubtotal;
             const mAncho = detailMaterialMeasure.medida_ancho;
             const mAlto = detailMaterialMeasure.medida_alto;
             const mUnidad = detailMaterialMeasure.medida_unidad || 'M';
             const mDetail = __pmResolvePdfSpaceDetail(sp, catalogSpace);
             const measuresStr = (mAncho !== null && mAncho !== undefined && mAlto !== null && mAlto !== undefined) ? `${mAncho}x${mAlto} ${mUnidad}` : '--';
-
-            rowsHtml += `<tr><td class="py-2 px-3 align-top break-words">${__pmRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(mDetail)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(measuresStr)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${window.safeFormatDate(sp.fecha_inicio)}<br>${window.safeFormatDate(sp.fecha_fin)}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${__pmFormatMoneyHtml(spSubtotal)}</td></tr>`;
+            const dateRangeLabel = (isConvenio && (sp?.convenio_indefinido === true || sp?.bloqueo_indefinido === true))
+                ? `${window.safeFormatDate(sp.fecha_inicio)}<br>Indefinido`
+                : `${window.safeFormatDate(sp.fecha_inicio)}<br>${window.safeFormatDate(sp.fecha_fin)}`;
+            rowsHtml += `<tr><td class="py-2 px-3 align-top break-words">${__pmRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(mDetail)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(measuresStr)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${dateRangeLabel}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${__pmFormatMoneyHtml(spSubtotal)}</td></tr>`;
         });
     } else {
         const identity = __pmResolveSpaceIdentity();
@@ -5135,7 +5537,8 @@ window.getOrderHTML = function(o, type) {
         const mDetail = __pmResolvePdfSpaceDetail(o, space);
         const measuresStr = (mAncho !== null && mAncho !== undefined && mAlto !== null && mAlto !== undefined) ? `${mAncho}x${mAlto} ${mUnidad}` : '--';
         runningSubtotal = rentalTotal;
-        rowsHtml = `<tr><td class="py-2 px-3 align-top break-words">${__pmRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(mDetail)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(measuresStr)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${window.safeFormatDate(o.fecha_inicio)}<br>${window.safeFormatDate(o.fecha_fin)}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${__pmFormatMoneyHtml(rentalTotal)}</td></tr>`;
+        convenioBaseTotal = rentalTotal;
+        rowsHtml = `<tr><td class="py-2 px-3 align-top break-words">${__pmRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(mDetail)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(measuresStr)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${isConvenio ? `${window.safeFormatDate(o.fecha_inicio)}<br>Indefinido` : `${window.safeFormatDate(o.fecha_inicio)}<br>${window.safeFormatDate(o.fecha_fin)}`}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${__pmFormatMoneyHtml(rentalTotal)}</td></tr>`;
     }
     
     const cArray = __pmNormalizeConceptsArray(o.conceptos_adicionales);
@@ -5143,15 +5546,16 @@ window.getOrderHTML = function(o, type) {
         let val = parseFloat(c.amount !== undefined ? c.amount : (c.value || 0));
         let amount = val;
         if(c.unit === 'percent') amount = runningSubtotal * (val/100); 
-        
-        if(c.type === 'descuento') runningSubtotal -= amount; else runningSubtotal += amount; 
-        const sign = (c.type === 'descuento') ? '-' : '+'; 
+        const convenioConcept = isConvenio || __pmIsConvenioConceptItem(c);
+        if(convenioConcept || c.type === 'descuento') runningSubtotal -= amount; else runningSubtotal += amount; 
+        if (convenioConcept) convenioDeliveredTotal += amount;
+        const sign = (convenioConcept || c.type === 'descuento') ? '-' : '+'; 
         const meta = c && typeof c.meta === 'object' ? c.meta : {};
         const sid = String(meta.space_id || meta.spaceId || '');
         const spName = sid ? (detailSpaces.find(sp => String(sp.espacio_id || sp.space_id || '') === sid)?.espacio_nombre || '') : '';
         const conceptPeople = __pmResolveConceptPeople(c);
         const peopleSuffix = conceptPeople > 0 ? ` (${conceptPeople} persona${conceptPeople === 1 ? '' : 's'})` : '';
-        const label = `${spName ? `${spName} - ` : ''}${c.description || c.nombre || 'Adicional'}${peopleSuffix}`;
+        const label = `${spName ? `${spName} - ` : ''}${c.description || c.nombre || (convenioConcept ? 'Trato de Convenio' : 'Adicional')}${peopleSuffix}`;
         rowsHtml += `<tr><td class="py-2 px-3 text-[13px] font-medium text-gray-600 break-words leading-snug">${label}</td><td class="py-2 px-3"></td><td class="py-2 px-3"></td><td class="py-2 px-3"></td><td class="py-2 px-3 text-right text-[13px] font-medium text-gray-600">${__pmFormatMoneyHtml(amount, { prefix: sign })}</td></tr>`; 
     }); 
     
@@ -5176,7 +5580,10 @@ window.getOrderHTML = function(o, type) {
         ? pricing.taxTotal
         : Math.max(0, __pmRoundMoney(pricing.total - runningSubtotal));
     const taxRows = __pmBuildTaxRows(runningSubtotal, taxIds, storedTaxTotal);
-    const totalsBlock = `<div class="pm-pdf-summary flex justify-end mb-2 pr-4" data-base-resource="summary"><div class="pm-pdf-summary-table-wrap"><table class="w-full border-collapse">${taxRows}<tr><td class="pt-2 border-t-2 border-gray-800 align-middle text-right" colspan="4"><span class="text-[10px] font-bold uppercase text-gray-500 mr-2">Total Neto</span></td><td class="pt-2 border-t-2 border-gray-800 align-middle text-right"><span class="text-xl font-black text-gray-900">${__pmFormatMoneyHtml(pricing.total)}</span></td></tr></table></div></div>`; 
+    const convenioBalance = __pmRoundMoney(runningSubtotal);
+    const totalsBlock = isConvenio
+        ? `<div class="pm-pdf-summary flex justify-end mb-2 pr-4" data-base-resource="summary"><div class="pm-pdf-summary-table-wrap"><table class="w-full border-collapse"><tr><td class="py-1 px-3 text-[10px] font-bold text-gray-500 text-right" colspan="4">Valor base del espacio</td><td class="py-1 px-3 text-right text-xs font-bold text-gray-800">${__pmFormatMoneyHtml(convenioBaseTotal)}</td></tr><tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="4">Tratos del convenio</td><td class="py-1 px-3 text-right text-xs text-amber-600 font-bold">${__pmFormatMoneyHtml(convenioDeliveredTotal, { prefix: '-' })}</td></tr><tr><td class="pt-2 border-t-2 border-gray-800 align-middle text-right" colspan="4"><span class="text-[10px] font-bold uppercase text-gray-500 mr-2">Balance del convenio</span></td><td class="pt-2 border-t-2 border-gray-800 align-middle text-right"><span class="text-xl font-black text-gray-900">${__pmFormatMoneyHtml(convenioBalance)}</span></td></tr></table></div></div>`
+        : `<div class="pm-pdf-summary flex justify-end mb-2 pr-4" data-base-resource="summary"><div class="pm-pdf-summary-table-wrap"><table class="w-full border-collapse">${taxRows}<tr><td class="pt-2 border-t-2 border-gray-800 align-middle text-right" colspan="4"><span class="text-[10px] font-bold uppercase text-gray-500 mr-2">Total Neto</span></td><td class="pt-2 border-t-2 border-gray-800 align-middle text-right"><span class="text-xl font-black text-gray-900">${__pmFormatMoneyHtml(pricing.total)}</span></td></tr></table></div></div>`; 
     
     const quoteApproverTitle = __pmResolvePdfTemplateString(pdfContent.quoteApproverTitle || 'QUIEN APRUEBA', { CLIENT_NAME: clientName });
     const quoteApproverSubtitle = __pmResolvePdfTemplateString(pdfContent.quoteApproverSubtitle || 'Plaza Mayor', { CLIENT_NAME: clientName });
@@ -5312,6 +5719,101 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     const amount = parseFloat(c?.amount ?? c?.value ?? 0) || 0;
     return { description: c?.description || c?.concepto || c?.nombre || "Concepto", amount, value: amount, unit: c?.unit || "fixed", type: c?.type || "aumento", meta: c?.meta && typeof c.meta === "object" ? { ...c.meta } : {} };
   };
+  const regularConcepts = (concepts = []) => safeArr(concepts).map(normConcept).filter((concept) => !__pmIsConvenioConceptItem(concept));
+  const convenioConcepts = (concepts = []) => safeArr(concepts).map(normConcept).filter((concept) => __pmIsConvenioConceptItem(concept));
+  const buildConvenioPayloadItems = (cfg = null) => convenioConcepts(cfg?.concepts).map((concept) => ({
+    id: String(concept?.meta?.convenio_option_id || "").trim() || null,
+    nombre: __pmNormalizeConvenioName(concept?.meta?.convenio_nombre || concept.description || "Convenio") || "Convenio",
+    cantidad_entrega: Math.max(1, parseInt(concept?.meta?.cantidad_entrega || 1, 10) || 1),
+    monto: Math.max(0, parseFloat(concept?.amount ?? concept?.value ?? 0) || 0)
+  }));
+  const syncOrderConvenioSelect = () => {
+    const select = document.getElementById("oed-convenio-select");
+    if (!select) return;
+    const current = String(select.value || "").trim();
+    select.innerHTML = '<option value="">Selecciona una opción...</option>' + pmConvenioCatalog.map((item) => `<option value="${item.id}">${item.nombre}</option>`).join("");
+    if (current && pmConvenioCatalog.some((item) => item.id === current)) select.value = current;
+  };
+  const renderOrderConvenioItems = () => {
+    const list = document.getElementById("oed-convenio-list");
+    if (!list) return;
+    const cfg = activeCfg();
+    const items = buildConvenioPayloadItems(cfg);
+    const locked = __pmIsLockedOrder() || !cfg?.convenioEnabled;
+    if (!items.length) {
+      list.innerHTML = '<div class="rounded-xl border border-dashed border-amber-200 bg-amber-50/40 px-4 py-4 text-[11px] font-bold text-amber-700/70">Aún no agregas tratos de convenio.</div>';
+      return;
+    }
+    list.innerHTML = items.map((item, index) => `<div class="flex items-center justify-between gap-3 rounded-xl border border-amber-100 bg-amber-50/70 px-4 py-3">
+        <div class="min-w-0">
+          <p class="text-xs font-black text-gray-800 truncate">${item.nombre}</p>
+          <p class="text-[10px] font-bold uppercase tracking-wide text-amber-900/70">${item.cantidad_entrega} ${item.cantidad_entrega === 1 ? "entrega" : "entregas"} acordadas</p>
+        </div>
+        <div class="flex items-center gap-3 shrink-0">
+          <span class="text-xs font-black text-gray-800">${money(item.monto)}</span>
+          ${locked ? "" : `<button type="button" onclick="window.removeOrderConvenioItem(${index})" class="w-8 h-8 rounded-full border border-amber-100 bg-white text-gray-400 transition hover:text-red-500"><i class="fa-solid fa-xmark"></i></button>`}
+        </div>
+      </div>`).join("");
+  };
+  const syncOrderConvenioUi = (cfg = activeCfg()) => {
+    const active = cfg || activeCfg();
+    const activeSpace = getSpace(active?.spaceId);
+    const allowsConvenio = __pmSpaceAllowsConvenio(activeSpace) || !!active?.convenioEnabled;
+    const card = document.getElementById("oed-convenio-card");
+    const chk = document.getElementById("oed-convenio-enabled");
+    const section = document.getElementById("oed-convenio-section");
+    const customPriceChk = document.getElementById("oed-custom-price-enabled");
+    const customPriceWrap = document.getElementById("oed-custom-price-wrap");
+    if (!allowsConvenio && active && !active.convenioEnabled) {
+      active.convenioEnabled = false;
+      active.concepts = regularConcepts(active.concepts);
+    }
+    if (card) card.classList.toggle("hidden", !allowsConvenio);
+    if (chk) chk.checked = !!active?.convenioEnabled;
+    if (chk) chk.disabled = !allowsConvenio;
+    if (section) section.classList.toggle("hidden", !active?.convenioEnabled || !allowsConvenio);
+    if (customPriceChk) {
+      if (active?.convenioEnabled) {
+        customPriceChk.checked = false;
+        customPriceChk.disabled = true;
+      } else if (!__pmIsLockedOrder()) {
+        customPriceChk.disabled = false;
+      }
+    }
+    if (active?.convenioEnabled && customPriceWrap) customPriceWrap.classList.add("hidden");
+    syncOrderConvenioSelect();
+    renderOrderConvenioItems();
+  };
+  const isEditorConvenioOrder = () => selectedCfg().some((cfg) => !!cfg?.convenioEnabled) || __pmIsConvenioOrder(currentPreviewOrder || {});
+  const syncPmOrderDetailModeUi = () => {
+    const isConvenio = isEditorConvenioOrder();
+    const financialTabBtn = document.querySelector('[data-order-tab="financial"]');
+    const financialPanel = document.querySelector('[data-order-panel="financial"]');
+    const convenioSection = document.getElementById("oed-convenio-section");
+    const financialHost = document.getElementById("oed-convenio-host-financial");
+    const spacesHost = document.getElementById("oed-convenio-host-spaces");
+    const setText = (id, value) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = value;
+    };
+    if (financialTabBtn) financialTabBtn.classList.toggle("hidden", isConvenio);
+    if (isConvenio && pmDetailTab === "financial") pmDetailTab = "spaces";
+    if (financialPanel) financialPanel.classList.toggle("hidden", isConvenio || pmDetailTab !== "financial");
+    if (convenioSection) {
+      const targetHost = isConvenio ? (spacesHost || financialHost) : (financialHost || spacesHost);
+      if (targetHost && convenioSection.parentElement !== targetHost) targetHost.appendChild(convenioSection);
+    }
+    setText("sum-general-title", isConvenio ? "Resumen del Convenio" : "Resumen General");
+    setText("sum-general-copy", isConvenio ? "Vista consolidada del convenio y su balance actual." : "Vista consolidada de la cotización completa.");
+    setText("sum-label-name", isConvenio ? "Convenio" : "Cotización");
+    setText("sum-financial-title", isConvenio ? "Trato del Convenio" : "Resumen Financiero");
+    setText("sum-financial-copy", isConvenio ? "Relación entre el valor del espacio y lo acordado a entregar." : "Concentrado total y desglose financiero por espacio.");
+    setText("sum-spaces-title", isConvenio ? "Espacios Comprometidos" : "Detalle por Espacio");
+    setText("sum-spaces-copy", isConvenio ? "Consulta cada espacio bloqueado y los tratos capturados para el convenio." : "Consulta cada espacio y su relación con el resumen financiero.");
+    setText("expediente-title", isConvenio ? "Expediente del Convenio" : "Expediente de la Cotización");
+    setText("expediente-copy", isConvenio ? "Consulta borradores, carta convenio aprobada y la evidencia fotográfica desde aquí." : "Consulta previews de documentos, snapshots guardados y genera archivos clave desde aquí.");
+    writePmDetailTab();
+  };
   const getCfg = (sid) => pmSpaces.find((x) => String(x.spaceId) === String(sid)) || null;
   const selectedCfg = () => pmSpaces.filter((x) => x.selected);
   const activeCfg = () => getCfg(pmActive);
@@ -5343,6 +5845,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       customPermanence: !!seed.customPermanence,
       customPriceEnabled: !!hasCustomPriceSeed,
       customPriceMode: String(seed.customPriceMode || seed.precio_personalizado_modo || "total"),
+      convenioEnabled: seed.convenioEnabled === true || seed.convenio_activo === true || seed.convenio_indefinido === true,
       startDate: iso(seed.startDate || ""),
       endDate: iso(seed.endDate || ""),
       customBasePrice: seed.customBasePrice === null || seed.customBasePrice === undefined || seed.customBasePrice === "" ? "" : (parseFloat(seed.customBasePrice) || 0),
@@ -5388,6 +5891,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
   const pmBaseUnitPrice = (space) => Math.max(0, parseFloat(space?.precio_base || 0) || 0);
   const resolvePmBaseTotal = (cfg, space) => {
     if (!cfg || !space) return 0;
+    if (cfg.convenioEnabled) return pmBaseUnitPrice(space);
     if (cfg.customPriceEnabled) {
       const manual = Math.max(0, parseFloat(cfg.customBasePrice || 0) || 0);
       if (cfg.customPriceMode === "per_day") {
@@ -5421,6 +5925,18 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     const catalogBase = pmBaseUnitPrice(space);
     const manualValue = Math.max(0, parseFloat(cfg?.customBasePrice || 0) || 0);
     const resultBase = Math.max(0, parseFloat(baseTotal || 0) || 0);
+    if (cfg?.convenioEnabled) {
+      return {
+        modeLabel: "Convenio",
+        referenceLabel: "Precio base catálogo",
+        referenceValue: catalogBase,
+        explanation: `El espacio queda bloqueado al precio base del catálogo: ${money(resultBase)}.`,
+        detailRows: [
+          { label: "Bloqueo del espacio", value: "Indefinido" },
+          { label: "Tratos de convenio", value: `${buildConvenioPayloadItems(cfg).length} registrado(s)` }
+        ]
+      };
+    }
     if (cfg?.customPriceEnabled) {
       if (cfg.customPriceMode === "per_day") {
         return {
@@ -5499,9 +6015,11 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     if (copy) copy.textContent = "Controla nombre de la cotización, fechas de estancia y reglas de precio del espacio activo.";
   };
   const applyPmOrderDetailTabUi = () => {
+    syncPmOrderDetailModeUi();
+    const convenioMode = isEditorConvenioOrder();
     document.querySelectorAll("[data-order-panel]").forEach((panel) => {
       const panelKey = panel.getAttribute("data-order-panel");
-      panel.classList.toggle("hidden", panelKey !== pmDetailTab);
+      panel.classList.toggle("hidden", panelKey !== pmDetailTab || (convenioMode && panelKey === "financial"));
     });
     document.querySelectorAll(".order-detail-tab-btn").forEach((btn) => {
       const active = btn.getAttribute("data-order-tab") === pmDetailTab;
@@ -5537,11 +6055,12 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
   const __pmResolveDraftSnapshotMeta = (record = {}) => {
     const orderId = String(record?.id || document.getElementById("oed-id")?.value || currentPreviewOrder?.id || "").trim();
     const folio = __pmResolveQuoteFolio(record, orderId);
+    const docMeta = __pmGetQuoteDocumentMeta(record);
     return {
       orderId,
       folio,
-      path: orderId ? `${orderId}/cotizacion_borrador_${folio}.pdf` : "",
-      fileName: `COTIZACION_BORRADOR_${folio}.pdf`
+      path: orderId ? `${orderId}/${docMeta.draftStorageBase}_${folio}.pdf` : "",
+      fileName: `${docMeta.draftFileBase}_${folio}.pdf`
     };
   };
   const __pmParsePaymentsForExpediente = (order = {}) => {
@@ -5712,6 +6231,8 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     let previewHtml = `<div class="order-doc-preview-wrap border-t border-gray-200 bg-white flex items-center justify-center px-5 text-sm font-bold text-gray-400">Vista no disponible.</div>`;
     if (doc.previewType === "iframe" && doc.previewSrc) {
       previewHtml = `<div class="order-doc-preview-wrap border-t border-gray-200 bg-white overflow-hidden"><iframe loading="lazy" src="${__pmExpedienteEscape(__pmExpedientePreviewSrc(doc.previewSrc))}" class="order-doc-preview-frame" title="${__pmExpedienteEscape(doc.title || "Documento")}"></iframe></div>`;
+    } else if (doc.previewType === "image" && doc.previewSrc) {
+      previewHtml = `<div class="order-doc-preview-wrap border-t border-gray-200 bg-slate-100 overflow-hidden"><img loading="lazy" src="${__pmExpedienteEscape(doc.previewSrc)}" alt="${__pmExpedienteEscape(doc.title || "Evidencia")}" class="h-full w-full object-cover"></div>`;
     } else if (doc.previewType === "message") {
       previewHtml = `<div class="order-doc-preview-wrap border-t border-gray-200 bg-white flex items-center justify-center px-5 text-center text-sm font-bold text-gray-400">${__pmExpedienteEscape(doc.previewMessage || "Vista no disponible.")}</div>`;
     }
@@ -5758,15 +6279,359 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     __pmExpedienteObjectUrls.push(objectUrl);
     return objectUrl;
   };
+  let __pmEvidenceUploadObjectUrls = [];
+  let __pmEvidenceGalleryItems = [];
+  let __pmEvidenceGalleryIndex = 0;
+  const __pmRevokeEvidenceUploadUrls = () => {
+    (__pmEvidenceUploadObjectUrls || []).forEach((url) => {
+      try { URL.revokeObjectURL(url); } catch (_) {}
+    });
+    __pmEvidenceUploadObjectUrls = [];
+  };
+  const __pmEnsureEvidenceModals = () => {
+    if (!document.getElementById("pm-evidence-upload-modal")) {
+      const uploadModal = document.createElement("div");
+      uploadModal.id = "pm-evidence-upload-modal";
+      uploadModal.className = "fixed inset-0 z-[205] hidden items-center justify-center bg-black/80 p-4 backdrop-blur-sm";
+      uploadModal.innerHTML = `<div class="w-full max-w-4xl overflow-hidden rounded-2xl bg-white shadow-2xl">
+          <div class="flex items-center justify-between gap-3 border-b border-gray-200 px-5 py-4">
+            <div>
+              <h3 class="text-sm font-black uppercase tracking-wide text-gray-800">Finalizar Convenio</h3>
+              <p class="text-[11px] text-gray-500">Sube de 3 a 5 fotografías o evidencias para cerrar la cotización.</p>
+            </div>
+            <button type="button" onclick="window.closePmEvidenceUploadModal()" class="flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 text-gray-500 transition hover:bg-gray-200"><i class="fa-solid fa-xmark"></i></button>
+          </div>
+          <div class="space-y-4 p-5">
+            <input id="pm-evidence-order-id" type="hidden">
+            <div class="flex flex-col gap-3 rounded-2xl border border-dashed border-amber-200 bg-amber-50/40 p-4 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p class="text-xs font-black uppercase tracking-wide text-amber-800">Evidencia obligatoria</p>
+                <p class="mt-1 text-[11px] font-semibold text-amber-900/80">Solo se aceptan imágenes. El convenio se marcará como finalizado al completar la carga.</p>
+              </div>
+              <div class="flex items-center gap-2">
+                <input id="pm-evidence-input" type="file" accept="image/*" multiple class="hidden" onchange="window.handlePmEvidenceSelection(event)">
+                <button type="button" onclick="document.getElementById('pm-evidence-input')?.click()" class="rounded-full bg-amber-500 px-4 py-2 text-[11px] font-black uppercase tracking-wide text-white transition hover:bg-amber-600">
+                  <i class="fa-solid fa-upload mr-1"></i>Seleccionar
+                </button>
+              </div>
+            </div>
+            <div id="pm-evidence-upload-summary" class="text-[11px] font-bold text-gray-500">Aún no seleccionas evidencias.</div>
+            <div id="pm-evidence-upload-grid" class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3"></div>
+          </div>
+          <div class="flex flex-col-reverse gap-3 border-t border-gray-200 bg-slate-50 px-5 py-4 sm:flex-row sm:items-center sm:justify-end">
+            <button type="button" onclick="window.closePmEvidenceUploadModal()" class="rounded-full border border-gray-200 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-wide text-gray-600 transition hover:bg-gray-50">Cancelar</button>
+            <button id="pm-evidence-upload-confirm" type="button" onclick="window.submitPmEvidenceUpload()" class="rounded-full bg-brand-red px-5 py-2 text-[11px] font-black uppercase tracking-wide text-white transition hover:bg-red-700">
+              <i class="fa-solid fa-camera mr-1"></i>Finalizar Cotización
+            </button>
+          </div>
+        </div>`;
+      uploadModal.addEventListener("click", (event) => {
+        if (event.target === uploadModal) window.closePmEvidenceUploadModal();
+      });
+      document.body.appendChild(uploadModal);
+    }
+    if (!document.getElementById("pm-evidence-gallery-modal")) {
+      const galleryModal = document.createElement("div");
+      galleryModal.id = "pm-evidence-gallery-modal";
+      galleryModal.className = "fixed inset-0 z-[206] hidden items-center justify-center bg-black/90 p-4";
+      galleryModal.innerHTML = `<div class="flex h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+          <div class="flex items-center justify-between gap-3 bg-gray-900 px-5 py-4 text-white">
+            <div>
+              <h3 class="text-sm font-black uppercase tracking-wide">Galería de Evidencias</h3>
+              <p id="pm-evidence-gallery-counter" class="text-[11px] text-gray-300">0 / 0</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <button type="button" onclick="window.downloadCurrentPmEvidence()" class="rounded-full bg-brand-red px-4 py-2 text-[11px] font-black uppercase tracking-wide text-white transition hover:bg-red-700"><i class="fa-solid fa-download mr-1"></i>Descargar</button>
+              <button type="button" onclick="window.closePmEvidenceGallery()" class="rounded-full border border-white/20 px-4 py-2 text-[11px] font-black uppercase tracking-wide text-white transition hover:bg-white/10">Cerrar</button>
+            </div>
+          </div>
+          <div class="relative flex min-h-0 flex-1 items-center justify-center bg-gray-950">
+            <button type="button" onclick="window.prevPmEvidence()" class="absolute left-4 top-1/2 z-10 -translate-y-1/2 rounded-full bg-white/10 px-3 py-3 text-white transition hover:bg-white/20"><i class="fa-solid fa-chevron-left"></i></button>
+            <img id="pm-evidence-gallery-image" alt="Evidencia" class="max-h-full max-w-full object-contain">
+            <button type="button" onclick="window.nextPmEvidence()" class="absolute right-4 top-1/2 z-10 -translate-y-1/2 rounded-full bg-white/10 px-3 py-3 text-white transition hover:bg-white/20"><i class="fa-solid fa-chevron-right"></i></button>
+          </div>
+          <div class="border-t border-gray-200 bg-white px-5 py-4">
+            <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p id="pm-evidence-gallery-title" class="text-sm font-black text-gray-800">Evidencia</p>
+                <p id="pm-evidence-gallery-meta" class="text-[11px] text-gray-500">Sin información.</p>
+              </div>
+            </div>
+            <div id="pm-evidence-gallery-thumbs" class="mt-4 flex gap-3 overflow-x-auto pb-1"></div>
+          </div>
+        </div>`;
+      galleryModal.addEventListener("click", (event) => {
+        if (event.target === galleryModal) window.closePmEvidenceGallery();
+      });
+      document.body.appendChild(galleryModal);
+    }
+  };
+  const __pmRenderEvidenceSelection = () => {
+    __pmEnsureEvidenceModals();
+    __pmRevokeEvidenceUploadUrls();
+    const input = document.getElementById("pm-evidence-input");
+    const summary = document.getElementById("pm-evidence-upload-summary");
+    const grid = document.getElementById("pm-evidence-upload-grid");
+    const files = Array.from(input?.files || []);
+    if (summary) {
+      summary.textContent = files.length
+        ? `${files.length} archivo(s) seleccionado(s). Debes cargar entre 3 y 5 evidencias.`
+        : "Aún no seleccionas evidencias.";
+      summary.className = `text-[11px] font-bold ${files.length >= 3 && files.length <= 5 ? "text-emerald-600" : "text-gray-500"}`;
+    }
+    if (!grid) return;
+    if (!files.length) {
+      grid.innerHTML = '<div class="col-span-full rounded-2xl border border-dashed border-gray-200 bg-slate-50 px-5 py-6 text-center text-sm font-bold text-gray-400">Aquí verás la vista previa de las evidencias seleccionadas.</div>';
+      return;
+    }
+    grid.innerHTML = files.map((file, index) => {
+      const objectUrl = URL.createObjectURL(file);
+      __pmEvidenceUploadObjectUrls.push(objectUrl);
+      return `<div class="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+          <div class="aspect-[4/3] overflow-hidden bg-slate-100"><img src="${objectUrl}" alt="Evidencia ${index + 1}" class="h-full w-full object-cover"></div>
+          <div class="space-y-1 px-4 py-3">
+            <p class="truncate text-xs font-black text-gray-800">Evidencia ${index + 1}</p>
+            <p class="truncate text-[11px] text-gray-500">${file.name}</p>
+            <p class="text-[10px] font-bold uppercase tracking-wide text-gray-400">${Math.max(1, Math.round((file.size || 0) / 1024))} KB</p>
+          </div>
+        </div>`;
+    }).join("");
+  };
+  window.handlePmEvidenceSelection = function () {
+    __pmRenderEvidenceSelection();
+  };
+  window.closePmEvidenceUploadModal = function () {
+    const input = document.getElementById("pm-evidence-input");
+    const orderField = document.getElementById("pm-evidence-order-id");
+    if (input) input.value = "";
+    if (orderField) orderField.value = "";
+    __pmRevokeEvidenceUploadUrls();
+    const grid = document.getElementById("pm-evidence-upload-grid");
+    const summary = document.getElementById("pm-evidence-upload-summary");
+    if (grid) grid.innerHTML = "";
+    if (summary) {
+      summary.textContent = "Aún no seleccionas evidencias.";
+      summary.className = "text-[11px] font-bold text-gray-500";
+    }
+    window.closeModal?.("pm-evidence-upload-modal");
+  };
+  window.openPmEvidenceUploadModal = async function (orderId) {
+    __pmEnsureEvidenceModals();
+    const safeOrderId = String(orderId || currentPreviewOrder?.id || "").trim();
+    if (!safeOrderId) return window.showToast("No se encontró la cotización.", "error");
+    const order = await __pmEnsureOrderRecord(safeOrderId);
+    if (!order) return window.showToast("No se encontró la cotización.", "error");
+    if (!__pmIsConvenioOrder(order)) return window.showToast("Esta cotización no usa convenio.", "error");
+    if (String(order.status || "").toLowerCase() === "finalizada") return window.showToast("La cotización ya está finalizada.", "info");
+    const orderField = document.getElementById("pm-evidence-order-id");
+    if (orderField) orderField.value = safeOrderId;
+    __pmRenderEvidenceSelection();
+    window.openModal?.("pm-evidence-upload-modal");
+  };
+  window.submitPmEvidenceUpload = async function () {
+    __pmEnsureEvidenceModals();
+    const btn = document.getElementById("pm-evidence-upload-confirm");
+    const orderId = String(document.getElementById("pm-evidence-order-id")?.value || currentPreviewOrder?.id || "").trim();
+    const input = document.getElementById("pm-evidence-input");
+    const files = Array.from(input?.files || []);
+    if (!orderId) return window.showToast("Cotización inválida.", "error");
+    if (files.length < 3 || files.length > 5) return window.showToast("Debes subir entre 3 y 5 evidencias.", "error");
+    if (files.some((file) => !String(file.type || "").startsWith("image/"))) return window.showToast("Solo se permiten imágenes como evidencia.", "error");
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-1"></i>Subiendo...'; }
+    try {
+      const order = await __pmEnsureOrderRecord(orderId);
+      if (!order) throw new Error("No se encontró la cotización.");
+      const convenioMeta = __pmParseConvenioMeta(order);
+      if (!convenioMeta.activo && !__pmIsConvenioOrder(order)) throw new Error("La cotización no está marcada como convenio.");
+      const stamp = Date.now();
+      const uploadedAt = new Date().toISOString();
+      const evidenceItems = [];
+      for (let index = 0; index < files.length; index += 1) {
+        const file = files[index];
+        const cleanName = String(file?.name || `evidencia_${index + 1}.jpg`).replace(/[^a-z0-9._-]+/gi, "_");
+        const path = `${orderId}/evidencias/${stamp}_${index + 1}_${cleanName}`;
+        const { error: uploadError } = await window.globalPocketBase.storage.from("documentos").upload(path, file);
+        if (uploadError) throw uploadError;
+        evidenceItems.push({
+          id: `evidence_${stamp}_${index + 1}`,
+          path,
+          file_name: cleanName,
+          uploaded_at: uploadedAt,
+          mime_type: file.type || "image/jpeg",
+          size: file.size || 0
+        });
+      }
+      const detailsEvent = __pmParseRecordJson(order.detalles_evento);
+      const payload = {
+        status: "finalizada",
+        detalles_evento: {
+          ...detailsEvent,
+          convenio: {
+            ...convenioMeta,
+            activo: true,
+            bloqueo_indefinido: true,
+            requiere_evidencia: true,
+            evidencia_minima: 3,
+            evidencia_maxima: 5,
+            requiere_factura: false,
+            requiere_recibo: false,
+            requiere_contrato: false,
+            evidencias: evidenceItems
+          }
+        }
+      };
+      const { error } = await __pmQuotesUpdate(orderId, payload);
+      if (error) throw error;
+      currentPreviewOrder = currentPreviewOrder && String(currentPreviewOrder.id || "") === orderId
+        ? { ...currentPreviewOrder, ...payload }
+        : currentPreviewOrder;
+      const statusSelect = document.getElementById("oed-status");
+      if (statusSelect) statusSelect.value = "finalizada";
+      if (typeof applyStatusVisual === "function") applyStatusVisual();
+      allOrders = (allOrders || []).map((item) => String(item?.id || "") === orderId ? { ...item, ...payload } : item);
+      signalOrdersRefresh("convenio_evidence");
+      window.showToast("Convenio finalizado con evidencias.", "success");
+      window.closePmEvidenceUploadModal();
+      if (pmDetailTab === "expediente") await __pmRenderExpedientePanel();
+      if (!(IS_PM_ORDER_PREVIEW_PAGE || __pmIsPreviewOnlyQueryMode() || IS_PM_ORDER_DETAIL_PAGE)) await window.loadOrders();
+    } catch (e) {
+      window.showToast(`No se pudieron guardar las evidencias: ${e?.message || e}`, "error");
+    } finally {
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-camera mr-1"></i>Finalizar Cotización'; }
+    }
+  };
+  window.closePmEvidenceGallery = function () {
+    __pmEvidenceGalleryItems = [];
+    __pmEvidenceGalleryIndex = 0;
+    const img = document.getElementById("pm-evidence-gallery-image");
+    const title = document.getElementById("pm-evidence-gallery-title");
+    const meta = document.getElementById("pm-evidence-gallery-meta");
+    const thumbs = document.getElementById("pm-evidence-gallery-thumbs");
+    const counter = document.getElementById("pm-evidence-gallery-counter");
+    if (img) img.removeAttribute("src");
+    if (title) title.textContent = "Evidencia";
+    if (meta) meta.textContent = "Sin información.";
+    if (thumbs) thumbs.innerHTML = "";
+    if (counter) counter.textContent = "0 / 0";
+    window.closeModal?.("pm-evidence-gallery-modal");
+  };
+  const __pmRenderEvidenceGallery = () => {
+    __pmEnsureEvidenceModals();
+    const items = __pmEvidenceGalleryItems || [];
+    if (!items.length) return;
+    __pmEvidenceGalleryIndex = Math.max(0, Math.min(__pmEvidenceGalleryIndex, items.length - 1));
+    const item = items[__pmEvidenceGalleryIndex];
+    const img = document.getElementById("pm-evidence-gallery-image");
+    const title = document.getElementById("pm-evidence-gallery-title");
+    const meta = document.getElementById("pm-evidence-gallery-meta");
+    const thumbs = document.getElementById("pm-evidence-gallery-thumbs");
+    const counter = document.getElementById("pm-evidence-gallery-counter");
+    if (img) img.src = item.signedUrl || "";
+    if (title) title.textContent = item.label || `Evidencia ${__pmEvidenceGalleryIndex + 1}`;
+    if (meta) meta.textContent = `${item.file_name || "archivo"}${item.uploaded_at ? ` • ${window.safeFormatDate(item.uploaded_at.slice(0, 10))}` : ""}`;
+    if (counter) counter.textContent = `${__pmEvidenceGalleryIndex + 1} / ${items.length}`;
+    if (thumbs) {
+      thumbs.innerHTML = items.map((entry, index) => `<button type="button" onclick="window.selectPmEvidence(${index})" class="overflow-hidden rounded-xl border ${index === __pmEvidenceGalleryIndex ? "border-brand-red ring-2 ring-brand-red/20" : "border-gray-200"} bg-white">
+          <img src="${__pmExpedienteEscape(entry.signedUrl || "")}" alt="${__pmExpedienteEscape(entry.label || `Evidencia ${index + 1}`)}" class="h-20 w-24 object-cover">
+        </button>`).join("");
+    }
+  };
+  window.selectPmEvidence = function (index) {
+    if (!__pmEvidenceGalleryItems.length) return;
+    __pmEvidenceGalleryIndex = Math.max(0, Math.min(parseInt(index, 10) || 0, __pmEvidenceGalleryItems.length - 1));
+    __pmRenderEvidenceGallery();
+  };
+  window.prevPmEvidence = function () {
+    if (!__pmEvidenceGalleryItems.length) return;
+    __pmEvidenceGalleryIndex = (__pmEvidenceGalleryIndex - 1 + __pmEvidenceGalleryItems.length) % __pmEvidenceGalleryItems.length;
+    __pmRenderEvidenceGallery();
+  };
+  window.nextPmEvidence = function () {
+    if (!__pmEvidenceGalleryItems.length) return;
+    __pmEvidenceGalleryIndex = (__pmEvidenceGalleryIndex + 1) % __pmEvidenceGalleryItems.length;
+    __pmRenderEvidenceGallery();
+  };
+  window.downloadPmEvidenceFile = async function (path, fileName = "evidencia.jpg") {
+    const signed = await __pmCreateSignedStorageUrl(path);
+    if (!signed) return window.showToast("No se pudo preparar la evidencia.", "error");
+    try {
+      const response = await fetch(signed, { method: "GET", credentials: "omit" });
+      if (!response.ok) throw new Error(`No se pudo descargar la evidencia (${response.status}).`);
+      const blob = await response.blob();
+      if (typeof window.downloadBlobAsFile === "function") {
+        window.downloadBlobAsFile(blob, fileName);
+      } else {
+        const objectUrl = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = objectUrl;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+      }
+    } catch (e) {
+      window.showToast(`No se pudo descargar la evidencia: ${e?.message || e}`, "error");
+    }
+  };
+  window.downloadCurrentPmEvidence = async function () {
+    const item = __pmEvidenceGalleryItems[__pmEvidenceGalleryIndex];
+    if (!item) return;
+    await window.downloadPmEvidenceFile(item.path, item.file_name || `evidencia_${__pmEvidenceGalleryIndex + 1}.jpg`);
+  };
+  window.openPmEvidenceGallery = async function (orderId, startIndex = 0) {
+    __pmEnsureEvidenceModals();
+    const safeOrderId = String(orderId || currentPreviewOrder?.id || "").trim();
+    if (!safeOrderId) return window.showToast("No se encontró la cotización.", "error");
+    const order = await __pmEnsureOrderRecord(safeOrderId);
+    if (!order) return window.showToast("No se encontró la cotización.", "error");
+    const evidences = __pmGetConvenioEvidence(order);
+    if (!evidences.length) return window.showToast("Aún no hay evidencias registradas.", "info");
+    const items = await Promise.all(evidences.map(async (item, index) => ({
+      ...item,
+      label: `Evidencia ${index + 1}`,
+      signedUrl: await __pmCreateSignedStorageUrl(item.path)
+    })));
+    __pmEvidenceGalleryItems = items.filter((item) => !!item.signedUrl);
+    if (!__pmEvidenceGalleryItems.length) return window.showToast("No se pudieron cargar las evidencias.", "error");
+    __pmEvidenceGalleryIndex = Math.max(0, Math.min(parseInt(startIndex, 10) || 0, __pmEvidenceGalleryItems.length - 1));
+    __pmRenderEvidenceGallery();
+    window.openModal?.("pm-evidence-gallery-modal");
+  };
   async function __pmRenderExpedientePanel() {
     const grid = document.getElementById("oed-expediente-grid");
     if (!grid) return;
+    __pmEnsureEvidenceModals();
     const renderSeq = ++__pmExpedienteRenderSeq;
     grid.innerHTML = '<div class="rounded-2xl border border-dashed border-gray-200 bg-slate-50 px-5 py-6 text-sm font-bold text-gray-400">Construyendo expediente...</div>';
     __pmClearExpedienteObjectUrls();
     try {
       const order = await __pmComposeExpedienteSourceOrder();
       if (renderSeq !== __pmExpedienteRenderSeq) return;
+      const isConvenio = __pmIsConvenioOrder(order);
+      const docMeta = __pmGetQuoteDocumentMeta(order);
+      const convenioMeta = __pmParseConvenioMeta(order);
+      const convenioEvidence = __pmGetConvenioEvidence(order);
+      const evidenceButtonsWrap = document.getElementById("expediente-evidence-buttons");
+      const paymentsButtonsWrap = document.getElementById("payments-sub-buttons");
+      const paymentsToggleBtn = document.getElementById("btn-pagos-toggle");
+      const facturaBtn = document.getElementById("btn-factura");
+      const contratoBtn = document.getElementById("btn-contrato");
+      if (paymentsButtonsWrap) paymentsButtonsWrap.classList.add("hidden");
+      if (paymentsToggleBtn) paymentsToggleBtn.classList.toggle("hidden", isConvenio);
+      if (facturaBtn) facturaBtn.classList.toggle("hidden", isConvenio);
+      if (contratoBtn) contratoBtn.classList.toggle("hidden", isConvenio);
+      if (evidenceButtonsWrap) {
+        const toolbarButtons = [];
+        if (isConvenio && String(order.status || "").toLowerCase() === "aprobada" && convenioEvidence.length < 3) {
+          toolbarButtons.push(`<button type="button" onclick="window.openPmEvidenceUploadModal('${order.id}')" class="bg-amber-500 hover:bg-amber-600 text-white px-5 py-2.5 rounded-xl font-bold text-sm uppercase tracking-wide shadow-lg transition flex items-center gap-2"><i class="fa-solid fa-camera"></i> Finalizar con Evidencia</button>`);
+        }
+        convenioEvidence.forEach((item, index) => {
+          toolbarButtons.push(`<button type="button" onclick="window.openPmEvidenceGallery('${order.id}', ${index})" class="bg-amber-100 hover:bg-amber-200 text-amber-900 px-4 py-2 rounded-xl font-bold text-sm uppercase tracking-wide transition flex items-center gap-2"><i class="fa-solid fa-image"></i> Evidencia ${index + 1}</button>`);
+        });
+        evidenceButtonsWrap.innerHTML = toolbarButtons.join("");
+        evidenceButtonsWrap.classList.toggle("hidden", !toolbarButtons.length);
+      }
       const details = parseDetail(order.espacios_detalle);
       const spacesCount = details.length || (order.espacio_id ? 1 : 0);
       const totalNet = money(parseFloat(order.precio_final || pmTotals?.final || 0) || 0);
@@ -5774,10 +6639,11 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       const draftSnapshotUrl = draftMeta.path ? await __pmCreateSignedStorageUrl(draftMeta.path) : "";
       const approvedStatus = ["aprobada", "finalizada"].includes(String(order.status || "").toLowerCase());
       const draftPreviewSrc = draftSnapshotUrl || await __pmBuildPreviewObjectUrl("quote", order);
+      const draftPreviewTitle = docMeta.isConvenio ? "Convenio" : docMeta.draftTitle;
       const docs = [];
 
         docs.push({
-          title: "Borrador de Cotización",
+          title: docMeta.draftTitle,
           description: draftSnapshotUrl ? "Documento archivado actualmente en el expediente." : "Vista previa viva del documento actual editable.",
           badge: draftSnapshotUrl ? "Archivado" : "Editable",
           badgeTone: draftSnapshotUrl ? "emerald" : "amber",
@@ -5787,39 +6653,38 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
           { label: "Espacios", value: String(spacesCount || 0) },
           { label: "Total Neto", value: totalNet },
           { label: "Snapshot", value: draftSnapshotUrl ? "Guardada" : "Pendiente" }
-        ],
+          ],
           previewType: "iframe",
           previewSrc: draftPreviewSrc,
           actions: [
-            { label: draftSnapshotUrl ? "Actualizar Snapshot" : "Guardar Snapshot", icon: "fa-solid fa-floppy-disk", tone: "brand", onclick: "window.savePmDraftSnapshot(this)" },
-            { label: "Vista Completa", icon: "fa-solid fa-expand", tone: "slate", onclick: `window.openPmExpedienteLivePreview("quote", ${JSON.stringify("Borrador de Cotización")})` },
-            ...(draftSnapshotUrl ? [{ label: "Abrir Archivada", icon: "fa-solid fa-folder-open", tone: "emerald", onclick: `window.openPmExpedientePreview(${JSON.stringify(draftPreviewSrc)}, ${JSON.stringify("Borrador de Cotización")})` }] : [])
+            { label: "Vista Completa", icon: "fa-solid fa-expand", tone: "slate", onclick: `window.openPmExpedienteLivePreview("quote", ${JSON.stringify(draftPreviewTitle)})` },
+            ...(draftSnapshotUrl ? [{ label: "Abrir Archivada", icon: "fa-solid fa-folder-open", tone: "emerald", onclick: `window.openPmExpedientePreview(${JSON.stringify(draftPreviewSrc)}, ${JSON.stringify(draftPreviewTitle)})` }] : [])
           ]
         });
 
       if (order.url_cotizacion_final) {
         const approvedUrl = await __pmCreateSignedStorageUrl(order.url_cotizacion_final);
         docs.push({
-          title: "Cotización Aprobada",
+          title: docMeta.approvedTitle,
           description: "Snapshot oficial almacenada en el expediente.",
           badge: "Oficial",
           badgeTone: "emerald",
           metaRows: [
             { label: "Folio", value: draftMeta.folio || "--" },
             { label: "Estado", value: "APROBADA" },
-            { label: "Archivo", value: order.url_cotizacion_final.split("/").pop() || "cotizacion_aprobada.pdf" },
+            { label: "Archivo", value: order.url_cotizacion_final.split("/").pop() || `${docMeta.approvedStorageBase}.pdf` },
             { label: "Total Neto", value: totalNet }
           ],
           previewType: approvedUrl ? "iframe" : "message",
           previewSrc: approvedUrl,
           previewMessage: "No se pudo generar la vista firmada del archivo aprobado.",
           actions: [
-            { label: "Abrir Documento", icon: "fa-solid fa-folder-open", tone: "emerald", onclick: approvedUrl ? `window.openPmExpedientePreview(${JSON.stringify(approvedUrl)}, ${JSON.stringify("Cotización Aprobada")})` : `window.openStoredDocument(${JSON.stringify(order.url_cotizacion_final)})` }
+            { label: "Abrir Documento", icon: "fa-solid fa-folder-open", tone: "emerald", onclick: approvedUrl ? `window.openPmExpedientePreview(${JSON.stringify(approvedUrl)}, ${JSON.stringify(docMeta.approvedTitle)})` : `window.openStoredDocument(${JSON.stringify(order.url_cotizacion_final)})` }
           ]
         });
       }
 
-      if (order.url_orden_compra) {
+      if (!isConvenio && order.url_orden_compra) {
         const ocUrl = await __pmCreateSignedStorageUrl(order.url_orden_compra);
         docs.push({
           title: "Orden de Compra",
@@ -5840,7 +6705,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
             { label: "Abrir Documento", icon: "fa-solid fa-folder-open", tone: "slate", onclick: ocUrl ? `window.openPmExpedientePreview(${JSON.stringify(ocUrl)}, ${JSON.stringify("Orden de Compra")})` : `window.openStoredDocument(${JSON.stringify(order.url_orden_compra)})` }
           ]
         });
-      } else {
+      } else if (!isConvenio) {
         const orderPreviewSrc = approvedStatus ? await __pmBuildPreviewObjectUrl("order", order) : "";
         docs.push({
           title: "Orden de Compra",
@@ -5865,7 +6730,49 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
         });
       }
 
-      if (order.contrato_url) {
+      if (isConvenio) {
+        if (String(order.status || "").toLowerCase() === "aprobada" && convenioEvidence.length < 3) {
+          docs.push({
+            title: "Evidencia Pendiente",
+            description: "Este convenio no solicita factura, contrato ni recibos. Para finalizarlo debes subir de 3 a 5 fotografías de evidencia.",
+            badge: "Pendiente",
+            badgeTone: "amber",
+            metaRows: [
+              { label: "Espacio bloqueado", value: convenioMeta.bloqueo_indefinido ? "Indefinido" : "Sí" },
+              { label: "Rango requerido", value: "3 a 5 imágenes" },
+              { label: "Documentación", value: "Solo evidencia" }
+            ],
+            previewType: "message",
+            previewMessage: "Sube la evidencia fotográfica para finalizar el convenio.",
+            actions: [
+              { label: "Subir Evidencias", icon: "fa-solid fa-camera", tone: "brand", onclick: `window.openPmEvidenceUploadModal(${JSON.stringify(order.id)})` }
+            ]
+          });
+        }
+        convenioEvidence.forEach((evidence, index) => {
+          docs.push({
+            title: `Evidencia ${index + 1}`,
+            description: "Registro fotográfico del cumplimiento del convenio.",
+            badge: "Evidencia",
+            badgeTone: "amber",
+            metaRows: [
+              { label: "Archivo", value: evidence.file_name || `evidencia_${index + 1}.jpg` },
+              { label: "Fecha", value: evidence.uploaded_at ? window.safeFormatDate(String(evidence.uploaded_at).slice(0, 10)) : "--" },
+              { label: "Documento", value: "Evidencia fotográfica" }
+            ],
+            previewType: "message",
+            previewMessage: "Cargando evidencia...",
+            previewSrcPromise: __pmCreateSignedStorageUrl(evidence.path),
+            previewAsImage: true,
+            path: evidence.path,
+            fileName: evidence.file_name || `evidencia_${index + 1}.jpg`,
+            actions: [
+              { label: "Abrir Galería", icon: "fa-solid fa-images", tone: "slate", onclick: `window.openPmEvidenceGallery(${JSON.stringify(order.id)}, ${index})` },
+              { label: "Descargar", icon: "fa-solid fa-download", tone: "emerald", onclick: `window.downloadPmEvidenceFile(${JSON.stringify(evidence.path)}, ${JSON.stringify(evidence.file_name || `evidencia_${index + 1}.jpg`)})` }
+            ]
+          });
+        });
+      } else if (order.contrato_url) {
         const contractUrl = await __pmCreateSignedStorageUrl(order.contrato_url);
         docs.push({
           title: "Contrato",
@@ -5885,7 +6792,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
         });
       }
 
-      if (order.factura_pdf_url) {
+      if (!isConvenio && order.factura_pdf_url) {
         const invoiceUrl = await __pmCreateSignedStorageUrl(order.factura_pdf_url);
         docs.push({
           title: "Factura PDF",
@@ -5904,7 +6811,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
             ...(order.factura_xml_url ? [{ label: "Descargar XML", icon: "fa-solid fa-file-code", tone: "slate", onclick: `window.openStoredDocument(${JSON.stringify(order.factura_xml_url)})` }] : [])
           ]
         });
-      } else if (order.factura_xml_url) {
+      } else if (!isConvenio && order.factura_xml_url) {
         docs.push({
           title: "XML Factura",
           description: "Archivo XML disponible para descarga.",
@@ -5921,7 +6828,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
         });
       }
 
-      __pmParsePaymentsForExpediente(order).forEach((payment, idx) => {
+      if (!isConvenio) __pmParsePaymentsForExpediente(order).forEach((payment, idx) => {
         const safePath = String(payment?.file_path || payment?.path || payment?.url || "").trim();
         if (!safePath) return;
         const type = String(payment?.type || payment?.tipo || "").toLowerCase();
@@ -5947,7 +6854,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
           const signed = await doc.previewSrcPromise;
           return {
             ...doc,
-            previewType: signed ? "iframe" : "message",
+            previewType: signed ? (doc.previewAsImage ? "image" : "iframe") : "message",
             previewSrc: signed,
             previewMessage: signed ? "" : "No se pudo cargar el documento."
           };
@@ -5995,6 +6902,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span>Guardando...</span>'; }
     try {
       const order = await __pmComposeExpedienteSourceOrder();
+      if (__pmIsConvenioOrder(order)) throw new Error("Los convenios no generan orden de compra.");
       const status = String(order?.status || currentPreviewOrder?.status || "").toLowerCase();
       if (!["aprobada", "finalizada"].includes(status)) throw new Error("La orden de compra solo se genera con cotizaciones aprobadas o finalizadas.");
       const { blob } = await __pmBuildDocumentBlob("order", order);
@@ -6030,12 +6938,14 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       if (el) el.textContent = value;
     };
     const rangeLabel = (cfg?.startDate && cfg?.endDate)
-      ? `${window.safeFormatDate(cfg.startDate)} - ${window.safeFormatDate(cfg.endDate)}`
+      ? `${window.safeFormatDate(cfg.startDate)} - ${cfg?.convenioEnabled ? "Indefinido" : window.safeFormatDate(cfg.endDate)}`
       : "--";
     const measureLabel = (detailInfo.medida_ancho !== null && detailInfo.medida_ancho !== undefined && detailInfo.medida_alto !== null && detailInfo.medida_alto !== undefined)
       ? `${detailInfo.medida_ancho} x ${detailInfo.medida_alto} ${detailInfo.medida_unidad || "M"}`
       : "--";
-    const modeLabel = cfg?.customPriceEnabled
+    const modeLabel = cfg?.convenioEnabled
+      ? "Convenio"
+      : cfg?.customPriceEnabled
       ? (cfg?.customPriceMode === "per_day" ? "Precio manual por día" : "Precio manual total")
       : (cfg?.customPermanence ? `${pmSpaceDays(cfg)} dia(s) prorrateados` : "Periodo automático (30 días)");
     setText("oed-active-space-name", space?.nombre || cfg?.spaceId || "--");
@@ -6102,7 +7012,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     }
     return out;
   };
-  const isApprovedStatus = (status) => String(status || "").toLowerCase() === "aprobada";
+  const isApprovedStatus = (status) => ["aprobada", "finalizada"].includes(String(status || "").toLowerCase());
   async function renderPdfBlobFallback(sourceNode) {
     const sourceRoot = sourceNode?.firstElementChild || sourceNode;
     if (!sourceRoot) throw new Error("No hay contenido PDF para generar.");
@@ -6200,7 +7110,8 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     const space = getSpace(cfg.spaceId);
     const editPolicy = __pmResolveDetailEditPolicy(cfg, space);
     cfg.customPermanence = !!document.getElementById("oed-custom-permanence")?.checked;
-    cfg.customPriceEnabled = !!document.getElementById("oed-custom-price-enabled")?.checked;
+    cfg.convenioEnabled = !!document.getElementById("oed-convenio-enabled")?.checked;
+    cfg.customPriceEnabled = cfg.convenioEnabled ? false : !!document.getElementById("oed-custom-price-enabled")?.checked;
     cfg.customPriceMode = String(document.getElementById("oed-space-custom-price-mode")?.value || cfg.customPriceMode || "total");
     cfg.startDate = iso(document.getElementById("oed-start")?.value || "");
     cfg.endDate = iso(document.getElementById("oed-end")?.value || "");
@@ -6209,7 +7120,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       if (raw === "" || raw === null || raw === undefined) return "";
       return Math.max(0, parseFloat(raw) || 0);
     })() : "";
-    cfg.concepts = safeArr(currentConcepts).map(normConcept);
+    cfg.concepts = safeArr(currentConcepts).map(normConcept).filter((concept) => cfg.convenioEnabled || !__pmIsConvenioConceptItem(concept));
     cfg.material = editPolicy.lockedMaterial || cfg.material || "";
     cfg.ubicacion = editPolicy.lockedLocation || cfg.ubicacion || "";
     cfg.taxIds = resolveCfgTaxIds(cfg, getSpace(cfg.spaceId));
@@ -6231,7 +7142,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     const modeSelect = document.getElementById("oed-space-custom-price-mode");
     const label = document.getElementById("oed-space-custom-price-label");
     const hint = document.getElementById("oed-space-custom-price-hint");
-    if (wrap) wrap.classList.toggle("hidden", !active?.customPriceEnabled);
+    if (wrap) wrap.classList.toggle("hidden", !active?.customPriceEnabled || !!active?.convenioEnabled);
     if (modeSelect) modeSelect.value = String(active?.customPriceMode || "total");
     if (label) label.textContent = (active?.customPriceMode === "per_day")
       ? "Precio Personalizado por Día"
@@ -6261,13 +7172,17 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     if (e) { e.value = cfg.endDate || ""; e.min = cfg.startDate || ""; }
     const chk = document.getElementById("oed-custom-permanence");
     const customPriceChk = document.getElementById("oed-custom-price-enabled");
+    const convenioChk = document.getElementById("oed-convenio-enabled");
     const wrap = document.getElementById("oed-custom-price-wrap");
     const price = document.getElementById("oed-space-custom-price");
     if (chk) chk.checked = !!cfg.customPermanence;
     if (customPriceChk) customPriceChk.checked = !!cfg.customPriceEnabled;
+    if (convenioChk) convenioChk.checked = !!cfg.convenioEnabled;
     if (price) price.value = cfg.customBasePrice === "" ? "" : String(cfg.customBasePrice);
     currentConcepts = safeArr(cfg.concepts).map(normConcept);
     window.renderConceptsList();
+    syncOrderConvenioUi(cfg);
+    syncPmOrderDetailModeUi();
     syncTaxUI();
     syncPmSpaceFieldLocks(cfg);
     syncPmCustomPriceUi(cfg);
@@ -6297,6 +7212,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     (allOrders || []).forEach((order) => {
       if (!order || String(order.id) === String(currentPreviewOrder?.id || "")) return;
       if (!isApprovedStatus(order.status)) return;
+      const orderBlocksIndefinitely = __pmOrderBlocksIndefinitely(order);
       const details = parseDetail(order.espacios_detalle);
       if (details.length) {
         details.forEach((item) => {
@@ -6304,11 +7220,11 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
           if (itemSid !== sid) return;
           const eventDates = safeArr(item.fechas_evento).map(iso).filter(Boolean);
           if (eventDates.length) eventDates.forEach(addDate);
-          else addRange(item.fecha_inicio, item.fecha_fin);
+          else addRange(item.fecha_inicio, (item?.convenio_indefinido === true || item?.bloqueo_indefinido === true || orderBlocksIndefinitely) ? PM_CONVENIO_INDEFINITE_END : item.fecha_fin);
         });
         return;
       }
-      if (String(order.espacio_id || "") === sid) addRange(order.fecha_inicio, order.fecha_fin);
+      if (String(order.espacio_id || "") === sid) addRange(order.fecha_inicio, orderBlocksIndefinitely ? PM_CONVENIO_INDEFINITE_END : order.fecha_fin);
     });
     return reserved;
   }
@@ -6347,6 +7263,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     (allOrders || []).forEach((order) => {
       if (!order || String(order.id) === String(currentPreviewOrder?.id || "")) return;
       if (!isApprovedStatus(order.status)) return;
+      const orderBlocksIndefinitely = __pmOrderBlocksIndefinitely(order);
       const details = parseDetail(order.espacios_detalle);
       if (details.length) {
         details.forEach((item) => {
@@ -6366,10 +7283,10 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
             flush();
             return;
           }
-          pushEvent(order.id, item.fecha_inicio, item.fecha_fin, order.cliente_nombre || "Ocupado");
+          pushEvent(order.id, item.fecha_inicio, (item?.convenio_indefinido === true || item?.bloqueo_indefinido === true || orderBlocksIndefinitely) ? PM_CONVENIO_INDEFINITE_END : item.fecha_fin, order.cliente_nombre || "Ocupado");
         });
       } else if (String(order.espacio_id || "") === String(cfg.spaceId)) {
-        pushEvent(order.id, order.fecha_inicio, order.fecha_fin, order.cliente_nombre || "Ocupado");
+        pushEvent(order.id, order.fecha_inicio, orderBlocksIndefinitely ? PM_CONVENIO_INDEFINITE_END : order.fecha_fin, order.cliente_nombre || "Ocupado");
       }
     });
 
@@ -6468,9 +7385,9 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
         ? "border-emerald-200 bg-emerald-100 text-emerald-700"
         : (sel ? "border-yellow-200 bg-yellow-100 text-yellow-700" : "border-gray-200 bg-gray-100 text-gray-500");
       const dateLabel = sel && cfg.startDate
-        ? `${window.safeFormatDate(cfg.startDate)} - ${window.safeFormatDate(cfg.endDate || cfg.startDate)}`
+        ? `${window.safeFormatDate(cfg.startDate)} - ${cfg.convenioEnabled ? "Indefinido" : window.safeFormatDate(cfg.endDate || cfg.startDate)}`
         : "--";
-      const permanenceLabel = sel ? (cfg.customPermanence ? "Personalizada" : "Automática") : "--";
+      const permanenceLabel = sel ? (cfg.convenioEnabled ? "Convenio" : (cfg.customPermanence ? "Personalizada" : "Automática")) : "--";
       const baseLabel = sel ? money(resolvePmDisplayedBase(cfg, sp)) : money(pmBaseUnitPrice(sp));
       const stateLabel = active ? "En edición" : (sel ? "Activa" : "Libre");
       const switchLabel = sel ? "En cotización" : "Agregar";
@@ -6523,7 +7440,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     }
     if (!cfg) {
       const a = activeCfg();
-      cfg = mkCfg(sid, { selected: true, customPermanence: !!a?.customPermanence, customPriceEnabled: !!a?.customPriceEnabled, customPriceMode: a?.customPriceMode || "total", startDate: a?.startDate || "", endDate: a?.endDate || "", customBasePrice: a?.customBasePrice ?? "" });
+      cfg = mkCfg(sid, { selected: true, customPermanence: !!a?.customPermanence, customPriceEnabled: !!a?.customPriceEnabled, customPriceMode: a?.customPriceMode || "total", convenioEnabled: !!a?.convenioEnabled, startDate: a?.startDate || "", endDate: a?.endDate || "", customBasePrice: a?.customBasePrice ?? "" });
       pmSpaces.push(cfg);
     }
     cfg.selected = true;
@@ -6540,7 +7457,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     let cfg = getCfg(sid);
     if (!cfg) {
       const a = activeCfg();
-      cfg = mkCfg(sid, { selected: true, customPermanence: !!a?.customPermanence, customPriceEnabled: !!a?.customPriceEnabled, customPriceMode: a?.customPriceMode || "total", startDate: a?.startDate || "", endDate: a?.endDate || "", customBasePrice: a?.customBasePrice ?? "" });
+      cfg = mkCfg(sid, { selected: true, customPermanence: !!a?.customPermanence, customPriceEnabled: !!a?.customPriceEnabled, customPriceMode: a?.customPriceMode || "total", convenioEnabled: !!a?.convenioEnabled, startDate: a?.startDate || "", endDate: a?.endDate || "", customBasePrice: a?.customBasePrice ?? "" });
       pmSpaces.push(cfg);
     }
     cfg.selected = true;
@@ -6559,7 +7476,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     if (enabled) {
       if (!cfg) {
         const a = activeCfg();
-        cfg = mkCfg(sid, { selected: true, customPermanence: !!a?.customPermanence, customPriceEnabled: !!a?.customPriceEnabled, customPriceMode: a?.customPriceMode || "total", startDate: a?.startDate || "", endDate: a?.endDate || "", customBasePrice: a?.customBasePrice ?? "" });
+        cfg = mkCfg(sid, { selected: true, customPermanence: !!a?.customPermanence, customPriceEnabled: !!a?.customPriceEnabled, customPriceMode: a?.customPriceMode || "total", convenioEnabled: !!a?.convenioEnabled, startDate: a?.startDate || "", endDate: a?.endDate || "", customBasePrice: a?.customBasePrice ?? "" });
         pmSpaces.push(cfg);
       }
       cfg.selected = true;
@@ -6593,6 +7510,70 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     cfg.customPriceEnabled = !!document.getElementById("oed-custom-price-enabled")?.checked;
     if (!cfg.customPriceEnabled) cfg.customBasePrice = "";
     loadActiveToForm();
+    window.recalcTotal();
+    __pmScheduleOrderDetailAutoSave();
+  };
+
+  window.toggleOrderConvenio = function () {
+    const cfg = activeCfg();
+    if (!cfg || __pmIsLockedOrder()) return;
+    const activeSpace = getSpace(cfg.spaceId);
+    if (!__pmSpaceAllowsConvenio(activeSpace) && !cfg.convenioEnabled) {
+      const checkbox = document.getElementById("oed-convenio-enabled");
+      if (checkbox) checkbox.checked = false;
+      return window.showToast("Este espacio no tiene permitido usar convenio.", "error");
+    }
+    cfg.convenioEnabled = !!document.getElementById("oed-convenio-enabled")?.checked;
+    if (!cfg.convenioEnabled) {
+      currentConcepts = regularConcepts(currentConcepts);
+      cfg.concepts = regularConcepts(cfg.concepts);
+    } else {
+      cfg.customPriceEnabled = false;
+      cfg.customBasePrice = "";
+      const customPriceField = document.getElementById("oed-space-custom-price");
+      if (customPriceField) customPriceField.value = "";
+    }
+    loadActiveToForm();
+    window.recalcTotal();
+    __pmScheduleOrderDetailAutoSave();
+  };
+
+  window.addOrderConvenioItem = function () {
+    const cfg = activeCfg();
+    if (!cfg || __pmIsLockedOrder() || !cfg.convenioEnabled) return;
+    const optionId = String(document.getElementById("oed-convenio-select")?.value || "").trim();
+    const cantidad = Math.max(1, parseInt(document.getElementById("oed-convenio-qty")?.value || 1, 10) || 1);
+    const amountRaw = document.getElementById("oed-convenio-amount")?.value;
+    const amount = Math.max(0, parseFloat(amountRaw || 0) || 0);
+    if (!optionId) return window.showToast("Selecciona una opción de convenio.", "error");
+    if (amount <= 0) return window.showToast("Captura el monto manual del trato.", "error");
+    const option = pmConvenioCatalog.find((item) => String(item.id) === optionId);
+    if (!option) return window.showToast("La opción de convenio ya no está disponible.", "error");
+    currentConcepts.push(normConcept(__pmBuildConvenioConcept(option, cantidad, amount)));
+    cfg.concepts = safeArr(currentConcepts).map(normConcept);
+    const select = document.getElementById("oed-convenio-select");
+    const qtyInput = document.getElementById("oed-convenio-qty");
+    const amountInput = document.getElementById("oed-convenio-amount");
+    if (select) select.value = "";
+    if (qtyInput) qtyInput.value = "1";
+    if (amountInput) amountInput.value = "";
+    renderOrderConvenioItems();
+    window.recalcTotal();
+    __pmScheduleOrderDetailAutoSave();
+  };
+
+  window.removeOrderConvenioItem = function (index) {
+    const cfg = activeCfg();
+    if (!cfg || __pmIsLockedOrder()) return;
+    let convenioVisibleIndex = -1;
+    const next = safeArr(currentConcepts).filter((concept) => {
+      if (!__pmIsConvenioConceptItem(concept)) return true;
+      convenioVisibleIndex += 1;
+      return convenioVisibleIndex !== index;
+    });
+    currentConcepts = next.map(normConcept);
+    cfg.concepts = safeArr(currentConcepts).map(normConcept);
+    renderOrderConvenioItems();
     window.recalcTotal();
     __pmScheduleOrderDetailAutoSave();
   };
@@ -6669,18 +7650,43 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       const base = resolvePmBaseTotal(cfg, sp);
       const baseMeta = describePmPricingRule(cfg, sp, base);
       const concepts = safeArr(cfg.concepts).map(normConcept);
-      const conceptsTotal = concepts.reduce((a, c) => a + (parseFloat(c.amount || c.value || 0) || 0), 0);
-      const subtotalSpace = base + conceptsTotal;
-      const taxIds = resolveCfgTaxIds(cfg, sp);
-      return { cfg, sp, base, baseMeta, concepts, conceptsTotal, subtotalSpace, taxIds, rate: taxRate(taxIds) };
+      const isConvenio = !!cfg.convenioEnabled;
+      const regularItems = regularConcepts(concepts);
+      const convenioItems = convenioConcepts(concepts);
+      const regularTotal = regularItems.reduce((a, c) => a + (parseFloat(c.amount || c.value || 0) || 0), 0);
+      const convenioValue = convenioItems.reduce((a, c) => a + (parseFloat(c.amount || c.value || 0) || 0), 0);
+      const conceptsTotal = isConvenio ? convenioValue : regularTotal;
+      const subtotalSpace = isConvenio ? (base - convenioValue) : (base + regularTotal);
+      const taxIds = isConvenio ? [] : resolveCfgTaxIds(cfg, sp);
+      return {
+        cfg,
+        sp,
+        base,
+        baseMeta,
+        isConvenio,
+        concepts: isConvenio ? convenioItems : regularItems,
+        regularItems,
+        convenioItems,
+        conceptsTotal,
+        convenioValue,
+        subtotalSpace,
+        taxIds,
+        rate: isConvenio ? 0 : taxRate(taxIds)
+      };
     });
+    const convenioMode = rows.some((row) => row.isConvenio);
     const subtotalRaw = rows.reduce((a, r) => a + r.subtotalSpace, 0);
     const subtotalBase = rows.reduce((a, r) => a + r.base, 0);
+    const convenioBaseTotal = rows.reduce((a, r) => a + (r.isConvenio ? r.base : 0), 0);
+    const convenioDeliveredTotal = rows.reduce((a, r) => a + (r.isConvenio ? r.convenioValue : 0), 0);
     const catalogBaseTotal = rows.reduce((a, r) => a + (parseFloat(r.baseMeta?.referenceValue || pmBaseUnitPrice(r.sp) || 0) || 0), 0);
-    const conceptsGlobal = rows.reduce((a, r) => a + r.conceptsTotal, 0);
-    const adjType = document.getElementById("oed-adj-type")?.value || "ninguno";
-    const adjVal = parseFloat(document.getElementById("oed-adj-val")?.value || 0) || 0;
-    const isPct = (document.getElementById("oed-adj-unit")?.value || "fixed") === "percent";
+    const conceptsGlobal = rows.reduce((a, r) => a + (r.isConvenio ? r.convenioValue : r.conceptsTotal), 0);
+    const rawAdjType = document.getElementById("oed-adj-type")?.value || "ninguno";
+    const rawAdjVal = parseFloat(document.getElementById("oed-adj-val")?.value || 0) || 0;
+    const rawIsPct = (document.getElementById("oed-adj-unit")?.value || "fixed") === "percent";
+    const adjType = convenioMode ? "ninguno" : rawAdjType;
+    const adjVal = convenioMode ? 0 : rawAdjVal;
+    const isPct = convenioMode ? false : rawIsPct;
     let adjustment = 0;
     let adjusted = subtotalRaw;
     if (adjType !== "ninguno") {
@@ -6691,12 +7697,13 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     const taxTotalsByName = {};
     const denom = subtotalRaw > 0 ? subtotalRaw : 1;
     rows.forEach((r) => {
-      const ratio = subtotalRaw > 0 ? (r.subtotalSpace / denom) : (1 / Math.max(1, rows.length));
+      const ratio = (subtotalRaw !== 0) ? (r.subtotalSpace / denom) : (1 / Math.max(1, rows.length));
       r.adjustedSubtotal = adjusted * ratio;
       r.adjustmentShare = r.adjustedSubtotal - r.subtotalSpace;
-      r.tax = r.adjustedSubtotal * r.rate;
+      if (r.isConvenio) r.adjustedSubtotal = r.subtotalSpace;
+      r.tax = r.isConvenio ? 0 : (r.adjustedSubtotal * r.rate);
       r.total = r.adjustedSubtotal + r.tax;
-      r.taxBreakdown = (r.taxIds || []).map((tid) => {
+      r.taxBreakdown = (r.isConvenio ? [] : (r.taxIds || [])).map((tid) => {
         const tax = __pmResolveTaxRecord(tid, r.sp);
         if (!tax) return null;
         const amount = r.adjustedSubtotal * __pmResolveTaxRate(tax);
@@ -6709,12 +7716,29 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       tax += r.tax;
     });
     const final = adjusted + tax;
-    pmTotals = { spaces: rows, subtotal: subtotalRaw, adjusted, adjustment, tax, final, adjType, subtotalBase, catalogBaseTotal, conceptsTotal: conceptsGlobal, taxByName: taxTotalsByName };
+    pmTotals = {
+      spaces: rows,
+      subtotal: subtotalRaw,
+      adjusted,
+      adjustment,
+      tax,
+      final,
+      adjType,
+      subtotalBase,
+      catalogBaseTotal,
+      conceptsTotal: conceptsGlobal,
+      taxByName: taxTotalsByName,
+      convenioMode,
+      convenioBaseTotal,
+      convenioDeliveredTotal
+    };
 
     const adjustmentModeLabel = adjType === "ninguno"
-      ? "Sin ajuste global"
+      ? (convenioMode ? "No aplica en convenio" : "Sin ajuste global")
       : `${adjType === "descuento" ? "Descuento" : "Aumento"} ${isPct ? `${adjVal}%` : money(adjVal)}`;
-    const adjustmentExplanation = adjType === "ninguno"
+    const adjustmentExplanation = convenioMode
+      ? "En convenio los tratos se restan del valor base del espacio y no se calculan impuestos."
+      : adjType === "ninguno"
       ? "No se está aplicando ningún ajuste global sobre el subtotal previo a impuestos."
       : (isPct
         ? `${adjType === "descuento" ? "Se descuenta" : "Se aumenta"} ${adjVal}% sobre ${money(subtotalRaw)} antes de impuestos.`
@@ -6736,9 +7760,32 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       const active = String(r.cfg.spaceId) === String(pmActive);
       const spaceRef = r.sp?.clave ? `${r.sp?.nombre || r.cfg.spaceId} [${r.sp.clave}]` : (r.sp?.nombre || r.cfg.spaceId);
       const conceptRows = r.concepts.length
-        ? r.concepts.map((c) => `<div class="flex justify-between text-[10px] text-gray-500"><span>${c.description}</span><span>+${money(c.amount)}</span></div>`).join("")
-        : '<div class="text-[10px] text-gray-400 italic">Sin conceptos extra en este espacio.</div>';
+        ? r.concepts.map((c) => `<div class="flex justify-between gap-3 text-[10px] text-gray-500"><span>${c.description}</span><span class="text-right ${r.isConvenio ? "text-amber-700 font-bold" : ""}">${r.isConvenio ? "-" : "+"}${money(c.amount)}</span></div>`).join("")
+        : `<div class="text-[10px] text-gray-400 italic">${r.isConvenio ? "Sin tratos registrados en este espacio." : "Sin conceptos extra en este espacio."}</div>`;
       const detailRows = (r.baseMeta?.detailRows || []).map((row) => `<div class="flex justify-between text-[10px] text-gray-500"><span>${row.label}</span><span class="text-right">${row.value}</span></div>`).join("");
+      if (r.isConvenio) {
+        return `<button type="button" onclick="window.focusOrderSpaceCard('${r.cfg.spaceId}')" class="w-full text-left rounded-lg border ${pmSummaryStateClass(active)} p-3 space-y-3 transition hover:border-brand-red">
+          <div class="flex items-start justify-between gap-2">
+              <p class="text-[10px] font-black uppercase text-gray-700">${spaceRef}</p>
+              ${pmSummaryStateLabel(active)}
+          </div>
+          <div class="rounded-xl border border-gray-200 bg-white/80 p-3 space-y-1.5">
+              <div class="flex justify-between text-[10px] text-gray-500"><span>Modo</span><span class="text-right font-bold text-gray-700">${r.baseMeta?.modeLabel || "Convenio"}</span></div>
+              <div class="flex justify-between text-[10px] text-gray-500"><span>Valor base del espacio</span><span>${money(r.base)}</span></div>
+              ${detailRows}
+              <div class="flex justify-between gap-3 text-[10px] text-gray-500"><span>Regla aplicada</span><span class="text-right max-w-[230px] font-bold text-gray-700">${r.baseMeta?.explanation || money(r.base)}</span></div>
+          </div>
+          <div class="rounded-xl border border-amber-100 bg-amber-50/40 p-3 space-y-1.5">
+              <p class="text-[10px] font-bold uppercase text-amber-700">Tratos del convenio</p>
+              ${conceptRows}
+              <div class="flex justify-between text-[10px] font-bold text-amber-800 border-t border-dashed border-amber-200 pt-1"><span>Total entregable</span><span>${money(r.convenioValue)}</span></div>
+          </div>
+          <div class="space-y-1.5">
+              <div class="flex justify-between text-[10px] text-gray-500"><span>Balance del convenio</span><span class="${r.total < 0 ? "text-red-600" : (r.total > 0 ? "text-emerald-700" : "text-gray-500")}">${signedMoney(r.total)}</span></div>
+              <div class="flex justify-between text-[10px] font-black text-gray-800 border-t border-dashed border-gray-200 pt-1"><span>Estado actual</span><span>${Math.abs(r.total) < 0.005 ? "Justo" : (r.total > 0 ? "A favor del espacio" : "A favor del trato")}</span></div>
+          </div>
+      </button>`;
+      }
       return `<button type="button" onclick="window.focusOrderSpaceCard('${r.cfg.spaceId}')" class="w-full text-left rounded-lg border ${pmSummaryStateClass(active)} p-3 space-y-3 transition hover:border-brand-red">
           <div class="flex items-start justify-between gap-2">
               <p class="text-[10px] font-black uppercase text-gray-700">${spaceRef}</p>
@@ -6767,6 +7814,17 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     const renderSpaceTaxCard = (r) => {
       const active = String(r.cfg.spaceId) === String(pmActive);
       const spaceRef = r.sp?.clave ? `${r.sp?.nombre || r.cfg.spaceId} [${r.sp.clave}]` : (r.sp?.nombre || r.cfg.spaceId);
+      if (r.isConvenio) {
+        return `<button type="button" onclick="window.focusOrderSpaceCard('${r.cfg.spaceId}')" class="w-full text-left rounded-lg border ${pmSummaryStateClass(active)} p-3 space-y-2 transition hover:border-brand-red">
+          <div class="flex items-start justify-between gap-2">
+              <p class="text-[10px] font-black uppercase text-gray-700">${spaceRef}</p>
+              ${pmSummaryStateLabel(active)}
+          </div>
+          <div class="flex justify-between text-[10px] text-gray-500"><span>Impuestos</span><span>No aplica</span></div>
+          <div class="text-[10px] text-gray-400 italic">Los convenios no solicitan factura ni impuestos dentro del cierre documental.</div>
+          <div class="flex justify-between text-[10px] font-black text-gray-800 border-t border-dashed border-gray-200 pt-1"><span>Balance del espacio</span><span>${signedMoney(r.total)}</span></div>
+      </button>`;
+      }
       const taxRows = r.taxBreakdown.length
         ? r.taxBreakdown.map((taxRow) => `<div class="flex justify-between text-[10px] text-gray-500"><span>${taxRow.name}</span><span>+${money(taxRow.amount)}</span></div>`).join("")
         : '<div class="text-[10px] text-gray-400 italic">Sin impuestos configurados.</div>';
@@ -6793,21 +7851,31 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     if (catalogBaseEl) catalogBaseEl.innerText = money(catalogBaseTotal);
     if (subtotalRawEl) subtotalRawEl.innerText = money(subtotalRaw);
     document.getElementById("lbl-subtotal").innerText = money(adjusted);
-    document.getElementById("lbl-adjustment").innerText = `${adjType === "descuento" ? "-" : "+"}${money(adjustment)}`;
+    document.getElementById("lbl-adjustment").innerText = convenioMode ? `-${money(convenioDeliveredTotal)}` : `${adjType === "descuento" ? "-" : "+"}${money(adjustment)}`;
     if (taxTotalEl) taxTotalEl.innerText = money(tax);
     document.getElementById("oed-price").value = (final || 0).toFixed(2);
     const sumSubtotal = document.getElementById("sum-total-subtotal");
     const sumAdjustment = document.getElementById("sum-total-adjustment");
     const sumTax = document.getElementById("sum-total-tax");
     const sumNet = document.getElementById("sum-total-net");
-    if (sumSubtotal) sumSubtotal.innerText = money(adjusted);
-    if (sumAdjustment) sumAdjustment.innerText = `${adjType === "descuento" ? "-" : "+"}${money(adjustment)}`;
+    if (sumSubtotal) sumSubtotal.innerText = money(convenioMode ? convenioBaseTotal : adjusted);
+    if (sumAdjustment) sumAdjustment.innerText = convenioMode ? `-${money(convenioDeliveredTotal)}` : `${adjType === "descuento" ? "-" : "+"}${money(adjustment)}`;
     if (sumTax) sumTax.innerText = money(tax);
     if (sumNet) sumNet.innerText = money(final);
+    const setLabel = (id, value) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = value;
+    };
+    setLabel("sum-label-subtotal", convenioMode ? "Valor Base" : "Subtotal");
+    setLabel("sum-label-adjustment", convenioMode ? "Tratos" : "Ajuste");
+    setLabel("sum-label-tax", convenioMode ? "Impuestos" : "Impuestos");
+    setLabel("sum-label-net", convenioMode ? "Balance del Convenio" : "Total Neto");
 
     const min = rows.map((r) => r.cfg.startDate).filter(Boolean).sort()[0] || "";
     const max = rows.map((r) => r.cfg.endDate).filter(Boolean).sort().slice(-1)[0] || "";
-    document.getElementById("sum-dates").innerText = (min && max) ? `${window.safeFormatDate(min)} al ${window.safeFormatDate(max)}` : "--";
+    document.getElementById("sum-dates").innerText = (min && max)
+      ? (convenioMode ? `${window.safeFormatDate(min)} al Indefinido` : `${window.safeFormatDate(min)} al ${window.safeFormatDate(max)}`)
+      : "--";
     document.getElementById("sum-quote-name").innerText = (document.getElementById("oed-quote-name")?.value || currentPreviewOrder?.nombre_cotizacion || "---");
     document.getElementById("sum-status").innerText = String(document.getElementById("oed-status")?.value || "pendiente").toUpperCase();
     document.getElementById("sum-client").innerText = document.getElementById("oed-client")?.value || "---";
@@ -6815,36 +7883,52 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     document.getElementById("sum-spaces-count").innerText = String(rows.length);
     const financialOverview = document.getElementById("oed-financial-overview");
     if (financialOverview) {
-      financialOverview.innerHTML = `
-        <div class="flex justify-between text-[10px] text-gray-500"><span>Conceptos adicionales acumulados</span><span>${money(conceptsGlobal)}</span></div>
-        <div class="flex justify-between gap-3 text-[10px] text-gray-500"><span>Regla de ajuste</span><span class="text-right font-bold text-gray-700 max-w-[240px]">${adjustmentModeLabel}</span></div>
-        <div class="text-[10px] text-gray-500 leading-relaxed">${adjustmentExplanation}</div>
-      `;
+      financialOverview.innerHTML = convenioMode
+        ? `
+          <div class="flex justify-between text-[10px] text-gray-500"><span>Valor base del convenio</span><span>${money(convenioBaseTotal)}</span></div>
+          <div class="flex justify-between text-[10px] text-gray-500"><span>Tratos registrados</span><span>-${money(convenioDeliveredTotal)}</span></div>
+          <div class="flex justify-between gap-3 text-[10px] text-gray-500"><span>Balance actual</span><span class="text-right font-bold text-gray-700 max-w-[240px]">${signedMoney(final)}</span></div>
+          <div class="text-[10px] text-gray-500 leading-relaxed">${adjustmentExplanation}</div>
+        `
+        : `
+          <div class="flex justify-between text-[10px] text-gray-500"><span>Conceptos adicionales acumulados</span><span>${money(conceptsGlobal)}</span></div>
+          <div class="flex justify-between gap-3 text-[10px] text-gray-500"><span>Regla de ajuste</span><span class="text-right font-bold text-gray-700 max-w-[240px]">${adjustmentModeLabel}</span></div>
+          <div class="text-[10px] text-gray-500 leading-relaxed">${adjustmentExplanation}</div>
+        `;
     }
     const financialList = document.getElementById("sum-financial-list");
     if (financialList) {
-      const overviewRows = [
-        { label: "Referencia catálogo acumulada", value: money(catalogBaseTotal) },
-        { label: "Base facturable acumulada", value: money(subtotalBase) },
-        { label: "Conceptos adicionales", value: money(conceptsGlobal) },
-        { label: "Subtotal antes de ajuste", value: money(subtotalRaw) },
-        { label: "Subtotal Ajustado", value: money(adjusted) },
-        { label: "Total Ajuste", value: `${adjType === "descuento" ? "-" : "+"}${money(adjustment)}` },
-        { label: "Impuestos", value: money(tax) },
-        { label: "Total Neto", value: money(final), highlight: true }
-      ];
+      const overviewRows = convenioMode
+        ? [
+            { label: "Valor base del convenio", value: money(convenioBaseTotal) },
+            { label: "Tratos acumulados", value: `-${money(convenioDeliveredTotal)}` },
+            { label: "Impuestos", value: money(0) },
+            { label: "Balance del convenio", value: signedMoney(final), highlight: true }
+          ]
+        : [
+            { label: "Referencia catálogo acumulada", value: money(catalogBaseTotal) },
+            { label: "Base facturable acumulada", value: money(subtotalBase) },
+            { label: "Conceptos adicionales", value: money(conceptsGlobal) },
+            { label: "Subtotal antes de ajuste", value: money(subtotalRaw) },
+            { label: "Subtotal Ajustado", value: money(adjusted) },
+            { label: "Total Ajuste", value: `${adjType === "descuento" ? "-" : "+"}${money(adjustment)}` },
+            { label: "Impuestos", value: money(tax) },
+            { label: "Total Neto", value: money(final), highlight: true }
+          ];
       const overviewHtml = `<div class="rounded-xl border border-gray-200 bg-white overflow-hidden">
           <div class="divide-y divide-gray-100 text-xs">
             ${overviewRows.map((row) => `<div class="flex items-center justify-between gap-3 px-4 py-3 ${row.highlight ? "bg-slate-50" : ""}"><span class="${row.highlight ? "font-black uppercase text-gray-700" : "font-bold text-gray-400"}">${row.label}</span><span class="${row.highlight ? "font-black text-gray-900" : "font-bold text-gray-800"} text-right">${row.value}</span></div>`).join("")}
           </div>
           <div class="border-t border-dashed border-gray-200 px-4 py-3 text-[10px] text-gray-500">
-            <p class="font-bold text-gray-700 mb-1">Regla de ajuste</p>
+            <p class="font-bold text-gray-700 mb-1">${convenioMode ? "Regla del convenio" : "Regla de ajuste"}</p>
             <p>${adjustmentExplanation}</p>
           </div>
         </div>`;
       const spaceCardsHtml = rows.length ? rows.map(renderSpacePricingCard).join("") : '<div class="rounded-xl border border-dashed border-gray-200 bg-white px-4 py-5 text-[11px] text-gray-400 italic">Sin espacios seleccionados.</div>';
       const spaceTaxCardsHtml = rows.length ? rows.map(renderSpaceTaxCard).join("") : "";
-      financialList.innerHTML = `${overviewHtml}<div class="space-y-2">${spaceCardsHtml}</div><div class="space-y-2">${globalTaxCardHtml}${spaceTaxCardsHtml}</div>`;
+      financialList.innerHTML = convenioMode
+        ? `${overviewHtml}<div class="space-y-2">${spaceCardsHtml}</div>`
+        : `${overviewHtml}<div class="space-y-2">${spaceCardsHtml}</div><div class="space-y-2">${globalTaxCardHtml}${spaceTaxCardsHtml}</div>`;
     }
     const list = document.getElementById("sum-spaces-list");
     if (list) {
@@ -6871,6 +7955,9 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
             ? "border-emerald-300 bg-emerald-50 ring-1 ring-emerald-200"
             : `border-gray-200 bg-white ${previewSummaryView ? "" : "hover:border-brand-red"}`;
           const stateLabel = active ? "En edición" : (previewSummaryView ? "Activo" : "Editar");
+          const dateLabel = r.cfg.convenioEnabled
+            ? `${window.safeFormatDate(r.cfg.startDate)} - Indefinido`
+            : `${window.safeFormatDate(r.cfg.startDate)} - ${window.safeFormatDate(r.cfg.endDate)}`;
           return `<button type="button" ${previewSummaryView ? "disabled" : `onclick="window.focusOrderSpaceCard('${r.cfg.spaceId}')"`} class="w-full text-left rounded-xl border ${stateClass} p-3 transition ${previewSummaryView ? "cursor-default" : "cursor-pointer"} ${idx > 0 ? "mt-2" : ""}">
               <div class="flex justify-between items-start gap-2">
                   <div class="min-w-0">
@@ -6880,22 +7967,26 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
                   <span class="text-[9px] font-bold uppercase tracking-wide shrink-0 ${active ? "text-emerald-700" : "text-gray-400"}">${stateLabel}</span>
               </div>
               <div class="mt-2 space-y-1 text-[10px] text-gray-600">
-                  <div class="flex justify-between gap-2"><span class="font-bold text-gray-400">Fechas</span><span class="text-right">${window.safeFormatDate(r.cfg.startDate)} - ${window.safeFormatDate(r.cfg.endDate)}</span></div>
+                  <div class="flex justify-between gap-2"><span class="font-bold text-gray-400">Fechas</span><span class="text-right">${dateLabel}</span></div>
                   <div class="flex justify-between gap-2"><span class="font-bold text-gray-400">Base</span><span class="text-right">${money(r.base)}</span></div>
                   <div class="flex justify-between gap-2"><span class="font-bold text-gray-400">Tipo</span><span class="text-right">${r.cfg.spaceType || r.sp?.tipo || "--"}</span></div>
                   <div class="flex justify-between gap-2"><span class="font-bold text-gray-400">Detalle</span><span class="text-right max-w-[180px]">${detailLabel}</span></div>
                   <div class="flex justify-between gap-2"><span class="font-bold text-gray-400">Medidas</span><span class="text-right">${measureLabel}</span></div>
-                  <div class="flex justify-between gap-2 border-t border-dashed border-gray-200 pt-1 mt-1 font-bold text-gray-700"><span>Total espacio</span><span>${money(r.total)}</span></div>
+                  <div class="flex justify-between gap-2 border-t border-dashed border-gray-200 pt-1 mt-1 font-bold text-gray-700"><span>${r.isConvenio ? "Balance convenio" : "Total espacio"}</span><span>${r.isConvenio ? signedMoney(r.total) : money(r.total)}</span></div>
               </div>
           </button>`;
         }).join("");
       } else {
         list.innerHTML = rows.map((r) => {
           const active = String(r.cfg.spaceId) === String(pmActive);
-          return `<button type="button" onclick="window.selectOrderSpaceCard('${r.cfg.spaceId}')" class="w-full text-left rounded-lg border ${active ? "border-emerald-300 bg-emerald-50" : "border-gray-200 bg-gray-50 hover:border-brand-red"} p-2 transition"><div class="flex justify-between items-start gap-2"><div class="min-w-0"><p class="text-[10px] font-black uppercase text-gray-800 whitespace-normal break-words leading-tight">${r.sp?.nombre || r.cfg.spaceId}</p><p class="text-[10px] font-mono text-gray-500 mt-0.5 break-all">${r.sp?.clave ? `Clave: ${r.sp.clave}` : "--"}</p></div><span class="text-[10px] font-bold shrink-0 ${active ? "text-emerald-700" : "text-gray-400"}">${active ? "Editando" : "Editar"}</span></div><p class="text-[10px] text-gray-500 mt-1">${window.safeFormatDate(r.cfg.startDate)} - ${window.safeFormatDate(r.cfg.endDate)}</p><p class="text-[10px] text-gray-500 mt-1">Base ${money(r.base)}</p><p class="text-[10px] font-bold text-gray-700 mt-1">${money(r.total)}</p></button>`;
+          const dateLabel = r.cfg.convenioEnabled
+            ? `${window.safeFormatDate(r.cfg.startDate)} - Indefinido`
+            : `${window.safeFormatDate(r.cfg.startDate)} - ${window.safeFormatDate(r.cfg.endDate)}`;
+          return `<button type="button" onclick="window.selectOrderSpaceCard('${r.cfg.spaceId}')" class="w-full text-left rounded-lg border ${active ? "border-emerald-300 bg-emerald-50" : "border-gray-200 bg-gray-50 hover:border-brand-red"} p-2 transition"><div class="flex justify-between items-start gap-2"><div class="min-w-0"><p class="text-[10px] font-black uppercase text-gray-800 whitespace-normal break-words leading-tight">${r.sp?.nombre || r.cfg.spaceId}</p><p class="text-[10px] font-mono text-gray-500 mt-0.5 break-all">${r.sp?.clave ? `Clave: ${r.sp.clave}` : "--"}</p></div><span class="text-[10px] font-bold shrink-0 ${active ? "text-emerald-700" : "text-gray-400"}">${active ? "Editando" : "Editar"}</span></div><p class="text-[10px] text-gray-500 mt-1">${dateLabel}</p><p class="text-[10px] text-gray-500 mt-1">Base ${money(r.base)}</p><p class="text-[10px] font-bold text-gray-700 mt-1">${r.isConvenio ? signedMoney(r.total) : money(r.total)}</p></button>`;
         }).join("");
       }
     }
+    syncPmOrderDetailModeUi();
     window.renderOrderSpaceCards();
     updatePmSpaceConfigTitle();
     renderPmActiveSpaceSummary(rows.find((r) => String(r.cfg.spaceId) === String(pmActive)));
@@ -6905,7 +7996,9 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     saveActiveFromForm();
     window.recalcTotal();
     if (!pmTotals.spaces.length) throw new Error("No hay espacios activos.");
+    const hasConvenioOrder = pmTotals.spaces.some((r) => !!r.isConvenio || !!r.cfg?.convenioEnabled);
     const details = pmTotals.spaces.map((r) => {
+      const convenioItems = buildConvenioPayloadItems(r.cfg);
       return {
         espacio_id: r.cfg.spaceId,
         espacio_nombre: r.sp?.nombre || r.cfg.spaceId,
@@ -6916,9 +8009,14 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
         precio_personalizado: (r.cfg.customPriceEnabled && r.cfg.customBasePrice !== "" && r.cfg.customBasePrice !== null && r.cfg.customBasePrice !== undefined) ? (parseFloat(r.cfg.customBasePrice) || 0) : null,
         precio_personalizado_activo: !!r.cfg.customPriceEnabled,
         precio_personalizado_modo: r.cfg.customPriceMode || "total",
-        subtotal_espacio: r.adjustedSubtotal,
-        impuestos_ids: r.taxIds || [],
-        impuestos_total: r.tax || 0,
+        convenio_activo: !!r.cfg.convenioEnabled,
+        convenio_indefinido: !!r.cfg.convenioEnabled,
+        convenio_items: convenioItems,
+        subtotal_espacio: r.isConvenio ? (r.base || 0) : r.adjustedSubtotal,
+        convenio_monto_entregado: r.isConvenio ? (r.convenioValue || 0) : 0,
+        convenio_balance: r.isConvenio ? (r.total || 0) : r.adjustedSubtotal,
+        impuestos_ids: r.isConvenio ? [] : (r.taxIds || []),
+        impuestos_total: r.isConvenio ? 0 : (r.tax || 0),
         total_espacio: r.total || 0,
         espacio_tipo: r.cfg.spaceType || r.sp?.tipo || "",
         tipo: r.cfg.spaceType || r.sp?.tipo || "",
@@ -6942,6 +8040,23 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     const ends = details.map((d) => d.fecha_fin).filter(Boolean).sort();
     const first = pmTotals.spaces[0];
     const taxUnion = Array.from(new Set(pmTotals.spaces.flatMap((r) => (r.taxIds || []).map((x) => String(x)))));
+    const existingConvenio = __pmParseConvenioMeta(currentPreviewOrder);
+    const convenioSpaces = pmTotals.spaces
+      .filter((r) => !!r.cfg.convenioEnabled)
+      .map((r) => ({
+        espacio_id: r.cfg.spaceId,
+        espacio_nombre: r.sp?.nombre || r.cfg.spaceId,
+        espacio_clave: r.sp?.clave || "",
+        cantidad_tratos: buildConvenioPayloadItems(r.cfg).length,
+        items: buildConvenioPayloadItems(r.cfg)
+      }));
+    const convenioItems = convenioSpaces.flatMap((space) => (space.items || []).map((item) => ({
+      ...item,
+      espacio_id: space.espacio_id,
+      espacio_nombre: space.espacio_nombre,
+      espacio_clave: space.espacio_clave
+    })));
+    const detallesEventoActual = __pmParseRecordJson(currentPreviewOrder?.detalles_evento);
     return {
       nombre_cotizacion: (document.getElementById("oed-quote-name")?.value || "").trim() || currentPreviewOrder?.nombre_cotizacion || "",
       cliente_nombre: document.getElementById("oed-client")?.value || "",
@@ -6955,29 +8070,67 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       espacio_id: first.cfg.spaceId,
       espacio_nombre: pmTotals.spaces.length === 1 ? (first.sp?.nombre || first.cfg.spaceId) : `${first.sp?.nombre || first.cfg.spaceId} + ${pmTotals.spaces.length - 1} espacio(s)`,
       espacio_clave: pmTotals.spaces.length === 1 ? (first.sp?.clave || "") : "MULTI",
-      tipo_ajuste: document.getElementById("oed-adj-type")?.value || "ninguno",
-      valor_ajuste: parseFloat(document.getElementById("oed-adj-val")?.value || 0) || 0,
-      ajuste_es_porcentaje: (document.getElementById("oed-adj-unit")?.value || "fixed") === "percent",
+      tipo_ajuste: hasConvenioOrder ? "ninguno" : (document.getElementById("oed-adj-type")?.value || "ninguno"),
+      valor_ajuste: hasConvenioOrder ? 0 : (parseFloat(document.getElementById("oed-adj-val")?.value || 0) || 0),
+      ajuste_es_porcentaje: hasConvenioOrder ? false : ((document.getElementById("oed-adj-unit")?.value || "fixed") === "percent"),
       conceptos_adicionales: concepts,
       espacios_detalle: details,
-      desglose_precios: { subtotal_antes_impuestos: pmTotals.adjusted, impuestos_detalle: taxUnion, tax_total: pmTotals.tax, espacios: details },
-      detalles_evento: { multi_espacio: details.length > 1, total_espacios: details.length, nombre_cotizacion: (document.getElementById("oed-quote-name")?.value || "").trim() || currentPreviewOrder?.nombre_cotizacion || "", permanencia_personalizada: details.some((d) => !!d.permanencia_personalizada) }
+      desglose_precios: {
+        subtotal_antes_impuestos: hasConvenioOrder ? pmTotals.final : pmTotals.adjusted,
+        impuestos_detalle: hasConvenioOrder ? [] : taxUnion,
+        tax_total: hasConvenioOrder ? 0 : pmTotals.tax,
+        convenio_base_total: hasConvenioOrder ? pmTotals.convenioBaseTotal : 0,
+        convenio_entregable_total: hasConvenioOrder ? pmTotals.convenioDeliveredTotal : 0,
+        convenio_balance_total: hasConvenioOrder ? pmTotals.final : 0,
+        espacios: details
+      },
+      detalles_evento: {
+        ...detallesEventoActual,
+        multi_espacio: details.length > 1,
+        total_espacios: details.length,
+        nombre_cotizacion: (document.getElementById("oed-quote-name")?.value || "").trim() || currentPreviewOrder?.nombre_cotizacion || "",
+        permanencia_personalizada: details.some((d) => !!d.permanencia_personalizada),
+        convenio: (hasConvenioOrder || convenioItems.length) ? {
+          ...existingConvenio,
+          activo: true,
+          bloqueo_indefinido: true,
+          requiere_evidencia: true,
+          evidencia_minima: Math.max(3, parseInt(existingConvenio?.evidencia_minima || 3, 10) || 3),
+          evidencia_maxima: Math.max(5, parseInt(existingConvenio?.evidencia_maxima || 5, 10) || 5),
+          requiere_factura: false,
+          requiere_recibo: false,
+          requiere_contrato: false,
+          espacios: convenioSpaces,
+          items: convenioItems,
+          evidencias: __pmGetConvenioEvidence(currentPreviewOrder)
+        } : null
+      }
     };
   };
 
   async function findConflict(orderId) {
     const selected = selectedCfg();
     if (!selected.length) return null;
-    const { data, error } = await __pmQuotesList({ filter: 'status = "aprobada"', perPage: 500 });
+    const { data, error } = await __pmQuotesList({ filter: 'status = "aprobada" || status = "finalizada"', perPage: 500 });
     if (error) throw error;
     for (const cfg of selected) {
-      const s = iso(cfg.startDate); const e = iso(cfg.endDate); const sid = String(cfg.spaceId);
+      const s = iso(cfg.startDate); const e = cfg.convenioEnabled ? PM_CONVENIO_INDEFINITE_END : iso(cfg.endDate); const sid = String(cfg.spaceId);
       for (const row of (data || [])) {
         if (String(row.id) === String(orderId)) continue;
         const d = parseDetail(row.espacios_detalle);
         const ranges = [];
-        if (d.length) d.forEach((x) => { const id = String(x.espacio_id || x.space_id || ""); const fi = iso(x.fecha_inicio || ""); const ff = iso(x.fecha_fin || ""); if (id === sid && fi && ff) ranges.push({ fi, ff }); });
-        else if (String(row.espacio_id || "") === sid) { const fi = iso(row.fecha_inicio || ""); const ff = iso(row.fecha_fin || ""); if (fi && ff) ranges.push({ fi, ff }); }
+        const orderBlocksIndefinitely = __pmOrderBlocksIndefinitely(row);
+        if (d.length) d.forEach((x) => {
+          const id = String(x.espacio_id || x.space_id || "");
+          const fi = iso(x.fecha_inicio || "");
+          const ff = (x?.convenio_indefinido === true || x?.bloqueo_indefinido === true || orderBlocksIndefinitely) ? PM_CONVENIO_INDEFINITE_END : iso(x.fecha_fin || "");
+          if (id === sid && fi && ff) ranges.push({ fi, ff });
+        });
+        else if (String(row.espacio_id || "") === sid) {
+          const fi = iso(row.fecha_inicio || "");
+          const ff = orderBlocksIndefinitely ? PM_CONVENIO_INDEFINITE_END : iso(row.fecha_fin || "");
+          if (fi && ff) ranges.push({ fi, ff });
+        }
         const hit = ranges.find((r) => new Date(s + "T00:00:00") <= new Date(r.ff + "T00:00:00") && new Date(r.fi + "T00:00:00") <= new Date(e + "T00:00:00"));
         if (hit) return { space: getSpace(sid)?.nombre || sid, fi: hit.fi, ff: hit.ff };
       }
@@ -6999,9 +8152,10 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     if (newLvl < curLvl) return window.showToast("No puedes regresar a un estado anterior.", "error");
     if (newStatus === "aprobada" && String(currentPreviewOrder?.status || "").toLowerCase() !== "aprobada") {
       const missing = [];
+      const convenioOrder = selectedCfg().some((cfg) => !!cfg?.convenioEnabled);
       if (!document.getElementById("oed-client")?.value) missing.push("Nombre Cliente");
       if (!document.getElementById("oed-email")?.value) missing.push("Email");
-      if (!document.getElementById("fiscal-rfc-re")?.value) missing.push("RFC");
+      if (!convenioOrder && !document.getElementById("fiscal-rfc-re")?.value) missing.push("RFC");
       if (!selectedCfg().every((c) => c.startDate && c.endDate)) missing.push("Fechas");
       if (missing.length) return window.showToast(`Faltan datos para aprobar: ${missing.join(", ")}`, "error");
       try {
@@ -7041,17 +8195,22 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       const nextStatus = document.getElementById("oed-status")?.value || "pendiente";
       const prevStatus = String(currentPreviewOrder?.status || "").toLowerCase();
       const approvalTransition = nextStatus === "aprobada" && !["aprobada", "finalizada"].includes(prevStatus);
+      const convenioTransition = nextStatus === "finalizada" && __pmIsConvenioOrder({ ...currentPreviewOrder, ...formData });
       formData.status = nextStatus;
       const saveOrderId = String(document.getElementById("oed-id")?.value || currentPreviewOrder?.id || "").trim();
       if (!saveOrderId) throw new Error("Cotización inválida.");
       if (!formData.numero_orden) formData.numero_orden = __pmResolveQuoteFolio(currentPreviewOrder, saveOrderId);
       const approvalSnapshotMeta = approvalTransition ? __pmBuildApprovalSnapshotMeta(saveOrderId, formData) : null;
       if (approvalSnapshotMeta?.path) formData.url_cotizacion_final = approvalSnapshotMeta.path;
+      if (convenioTransition && __pmGetConvenioEvidence({ ...currentPreviewOrder, ...formData }).length < 3) {
+        throw new Error("Finaliza el convenio desde Expediente para adjuntar de 3 a 5 evidencias.");
+      }
       if (approvalTransition) {
         const missing = [];
+        const convenioOrder = __pmIsConvenioOrder({ ...currentPreviewOrder, ...formData });
         if (!document.getElementById("oed-client")?.value) missing.push("Nombre Cliente");
         if (!document.getElementById("oed-email")?.value) missing.push("Email");
-        if (!document.getElementById("fiscal-rfc-re")?.value) missing.push("RFC");
+        if (!convenioOrder && !document.getElementById("fiscal-rfc-re")?.value) missing.push("RFC");
         if (!selectedCfg().every((c) => c.startDate && c.endDate)) missing.push("Fechas");
         if (missing.length) throw new Error(`Faltan datos para aprobar: ${missing.join(", ")}`);
         const c = await findConflict(currentPreviewOrder?.id);
@@ -7062,6 +8221,8 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       currentPreviewOrder = { ...currentPreviewOrder, ...formData };
       signalOrdersRefresh(nextStatus === "aprobada" ? "approved_saved" : "saved");
       if (approvalTransition) {
+        const docMeta = __pmGetQuoteDocumentMeta({ ...currentPreviewOrder, ...formData });
+        const approvalLabel = docMeta.isConvenio ? "Convenio aprobado" : "Cotización aprobada";
         await __pmEnsurePdfStyleProfile('quote', { forceReload: !__pmIsAdminProfile() });
         const content = await window.getOrderHTML({ ...currentPreviewOrder, ...formData }, "quote");
         const pdfContainer = document.getElementById("pdf-content");
@@ -7097,18 +8258,19 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
           btnDownload.innerHTML = '<i class="fa-solid fa-download"></i> Descargar';
           btnDownload.className = "bg-brand-red hover:bg-red-600 text-white px-5 py-2 rounded-full text-xs font-bold uppercase shadow-lg transition flex items-center gap-2";
           btnDownload.onclick = () => {
-            if (typeof window.downloadBlobAsFile === "function") window.downloadBlobAsFile(pdfBlob, `Cotizacion_Aprobada_${folio}.pdf`);
+            const fileName = `${docMeta.approvedFileBase}_${folio}.pdf`;
+            if (typeof window.downloadBlobAsFile === "function") window.downloadBlobAsFile(pdfBlob, fileName);
             else {
               const a = document.createElement("a");
               a.href = URL.createObjectURL(pdfBlob);
-              a.download = `Cotizacion_Aprobada_${folio}.pdf`;
+              a.download = fileName;
               document.body.appendChild(a);
               a.click();
               a.remove();
             }
           };
         }
-        if (!silent) window.showToast("Cotización aprobada, PDF y snapshot generados.", "success");
+        if (!silent) window.showToast(`${approvalLabel}, PDF y snapshot generados.`, "success");
       } else {
         if (!silent) window.showToast("Cambios guardados", "success");
       }
@@ -7117,6 +8279,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       }
       __pmClearOrderDetailDirty();
       if (!keepOpen) window.closeModal("order-edit-modal");
+      pmOrdersSaveViewState({ selectedOrderId: saveOrderId });
       if (!skipReload) await window.loadOrders();
       if (approvalTransition && IS_PM_ORDER_DETAIL_PAGE) {
         await window.openOrderEditModal(currentPreviewOrder.id);
@@ -7135,6 +8298,8 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     const btn = document.getElementById("btn-download-preview");
     if (btn) { btn.disabled = true; btn.innerText = "Generando Snapshot..."; }
     try {
+      const docMeta = __pmGetQuoteDocumentMeta({ ...currentPreviewOrder, ...formData });
+      const approvalArchivedLabel = docMeta.isConvenio ? "¡Convenio aprobado y archivado!" : "¡Cotización aprobada y archivada!";
       const element = document.getElementById("pdf-content");
       if (!__pmIsAdminProfile() && element && currentPreviewOrder) {
         await __pmEnsurePdfStyleProfile("quote", { forceReload: true });
@@ -7164,18 +8329,20 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       const folio = snapshotResult.folio;
       const payload = snapshotResult.payload || { ...formData, status: "aprobada", url_cotizacion_final: path };
       currentPreviewOrder = { ...currentPreviewOrder, ...payload };
-      if (typeof window.downloadBlobAsFile === "function") window.downloadBlobAsFile(pdfBlob, `Cotizacion_Aprobada_${folio}.pdf`);
+      const fileName = `${docMeta.approvedFileBase}_${folio}.pdf`;
+      if (typeof window.downloadBlobAsFile === "function") window.downloadBlobAsFile(pdfBlob, fileName);
       else {
         const link = document.createElement("a");
         link.href = URL.createObjectURL(pdfBlob);
-        link.download = `Cotizacion_Aprobada_${folio}.pdf`;
+        link.download = fileName;
         document.body.appendChild(link);
         link.click();
         link.remove();
         setTimeout(() => URL.revokeObjectURL(link.href), 1500);
       }
-      window.showToast("¡Cotización aprobada y archivada!", "success");
+      window.showToast(approvalArchivedLabel, "success");
       window.closeModal("preview-modal");
+      pmOrdersSaveViewState({ selectedOrderId: currentPreviewOrder?.id || '' });
       if (!IS_PM_ORDER_DETAIL_PAGE) await window.loadOrders();
       if (IS_PM_ORDER_DETAIL_PAGE) await window.openOrderEditModal(currentPreviewOrder.id);
       else window.closeModal("order-edit-modal");
@@ -7217,9 +8384,10 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     }
 
     const details = parseDetail(order.espacios_detalle);
+    const convenioMeta = __pmParseConvenioMeta(order);
     pmSpaces = details.length
-      ? details.map((d) => mkCfg(d.espacio_id || d.space_id, { selected: true, spaceType: d.espacio_tipo || d.tipo || "", customPermanence: d.permanencia_personalizada === true, customPriceEnabled: d.precio_personalizado_activo === true || (d.precio_personalizado !== null && d.precio_personalizado !== undefined && d.precio_personalizado !== ""), customPriceMode: d.precio_personalizado_modo || "total", startDate: d.fecha_inicio || "", endDate: d.fecha_fin || "", customBasePrice: d.precio_personalizado, taxIds: __pmNormalizeTaxIds(d.impuestos_ids), material: d.material || "", ubicacion: d.ubicacion || "", medidaAncho: d.medida_ancho ?? d.ancho ?? 0, medidaAlto: d.medida_alto ?? d.alto ?? 0, medidaUnit: d.medida_unidad || d.unidad_medida || "M" }))
-      : [mkCfg(order.espacio_id, { selected: true, startDate: order.fecha_inicio, endDate: order.fecha_fin })];
+      ? details.map((d) => mkCfg(d.espacio_id || d.space_id, { selected: true, spaceType: d.espacio_tipo || d.tipo || "", customPermanence: d.permanencia_personalizada === true, customPriceEnabled: d.precio_personalizado_activo === true || (d.precio_personalizado !== null && d.precio_personalizado !== undefined && d.precio_personalizado !== ""), customPriceMode: d.precio_personalizado_modo || "total", convenioEnabled: d.convenio_activo === true || d.convenio_indefinido === true, startDate: d.fecha_inicio || "", endDate: d.fecha_fin || "", customBasePrice: d.precio_personalizado, taxIds: __pmNormalizeTaxIds(d.impuestos_ids), material: d.material || "", ubicacion: d.ubicacion || "", medidaAncho: d.medida_ancho ?? d.ancho ?? 0, medidaAlto: d.medida_alto ?? d.alto ?? 0, medidaUnit: d.medida_unidad || d.unidad_medida || "M" }))
+      : [mkCfg(order.espacio_id, { selected: true, convenioEnabled: convenioMeta.activo === true, startDate: order.fecha_inicio, endDate: order.fecha_fin })];
 
     const rawConcepts = safeArr(order.conceptos_adicionales).map(normConcept);
     if (rawConcepts.length) {
@@ -7250,7 +8418,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       catalogConcepts.forEach((c) => conceptSel.innerHTML += `<option value="${c.id}">${c.nombre}</option>`);
     }
     const extraConceptsToggle = document.getElementById("oed-has-extra-concepts");
-    if (extraConceptsToggle) extraConceptsToggle.checked = selectedCfg().some((cfg) => safeArr(cfg.concepts).length);
+    if (extraConceptsToggle) extraConceptsToggle.checked = selectedCfg().some((cfg) => regularConcepts(cfg.concepts).length);
 
     const isLocked = __pmIsLockedOrder();
     document.querySelectorAll("#order-edit-modal input, #order-edit-modal select").forEach((i) => {

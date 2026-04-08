@@ -148,7 +148,7 @@ async function __hubFetchRuntimeConfig() {
     try {
       const response = await fetch(path, {
         method: 'GET',
-        cache: 'no-store',
+        cache: 'no-cache',
         credentials: 'same-origin'
       });
       if (!response.ok) continue;

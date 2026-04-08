@@ -186,11 +186,14 @@
     var windowMs = 10 * 60 * 1000;
     var duplicateWindowMs = 45 * 1000;
     var maxCreatesPerWindow = 4;
+    // SEGURIDAD: La clave no incluye quoteName para evitar falsos positivos
+    // entre usuarios distintos que soliciten el mismo espacio con el mismo nombre.
+    // NOTA: Este throttle es in-memory y se resetea al reiniciar PocketBase.
+    // Para producción con alta carga, considerar un throttle persistente en BD.
     var key = [
       String(tenant || "").trim().toLowerCase(),
       String(email || "").trim().toLowerCase(),
-      String(phone || "").replace(/\D+/g, ""),
-      sanitizeText(quoteName, 120).toLowerCase()
+      String(phone || "").replace(/\D+/g, "")
     ].join("|");
     var store = getPublicThrottleStore();
     var recent = Array.isArray(store[key]) ? store[key] : [];

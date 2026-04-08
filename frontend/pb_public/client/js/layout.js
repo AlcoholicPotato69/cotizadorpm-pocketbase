@@ -1769,6 +1769,7 @@
             }
 
             initUnifiedNotifications();
+            initOrderNotifications(authCtx);
             initLegacyCalendarListener(); 
             loadHistory();
             return;
@@ -1842,12 +1843,12 @@
                     </div>
                     <div class="h-6 w-px bg-white/10 mx-1"></div>`}
                     
-                    <a href="${pathPrefix}system/users1.html" id="layout-settings-btn" class="w-9 h-9 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition border border-white/5 text-gray-300 hover:text-white ${settingsClass}" title="Configuración">
+                    <a href="${pathPrefix}system/config.html" id="layout-settings-btn" class="w-9 h-9 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition border border-white/5 text-gray-300 hover:text-white ${settingsClass}" title="Configuración">
                         <i class="fa-solid fa-gear"></i>
                     </a>
                     
                     <button onclick="window.layoutApi.logout()" class="flex items-center gap-2 text-xs font-bold text-red-400 hover:text-red-300 transition uppercase tracking-wide ml-2">
-                        <span class="hidden sm:inline">Salir</span> <i class="fa-solid fa-right-from-bracket"></i>
+                        <span class="inline">Salir</span> <i class="fa-solid fa-right-from-bracket"></i>
                     </button>
                 </div>
             </div>
@@ -1887,6 +1888,83 @@
                 loadHistory();
                 const audio = new Audio('' + NOTIFY_SOUND + ''); audio.volume = 0.2; audio.play().catch(()=>{});
             }).subscribe();
+    }
+
+        function initOrderNotifications(authCtx) {
+        if (IS_LOCAL) return;
+        if (!layoutClient) return;
+        const userRole = String(authCtx && authCtx.role ? authCtx.role : '').toLowerCase();
+        const isAdmin = userRole === 'admin';
+        const allowedTenants = (authCtx && Array.isArray(authCtx.allowedTenants)) ? authCtx.allowedTenants : [];
+        const hasPM = isAdmin || allowedTenants.includes('plaza_mayor');
+        const hasCP = isAdmin || allowedTenants.includes('casa_de_piedra');
+
+        const PM_SCHEMA = (window.HUB_CONFIG && window.HUB_CONFIG.finanzasSchema) || 'finanzas';
+        const CP_SCHEMA = 'finanzas_casadepiedra';
+
+        const statusLabels = {
+            'borrador': 'Borrador',
+            'pendiente': 'Pendiente',
+            'aprobada': 'Aprobada',
+            'rechazada': 'Rechazada',
+            'finalizada': 'Finalizada',
+            'cancelada': 'Cancelada'
+        };
+
+        async function handleOrderChange(payload, tenantLabel, tenantPath) {
+            const rec = payload.new || {};
+            const old = payload.old || {};
+            const eventType = payload.eventType || 'UPDATE';
+            const folio = rec.numero_cotizacion || rec.folio || rec.id || '';
+            let title = '';
+            let msg = '';
+            let link = tenantPath + '/orders.html';
+
+            if (eventType === 'INSERT') {
+                title = '\u{1F4CB} Nueva Orden — ' + tenantLabel;
+                msg = 'Folio ' + folio + (rec.client_name || rec.nombre_cliente ? ' · ' + (rec.client_name || rec.nombre_cliente) : '');
+            } else {
+                const newStatus = rec.status || rec.estado || '';
+                const oldStatus = old.status || old.estado || '';
+                if (newStatus && newStatus !== oldStatus) {
+                    const statusText = statusLabels[newStatus] || newStatus;
+                    title = '\u{1F504} Estado actualizado — ' + tenantLabel;
+                    msg = 'Orden ' + folio + ' → ' + statusText;
+                } else {
+                    title = '\u{270F}\uFE0F Orden modificada — ' + tenantLabel;
+                    msg = 'Orden ' + folio + ' fue actualizada.';
+                }
+            }
+
+            try {
+                await layoutClient.from('hub_notifications').insert({
+                    user_id: myId,
+                    title: title,
+                    message: msg,
+                    type: 'order',
+                    source_app: 'cotizador',
+                    link: link
+                });
+            } catch (_) {}
+        }
+
+        if (hasPM) {
+            layoutClient.channel('hub-orders-pm-v1')
+                .on('postgres_changes', { event: 'INSERT', schema: PM_SCHEMA, table: 'cotizaciones' },
+                    (p) => handleOrderChange(p, 'Plaza Mayor', 'cotizador'))
+                .on('postgres_changes', { event: 'UPDATE', schema: PM_SCHEMA, table: 'cotizaciones' },
+                    (p) => handleOrderChange(p, 'Plaza Mayor', 'cotizador'))
+                .subscribe();
+        }
+
+        if (hasCP) {
+            layoutClient.channel('hub-orders-cp-v1')
+                .on('postgres_changes', { event: 'INSERT', schema: CP_SCHEMA, table: 'cotizaciones' },
+                    (p) => handleOrderChange(p, 'Casa de Piedra', 'cotizadorcp'))
+                .on('postgres_changes', { event: 'UPDATE', schema: CP_SCHEMA, table: 'cotizaciones' },
+                    (p) => handleOrderChange(p, 'Casa de Piedra', 'cotizadorcp'))
+                .subscribe();
+        }
     }
 
     async function initLegacyCalendarListener() {

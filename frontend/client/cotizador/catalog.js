@@ -76,7 +76,9 @@ const PM_CATALOG_MODE = window.__PM_CATALOG_MODE || ((window.location.pathname |
 const IS_PM_QUOTE_PAGE = PM_CATALOG_MODE === 'quote';
 const IS_PM_CATALOG_ADMIN_PAGE = !IS_PM_QUOTE_PAGE;
 const PM_MATERIAL_TAGS = new Set(['Vinil', 'Vinil transparente', 'Vinil con reverso negro', 'Vinil con reverso gris/negro', 'Lona', 'Lona sobre bastidor', 'Coroplast', 'Imagen fija JPG']);
-let allSpaces = [], dbTaxes = [], dbMaterials = [], dbLocations = [], currentSpace = null, currentPricing = { base: 0, final: 0 };
+const PM_CONVENIOS_CFG_KEY = 'convenios_pm';
+const PM_CONVENIO_INDEFINITE_END = '2099-12-31';
+let allSpaces = [], dbTaxes = [], dbMaterials = [], dbLocations = [], pmConvenioCatalog = [], currentSpace = null, currentPricing = { base: 0, final: 0 };
 let myPermissions = { access: false, catalog_manage: false };
 let pmQuoteSpaces = [];
 let pmActiveSpaceId = null;
@@ -85,6 +87,70 @@ let pmQuoteDatePickMode = 'start';
 let pmQuoteTempStart = '';
 let pmQuoteTempEnd = '';
 let pmQuoteBlockedRanges = [];
+let pmCatalogRestoringViewState = false;
+let pmCatalogCachedViewState = null;
+const PM_CATALOG_VIEW_STATE_SCOPE = `pm_catalog:${PM_CATALOG_MODE}`;
+
+function pmCatalogViewStateApi() {
+    return window.__HUB_VIEW_STATE || null;
+}
+
+function pmCatalogReadViewState() {
+    if (pmCatalogCachedViewState && typeof pmCatalogCachedViewState === 'object') {
+        return { ...pmCatalogCachedViewState };
+    }
+    const api = pmCatalogViewStateApi();
+    const state = api?.read ? (api.read(PM_CATALOG_VIEW_STATE_SCOPE, { maxAgeMs: 30 * 60 * 1000 }) || null) : null;
+    if (state && typeof state === 'object') pmCatalogCachedViewState = { ...state };
+    return state;
+}
+
+function pmCatalogApplyViewStateControls(state = pmCatalogReadViewState()) {
+    if (!state || typeof state !== 'object') return;
+    const searchEl = document.getElementById('cat-search');
+    const typeEl = document.getElementById('cat-filter-type');
+    const sortEl = document.getElementById('cat-sort');
+    if (searchEl && typeof state.search === 'string') searchEl.value = state.search;
+    if (typeEl && typeof state.type === 'string') typeEl.value = state.type;
+    if (sortEl && typeof state.sort === 'string') sortEl.value = state.sort;
+}
+
+function pmCatalogSaveViewState(extra = {}) {
+    const api = pmCatalogViewStateApi();
+    const state = (extra && typeof extra === 'object') ? extra : {};
+    const mgrId = document.getElementById('mgr-id')?.value || '';
+    const hasSelectedSpaceId = Object.prototype.hasOwnProperty.call(state, 'selectedSpaceId');
+    const nextState = {
+        search: document.getElementById('cat-search')?.value || '',
+        type: document.getElementById('cat-filter-type')?.value || 'all',
+        sort: document.getElementById('cat-sort')?.value || 'default',
+        selectedSpaceId: hasSelectedSpaceId
+            ? String(state.selectedSpaceId || '').trim()
+            : String(mgrId || pmActiveSpaceId || currentSpace?.id || '').trim(),
+        windowScrollY: api?.getWindowScrollY ? api.getWindowScrollY() : (window.scrollY || 0),
+        ...state
+    };
+    pmCatalogCachedViewState = { ...nextState };
+    if (!api?.write) return pmCatalogCachedViewState;
+    const persisted = api.write(PM_CATALOG_VIEW_STATE_SCOPE, nextState);
+    pmCatalogCachedViewState = persisted && typeof persisted === 'object' ? { ...persisted } : { ...nextState };
+    return pmCatalogCachedViewState;
+}
+
+function pmCatalogRestoreViewStateAfterRender(state = pmCatalogReadViewState()) {
+    if (!state || typeof state !== 'object') return;
+    const api = pmCatalogViewStateApi();
+    if (api?.restoreScrollState) api.restoreScrollState(state, { steps: [0, 120, 320, 650] });
+    const selectedSpaceId = String(state.selectedSpaceId || '').trim();
+    if (!selectedSpaceId) return;
+    const focusSelectedSpace = () => {
+        const target = document.querySelector(`[data-space-id="${selectedSpaceId}"]`);
+        if (target && typeof target.scrollIntoView === 'function') {
+            target.scrollIntoView({ block: 'center', inline: 'nearest' });
+        }
+    };
+    [90, 240, 520].forEach((delay) => window.setTimeout(focusSelectedSpace, delay));
+}
 
 function normalizeCatalogTenantSlug(value) {
     const raw = String(value || '').trim().toLowerCase();
@@ -123,6 +189,136 @@ function findCatalogTaxRecord(taxId, space = null) {
     return tenantTaxes.find((tax) => String(tax?.id || '').trim() === safeId)
         || dbTaxes.find((tax) => String(tax?.id || '').trim() === safeId)
         || null;
+}
+function normalizePmConvenioName(value) {
+    return String(value || '').trim().replace(/\s+/g, ' ');
+}
+function buildPmConvenioCatalog(items = []) {
+    const source = Array.isArray(items) ? items : [];
+    const seen = new Set();
+    const out = [];
+    source.forEach((item, idx) => {
+        const record = (item && typeof item === 'object') ? item : { nombre: item };
+        const nombre = normalizePmConvenioName(record.nombre || record.name || record.label || '');
+        if (!nombre) return;
+        const key = normalizeCatalogSearchText(nombre);
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        out.push({
+            id: String(record.id || `conv_${idx}_${key.replace(/\s+/g, '_')}`),
+            nombre
+        });
+    });
+    return out;
+}
+function normalizeQuoteConcept(concept = {}) {
+    const amount = Math.max(0, parseFloat(concept?.amount ?? concept?.value ?? 0) || 0);
+    return {
+        description: String(concept?.description || concept?.concepto || concept?.nombre || 'Concepto').trim() || 'Concepto',
+        amount,
+        value: amount,
+        unit: concept?.unit || 'fixed',
+        type: concept?.type || 'aumento',
+        meta: (concept?.meta && typeof concept.meta === 'object') ? { ...concept.meta } : {}
+    };
+}
+function isQuoteConvenioConcept(concept = {}) {
+    return !!(concept?.meta && concept.meta.convenio_item === true);
+}
+function formatQuoteConvenioDescription(nombre, cantidad) {
+    const label = normalizePmConvenioName(nombre) || 'Convenio';
+    const qty = Math.max(1, parseInt(cantidad, 10) || 1);
+    return `${label} (${qty} ${qty === 1 ? 'entrega' : 'entregas'})`;
+}
+function buildQuoteConvenioConcept(option = {}, cantidad, amount) {
+    const qty = Math.max(1, parseInt(cantidad, 10) || 1);
+    const value = Math.max(0, parseFloat(amount || 0) || 0);
+    const nombre = normalizePmConvenioName(option?.nombre || option?.name || option?.label || '');
+    return normalizeQuoteConcept({
+        description: formatQuoteConvenioDescription(nombre, qty),
+        amount: value,
+        value,
+        unit: 'fixed',
+        type: 'aumento',
+        meta: {
+            convenio_item: true,
+            convenio_option_id: String(option?.id || '').trim(),
+            convenio_nombre: nombre,
+            cantidad_entrega: qty
+        }
+    });
+}
+function getQuoteConvenioItems(cfg = getActiveCfg()) {
+    return (Array.isArray(cfg?.concepts) ? cfg.concepts : []).map(normalizeQuoteConcept).filter(isQuoteConvenioConcept);
+}
+function buildQuoteConvenioPayloadItems(cfg = getActiveCfg()) {
+    return getQuoteConvenioItems(cfg).map((concept) => ({
+        id: String(concept?.meta?.convenio_option_id || '').trim() || null,
+        nombre: concept?.meta?.convenio_nombre || concept.description || 'Convenio',
+        cantidad_entrega: Math.max(1, parseInt(concept?.meta?.cantidad_entrega || 1, 10) || 1),
+        monto: Math.max(0, parseFloat(concept?.amount || concept?.value || 0) || 0)
+    }));
+}
+function syncQuoteConvenioCatalogSelect() {
+    const select = document.getElementById('q-convenio-select');
+    if (!select) return;
+    const current = String(select.value || '').trim();
+    select.innerHTML = '<option value="">Selecciona una opción...</option>' + pmConvenioCatalog.map((item) => `<option value="${item.id}">${item.nombre}</option>`).join('');
+    if (current && pmConvenioCatalog.some((item) => item.id === current)) select.value = current;
+}
+function renderQuoteConvenioItems() {
+    const container = document.getElementById('q-convenio-items');
+    if (!container) return;
+    const cfg = getActiveCfg();
+    const locked = !cfg?.convenioEnabled;
+    const items = getQuoteConvenioItems(cfg);
+    if (!items.length) {
+        container.innerHTML = '<div class="rounded-xl border border-dashed border-gray-200 bg-slate-50 px-4 py-4 text-[11px] font-bold text-gray-400">Aún no agregas tratos de convenio.</div>';
+        return;
+    }
+    container.innerHTML = items.map((item, index) => {
+        const qty = Math.max(1, parseInt(item?.meta?.cantidad_entrega || 1, 10) || 1);
+        const amount = Math.max(0, parseFloat(item?.amount || item?.value || 0) || 0);
+        const name = item?.meta?.convenio_nombre || item.description || 'Convenio';
+        return `<div class="flex items-center justify-between gap-3 rounded-xl border border-amber-100 bg-amber-50/60 px-4 py-3">
+            <div class="min-w-0">
+                <p class="text-xs font-black text-gray-800 truncate">${name}</p>
+                <p class="text-[10px] font-bold text-gray-500 uppercase tracking-wide">${qty} ${qty === 1 ? 'entrega' : 'entregas'} acordadas</p>
+            </div>
+            <div class="flex items-center gap-3 shrink-0">
+                <span class="text-xs font-black text-gray-800">${formatMoney(amount)}</span>
+                ${locked ? '' : `<button type="button" onclick="window.removeQuoteConvenioItem(${index})" class="w-8 h-8 rounded-full bg-white text-gray-400 hover:text-red-500 border border-amber-100 transition"><i class="fa-solid fa-xmark"></i></button>`}
+            </div>
+        </div>`;
+    }).join('');
+}
+function syncQuoteConvenioUi(cfg = getActiveCfg()) {
+    const activeSpace = getSpaceById(cfg?.spaceId);
+    const allowsConvenio = pmSpaceAllowsConvenio(activeSpace) || !!cfg?.convenioEnabled;
+    const card = document.getElementById('q-convenio-card');
+    const wrap = document.getElementById('q-convenio-wrap');
+    const chk = document.getElementById('q-convenio-enabled');
+    const customPriceChk = document.getElementById('q-custom-price-enabled');
+    const customPriceWrap = document.getElementById('q-custom-price-wrap');
+    if (!allowsConvenio && cfg && !cfg.convenioEnabled) {
+        cfg.convenioEnabled = false;
+        cfg.concepts = (Array.isArray(cfg.concepts) ? cfg.concepts : []).filter((concept) => !isQuoteConvenioConcept(concept));
+    }
+    if (card) card.classList.toggle('hidden', !allowsConvenio);
+    if (chk) chk.checked = !!cfg?.convenioEnabled;
+    if (chk) chk.disabled = !allowsConvenio;
+    if (wrap) wrap.classList.toggle('hidden', !cfg?.convenioEnabled || !allowsConvenio);
+    if (customPriceChk) {
+        if (cfg?.convenioEnabled) {
+            customPriceChk.checked = false;
+            customPriceChk.disabled = true;
+        } else {
+            customPriceChk.disabled = false;
+        }
+    }
+    if (cfg?.convenioEnabled && customPriceWrap) customPriceWrap.classList.add('hidden');
+    syncQuoteConvenioCatalogSelect();
+    renderQuoteConvenioItems();
 }
 
 function pmEspaciosService() {
@@ -375,33 +571,62 @@ function getSpaceLocationLabel(space) {
     return tagMatch ? (findPmLocationOption(tagMatch) || normalizePmLocationLabel(tagMatch)) : '';
 }
 function getCatalogSpaceMeasuresLabel(space) {
+    const parts = getCatalogSpaceMeasureParts(space);
+    if (!parts.length) return 'Sin medidas';
+    return parts.map((part) => `${part.label}: ${part.value}`).join(' | ');
+}
+function getCatalogSpaceMeasureParts(space) {
     const width = normalizeSpaceMeasureValue(space?.medida_ancho ?? space?.ancho);
     const height = normalizeSpaceMeasureValue(space?.medida_alto ?? space?.alto);
     const unit = normalizeSpaceMeasureUnit(space?.medida_unidad || space?.unidad_medida || 'M');
-    if (width === null && height === null) return 'Sin medidas';
-    if (width !== null && height !== null) return `${trimCatalogMeasureNumber(width)} x ${trimCatalogMeasureNumber(height)} ${unit}`;
-    const single = width !== null ? width : height;
-    return `${trimCatalogMeasureNumber(single)} ${unit}`;
+    const parts = [];
+    if (width !== null) parts.push({ label: 'Ancho', value: `${trimCatalogMeasureNumber(width)} ${unit}` });
+    if (height !== null) parts.push({ label: 'Alto', value: `${trimCatalogMeasureNumber(height)} ${unit}` });
+    return parts;
+}
+function renderCatalogMeasureParts(space, options = {}) {
+    const parts = getCatalogSpaceMeasureParts(space);
+    if (!parts.length) {
+        return `<span class="${options.emptyClass || 'text-gray-500 font-semibold'}">Sin medidas</span>`;
+    }
+    const wrapperClass = options.wrapperClass || 'flex flex-wrap justify-end gap-1.5';
+    const chipClass = options.chipClass || 'inline-flex items-center gap-1 rounded-md bg-white border border-gray-200 px-2 py-1 text-[10px] font-bold text-gray-700';
+    const labelClass = options.labelClass || 'uppercase text-gray-400';
+    const valueClass = options.valueClass || 'text-gray-800';
+    return `<div class="${wrapperClass}">${parts.map((part) => `<span class="${chipClass}"><span class="${labelClass}">${part.label}</span><span class="${valueClass}">${part.value}</span></span>`).join('')}</div>`;
 }
 function getCatalogSpaceInfoRows(space, options = {}) {
     const rows = [];
     const includeType = options.includeType === true;
-    const advertising = isCatalogAdvertisingSpace(space);
-    const localLike = isCatalogLocalLikeSpace(space);
-    const localOrIsland = catalogSpaceHasTag(space, 'local') || catalogSpaceHasTag(space, 'isla') || catalogSpaceHasTag(space, 'espacio');
+    const type = String(space?.tipo || '').trim();
+    const advertising = isCatalogAdvertisingType(type) || isCatalogAdvertisingSpace(space);
+    const localLike = isCatalogLocalOrIslandType(type) || isCatalogLocalLikeSpace(space);
     const locationLabel = getSpaceLocationLabel(space);
     if (includeType) rows.push({ label: 'Tipo', value: space?.tipo || '--' });
-    if (localOrIsland && locationLabel) rows.push({ label: 'Ubicación', value: locationLabel });
-    if (advertising || localOrIsland) rows.push({ label: 'Medidas', value: getCatalogSpaceMeasuresLabel(space) });
+    if (localLike && locationLabel) rows.push({ label: 'Ubicación', value: locationLabel });
+    if (advertising || localLike) rows.push({ label: 'Medidas', value: getCatalogSpaceMeasuresLabel(space) });
     if (!localLike) rows.push({ label: 'Material', value: getSpaceMaterialLabel(space) });
     if (!advertising && !localLike) rows.push({ label: 'Impuestos', value: getSpaceTaxLabel(space) });
     return rows.filter((row) => String(row?.value || '').trim());
 }
 function renderCatalogSpaceInfoRows(space, options = {}) {
-    return getCatalogSpaceInfoRows(space, options).map((row) => `<div class="flex justify-between gap-3 rounded-lg bg-gray-50 border border-gray-100 px-3 py-2"><span class="font-black uppercase text-gray-400">${row.label}</span><span class="font-bold text-gray-700 text-right">${row.value}</span></div>`).join('');
+    return getCatalogSpaceInfoRows(space, options).map((row) => {
+        const isMeasures = row.label === 'Medidas';
+        const valueHtml = isMeasures
+            ? renderCatalogMeasureParts(space)
+            : `<span class="font-bold text-gray-700 text-right">${row.value}</span>`;
+        return `<div class="flex justify-between items-start gap-3 rounded-lg bg-gray-50 border border-gray-100 px-3 py-2"><span class="font-black uppercase text-gray-400">${row.label}</span>${valueHtml}</div>`;
+    }).join('');
 }
 function renderCatalogPreviewBadges(space) {
-    return getCatalogSpaceInfoRows(space).map((row) => `<span class="px-2 py-1 rounded-full bg-white/15 text-white font-bold">${row.label}: ${row.value}</span>`).join('');
+    return getCatalogSpaceInfoRows(space).map((row) => {
+        if (row.label === 'Medidas') {
+            const parts = getCatalogSpaceMeasureParts(space);
+            if (!parts.length) return `<span class="px-2 py-1 rounded-full bg-white/15 text-white font-bold">Medidas: Sin medidas</span>`;
+            return parts.map((part) => `<span class="px-2 py-1 rounded-full bg-white/15 text-white font-bold">${part.label}: ${part.value}</span>`).join('');
+        }
+        return `<span class="px-2 py-1 rounded-full bg-white/15 text-white font-bold">${row.label}: ${row.value}</span>`;
+    }).join('');
 }
 function shouldHideCatalogTaxPriceDetail(space) {
     return isCatalogAdvertisingSpace(space) || isCatalogLocalLikeSpace(space);
@@ -579,6 +804,19 @@ function addCatalogMeasurePairTerms(tokens, firstVariants, secondVariants, unit)
         });
     });
 }
+function addCatalogMeasureNamedTerms(tokens, label, variants, unit) {
+    const safeLabel = normalizeCatalogSearchText(label);
+    if (!safeLabel || !variants.length) return;
+    variants.forEach(variant => {
+        const safeVariant = String(variant || '').trim().toLowerCase();
+        if (!safeVariant) return;
+        tokens.add(`${safeLabel} ${safeVariant}`);
+        if (unit) {
+            tokens.add(`${safeLabel} ${safeVariant} ${unit}`);
+            tokens.add(`${safeLabel} ${safeVariant}${unit}`);
+        }
+    });
+}
 function buildCatalogMeasureSearchTerms(space) {
     const width = normalizeSpaceMeasureValue(space?.medida_ancho ?? space?.ancho);
     const height = normalizeSpaceMeasureValue(space?.medida_alto ?? space?.alto);
@@ -592,6 +830,8 @@ function buildCatalogMeasureSearchTerms(space) {
     addCatalogMeasureNumberTerms(terms, heightVariants, unitLower);
     addCatalogMeasurePairTerms(terms, widthVariants, heightVariants, unitLower);
     addCatalogMeasurePairTerms(terms, heightVariants, widthVariants, unitLower);
+    addCatalogMeasureNamedTerms(terms, 'ancho', widthVariants, unitLower);
+    addCatalogMeasureNamedTerms(terms, 'largo', heightVariants, unitLower);
 
     if (width !== null && height !== null) {
         if (unit === 'M') {
@@ -601,6 +841,8 @@ function buildCatalogMeasureSearchTerms(space) {
             addCatalogMeasureNumberTerms(terms, heightCmVariants, 'cm');
             addCatalogMeasurePairTerms(terms, widthCmVariants, heightCmVariants, 'cm');
             addCatalogMeasurePairTerms(terms, heightCmVariants, widthCmVariants, 'cm');
+            addCatalogMeasureNamedTerms(terms, 'ancho', widthCmVariants, 'cm');
+            addCatalogMeasureNamedTerms(terms, 'largo', heightCmVariants, 'cm');
         } else if (unit === 'CM') {
             const widthMVariants = buildCatalogMeasureNumberVariants(width / 100);
             const heightMVariants = buildCatalogMeasureNumberVariants(height / 100);
@@ -608,6 +850,8 @@ function buildCatalogMeasureSearchTerms(space) {
             addCatalogMeasureNumberTerms(terms, heightMVariants, 'm');
             addCatalogMeasurePairTerms(terms, widthMVariants, heightMVariants, 'm');
             addCatalogMeasurePairTerms(terms, heightMVariants, widthMVariants, 'm');
+            addCatalogMeasureNamedTerms(terms, 'ancho', widthMVariants, 'm');
+            addCatalogMeasureNamedTerms(terms, 'largo', heightMVariants, 'm');
         }
     }
 
@@ -629,6 +873,18 @@ function matchesCatalogSearch(space, term) {
     if (!normalizedTerm) return true;
     return buildCatalogSearchIndex(space).includes(normalizedTerm);
 }
+function normalizePmSpaceConvenioFlag(value, fallback = true) {
+    if (value === null || value === undefined || value === '') return !!fallback;
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value !== 0;
+    const raw = String(value).trim().toLowerCase();
+    if (['false', '0', 'no', 'off'].includes(raw)) return false;
+    if (['true', '1', 'si', 'sí', 'yes', 'on'].includes(raw)) return true;
+    return !!fallback;
+}
+function pmSpaceAllowsConvenio(space) {
+    return normalizePmSpaceConvenioFlag(space?.permite_convenio, true);
+}
 function normalizeSpaceMaterialMeasure(space) {
     const src = (space && typeof space === 'object') ? space : {};
     const medidaAncho = normalizeSpaceMeasureValue(src.medida_ancho ?? src.ancho);
@@ -641,6 +897,7 @@ function normalizeSpaceMaterialMeasure(space) {
         medida_ancho: medidaAncho,
         medida_alto: medidaAlto,
         medida_unidad: medidaUnidad,
+        permite_convenio: normalizePmSpaceConvenioFlag(src.permite_convenio, true),
         ancho: medidaAncho,
         alto: medidaAlto,
         unidad_medida: medidaUnidad
@@ -726,7 +983,9 @@ function createSpaceCfg(spaceId, seed = {}) {
         customPriceMode: String(seed.customPriceMode || 'total'),
         customBasePrice: (seed.customBasePrice === undefined || seed.customBasePrice === null || seed.customBasePrice === '')
             ? ''
-            : (parseFloat(seed.customBasePrice) || 0)
+            : (parseFloat(seed.customBasePrice) || 0),
+        convenioEnabled: !!seed.convenioEnabled,
+        concepts: Array.isArray(seed.concepts) ? seed.concepts.map(normalizeQuoteConcept) : []
     };
 }
 function pmQuoteSpaceDays(cfg) {
@@ -826,8 +1085,8 @@ async function fetchBlockedRangesForSpace(spaceId) {
     if (!sid) return [];
     const { data, error } = await window.tenantPocketBase
         .from('cotizaciones')
-        .select('id,espacio_id,fecha_inicio,fecha_fin,espacios_detalle,status')
-        .eq('status', 'aprobada');
+        .select('id,espacio_id,fecha_inicio,fecha_fin,espacios_detalle,detalles_evento,status')
+        .in('status', ['aprobada', 'finalizada']);
     if (error) {
         console.error(error);
         return [];
@@ -835,18 +1094,27 @@ async function fetchBlockedRangesForSpace(spaceId) {
     const out = [];
     (data || []).forEach(o => {
         const detail = safeArray(o.espacios_detalle);
+        const orderDetails = (o?.detalles_evento && typeof o.detalles_evento === 'object')
+            ? o.detalles_evento
+            : (() => {
+                try { return JSON.parse(o?.detalles_evento || '{}'); } catch (_) { return {}; }
+            })();
+        const orderConvenio = orderDetails?.convenio && typeof orderDetails.convenio === 'object' ? orderDetails.convenio : {};
+        const orderBlocksIndefinitely = orderConvenio?.activo === true && orderConvenio?.bloqueo_indefinido === true;
         if (detail.length) {
             detail.forEach(d => {
                 const dsid = String(d?.espacio_id || d?.space_id || '');
                 const fi = toDateISO(d?.fecha_inicio || '');
-                const ff = toDateISO(d?.fecha_fin || '');
+                const ff = (d?.convenio_indefinido === true || d?.bloqueo_indefinido === true || orderBlocksIndefinitely)
+                    ? PM_CONVENIO_INDEFINITE_END
+                    : toDateISO(d?.fecha_fin || '');
                 if (dsid === sid && fi && ff) out.push({ start: fi, end: ff, orderId: o.id });
             });
             return;
         }
         if (String(o.espacio_id || '') === sid) {
             const fi = toDateISO(o.fecha_inicio || '');
-            const ff = toDateISO(o.fecha_fin || '');
+            const ff = orderBlocksIndefinitely ? PM_CONVENIO_INDEFINITE_END : toDateISO(o.fecha_fin || '');
             if (fi && ff) out.push({ start: fi, end: ff, orderId: o.id });
         }
     });
@@ -931,7 +1199,8 @@ function setActiveQuoteSpaceCard(_spaceId) {
 }
 function syncQuoteCustomUi(cfg) {
     const isCustomPerm = !!cfg?.customPermanence;
-    const isCustomPrice = !!cfg?.customPriceEnabled;
+    const isConvenio = !!cfg?.convenioEnabled;
+    const isCustomPrice = !!cfg?.customPriceEnabled && !isConvenio;
     const chkPerm = document.getElementById('q-custom-permanence');
     const chkPrice = document.getElementById('q-custom-price-enabled');
     const wrap = document.getElementById('q-custom-price-wrap');
@@ -941,7 +1210,10 @@ function syncQuoteCustomUi(cfg) {
     const hint = document.getElementById('q-custom-price-hint');
     const isPerDay = (cfg?.customPriceMode === 'per_day');
     if (chkPerm) chkPerm.checked = isCustomPerm;
-    if (chkPrice) chkPrice.checked = isCustomPrice;
+    if (chkPrice) {
+        chkPrice.checked = isCustomPrice;
+        chkPrice.disabled = isConvenio;
+    }
     if (wrap) wrap.classList.toggle('hidden', !isCustomPrice);
     if (modeSelect) modeSelect.value = String(cfg?.customPriceMode || 'total');
     if (input) {
@@ -949,12 +1221,14 @@ function syncQuoteCustomUi(cfg) {
     }
     if (label) label.textContent = isPerDay ? "Precio Personalizado por Día" : "Precio Personalizado del Espacio (antes de impuestos)";
     if (hint) hint.textContent = isPerDay ? "Se multiplicará por el número de días disponibles en la fecha seleccionada." : "Define el total manual de la estancia seleccionada.";
+    syncQuoteConvenioUi(cfg);
 }
 function saveActiveCfgFromForm() {
     const cfg = getActiveCfg();
     if (!cfg) return;
     cfg.customPermanence = !!document.getElementById('q-custom-permanence')?.checked;
-    cfg.customPriceEnabled = !!document.getElementById('q-custom-price-enabled')?.checked;
+    cfg.convenioEnabled = !!document.getElementById('q-convenio-enabled')?.checked;
+    cfg.customPriceEnabled = cfg.convenioEnabled ? false : !!document.getElementById('q-custom-price-enabled')?.checked;
     cfg.customPriceMode = String(document.getElementById('q-custom-price-mode')?.value || cfg.customPriceMode || 'total');
     cfg.startDate = toDateISO(document.getElementById('date-start')?.value || '');
     cfg.endDate = toDateISO(document.getElementById('date-end')?.value || '');
@@ -965,6 +1239,7 @@ function saveActiveCfgFromForm() {
             return Math.max(0, parseFloat(raw) || 0);
         })()
         : '';
+    cfg.concepts = Array.isArray(cfg.concepts) ? cfg.concepts.map(normalizeQuoteConcept) : [];
     normalizeCfgDates(cfg);
 }
 function renderSpaceAddSelect() {
@@ -1010,6 +1285,7 @@ function loadActiveCfgToForm() {
     currentSpace = space;
     setActiveQuoteSpaceCard(space.id);
     syncQuoteCustomUi(cfg);
+    renderQuoteConvenioItems();
     const qName = document.getElementById('q-name');
     const qKey = document.getElementById('q-key');
     const qImg = document.getElementById('q-img');
@@ -1046,8 +1322,59 @@ window.toggleQuoteCustomPermanence = function () {
 window.toggleQuoteCustomPrice = function () {
     const cfg = getActiveCfg();
     if (!cfg) return;
+    if (cfg.convenioEnabled) return;
     cfg.customPriceEnabled = !!document.getElementById('q-custom-price-enabled')?.checked;
     syncQuoteCustomUi(cfg);
+    window.updateQuoteCalculation();
+};
+window.toggleQuoteConvenio = function () {
+    const cfg = getActiveCfg();
+    if (!cfg) return;
+    const activeSpace = getSpaceById(cfg.spaceId);
+    if (!pmSpaceAllowsConvenio(activeSpace) && !cfg.convenioEnabled) {
+        const checkbox = document.getElementById('q-convenio-enabled');
+        if (checkbox) checkbox.checked = false;
+        return window.showToast('Este espacio no tiene permitido usar convenio.', 'error');
+    }
+    cfg.convenioEnabled = !!document.getElementById('q-convenio-enabled')?.checked;
+    if (!cfg.convenioEnabled) {
+        cfg.concepts = (Array.isArray(cfg.concepts) ? cfg.concepts : []).filter((concept) => !isQuoteConvenioConcept(concept));
+    }
+    cfg.customPriceEnabled = false;
+    cfg.customBasePrice = '';
+    syncQuoteCustomUi(cfg);
+    window.updateQuoteCalculation();
+};
+window.addQuoteConvenioItem = function () {
+    const cfg = getActiveCfg();
+    if (!cfg || !cfg.convenioEnabled) return;
+    const optionId = String(document.getElementById('q-convenio-select')?.value || '').trim();
+    const cantidad = Math.max(1, parseInt(document.getElementById('q-convenio-qty')?.value || 1, 10) || 1);
+    const amountRaw = document.getElementById('q-convenio-amount')?.value;
+    const amount = Math.max(0, parseFloat(amountRaw || 0) || 0);
+    if (!optionId) return window.showToast('Selecciona una opción de convenio.', 'error');
+    if (amount <= 0) return window.showToast('Indica el monto manual del trato.', 'error');
+    const option = pmConvenioCatalog.find((item) => item.id === optionId);
+    if (!option) return window.showToast('La opción de convenio ya no está disponible.', 'error');
+    cfg.concepts = Array.isArray(cfg.concepts) ? cfg.concepts.map(normalizeQuoteConcept) : [];
+    cfg.concepts.push(buildQuoteConvenioConcept(option, cantidad, amount));
+    document.getElementById('q-convenio-select').value = '';
+    document.getElementById('q-convenio-qty').value = '1';
+    document.getElementById('q-convenio-amount').value = '';
+    renderQuoteConvenioItems();
+    window.updateQuoteCalculation();
+};
+window.removeQuoteConvenioItem = function (visibleIndex) {
+    const cfg = getActiveCfg();
+    if (!cfg) return;
+    const concepts = Array.isArray(cfg.concepts) ? cfg.concepts.map(normalizeQuoteConcept) : [];
+    let convenioCounter = -1;
+    cfg.concepts = concepts.filter((concept) => {
+        if (!isQuoteConvenioConcept(concept)) return true;
+        convenioCounter += 1;
+        return convenioCounter !== visibleIndex;
+    });
+    renderQuoteConvenioItems();
     window.updateQuoteCalculation();
 };
 
@@ -1112,10 +1439,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     if (myPermissions.catalog_manage && IS_PM_CATALOG_ADMIN_PAGE) document.getElementById('btn-new-space')?.classList.remove('hidden');
+    pmCatalogApplyViewStateControls();
 
     await loadTaxes();
     await loadClientProfilesForQuoteModal();
-    loadCatalog();
+    await loadCatalog(pmCatalogReadViewState());
 
     document.getElementById('mgr-type')?.addEventListener('change', function () {
         syncManagerTypeFields(this.value);
@@ -1212,7 +1540,28 @@ async function pmLoadLocations(spaceList = []) {
         sel.value = current;
     }
 }
-async function loadCatalog() {
+async function pmLoadConvenios() {
+    const tenant = resolveCatalogTenantSlug('plaza_mayor');
+    try {
+        const { data } = await window.tenantPocketBase
+            .from('configuracion')
+            .select('id,valor_json,updated,updated_at,created,created_at')
+            .eq('tenant', tenant)
+            .eq('clave', PM_CONVENIOS_CFG_KEY);
+        const row = pickCatalogLatestConfigRow(Array.isArray(data) ? data : (data ? [data] : []));
+        const configValue = parseConfigJsonValue(row?.valor_json);
+        pmConvenioCatalog = buildPmConvenioCatalog(configValue?.items);
+    } catch (_) {
+        pmConvenioCatalog = [];
+    }
+    syncQuoteConvenioCatalogSelect();
+}
+async function loadCatalog(viewStateOverride = null) {
+    const viewState = (viewStateOverride && typeof viewStateOverride === 'object')
+        ? { ...viewStateOverride }
+        : (pmCatalogReadViewState() || null);
+    if (viewState) pmCatalogCachedViewState = { ...viewState };
+    pmCatalogApplyViewStateControls(viewState || undefined);
     const tenant = resolveCatalogTenantSlug();
     const { data } = await window.tenantPocketBase.from('espacios').select('*').order('clave');
     allSpaces = filterCatalogRowsByTenant(data || [], tenant)
@@ -1220,8 +1569,14 @@ async function loadCatalog() {
         .sort((a, b) => String(a?.clave || a?.nombre || '').localeCompare(String(b?.clave || b?.nombre || ''), 'es', { numeric: true, sensitivity: 'base' }));
     await pmLoadMaterials(allSpaces);
     await pmLoadLocations(allSpaces);
-    renderSpaces(allSpaces);
+    await pmLoadConvenios();
+    pmCatalogRestoringViewState = true;
+    pmCatalogApplyViewStateControls(viewState || undefined);
+    if (typeof window.filterCatalogLogic === 'function') window.filterCatalogLogic({ skipSave: true, viewState });
+    else renderSpaces(allSpaces);
+    pmCatalogRestoringViewState = false;
     if (IS_PM_QUOTE_PAGE) renderSpaceAddSelect();
+    pmCatalogRestoreViewStateAfterRender(viewState);
 }
 
 function renderSpaces(list) {
@@ -1299,7 +1654,18 @@ function renderSpaces(list) {
                     <p class="text-[10px] font-mono text-gray-400 mt-1">${s.clave || '--'}</p>
                 </div>
                     <div class="space-y-2 mb-4 text-[11px]">
-                        ${quoteInfoRows.map((row) => `<div class="flex justify-between gap-2"><span class="text-gray-400 font-bold uppercase">${row.label}</span><span class="text-gray-700 font-bold text-right">${row.value}</span></div>`).join('')}
+                        ${quoteInfoRows.map((row) => {
+                            if (row.label === 'Medidas') {
+                                return `<div class="flex justify-between items-start gap-2"><span class="text-gray-400 font-bold uppercase">Medidas</span>${renderCatalogMeasureParts(s, {
+                                    wrapperClass: 'flex flex-wrap justify-end gap-1',
+                                    chipClass: 'inline-flex items-center gap-1 rounded-md bg-white border border-gray-200 px-1.5 py-0.5 text-[9px] font-bold text-gray-700',
+                                    labelClass: 'uppercase text-gray-400',
+                                    valueClass: 'text-gray-800',
+                                    emptyClass: 'text-gray-500 font-semibold text-right'
+                                })}</div>`;
+                            }
+                            return `<div class="flex justify-between gap-2"><span class="text-gray-400 font-bold uppercase">${row.label}</span><span class="text-gray-700 font-bold text-right">${row.value}</span></div>`;
+                        }).join('')}
                         <div class="rounded-lg border border-gray-100 bg-slate-50 px-3 py-2">${buildCatalogPriceDisplay(adjustedBase, taxOnlyAmount, finalPrice, taxPriceLabel, { compact: true })}</div>
                     </div>
                 <div class="flex items-center justify-between gap-2">${stateLabel}${powerOffBtn}</div>
@@ -1308,7 +1674,7 @@ function renderSpaces(list) {
             const imgsHtml = allUrls.map((url, i) => `<img src="${url}" class="card-img absolute inset-0 w-full h-full object-cover transition-opacity duration-1000 ${i === 0 ? 'opacity-100' : 'opacity-0'}" data-index="${i}">`).join('');
 
             g.innerHTML += `
-                <div class="bg-white rounded-xl shadow-md relative group hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 overflow-hidden border border-gray-100 cursor-pointer"
+                <div data-space-card="1" data-space-id="${s.id}" class="bg-white rounded-xl shadow-md relative group hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 overflow-hidden border border-gray-100 cursor-pointer"
                      onclick="window.openPreviewCardModal('${String(s.id)}')"
                      onmouseenter="window.startCardCarousel(this)" 
                      onmouseleave="window.stopCardCarousel(this)">
@@ -1500,8 +1866,11 @@ window.updateQuoteCalculation = function () {
         const space = getSpaceById(cfg.spaceId);
         if (!space) return;
         normalizeCfgDates(cfg);
+        cfg.concepts = Array.isArray(cfg.concepts) ? cfg.concepts.map(normalizeQuoteConcept) : [];
         let customBase = null;
-        if (cfg.customPriceEnabled) {
+        if (cfg.convenioEnabled) {
+            customBase = parseFloat(space.precio_base || 0) || 0;
+        } else if (cfg.customPriceEnabled) {
             const manual = parseFloat(cfg.customBasePrice || 0) || 0;
             if (cfg.customPriceMode === 'per_day') {
                 const days = pmQuoteSpaceDays(cfg);
@@ -1511,8 +1880,21 @@ window.updateQuoteCalculation = function () {
             }
         }
         const pricing = buildSpacePrice(space, { customBase });
-        subtotal += pricing.subtotal;
-        taxes += pricing.taxes;
+        const concepts = cfg.concepts.map(normalizeQuoteConcept);
+        const conceptsTotal = concepts.reduce((sum, concept) => sum + (parseFloat(concept.amount || concept.value || 0) || 0), 0);
+        const baseValue = pricing.subtotal;
+        const taxableSubtotal = cfg.convenioEnabled ? (baseValue - conceptsTotal) : (baseValue + conceptsTotal);
+        let conceptsTax = 0;
+        if (!cfg.convenioEnabled) {
+            pricing.taxIds.forEach((tid) => {
+                const tax = findCatalogTaxRecord(tid, space);
+                if (!tax) return;
+                const rate = parseFloat(tax.porcentaje || 0) > 1 ? (parseFloat(tax.porcentaje || 0) / 100) : parseFloat(tax.porcentaje || 0);
+                conceptsTax += taxableSubtotal * rate;
+            });
+        }
+        subtotal += taxableSubtotal;
+        taxes += conceptsTax;
         spacesPricing.push({
             spaceId: space.id,
             spaceName: space.nombre,
@@ -1520,13 +1902,17 @@ window.updateQuoteCalculation = function () {
             startDate: cfg.startDate || '',
             endDate: cfg.endDate || '',
             customPermanence: !!cfg.customPermanence,
-            customPriceEnabled: !!cfg.customPriceEnabled,
+            customPriceEnabled: !!cfg.customPriceEnabled && !cfg.convenioEnabled,
             customPriceMode: cfg.customPriceMode || 'total',
             customBasePrice: customBase,
-            subtotalBeforeTax: pricing.subtotal,
-            taxTotal: pricing.taxes,
-            total: pricing.total,
-            taxIds: pricing.taxIds
+            convenioEnabled: !!cfg.convenioEnabled,
+            baseValue,
+            convenioValue: conceptsTotal,
+            subtotalBeforeTax: taxableSubtotal,
+            taxTotal: conceptsTax,
+            total: taxableSubtotal + conceptsTax,
+            taxIds: cfg.convenioEnabled ? [] : pricing.taxIds,
+            concepts: concepts
         });
     });
     currentPricing = { subtotal, taxes, final: subtotal + taxes, spaces: spacesPricing };
@@ -1541,6 +1927,7 @@ window.clearManagerImage = function (num) { const input = document.getElementByI
 window.openManagerModal = function (id) {
     if (IS_PM_QUOTE_PAGE) return window.showToast("Esta vista es solo para cotizar.", "error");
     if (!myPermissions.catalog_manage) return window.showToast("No tienes permisos.", "error");
+    pmCatalogSaveViewState({ selectedSpaceId: String(id || '').trim() });
     document.getElementById('mgr-id').value = id || '';
     const container = document.getElementById('mgr-taxes-list');
     if (container) {
@@ -1580,6 +1967,8 @@ window.openManagerModal = function (id) {
         document.getElementById('mgr-base').value = s.precio_base;
         document.getElementById('mgr-adj-type').value = normalizeCatalogAdjustmentType(s.ajuste_tipo || 'ninguno'); document.getElementById('mgr-adj-pct').value = s.ajuste_porcentaje || 0;
         document.getElementById('mgr-active').checked = s.activa !== false;
+        const convenioToggle = document.getElementById('mgr-allow-convenio');
+        if (convenioToggle) convenioToggle.checked = pmSpaceAllowsConvenio(s);
 
         let allUrls = []; try { if (s.imagen_url && typeof s.imagen_url === 'string' && s.imagen_url.startsWith('[')) allUrls = JSON.parse(s.imagen_url); else if (s.imagen_url) allUrls = [s.imagen_url]; } catch (e) { }
         for (let i = 1; i <= 5; i++) {
@@ -1599,6 +1988,8 @@ window.openManagerModal = function (id) {
         document.getElementById('mgr-tags').value = '';
         document.getElementById('mgr-material').value = ''; document.getElementById('mgr-location').value = ''; document.getElementById('mgr-ancho').value = ''; document.getElementById('mgr-alto').value = ''; document.getElementById('mgr-unidad').value = 'M';
         document.getElementById('mgr-desc').value = ''; document.getElementById('mgr-active').checked = true;
+        const convenioToggle = document.getElementById('mgr-allow-convenio');
+        if (convenioToggle) convenioToggle.checked = true;
         for (let i = 1; i <= 5; i++) {
             const mgrPrev = document.getElementById(`mgr-preview-${i}`); if (mgrPrev) { mgrPrev.src = ''; mgrPrev.classList.add('hidden'); mgrPrev.removeAttribute('data-modified'); }
             const fi = document.getElementById(`mgr-file-${i}`); if (fi) fi.value = '';
@@ -1621,6 +2012,7 @@ window.saveSpace = async function () {
         ? 0
         : Math.max(0, parseCatalogNumberInput(document.getElementById('mgr-adj-pct').value, 0));
     const isActive = !!document.getElementById('mgr-active').checked;
+    const allowsConvenio = !!document.getElementById('mgr-allow-convenio')?.checked;
     if (!clave) return window.showToast('La clave es obligatoria.', 'error');
     if (!nombre) return window.showToast('El nombre es obligatorio.', 'error');
     const selectedTaxes = Array.from(document.querySelectorAll('.tax-check:checked'))
@@ -1658,6 +2050,7 @@ window.saveSpace = async function () {
         ajuste_porcentaje: ajustePorcentaje,
         activo: isActive,
         activa: isActive,
+        permite_convenio: allowsConvenio,
         impuestos_ids: selectedTaxes
     };
 
@@ -1695,8 +2088,9 @@ window.saveSpace = async function () {
     };
 
     try {
-        await persistSpacePayload(payload);
-        for (let i = 1; i <= 5; i++) { const fi = document.getElementById(`mgr-file-${i}`); if (fi) fi.value = ''; } window.showToast("Guardado", "success"); window.closeModal('manager-modal'); loadCatalog();
+        const savedSpace = await persistSpacePayload(payload);
+        const preservedViewState = pmCatalogSaveViewState({ selectedSpaceId: String(savedSpace?.id || id || '').trim() });
+        for (let i = 1; i <= 5; i++) { const fi = document.getElementById(`mgr-file-${i}`); if (fi) fi.value = ''; } window.showToast("Guardado", "success"); window.closeModal('manager-modal'); await loadCatalog(preservedViewState);
     } catch (e) {
         console.error(e);
         window.showToast("Error al guardar: " + e.message, "error");
@@ -1830,6 +2224,8 @@ window.generatePDF = async function () {
         if (!spaces.length) return window.showToast("Selecciona al menos un espacio.", "error");
         const missingDates = spaces.find(sp => !toDateISO(sp.startDate) || !toDateISO(sp.endDate));
         if (missingDates) return window.showToast(`Faltan fechas para ${missingDates.spaceName}.`, "error");
+        const missingConvenio = spaces.find((sp) => !!sp.convenioEnabled && !(Array.isArray(sp.concepts) && sp.concepts.some(isQuoteConvenioConcept)));
+        if (missingConvenio) return window.showToast(`Agrega al menos un trato de convenio para ${missingConvenio.spaceName}.`, "error");
     } else {
         if (!currentSpace) return window.showToast("Selecciona un espacio para cotizar.", "error");
         const startDate = document.getElementById('date-start')?.value || '';
@@ -1858,13 +2254,34 @@ window.generatePDF = async function () {
     const endDates = spaces.map(s => toDateISO(s.endDate)).filter(Boolean);
     const minStart = minDate(startDates);
     const maxEnd = maxDate(endDates);
-    const taxIdsUnion = Array.from(new Set(spaces.flatMap(s => (s.taxIds || []).map(x => String(x)))));
+    const taxIdsUnion = Array.from(new Set(spaces.filter((sp) => !sp.convenioEnabled).flatMap(s => (s.taxIds || []).map(x => String(x)))));
     const first = spaces[0];
+    const conceptosAdicionales = spaces.flatMap((sp) => (Array.isArray(sp.concepts) ? sp.concepts : []).map((concept) => {
+        const normalized = normalizeQuoteConcept(concept);
+        normalized.meta = { ...(normalized.meta || {}), space_id: sp.spaceId };
+        return normalized;
+    }));
+    const convenioSpaces = spaces
+        .filter((sp) => !!sp.convenioEnabled)
+        .map((sp) => ({
+            espacio_id: sp.spaceId,
+            espacio_nombre: sp.spaceName,
+            espacio_clave: sp.spaceKey,
+            cantidad_tratos: buildQuoteConvenioPayloadItems({ concepts: sp.concepts }).length,
+            items: buildQuoteConvenioPayloadItems({ concepts: sp.concepts })
+        }));
+    const convenioItems = convenioSpaces.flatMap((space) => (space.items || []).map((item) => ({
+        ...item,
+        espacio_id: space.espacio_id,
+        espacio_nombre: space.espacio_nombre,
+        espacio_clave: space.espacio_clave
+    })));
     const espaciosDetalle = spaces.map(sp => {
         const fullSpace = getSpaceById(sp.spaceId) || {};
         const medidaAncho = fullSpace.medida_ancho ?? fullSpace.ancho ?? null;
         const medidaAlto = fullSpace.medida_alto ?? fullSpace.alto ?? null;
         const medidaUnidad = fullSpace.medida_unidad || fullSpace.unidad_medida || 'M';
+        const convenioItems = buildQuoteConvenioPayloadItems({ concepts: sp.concepts });
         return {
             espacio_id: sp.spaceId,
             espacio_nombre: sp.spaceName,
@@ -1874,11 +2291,20 @@ window.generatePDF = async function () {
             fecha_inicio: sp.startDate,
             fecha_fin: sp.endDate,
             permanencia_personalizada: !!sp.customPermanence,
-            precio_personalizado: (sp.customBasePrice === '' || sp.customBasePrice === null || sp.customBasePrice === undefined) ? null : (parseFloat(sp.customBasePrice) || 0),
-            subtotal_espacio: sp.subtotalBeforeTax,
-            impuestos_ids: sp.taxIds || [],
+            precio_personalizado: (sp.customPriceEnabled && sp.customBasePrice !== '' && sp.customBasePrice !== null && sp.customBasePrice !== undefined)
+                ? (parseFloat(sp.customBasePrice) || 0)
+                : null,
+            precio_personalizado_activo: !!sp.customPriceEnabled,
+            precio_personalizado_modo: sp.customPriceMode || 'total',
+            subtotal_espacio: sp.baseValue ?? sp.subtotalBeforeTax,
+            convenio_monto_entregado: sp.convenioValue ?? 0,
+            convenio_balance: sp.total ?? sp.subtotalBeforeTax,
+            impuestos_ids: sp.convenioEnabled ? [] : (sp.taxIds || []),
             impuestos_total: sp.taxTotal || 0,
             total_espacio: sp.total || 0,
+            convenio_activo: !!sp.convenioEnabled,
+            convenio_indefinido: !!sp.convenioEnabled,
+            convenio_items: convenioItems,
             // Nuevos campos para PDF
             material: fullSpace.material || null,
             ubicacion: normalizePmLocationLabel(fullSpace.ubicacion || '') || null,
@@ -1905,15 +2331,36 @@ window.generatePDF = async function () {
         fecha_inicio: minStart,
         fecha_fin: maxEnd,
         precio_final: currentPricing.final,
-        desglose_precios: { subtotal_antes_impuestos: currentPricing.subtotal, impuestos_detalle: taxIdsUnion, tax_total: currentPricing.taxes, espacios: espaciosDetalle },
+        desglose_precios: {
+            subtotal_antes_impuestos: currentPricing.subtotal,
+            impuestos_detalle: taxIdsUnion,
+            tax_total: currentPricing.taxes,
+            convenio_base_total: convenioItems.length ? spaces.reduce((sum, sp) => sum + (parseFloat(sp.baseValue ?? sp.subtotalBeforeTax ?? 0) || 0), 0) : 0,
+            convenio_entregable_total: convenioItems.length ? spaces.reduce((sum, sp) => sum + (parseFloat(sp.convenioValue || 0) || 0), 0) : 0,
+            convenio_balance_total: convenioItems.length ? currentPricing.final : 0,
+            espacios: espaciosDetalle
+        },
         detalles_evento: {
             multi_espacio: spaces.length > 1,
             total_espacios: spaces.length,
             nombre_cotizacion: quoteName,
-            permanencia_personalizada: spaces.some(sp => !!sp.customPermanence)
+            permanencia_personalizada: spaces.some(sp => !!sp.customPermanence),
+            convenio: convenioItems.length ? {
+                activo: true,
+                bloqueo_indefinido: true,
+                requiere_evidencia: true,
+                evidencia_minima: 3,
+                evidencia_maxima: 5,
+                requiere_factura: false,
+                requiere_recibo: false,
+                requiere_contrato: false,
+                espacios: convenioSpaces,
+                items: convenioItems,
+                evidencias: []
+            } : null
         },
         espacios_detalle: espaciosDetalle,
-        conceptos_adicionales: [],
+        conceptos_adicionales: conceptosAdicionales,
         status: 'pendiente',
         creado_por: audit.actorId || null,
         creado_por_nombre: audit.actorName,
@@ -1933,7 +2380,9 @@ window.generatePDF = async function () {
     setTimeout(() => { pmNavigateSafely(targetUrl); }, 900);
 }
 
-window.filterCatalogLogic = function () {
+window.filterCatalogLogic = function (options = {}) {
+    const viewState = (options.viewState && typeof options.viewState === 'object') ? options.viewState : null;
+    if (viewState) pmCatalogApplyViewStateControls(viewState);
     const term = document.getElementById('cat-search')?.value || '';
     const type = document.getElementById('cat-filter-type')?.value || 'all';
     const sort = document.getElementById('cat-sort')?.value || 'default';
@@ -1941,6 +2390,7 @@ window.filterCatalogLogic = function () {
     if (sort === 'price_asc') filtered.sort((a, b) => a.precio_base - b.precio_base);
     if (sort === 'price_desc') filtered.sort((a, b) => b.precio_base - a.precio_base);
     renderSpaces(filtered);
+    if (!pmCatalogRestoringViewState && options.skipSave !== true) pmCatalogSaveViewState();
 }
 window.previewImage = function (i, id) { const p = document.getElementById(id || 'mgr-preview'); if (i.files && i.files[0]) { const r = new FileReader(); r.onload = e => { p.src = e.target.result; p.classList.remove('hidden'); p.setAttribute('data-modified', 'true'); }; r.readAsDataURL(i.files[0]); } }
 window.checkAvailability = async function () {
@@ -1973,8 +2423,8 @@ window.checkAvailability = async function () {
 
     const { data, error } = await window.tenantPocketBase
         .from('cotizaciones')
-        .select('id,espacio_id,fecha_inicio,fecha_fin,espacios_detalle,status')
-        .eq('status', 'aprobada');
+        .select('id,espacio_id,fecha_inicio,fecha_fin,espacios_detalle,detalles_evento,status')
+        .in('status', ['aprobada', 'finalizada']);
     if (error) {
         if (msg) {
             msg.classList.remove('hidden');
@@ -1993,16 +2443,25 @@ window.checkAvailability = async function () {
         (data || []).forEach(order => {
             let ranges = [];
             const detail = safeArray(order.espacios_detalle);
+            const orderDetails = (order?.detalles_evento && typeof order.detalles_evento === 'object')
+                ? order.detalles_evento
+                : (() => {
+                    try { return JSON.parse(order?.detalles_evento || '{}'); } catch (_) { return {}; }
+                })();
+            const orderConvenio = orderDetails?.convenio && typeof orderDetails.convenio === 'object' ? orderDetails.convenio : {};
+            const orderBlocksIndefinitely = orderConvenio?.activo === true && orderConvenio?.bloqueo_indefinido === true;
             if (detail.length) {
                 detail.forEach(d => {
                     const dsid = String(d?.espacio_id || d?.space_id || '');
                     const fi = toDateISO(d?.fecha_inicio || '');
-                    const ff = toDateISO(d?.fecha_fin || '');
+                    const ff = (d?.convenio_indefinido === true || d?.bloqueo_indefinido === true || orderBlocksIndefinitely)
+                        ? PM_CONVENIO_INDEFINITE_END
+                        : toDateISO(d?.fecha_fin || '');
                     if (dsid === sid && fi && ff) ranges.push({ start: fi, end: ff });
                 });
             } else if (String(order.espacio_id || '') === sid) {
                 const fi = toDateISO(order.fecha_inicio || '');
-                const ff = toDateISO(order.fecha_fin || '');
+                const ff = orderBlocksIndefinitely ? PM_CONVENIO_INDEFINITE_END : toDateISO(order.fecha_fin || '');
                 if (fi && ff) ranges.push({ start: fi, end: ff });
             }
             if (ranges.some(r => rangesOverlap(s, e, r.start, r.end))) {
@@ -2047,9 +2506,10 @@ window.askDeleteSpace = async function () {
         if (!(await pmEnsureCatalogManageSession('eliminar el espacio'))) return;
         try {
             await pmDeleteEspacioRecord(document.getElementById('mgr-id').value);
+            const preservedViewState = pmCatalogSaveViewState({ selectedSpaceId: '' });
             window.showToast("Eliminado");
             window.closeModal('manager-modal');
-            loadCatalog();
+            await loadCatalog(preservedViewState);
         } catch (e) {
             console.error(e);
             window.showToast("Error al eliminar: " + (e?.message || e), "error");

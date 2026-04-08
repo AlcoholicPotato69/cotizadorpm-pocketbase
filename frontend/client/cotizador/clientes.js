@@ -16,6 +16,49 @@ let allClients = [];
 let canManage = false;
 let clientHistoryRows = [];
 let activeHistoryClient = null;
+let pmClientsRestoringViewState = false;
+const PM_CLIENTS_VIEW_STATE_SCOPE = 'pm_clients';
+
+function pmClientsViewStateApi() {
+  return window.__HUB_VIEW_STATE || null;
+}
+
+function pmClientsReadViewState() {
+  const api = pmClientsViewStateApi();
+  return api?.read ? (api.read(PM_CLIENTS_VIEW_STATE_SCOPE, { maxAgeMs: 30 * 60 * 1000 }) || null) : null;
+}
+
+function pmClientsApplyViewStateControls(state = pmClientsReadViewState()) {
+  if (!state || typeof state !== 'object') return;
+  const searchEl = document.getElementById('clients-search');
+  if (searchEl && typeof state.search === 'string') searchEl.value = state.search;
+}
+
+function pmClientsSaveViewState(extra = {}) {
+  const api = pmClientsViewStateApi();
+  if (!api?.write) return null;
+  const selectedClientId = String(extra.selectedClientId || document.getElementById('client-id')?.value || '').trim();
+  return api.write(PM_CLIENTS_VIEW_STATE_SCOPE, {
+    search: document.getElementById('clients-search')?.value || '',
+    selectedClientId,
+    windowScrollY: api.getWindowScrollY ? api.getWindowScrollY() : (window.scrollY || 0),
+    ...(extra && typeof extra === 'object' ? extra : {})
+  });
+}
+
+function pmClientsRestoreViewStateAfterRender(state = pmClientsReadViewState()) {
+  if (!state || typeof state !== 'object') return;
+  const api = pmClientsViewStateApi();
+  if (api?.restoreScrollState) api.restoreScrollState(state);
+  const selectedClientId = String(state.selectedClientId || '').trim();
+  if (!selectedClientId) return;
+  window.setTimeout(() => {
+    const target = document.querySelector(`[data-client-id="${selectedClientId}"]`);
+    if (target && typeof target.scrollIntoView === 'function') {
+      target.scrollIntoView({ block: 'center', inline: 'nearest' });
+    }
+  }, 90);
+}
 
 function normalizeRoleName(value='') {
   const raw = String(value || '').trim().toLowerCase();
@@ -184,6 +227,7 @@ function renderClients(list) {
 
     const card = document.createElement('div');
     card.setAttribute('data-client-card', '1');
+    card.setAttribute('data-client-id', String(c.id || ''));
     card.className = "bg-white rounded-2xl shadow-md border border-gray-100 p-4 hover:shadow-lg transition cursor-pointer";
     card.innerHTML = `
       <div class="flex items-start justify-between gap-3">
@@ -231,6 +275,7 @@ function renderClients(list) {
 }
 
 async function loadClients() {
+  pmClientsApplyViewStateControls();
   try {
     const { data, error } = await window.tenantPocketBase.from('clientes')
       .select('id,nombre_completo,telefono,correo,rfc,created_at,updated_at')
@@ -238,18 +283,28 @@ async function loadClients() {
 
     if (error) throw error;
     allClients = data || [];
-    applySearch();
+    pmClientsRestoringViewState = true;
+    applySearch({ skipSave: true });
+    pmClientsRestoringViewState = false;
+    pmClientsRestoreViewStateAfterRender();
   } catch (e) {
     console.error(e);
     window.showToast?.("No se pudieron cargar los clientes. (¿Ya ejecutaste el SQL?)", "error");
     allClients = [];
-    applySearch();
+    pmClientsRestoringViewState = true;
+    applySearch({ skipSave: true });
+    pmClientsRestoringViewState = false;
+    pmClientsRestoreViewStateAfterRender();
   }
 }
 
-function applySearch() {
+function applySearch(options = {}) {
   const q = normalize(document.getElementById('clients-search')?.value || '');
-  if (!q) return renderClients(allClients);
+  if (!q) {
+    renderClients(allClients);
+    if (!pmClientsRestoringViewState && options.skipSave !== true) pmClientsSaveViewState();
+    return;
+  }
 
   const filtered = allClients.filter(c => {
     const blob = [c.nombre_completo, c.telefono, c.correo, c.rfc].map(v => normalize(v || '')).join(' ');
@@ -257,10 +312,12 @@ function applySearch() {
   });
 
   renderClients(filtered);
+  if (!pmClientsRestoringViewState && options.skipSave !== true) pmClientsSaveViewState();
 }
 
 function openClientModal(client=null) {
   if (!canManage) return window.showToast?.("No tienes permisos para administrar clientes.", "error");
+  pmClientsSaveViewState({ selectedClientId: String(client?.id || '').trim() });
 
   const idEl = document.getElementById('client-id');
   const nameEl = document.getElementById('client-name');
@@ -311,6 +368,7 @@ async function confirmDeleteClient(client) {
   try {
     const { error } = await window.tenantPocketBase.from('clientes').delete().eq('id', client.id);
     if (error) throw error;
+    pmClientsSaveViewState({ selectedClientId: '' });
     window.showToast?.("Cliente eliminado", "success");
     await loadClients();
   } catch (e) {
@@ -499,10 +557,12 @@ async function saveClient() {
     if (id) {
       const { error } = await window.tenantPocketBase.from('clientes').update(payload).eq('id', id);
       if (error) throw error;
+      pmClientsSaveViewState({ selectedClientId: id });
       window.showToast?.("Cliente actualizado", "success");
     } else {
       const { error } = await window.tenantPocketBase.from('clientes').insert(payload);
       if (error) throw error;
+      pmClientsSaveViewState({ selectedClientId: '' });
       window.showToast?.("Cliente creado", "success");
     }
     closeClientModal();
@@ -564,6 +624,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     btnNew.addEventListener('click', () => openClientModal(null));
   }
 
+  pmClientsApplyViewStateControls();
   document.getElementById('clients-search')?.addEventListener('input', applySearch);
   document.getElementById('btn-save-client')?.addEventListener('click', saveClient);
   await loadClients();

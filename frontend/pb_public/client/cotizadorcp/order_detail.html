@@ -4,6 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
     <title>Editar Cotización - Casa de Piedra</title>
     
     <link rel="preload" as="script" href="../../assets/libs/js/tailwindcss.js">
@@ -349,12 +350,21 @@
                     <section data-order-panel="financial" class="hidden p-4 sm:p-5 xl:p-6">
                         <div class="grid grid-cols-1 2xl:grid-cols-[minmax(0,1.05fr)_minmax(320px,0.95fr)] gap-6 items-start">
                             <div class="space-y-6 min-w-0">
-                                <div class="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm">
-                                    <label class="flex items-center justify-between gap-3 text-[11px] font-bold text-gray-700 cursor-pointer">
-                                        <span>¿Utilizará conceptos adicionales?</span>
-                                        <input id="oed-has-extra-concepts" type="checkbox" class="accent-brand-red" onchange="window.toggleExtraConceptsSection()">
-                                    </label>
-                                    <p class="text-[10px] text-gray-400 mt-1">Actívalo solo si necesitas agregar conceptos extras a esta cotización.</p>
+                                <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm flex flex-wrap items-center justify-between gap-4">
+                                    <div>
+                                        <label class="flex items-center gap-2 text-[11px] font-bold text-gray-700 cursor-pointer">
+                                            <input id="oed-has-extra-concepts" type="checkbox" class="accent-brand-red w-4 h-4 rounded cursor-pointer" onchange="window.toggleExtraConceptsSection()">
+                                            <span>Conceptos Adicionales Libres</span>
+                                        </label>
+                                    </div>
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-[9px] font-bold uppercase tracking-widest text-gray-400">Ajuste Global</span>
+                                        <div class="flex border border-gray-200 bg-gray-50 rounded-lg overflow-hidden shadow-inner flex-shrink-0">
+                                            <select id="oed-adj-type" onchange="window.recalcTotal()" class="bg-transparent border-r border-gray-200 text-[10px] py-1 px-1.5 font-bold outline-none text-gray-600 focus:bg-gray-100"><option value="ninguno">N/A</option><option value="descuento">Desc (-)</option><option value="aumento">Aum (+)</option></select>
+                                            <input id="oed-adj-val" onchange="window.recalcTotal()" type="number" class="w-16 bg-transparent border-r border-gray-200 text-[10px] py-1 px-1.5 font-bold outline-none text-center focus:bg-gray-100" placeholder="0.00">
+                                            <select id="oed-adj-unit" onchange="window.recalcTotal()" class="bg-transparent text-[10px] py-1 px-1.5 font-bold outline-none text-gray-600 focus:bg-gray-100"><option value="fixed">MXN</option><option value="percent">%</option></select>
+                                        </div>
+                                    </div>
                                 </div>
 
                                 <div id="oed-extra-concepts-section" class="hidden bg-white p-5 rounded-2xl border border-gray-200 shadow-sm">
@@ -372,29 +382,72 @@
                                 </div>
                             </div>
 
-                            <div class="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm">
-                                <h4 class="font-black text-sm uppercase text-gray-700 mb-4"><i class="fa-solid fa-calculator text-brand-red mr-1"></i> Resumen Financiero</h4>
-                                <div class="space-y-2">
-                                    <div class="flex justify-between text-xs text-gray-500"><span>Renta Base + Logística</span><span class="font-bold" id="lbl-subtotal-base">$0.00</span></div>
-                                    <div id="oed-summary-concepts" class="space-y-1 border-b border-dashed border-gray-200 pb-2 mb-2"></div>
-                                    <div class="flex justify-between items-center text-xs text-gray-500">
-                                        <span>Ajuste Global</span>
-                                        <div class="flex items-center gap-1">
-                                            <select id="oed-adj-type" onchange="window.recalcTotal()" class="border rounded p-0.5 text-[10px]"><option value="ninguno">-</option><option value="descuento">Desc</option><option value="aumento">Aum</option></select>
-                                            <input id="oed-adj-val" onchange="window.recalcTotal()" type="number" class="w-12 border rounded p-0.5 text-[10px] text-right" placeholder="0">
-                                            <select id="oed-adj-unit" onchange="window.recalcTotal()" class="border rounded p-0.5 text-[10px]"><option value="fixed">$</option><option value="percent">%</option></select>
+                            <div class="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm flex flex-col h-full">
+                                <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-3">
+                                    <h4 class="font-black text-sm uppercase text-gray-700"><i class="fa-solid fa-calculator text-brand-red mr-1"></i> Resumen Financiero</h4>
+                                </div>
+
+                                <div class="space-y-4 flex-grow flex flex-col">
+                                    <!-- Info de subtotales super compacta y en cuadrícula -->
+                                    <div class="grid grid-cols-2 lg:grid-cols-6 gap-2">
+                                        <div class="rounded-lg border border-gray-100 bg-slate-50 p-2 text-center flex flex-col justify-center">
+                                            <p class="text-[9px] uppercase font-bold text-gray-400 mb-0.5 tracking-wider">Base Catálogo</p>
+                                            <p class="text-xs font-black text-gray-600 truncate" id="lbl-catalog-base-total">$0.00</p>
+                                        </div>
+                                        <div class="rounded-lg border border-gray-100 bg-slate-50 p-2 text-center flex flex-col justify-center">
+                                            <p class="text-[9px] uppercase font-bold text-gray-400 mb-0.5 tracking-wider">Base Facturable</p>
+                                            <p class="text-xs font-black text-gray-600 truncate" id="lbl-subtotal-base">$0.00</p>
+                                        </div>
+                                        <div class="rounded-lg border border-gray-100 bg-slate-50 p-2 text-center flex flex-col justify-center">
+                                            <p class="text-[9px] uppercase font-bold text-gray-400 mb-0.5 tracking-wider">Subtotal Bruto</p>
+                                            <p class="text-xs font-black text-gray-600 truncate" id="lbl-subtotal-raw">$0.00</p>
+                                        </div>
+                                        <div class="rounded-lg border border-indigo-100 bg-indigo-50 p-2 text-center flex flex-col justify-center shadow-inner relative overflow-hidden group">
+                                            <p class="text-[9px] uppercase font-bold text-indigo-500 mb-0.5 tracking-wider relative z-10"><i class="fa-solid fa-gift mr-1"></i> Cortesías</p>
+                                            <p class="text-xs font-black text-indigo-700 truncate relative z-10" id="lbl-cortesia-total">$0.00 <span class="text-[9px] text-indigo-400 ml-1 font-bold" id="lbl-cortesia-pct">(0%)</span></p>
+                                        </div>
+                                        <div class="rounded-lg border border-brand-red/20 bg-red-50 p-2 text-center flex flex-col justify-center shadow-inner relative overflow-hidden group">
+                                            <div class="absolute inset-0 bg-brand-red/5 -translate-y-full group-hover:translate-y-0 transition-transform"></div>
+                                            <p class="text-[9px] uppercase font-bold text-brand-red mb-0.5 tracking-wider relative z-10">Total Ajustado</p>
+                                            <p class="text-xs font-black text-brand-dark truncate relative z-10" id="lbl-subtotal">$0.00</p>
+                                        </div>
+                                        <div class="rounded-lg border border-gray-100 bg-brand-dark p-2 pl-3 text-left flex flex-col justify-center shadow-inner relative overflow-hidden">
+                                            <p class="text-[8px] uppercase font-bold text-gray-300 mb-0.5 tracking-wider">Neto a Cobrar</p>
+                                            <div class="relative">
+                                                <span class="absolute left-0 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-bold pointer-events-none">$</span>
+                                                <input id="oed-price" readonly class="w-full text-left font-black bg-transparent outline-none text-white pointer-events-auto pl-3 text-lg" value="0.00">
+                                            </div>
+                                        </div>
+                                        <div id="oed-financial-overview" class="hidden"></div>
+                                    </div>
+
+                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 items-start pb-2">
+                                        <!-- Detalles y desgloses, muy compactos -->
+                                        <div class="border border-gray-100 rounded-xl overflow-hidden shadow-sm flex flex-col h-full">
+                                            <div class="bg-gray-50 px-3 py-2 border-b border-gray-100 flex justify-between items-center shrink-0">
+                                                <span class="text-[9px] font-black uppercase tracking-wider text-gray-500"><i class="fa-solid fa-layer-group text-gray-400 mr-1"></i> Desglose Extra</span>
+                                            </div>
+                                            <div id="oed-summary-concepts" class="p-2 flex-grow space-y-1 bg-white custom-scroll max-h-[400px] overflow-y-auto min-h-[3rem] text-xs"></div>
+                                        </div>
+                                        
+                                        <div class="flex flex-col h-full">
+                                            <div id="oed-taxes-list" class="hidden" aria-hidden="true"></div>
+                                            <div class="border border-gray-100 rounded-xl overflow-hidden shadow-sm mb-2 flex flex-col flex-grow">
+                                                <div class="bg-gray-50 px-3 py-2 border-b border-gray-100 flex justify-between items-center shrink-0">
+                                                    <span class="text-[9px] font-black uppercase tracking-wider text-gray-500"><i class="fa-solid fa-percent text-gray-400 mr-1"></i> Impuestos</span>
+                                                    <span class="text-[9px] font-black text-gray-400" id="lbl-tax-total">$0.00</span>
+                                                </div>
+                                                <div id="oed-tax-summary-display" class="p-2 space-y-1.5 bg-white flex-grow custom-scroll max-h-[400px] overflow-y-auto min-h-[2rem] text-xs"></div>
+                                            </div>
+                                            <!-- Indicador del monto de ajuste -->
+                                            <div class="flex justify-between items-center bg-gray-50 rounded-lg px-3 py-2 text-[10px] border border-gray-100 border-dashed shrink-0">
+                                                <span class="font-bold text-gray-400 tracking-wider">Ajuste Valor:</span>
+                                                <span class="font-black text-gray-600 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm" id="lbl-adjustment">$0.00</span>
+                                            </div>
                                         </div>
                                     </div>
-                                    <div class="flex justify-between text-xs text-gray-500 font-bold border-b border-dashed pb-2"><span>Total Ajuste</span><span id="lbl-adjustment">$0.00</span></div>
-                                    <div id="oed-taxes-list" class="hidden" aria-hidden="true"></div>
-                                    <div class="pt-1 border-t border-gray-100">
-                                        <p class="text-[10px] font-bold uppercase text-gray-400 mb-1">Impuestos Automáticos</p>
-                                        <div id="oed-tax-summary-display" class="space-y-1"></div>
-                                    </div>
-                                    <div class="pt-4 mt-2 border-t border-gray-200">
-                                        <p class="text-[10px] font-black uppercase text-gray-400 text-right">Total Neto</p>
-                                        <input id="oed-price" readonly class="w-full text-right text-3xl font-black bg-transparent outline-none text-gray-800" value="0.00">
-                                    </div>
+
+
                                 </div>
                             </div>
                         </div>

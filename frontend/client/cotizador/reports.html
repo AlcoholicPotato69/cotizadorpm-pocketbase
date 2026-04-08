@@ -4,6 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
     <title>Reportes - Plaza Mayor</title>
     <link rel="preload" as="script" href="../../assets/libs/js/tailwindcss.js">
     <script src="../../assets/libs/js/tailwindcss.js"></script>
@@ -55,9 +56,11 @@
                 <div class="px-4 border-r border-gray-200 flex items-center flex-grow md:flex-grow-0"><span class="text-[10px] font-black text-gray-400 uppercase mr-1 tracking-wider">Tipo</span><select id="report-type-filter" onchange="window.generateReports()" class="text-xs font-bold text-brand-dark outline-none bg-transparent cursor-pointer hover:text-brand-red transition focus:ring-0 border-none w-full"><option value="all">Todos</option></select></div>
                 <div class="px-4 border-r border-gray-200 flex items-center flex-grow md:flex-grow-0"><span class="text-[10px] font-black text-gray-400 uppercase mr-1 tracking-wider">Mes</span><select id="report-month-filter" onchange="window.generateReports()" class="text-xs font-bold text-brand-dark outline-none bg-transparent cursor-pointer hover:text-brand-red transition focus:ring-0 border-none w-full"></select></div>
                 <div class="px-4 border-r border-gray-200 flex items-center flex-grow md:flex-grow-0"><span class="text-[10px] font-black text-gray-400 uppercase mr-1 tracking-wider">Año</span><select id="report-year-filter" onchange="window.generateReports()" class="text-xs font-bold text-brand-dark outline-none bg-transparent cursor-pointer hover:text-brand-red transition focus:ring-0 border-none w-full"></select></div>
+                <button id="btn-toggle-convenio-reports" onclick="window.toggleConvenioReports()" class="bg-amber-100 text-amber-800 px-5 py-2 rounded-xl text-[10px] font-bold uppercase hover:bg-amber-200 transition shadow-lg flex items-center gap-2 w-full md:w-auto justify-center"><i class="fa-solid fa-handshake"></i> Ver Convenios</button>
                 <button onclick="window.resetReportFilters()" class="bg-brand-red text-white px-5 py-2 rounded-xl text-[10px] font-bold uppercase hover:bg-red-700 transition shadow-lg flex items-center gap-2 w-full md:w-auto justify-center"><i class="fa-solid fa-rotate-left"></i> Actual</button>
             </div>
         </div>
+        <div id="standard-reports-section">
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
             <div class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between hover:shadow-md transition group"><div><p class="text-[10px] font-black text-gray-400 uppercase tracking-wider mb-1">Ingresos (Netos)</p><h3 class="text-xl font-black text-green-600 truncate group-hover:scale-105 transition origin-left" id="rpt-revenue">$0.00</h3></div><div class="mt-2 text-right"><i class="fa-solid fa-sack-dollar text-green-100 text-3xl group-hover:text-green-500 transition-colors"></i></div></div>
             <div class="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between hover:shadow-md transition group"><div><p class="text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1">Total Cotizaciones</p><h3 class="text-2xl font-black text-gray-800" id="rpt-total-count">0</h3></div><div class="mt-2 text-right"><i class="fa-solid fa-list-ol text-gray-100 text-3xl group-hover:text-gray-400 transition-colors"></i></div></div>
@@ -148,9 +151,75 @@
         * "Gasto" suma <span class="font-bold">solo</span> órdenes <span class="font-bold">finalizadas</span>.
     </p>
 </section>
+        </div>
+
+<section id="convenio-reports-section" class="mt-8 hidden">
+    <div class="bg-white rounded-3xl border border-amber-100 shadow-sm p-5 mb-6">
+        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div>
+                <div class="text-[10px] font-black uppercase tracking-wider text-amber-600">Convenios</div>
+                <h2 class="text-xl font-black text-gray-800 uppercase tracking-tight mt-1">Analítica de Convenios</h2>
+                <p class="text-xs text-gray-500 mt-1">Vista separada para convenios. No altera los reportes financieros normales.</p>
+            </div>
+            <button onclick="window.generateConvenioReports()" class="bg-amber-500 text-white px-5 py-2 rounded-xl text-[10px] font-bold uppercase hover:bg-amber-600 transition shadow-lg flex items-center gap-2 w-full md:w-auto justify-center"><i class="fa-solid fa-rotate"></i> Actualizar Convenios</button>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
+        <div class="bg-white p-5 rounded-2xl shadow-sm border border-amber-100 flex flex-col justify-between"><div><p class="text-[10px] font-black text-gray-400 uppercase tracking-wider mb-1">Convenios</p><h3 class="text-2xl font-black text-amber-600" id="conv-rpt-total">0</h3></div><div class="mt-2 text-right"><i class="fa-solid fa-handshake text-amber-100 text-3xl"></i></div></div>
+        <div class="bg-white p-5 rounded-2xl shadow-sm border border-amber-100 flex flex-col justify-between"><div><p class="text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1">Aprobados</p><h3 class="text-2xl font-black text-blue-600" id="conv-rpt-approved">0</h3></div><div class="mt-2 text-right"><i class="fa-solid fa-file-circle-check text-blue-100 text-3xl"></i></div></div>
+        <div class="bg-white p-5 rounded-2xl shadow-sm border border-amber-100 flex flex-col justify-between"><div><p class="text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1">Finalizados</p><h3 class="text-2xl font-black text-emerald-600" id="conv-rpt-finalized">0</h3></div><div class="mt-2 text-right"><i class="fa-solid fa-camera text-emerald-100 text-3xl"></i></div></div>
+        <div class="bg-white p-5 rounded-2xl shadow-sm border border-amber-100 flex flex-col justify-between"><div><p class="text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1">Tasa Cierre</p><h3 class="text-2xl font-black text-purple-600" id="conv-rpt-rate">0%</h3></div><div class="mt-2 text-right"><i class="fa-solid fa-chart-simple text-purple-100 text-3xl"></i></div></div>
+        <div class="bg-white p-5 rounded-2xl shadow-sm border border-amber-100 flex flex-col justify-between"><div><p class="text-[9px] font-black text-gray-400 uppercase tracking-wider mb-1">Tratos Registrados</p><h3 class="text-2xl font-black text-gray-800" id="conv-rpt-deals">0</h3></div><div class="mt-2 text-right"><i class="fa-solid fa-box-open text-gray-100 text-3xl"></i></div></div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 md:gap-8 mb-8">
+        <div class="lg:col-span-2 bg-white p-6 rounded-3xl shadow-sm border border-amber-100">
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 border-b border-gray-50 pb-2 gap-2"><h3 class="font-bold text-gray-700 uppercase text-xs tracking-wider">Flujo de Convenios</h3><span class="text-[9px] font-bold text-gray-300 uppercase bg-gray-50 px-2 py-1 rounded">Mensual / Diario</span></div>
+            <div class="h-64 md:h-72 w-full"><canvas id="convenioTimelineChart"></canvas></div>
+        </div>
+        <div class="bg-white p-6 rounded-3xl shadow-sm border border-amber-100 flex flex-col h-full">
+            <h3 class="font-bold text-gray-700 uppercase text-xs tracking-wider mb-6 text-center border-b border-gray-50 pb-2">Espacios Más Usados en Convenio</h3>
+            <div class="relative h-48 w-full flex items-center justify-center mb-6"><canvas id="convenioSpacesChart"></canvas></div>
+            <div class="overflow-y-auto flex-grow max-h-48 scrollbar-hide pr-1">
+                <table class="w-full"><thead class="sticky top-0 bg-white text-[9px] font-black text-gray-400 uppercase border-b border-gray-100"><tr><th class="text-left pb-2 pl-2">Espacio</th><th class="text-right pb-2">Convenios</th><th class="text-right pb-2 pr-2">Tratos</th></tr></thead><tbody id="conv-rpt-table-spaces" class="divide-y divide-gray-50 text-xs"></tbody></table>
+            </div>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8 mb-8">
+        <div class="bg-white p-6 rounded-3xl shadow-sm border border-amber-100">
+            <h3 class="font-bold text-gray-700 uppercase text-xs tracking-wider mb-6 flex items-center gap-2 border-b border-gray-50 pb-2"><i class="fa-solid fa-calendar-week text-blue-500"></i> Convenios por Día de la Semana</h3>
+            <div class="h-64 w-full"><canvas id="convenioDaysChart"></canvas></div>
+        </div>
+        <div class="bg-white p-6 rounded-3xl shadow-sm border border-amber-100">
+            <h3 class="font-bold text-gray-700 uppercase text-xs tracking-wider mb-6 flex items-center gap-2 border-b border-gray-50 pb-2"><i class="fa-solid fa-box-open text-amber-500"></i> Tratos Más Registrados</h3>
+            <div class="h-64 w-full"><canvas id="convenioDealsChart"></canvas></div>
+        </div>
+    </div>
+
+    <div class="bg-white rounded-2xl shadow-md border border-amber-100 p-4">
+        <h2 class="text-sm font-black uppercase text-gray-800 flex items-center gap-2">
+            <i class="fa-solid fa-users text-amber-500"></i> Clientes con Convenio
+        </h2>
+        <p class="text-xs text-gray-500 mt-1">Frecuencia de convenios por cliente con los filtros actuales.</p>
+        <div class="overflow-auto mt-4">
+            <table class="w-full text-xs">
+                <thead>
+                    <tr class="text-[11px] uppercase text-gray-500 border-b">
+                        <th class="text-left py-2">Cliente</th>
+                        <th class="text-right py-2">Convenios</th>
+                        <th class="text-right py-2">Tratos</th>
+                    </tr>
+                </thead>
+                <tbody id="tbl-top-convenio-clients"></tbody>
+            </table>
+        </div>
+    </div>
+</section>
 
 </main>
-<script src="reports.js?v=20260326-native-pb2"></script>
+<script src="reports.js?v=20260407-convenio-v2"></script>
 </body>
 </html>
 

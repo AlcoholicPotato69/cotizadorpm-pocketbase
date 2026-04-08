@@ -36,10 +36,64 @@ let allSpaces = [], catalogConcepts = [], dbTaxes = [], currentSpace = null, cur
 let adminSelectedConcepts = []; let myPermissions = { access:false, catalog_manage:false };
 let __cpPremontajePct = 25;
 let __cpHoraExtraCfg = { mode: 'percent', value: 100, allowCustom: true };
+let cpQuoteRestoringViewState = false;
+const CP_QUOTE_VIEW_STATE_SCOPE = `cp_quote:${CP_PAGE_MODE}`;
 
 // NUEVO: PRECIO PERSONALIZADO
 let precioPersonalizadoEnabled = false;
 let precioPersonalizadoValue = 0;
+
+function cpQuoteViewStateApi() {
+    return window.__HUB_VIEW_STATE || null;
+}
+
+function cpQuoteReadViewState() {
+    const api = cpQuoteViewStateApi();
+    return api?.read ? (api.read(CP_QUOTE_VIEW_STATE_SCOPE, { maxAgeMs: 30 * 60 * 1000 }) || null) : null;
+}
+
+function cpQuoteApplyViewStateControls(state = cpQuoteReadViewState()) {
+    if (!state || typeof state !== 'object') return;
+    const searchEl = document.getElementById('cat-search');
+    const typeEl = document.getElementById('cat-filter-type');
+    const sortEl = document.getElementById('cat-sort');
+    if (searchEl && typeof state.search === 'string') searchEl.value = state.search;
+    if (typeEl && typeof state.type === 'string') typeEl.value = state.type;
+    if (sortEl && typeof state.sort === 'string') sortEl.value = state.sort;
+}
+
+function cpQuoteSaveViewState(extra = {}) {
+    const api = cpQuoteViewStateApi();
+    if (!api?.write) return null;
+    const mgrId = document.getElementById('mgr-id')?.value || '';
+    return api.write(CP_QUOTE_VIEW_STATE_SCOPE, {
+        search: document.getElementById('cat-search')?.value || '',
+        type: document.getElementById('cat-filter-type')?.value || 'all',
+        sort: document.getElementById('cat-sort')?.value || 'default',
+        selectedSpaceId: String(
+            extra.selectedSpaceId
+            || mgrId
+            || currentSpace?.id
+            || ''
+        ).trim(),
+        windowScrollY: api.getWindowScrollY ? api.getWindowScrollY() : (window.scrollY || 0),
+        ...(extra && typeof extra === 'object' ? extra : {})
+    });
+}
+
+function cpQuoteRestoreViewStateAfterRender(state = cpQuoteReadViewState()) {
+    if (!state || typeof state !== 'object') return;
+    const api = cpQuoteViewStateApi();
+    if (api?.restoreScrollState) api.restoreScrollState(state);
+    const selectedSpaceId = String(state.selectedSpaceId || '').trim();
+    if (!selectedSpaceId) return;
+    window.setTimeout(() => {
+        const target = document.querySelector(`[data-space-id="${selectedSpaceId}"]`);
+        if (target && typeof target.scrollIntoView === 'function') {
+            target.scrollIntoView({ block: 'center', inline: 'nearest' });
+        }
+    }, 90);
+}
 
 function normalizeCpQuoteTenantSlug(value) {
     const raw = String(value || '').trim().toLowerCase();
@@ -449,6 +503,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     if (!myPermissions.access) return window.showToast?.('No tienes permisos.', 'error');
     if (myPermissions.catalog_manage && IS_CATALOG_ADMIN_PAGE) { const btn = document.getElementById('btn-new-space'); if(btn) btn.classList.remove('hidden'); }
+    cpQuoteApplyViewStateControls();
     await loadTaxes();
     await loadPremontajePctConfig();
     if (IS_QUOTE_PAGE) {
@@ -487,10 +542,15 @@ async function loadTaxes() {
     }
 }
 async function loadCatalog() {
+    cpQuoteApplyViewStateControls();
     const tenant = resolveCpQuoteTenantSlug();
     const { data } = await window.tenantPocketBase.from('espacios').select('*').order('clave');
     allSpaces = filterCpQuoteRowsByTenant(data || [], tenant).sort((a, b) => String(a?.clave || a?.nombre || '').localeCompare(String(b?.clave || b?.nombre || ''), 'es', { numeric: true, sensitivity: 'base' }));
-    renderSpaces(allSpaces);
+    cpQuoteRestoringViewState = true;
+    if (typeof window.filterCatalogLogic === 'function') window.filterCatalogLogic({ skipSave: true });
+    else renderSpaces(allSpaces);
+    cpQuoteRestoringViewState = false;
+    cpQuoteRestoreViewStateAfterRender();
 }
 
 function renderSpaces(list) {
@@ -544,7 +604,7 @@ function renderSpaces(list) {
         const imgsHtml = allUrls.map((url, i) => `<img src="${url}" class="card-img absolute inset-0 w-full h-full object-cover transition-opacity duration-1000 ${i===0?'opacity-100':'opacity-0'}" data-index="${i}">`).join('');
 
         const cardHtml = `
-            <div class="bg-white rounded-xl shadow-md relative group hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 overflow-hidden border border-gray-100 cursor-pointer"
+            <div data-space-card="1" data-space-id="${s.id}" class="bg-white rounded-xl shadow-md relative group hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 overflow-hidden border border-gray-100 cursor-pointer"
                  onclick="window.openPreviewCardModal('${String(s.id)}')"
                  onmouseenter="window.startCardCarousel(this)" 
                  onmouseleave="window.stopCardCarousel(this)">
@@ -648,6 +708,7 @@ window.addHorarioRow = function(data = null) {
 
 window.openManagerModal = function(id){
     if (!myPermissions.catalog_manage) return window.showToast("No tienes permisos.", "error"); 
+    cpQuoteSaveViewState({ selectedSpaceId: String(id || '').trim() });
     document.getElementById('mgr-id').value = id || ''; const container = document.getElementById('mgr-taxes-list'); document.querySelectorAll('.day-block-check').forEach(cb => cb.checked = false);
     if(container) { container.innerHTML = ''; let currentTaxes = []; if(id) { const s = allSpaces.find(x => x.id === id); currentTaxes = parseIds((s && (s.impuestos_ids || s.impuestos)) || []); } dbTaxes.forEach(t => { const isChecked = currentTaxes.some(cid => String(cid) === String(t.id)) ? 'checked' : ''; container.innerHTML += `<label class="flex items-center gap-2 p-2 border rounded bg-white hover:bg-gray-50 cursor-pointer"><input type="checkbox" value="${t.id}" class="tax-check accent-brand-red cursor-pointer" ${isChecked}><span class="text-[10px] font-bold uppercase text-gray-600 cursor-pointer select-none">${t.nombre} (${t.porcentaje}%)</span></label>`; }); }
 
@@ -748,7 +809,7 @@ window.saveSpace = async function(){
             ajuste_tipo: ajusteTipo, ajuste_porcentaje: ajustePorcentaje, activo: isActive, activa: isActive, impuestos_ids: selectedTaxes, imagen_url: imgUrl 
         }; 
 
-        if(id) { const { error: updErr } = await window.tenantPocketBase.from('espacios').update(payload).eq('id', id); if(updErr) throw updErr; } else { const { error: insErr } = await window.tenantPocketBase.from('espacios').insert(payload); if(insErr) throw insErr; } 
+        if(id) { const { error: updErr } = await window.tenantPocketBase.from('espacios').update(payload).eq('id', id); if(updErr) throw updErr; cpQuoteSaveViewState({ selectedSpaceId: String(id || '').trim() }); } else { const { error: insErr } = await window.tenantPocketBase.from('espacios').insert(payload); if(insErr) throw insErr; cpQuoteSaveViewState({ selectedSpaceId: '' }); }
         window.showToast("Guardado", "success"); window.closeModal('manager-modal'); loadCatalog(); fileInput.value = '';
 
     } catch(e) { console.error("Error al guardar:", e); window.showToast("Error al guardar: " + (e?.message || e), "error"); } finally { btn.disabled = false; btn.innerText = "Guardar"; }
@@ -1129,10 +1190,10 @@ window.generatePDF = async function(){
     setTimeout(() => { __cpNavigateSafely(targetUrl); }, 1200);
 };
 
-window.filterCatalogLogic = function() { const term = document.getElementById('cat-search').value.toLowerCase(); const type = document.getElementById('cat-filter-type').value; const sort = document.getElementById('cat-sort').value; let filtered = allSpaces.filter(s => (s.nombre.toLowerCase().includes(term) || s.clave.toLowerCase().includes(term)) && (type === 'all' || s.tipo === type)); if (sort === 'price_asc') filtered.sort((a,b) => a.precio_base - b.precio_base); if (sort === 'price_desc') filtered.sort((a,b) => b.precio_base - a.precio_base); renderSpaces(filtered); }
+window.filterCatalogLogic = function(options = {}) { const term = document.getElementById('cat-search').value.toLowerCase(); const type = document.getElementById('cat-filter-type').value; const sort = document.getElementById('cat-sort').value; let filtered = allSpaces.filter(s => (s.nombre.toLowerCase().includes(term) || s.clave.toLowerCase().includes(term)) && (type === 'all' || s.tipo === type)); if (sort === 'price_asc') filtered.sort((a,b) => a.precio_base - b.precio_base); if (sort === 'price_desc') filtered.sort((a,b) => b.precio_base - a.precio_base); renderSpaces(filtered); if (!cpQuoteRestoringViewState && options.skipSave !== true) cpQuoteSaveViewState(); }
 window.previewImage = function(i, id){ const p = document.getElementById(id || 'mgr-preview'); if(i.files && i.files[0]){ const r=new FileReader(); r.onload=e=>{ p.src=e.target.result; p.classList.remove('hidden'); p.setAttribute('data-modified', 'true'); }; r.readAsDataURL(i.files[0]); } }
 window.checkAvailability = async function() { const s=document.getElementById('date-start').value, e=document.getElementById('date-end').value; if(!s||!e)return; const {data} = await window.tenantPocketBase.from('cotizaciones').select('id').eq('espacio_id',currentSpace.id).in('status',['aprobada','finalizada']).or(`and(fecha_inicio.lte.${e},fecha_fin.gte.${s})`); const msg=document.getElementById('avail-msg'); msg.classList.remove('hidden'); if(data.length){ msg.innerText='OCUPADO'; msg.className='text-red-500 font-bold text-center'; document.getElementById('btn-generate').disabled=true; }else{ msg.innerText='DISPONIBLE'; msg.className='text-green-600 font-bold text-center'; document.getElementById('btn-generate').disabled=false; } }
-window.askDeleteSpace = async function(){ window.openConfirm("¿Eliminar espacio?", async () => { if (!(await ensureCpQuoteManageSession('eliminar el espacio'))) return; await window.tenantPocketBase.from('espacios').delete().eq('id', document.getElementById('mgr-id').value); window.showToast("Eliminado"); window.closeModal('manager-modal'); loadCatalog(); }); }
+window.askDeleteSpace = async function(){ window.openConfirm("¿Eliminar espacio?", async () => { if (!(await ensureCpQuoteManageSession('eliminar el espacio'))) return; await window.tenantPocketBase.from('espacios').delete().eq('id', document.getElementById('mgr-id').value); cpQuoteSaveViewState({ selectedSpaceId: '' }); window.showToast("Eliminado"); window.closeModal('manager-modal'); loadCatalog(); }); }
 
 // =========================================================================
 // EXTENSIÓN 2026: MULTI-ESPACIO + PREMONTAJE 25% DÍA BASE + BLOQUEO CRUZADO
