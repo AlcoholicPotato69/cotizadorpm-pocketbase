@@ -68,7 +68,9 @@
 
   function sanitizeDate(v) {
     var text = String(v || "").trim();
-    return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+    if (/^\d{4}-\d{2}-\d{2}[ T]/.test(text)) return text.slice(0, 10);
+    return "";
   }
 
   function clampInt(v, min, max) {
@@ -147,13 +149,6 @@
   }
 
   function clearSensitivePublicFields(record) {
-    record.set("precio_final", 0);
-    record.set("desglose_precios", {});
-    record.set("desglose_impuestos", []);
-    record.set("conceptos_adicionales", []);
-    record.set("tipo_ajuste", "");
-    record.set("valor_ajuste", 0);
-    record.set("ajuste_es_porcentaje", false);
     record.set("datos_fiscales", {});
     record.set("historial_pagos", []);
     record.set("datos_factura", {});
@@ -210,8 +205,17 @@
     store[key] = recent;
   }
 
-  /** Tenants válidos del sistema (whitelist). */
-  var VALID_TENANTS = { plaza_mayor: true, casa_de_piedra: true };
+  globalThis.__COTIZADOR_PUBLIC_QUOTE_HELPERS__ = {
+    sanitizeText: sanitizeText,
+    safeArray: safeArray,
+    sanitizeDate: sanitizeDate,
+    clampInt: clampInt,
+    diffDays: diffDays,
+    sanitizeSpaceDetail: sanitizeSpaceDetail,
+    sanitizeEventDetails: sanitizeEventDetails,
+    clearSensitivePublicFields: clearSensitivePublicFields,
+    enforcePublicThrottle: enforcePublicThrottle
+  };
 
   // ─── HOOK: Crear Cotización ─────────────────────────────────────────────────
 
@@ -227,6 +231,178 @@
    *   - Limpia campos sensibles (orden, contrato, factura, etc.)
    */
   onRecordCreateRequest(function (e) {
+    function stripTagsLocal(v) {
+      return String(v || "").replace(/<[^>]*>/g, "");
+    }
+
+    function sanitizeText(v, maxLen) {
+      var text = stripTagsLocal(String(v || "")).trim();
+      text = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+      if (maxLen && text.length > maxLen) text = text.slice(0, maxLen);
+      return text;
+    }
+
+    function safeArray(v) {
+      if (Array.isArray(v)) return v;
+      if (typeof v === "string") {
+        try {
+          var parsed = JSON.parse(v);
+          return Array.isArray(parsed) ? parsed : [];
+        } catch (_) {
+          return [];
+        }
+      }
+      return [];
+    }
+
+    function safeObject(v) {
+      if (v && typeof v === "object" && !Array.isArray(v)) return v;
+      if (typeof v === "string") {
+        try {
+          var parsed = JSON.parse(v);
+          return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+        } catch (_) {
+          return {};
+        }
+      }
+      return {};
+    }
+
+    function sanitizeDate(v) {
+      var text = String(v || "").trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+      if (/^\d{4}-\d{2}-\d{2}[ T]/.test(text)) return text.slice(0, 10);
+      return "";
+    }
+
+    function clampInt(v, min, max) {
+      var num = parseInt(v, 10);
+      if (isNaN(num)) num = 0;
+      if (typeof min === "number" && num < min) num = min;
+      if (typeof max === "number" && num > max) num = max;
+      return num;
+    }
+
+    function uniqueSortedDates(list) {
+      var map = {};
+      var out = [];
+      var values = safeArray(list);
+      for (var i = 0; i < values.length; i += 1) {
+        var ds = sanitizeDate(values[i]);
+        if (!ds || map[ds]) continue;
+        map[ds] = true;
+        out.push(ds);
+      }
+      out.sort();
+      return out;
+    }
+
+    function diffDays(start, end) {
+      var a = sanitizeDate(start);
+      var b = sanitizeDate(end);
+      if (!a || !b) return -1;
+      var startDate = new Date(a + "T00:00:00Z");
+      var endDate = new Date(b + "T00:00:00Z");
+      if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) return -1;
+      return Math.round((endDate.getTime() - startDate.getTime()) / 86400000);
+    }
+
+    function sanitizeSpaceDetail(raw, tenant) {
+      var detail = safeObject(raw);
+      var start = sanitizeDate(detail.fecha_inicio);
+      var end = sanitizeDate(detail.fecha_fin || detail.fecha_inicio);
+      if (!start || !end || diffDays(start, end) < 0 || diffDays(start, end) > 366) return null;
+
+      var premDates = uniqueSortedDates(detail.premontaje_fechas).slice(0, 31);
+      var horario = safeObject(detail.horario);
+      var normalized = {
+        espacio_id: sanitizeText(detail.espacio_id || detail.space_id, 80),
+        espacio_nombre: sanitizeText(detail.espacio_nombre, 200),
+        espacio_clave: sanitizeText(detail.espacio_clave || detail.space_key, 80),
+        fecha_inicio: start,
+        fecha_fin: end,
+        personas: clampInt(detail.personas, 0, 100000),
+        horario: {
+          label: sanitizeText(horario.label || detail.horario_label, 120)
+        },
+        premontaje_dias: clampInt(detail.premontaje_dias, 0, 31),
+        premontaje_fechas: premDates,
+        horas_extra: clampInt(detail.horas_extra, 0, 48)
+      };
+
+      if (!normalized.espacio_id) return null;
+      if (tenant === "casa_de_piedra") {
+        normalized.premontaje_dias = Math.min(normalized.premontaje_dias, premDates.length || normalized.premontaje_dias);
+      } else {
+        normalized.premontaje_dias = 0;
+        normalized.premontaje_fechas = [];
+        normalized.horas_extra = 0;
+      }
+      return normalized;
+    }
+
+    function sanitizeEventDetails(raw, fallbackName, spaceCount) {
+      var data = safeObject(raw);
+      return {
+        multi_espacio: !!data.multi_espacio || clampInt(data.total_espacios, 0, 99) > 1 || spaceCount > 1,
+        total_espacios: clampInt(data.total_espacios || spaceCount, 0, 99),
+        nombre_cotizacion: sanitizeText(data.nombre_cotizacion || fallbackName, 300)
+      };
+    }
+
+    function clearSensitivePublicFields(record) {
+      record.set("datos_fiscales", {});
+      record.set("historial_pagos", []);
+      record.set("datos_factura", {});
+      record.set("cliente_id", "");
+      record.set("cliente_rfc", "");
+      record.set("notas_pdf", []);
+      record.set("numero_orden", "");
+      record.set("numero_contrato", "");
+      record.set("factura_pdf_url", "");
+      record.set("factura_xml_url", "");
+      record.set("contrato_url", "");
+      record.set("url_cotizacion_final", "");
+      record.set("url_orden_compra", "");
+      record.set("factura_pdf_file", []);
+      record.set("factura_xml_file", []);
+      record.set("contrato_file", []);
+      record.set("cotizacion_final_file", []);
+      record.set("orden_compra_file", []);
+    }
+
+    function getPublicThrottleStore() {
+      if (!globalThis.__COTIZADOR_PUBLIC_QUOTE_THROTTLE__) {
+        globalThis.__COTIZADOR_PUBLIC_QUOTE_THROTTLE__ = {};
+      }
+      return globalThis.__COTIZADOR_PUBLIC_QUOTE_THROTTLE__;
+    }
+
+    function enforcePublicThrottle(tenant, email, phone) {
+      var now = Date.now();
+      var windowMs = 10 * 60 * 1000;
+      var duplicateWindowMs = 45 * 1000;
+      var maxCreatesPerWindow = 4;
+      var key = [
+        String(tenant || "").trim().toLowerCase(),
+        String(email || "").trim().toLowerCase(),
+        String(phone || "").replace(/\D+/g, "")
+      ].join("|");
+      var store = getPublicThrottleStore();
+      var recent = Array.isArray(store[key]) ? store[key] : [];
+      recent = recent.filter(function (ts) {
+        return typeof ts === "number" && (now - ts) < windowMs;
+      });
+      if (recent.length && (now - recent[recent.length - 1]) < duplicateWindowMs) {
+        throw new BadRequestError("La solicitud ya fue recibida. Espera un momento antes de intentarlo de nuevo.");
+      }
+      if (recent.length >= maxCreatesPerWindow) {
+        throw new BadRequestError("Se alcanzó el límite temporal de solicitudes. Intenta nuevamente más tarde.");
+      }
+      recent.push(now);
+      store[key] = recent;
+    }
+
     // Superusuarios (admin PB) pueden crear sin restricciones
     if (e.hasSuperuserAuth && e.hasSuperuserAuth()) {
       return e.next();
@@ -239,7 +415,7 @@
 
       // Validar que el tenant sea uno de los valores permitidos
       var tenant = String(e.record.get("tenant") || "").trim().toLowerCase();
-      if (!tenant || !VALID_TENANTS[tenant]) {
+      if (!tenant || (tenant !== "plaza_mayor" && tenant !== "casa_de_piedra")) {
         throw new BadRequestError("El campo tenant es obligatorio y debe ser un valor válido.");
       }
       e.record.set("tenant", tenant);

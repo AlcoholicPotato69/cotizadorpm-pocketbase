@@ -1014,6 +1014,50 @@ function safeArray(v) {
     if (typeof v === 'string') { try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch (e) { return []; } }
     return [];
 }
+function safeObject(v) {
+    if (!v) return {};
+    if (typeof v === 'object') return v;
+    if (typeof v === 'string') {
+        try {
+            const p = JSON.parse(v);
+            return p && typeof p === 'object' ? p : {};
+        } catch (e) {
+            return {};
+        }
+    }
+    return {};
+}
+function pmQuoteConvenioCovered(baseValue, deliveredValue, balanceValue) {
+    const balance = parseFloat(balanceValue);
+    if (Number.isFinite(balance)) return balance <= 0.009;
+    const base = Math.max(0, parseFloat(baseValue || 0) || 0);
+    const delivered = Math.max(0, parseFloat(deliveredValue || 0) || 0);
+    if (base <= 0) return false;
+    return delivered + 0.009 >= base;
+}
+function pmQuoteDetailBlocksIndefinitely(detail = {}) {
+    const row = detail && typeof detail === 'object' ? detail : {};
+    const flagged = row?.convenio_activo === true || row?.convenio_indefinido === true || row?.bloqueo_indefinido === true;
+    if (!flagged) return false;
+    return pmQuoteConvenioCovered(
+        row?.subtotal_espacio ?? row?.baseValue,
+        row?.convenio_monto_entregado ?? row?.convenioValue,
+        row?.convenio_balance
+    );
+}
+function pmQuoteOrderBlocksIndefinitely(order = {}, detailsOverride = null) {
+    const details = Array.isArray(detailsOverride) ? detailsOverride : safeArray(order?.espacios_detalle);
+    if (details.length) return details.some((detail) => pmQuoteDetailBlocksIndefinitely(detail));
+    const orderDetails = safeObject(order?.detalles_evento);
+    const convenio = safeObject(orderDetails?.convenio);
+    if (!(convenio?.activo === true && convenio?.bloqueo_indefinido === true)) return false;
+    const breakdown = safeObject(order?.desglose_precios);
+    return pmQuoteConvenioCovered(
+        breakdown?.convenio_base_total,
+        breakdown?.convenio_entregable_total,
+        breakdown?.convenio_balance_total ?? order?.precio_final
+    );
+}
 function rangesOverlap(aStart, aEnd, bStart, bEnd) {
     const s1 = toDateObj(aStart), e1 = toDateObj(aEnd);
     const s2 = toDateObj(bStart), e2 = toDateObj(bEnd);
@@ -1094,18 +1138,12 @@ async function fetchBlockedRangesForSpace(spaceId) {
     const out = [];
     (data || []).forEach(o => {
         const detail = safeArray(o.espacios_detalle);
-        const orderDetails = (o?.detalles_evento && typeof o.detalles_evento === 'object')
-            ? o.detalles_evento
-            : (() => {
-                try { return JSON.parse(o?.detalles_evento || '{}'); } catch (_) { return {}; }
-            })();
-        const orderConvenio = orderDetails?.convenio && typeof orderDetails.convenio === 'object' ? orderDetails.convenio : {};
-        const orderBlocksIndefinitely = orderConvenio?.activo === true && orderConvenio?.bloqueo_indefinido === true;
+        const orderBlocksIndefinitely = pmQuoteOrderBlocksIndefinitely(o, detail);
         if (detail.length) {
             detail.forEach(d => {
                 const dsid = String(d?.espacio_id || d?.space_id || '');
                 const fi = toDateISO(d?.fecha_inicio || '');
-                const ff = (d?.convenio_indefinido === true || d?.bloqueo_indefinido === true || orderBlocksIndefinitely)
+                const ff = pmQuoteDetailBlocksIndefinitely(d)
                     ? PM_CONVENIO_INDEFINITE_END
                     : toDateISO(d?.fecha_fin || '');
                 if (dsid === sid && fi && ff) out.push({ start: fi, end: ff, orderId: o.id });
@@ -1444,6 +1482,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadTaxes();
     await loadClientProfilesForQuoteModal();
     await loadCatalog(pmCatalogReadViewState());
+    if (IS_PM_QUOTE_PAGE) {
+        const preselect = new URLSearchParams(window.location.search || '').get('space');
+        if (preselect) setTimeout(() => window.openQuoteModal(preselect), 150);
+    }
 
     document.getElementById('mgr-type')?.addEventListener('change', function () {
         syncManagerTypeFields(this.value);
@@ -1883,7 +1925,8 @@ window.updateQuoteCalculation = function () {
         const concepts = cfg.concepts.map(normalizeQuoteConcept);
         const conceptsTotal = concepts.reduce((sum, concept) => sum + (parseFloat(concept.amount || concept.value || 0) || 0), 0);
         const baseValue = pricing.subtotal;
-        const taxableSubtotal = cfg.convenioEnabled ? (baseValue - conceptsTotal) : (baseValue + conceptsTotal);
+        const convenioCovered = cfg.convenioEnabled ? pmQuoteConvenioCovered(baseValue, conceptsTotal) : false;
+        const taxableSubtotal = cfg.convenioEnabled ? Math.max(0, baseValue - conceptsTotal) : (baseValue + conceptsTotal);
         let conceptsTax = 0;
         if (!cfg.convenioEnabled) {
             pricing.taxIds.forEach((tid) => {
@@ -1906,6 +1949,7 @@ window.updateQuoteCalculation = function () {
             customPriceMode: cfg.customPriceMode || 'total',
             customBasePrice: customBase,
             convenioEnabled: !!cfg.convenioEnabled,
+            convenioCovered,
             baseValue,
             convenioValue: conceptsTotal,
             subtotalBeforeTax: taxableSubtotal,
@@ -2226,6 +2270,8 @@ window.generatePDF = async function () {
         if (missingDates) return window.showToast(`Faltan fechas para ${missingDates.spaceName}.`, "error");
         const missingConvenio = spaces.find((sp) => !!sp.convenioEnabled && !(Array.isArray(sp.concepts) && sp.concepts.some(isQuoteConvenioConcept)));
         if (missingConvenio) return window.showToast(`Agrega al menos un trato de convenio para ${missingConvenio.spaceName}.`, "error");
+        const uncoveredConvenio = spaces.find((sp) => !!sp.convenioEnabled && !pmQuoteConvenioCovered(sp.baseValue, sp.convenioValue, sp.total));
+        if (uncoveredConvenio) return window.showToast(`El convenio de ${uncoveredConvenio.spaceName} debe cubrir al menos el valor total del espacio.`, "error");
     } else {
         if (!currentSpace) return window.showToast("Selecciona un espacio para cotizar.", "error");
         const startDate = document.getElementById('date-start')?.value || '';
@@ -2303,7 +2349,7 @@ window.generatePDF = async function () {
             impuestos_total: sp.taxTotal || 0,
             total_espacio: sp.total || 0,
             convenio_activo: !!sp.convenioEnabled,
-            convenio_indefinido: !!sp.convenioEnabled,
+            convenio_indefinido: false,
             convenio_items: convenioItems,
             // Nuevos campos para PDF
             material: fullSpace.material || null,
@@ -2443,18 +2489,12 @@ window.checkAvailability = async function () {
         (data || []).forEach(order => {
             let ranges = [];
             const detail = safeArray(order.espacios_detalle);
-            const orderDetails = (order?.detalles_evento && typeof order.detalles_evento === 'object')
-                ? order.detalles_evento
-                : (() => {
-                    try { return JSON.parse(order?.detalles_evento || '{}'); } catch (_) { return {}; }
-                })();
-            const orderConvenio = orderDetails?.convenio && typeof orderDetails.convenio === 'object' ? orderDetails.convenio : {};
-            const orderBlocksIndefinitely = orderConvenio?.activo === true && orderConvenio?.bloqueo_indefinido === true;
+            const orderBlocksIndefinitely = pmQuoteOrderBlocksIndefinitely(order, detail);
             if (detail.length) {
                 detail.forEach(d => {
                     const dsid = String(d?.espacio_id || d?.space_id || '');
                     const fi = toDateISO(d?.fecha_inicio || '');
-                    const ff = (d?.convenio_indefinido === true || d?.bloqueo_indefinido === true || orderBlocksIndefinitely)
+                    const ff = pmQuoteDetailBlocksIndefinitely(d)
                         ? PM_CONVENIO_INDEFINITE_END
                         : toDateISO(d?.fecha_fin || '');
                     if (dsid === sid && fi && ff) ranges.push({ start: fi, end: ff });

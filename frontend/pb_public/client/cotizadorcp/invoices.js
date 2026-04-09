@@ -25,6 +25,22 @@ let confirmCallback = null;
 let cpInvoicesRestoringViewState = false;
 const CP_INVOICES_VIEW_STATE_SCOPE = 'cp_invoices';
 
+function cpInvoicesParseJson(value) {
+    if (!value) return {};
+    if (typeof value === 'object') return value;
+    if (typeof value === 'string') {
+        try { return JSON.parse(value) || {}; } catch (_) { return {}; }
+    }
+    return {};
+}
+
+function cpInvoicesIsConvenioOrder(order = {}) {
+    const details = cpInvoicesParseJson(order?.detalles_evento);
+    if (details?.convenio?.activo === true) return true;
+    const spaces = cpInvoicesParseJson(order?.espacios_detalle);
+    return Array.isArray(spaces) && spaces.some((item) => item?.convenio_activo === true || item?.convenio_indefinido === true);
+}
+
 function cpInvoicesViewStateApi() {
     return window.__HUB_VIEW_STATE || null;
 }
@@ -129,7 +145,7 @@ async function loadOrders() {
         return;
     }
 
-    approvedOrders = data || [];
+    approvedOrders = (data || []).filter((order) => !cpInvoicesIsConvenioOrder(order));
     cpInvoicesRestoringViewState = true;
     filterOrders(document.getElementById('search-orders')?.value || '', { skipSave: true });
     cpInvoicesRestoringViewState = false;
@@ -290,6 +306,9 @@ function checkReady() {
 // SI EXISTE CONTRATO, SE CAMBIA STATUS A 'FINALIZADA'
 // =========================================================
 window.validateAndSaveInvoice = async function() {
+    if (selectedOrder && cpInvoicesIsConvenioOrder(selectedOrder)) {
+        return window.showToast("Las cotizaciones por convenio no requieren factura.", "error");
+    }
     if (!xmlData || !files.pdf) return;
     
     document.getElementById('loading-overlay').classList.remove('hidden');

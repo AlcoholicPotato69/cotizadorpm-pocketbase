@@ -267,7 +267,7 @@
                                             <button type="button" onclick="window.openOrderDatePicker('end')" class="text-gray-400 ml-2"><i class="fa-solid fa-calendar-days"></i></button>
                                         </div>
                                     </div>
-                                    <div>
+                                    <div id="oed-event-guests-field">
                                         <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Personas (Asistentes)</label>
                                         <input type="number" id="oed-guests" min="1" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold bg-white focus:border-brand-red outline-none" onchange="window.recalcTotal()">
                                     </div>
@@ -277,7 +277,42 @@
                                     </div>
                                 </div>
 
-                                <div class="mt-4 space-y-4">
+                                <div id="oed-publicidad-controls" class="hidden mt-4 grid grid-cols-1 xl:grid-cols-2 gap-4">
+                                    <label class="flex items-center gap-2 text-[11px] font-bold text-gray-700 cursor-pointer bg-slate-50 border border-gray-200 rounded-xl px-4 py-3">
+                                        <input id="oed-custom-permanence" type="checkbox" class="accent-brand-red" onchange="window.toggleOrderCustomPermanence()">
+                                        Usar fechas personalizadas
+                                    </label>
+                                    <label class="flex items-center gap-2 text-[11px] font-bold text-gray-700 cursor-pointer bg-slate-50 border border-gray-200 rounded-xl px-4 py-3">
+                                        <input id="oed-custom-price-enabled" type="checkbox" class="accent-brand-red" onchange="window.toggleOrderCustomPrice()">
+                                        Usar precio personalizado
+                                    </label>
+                                    <div id="oed-custom-price-wrap" class="hidden xl:col-span-2">
+                                        <div class="grid grid-cols-1 md:grid-cols-[220px_minmax(0,1fr)] gap-4">
+                                            <div>
+                                                <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Modo de Precio</label>
+                                                <select id="oed-space-custom-price-mode" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold bg-white focus:border-brand-red outline-none" onchange="window.changeOrderCustomPriceMode()">
+                                                    <option value="total">Total de la estancia</option>
+                                                    <option value="per_day">Precio por día</option>
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label id="oed-space-custom-price-label" class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Precio Personalizado del Espacio (antes de impuestos)</label>
+                                                <input type="number" id="oed-space-custom-price" min="0" step="0.01" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold bg-white focus:border-brand-red outline-none text-right" onchange="window.recalcTotal()">
+                                                <p id="oed-space-custom-price-hint" class="mt-1 text-[10px] text-gray-400">Define el total manual de la estancia seleccionada.</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div id="oed-convenio-card" class="hidden xl:col-span-2 rounded-2xl border border-amber-200 bg-amber-50/70 p-4">
+                                        <label class="flex items-center gap-2 text-[11px] font-bold text-gray-700 cursor-pointer">
+                                            <input id="oed-convenio-enabled" type="checkbox" class="accent-brand-red" onchange="window.toggleOrderConvenio()">
+                                            Activar convenio en este espacio
+                                        </label>
+                                        <p class="mt-2 text-[10px] text-amber-900/80 font-semibold">El espacio se cotiza al precio base del catálogo, la entrega se registra por evidencia y no requerirá factura, recibo ni contrato.</p>
+                                    </div>
+                                    <div id="oed-convenio-host-spaces" class="xl:col-span-2"></div>
+                                </div>
+
+                                <div id="oed-event-options-wrap" class="mt-4 space-y-4">
                                     <div class="flex flex-wrap gap-4 p-3 bg-slate-50 rounded-xl border border-gray-200">
                                         <label class="flex items-center gap-2 text-[11px] font-bold text-gray-600 cursor-pointer">
                                             <input id="oed-chk-premontaje" type="checkbox" class="accent-brand-red" onchange="window.toggleOrderPremontaje()">
@@ -380,6 +415,26 @@
                                         <tbody id="concepts-list" class="divide-y divide-gray-100 bg-white"></tbody>
                                     </table>
                                 </div>
+
+                                <div id="oed-convenio-host-financial">
+                                    <div id="oed-convenio-section" class="hidden bg-white p-5 rounded-2xl border border-amber-200 shadow-sm">
+                                        <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-3">
+                                            <div>
+                                                <h4 class="font-bold text-xs uppercase text-amber-700">Convenio Activo</h4>
+                                                <p class="mt-1 text-[11px] text-gray-500">Agrega uno o varios tratos indicando la cantidad a entregar y el monto manual de cada uno.</p>
+                                            </div>
+                                            <span class="shrink-0 px-3 py-1 rounded-full bg-amber-100 text-amber-700 text-[10px] font-black uppercase tracking-wide">Evidencia requerida</span>
+                                        </div>
+                                        <div class="flex flex-wrap gap-2">
+                                            <select id="oed-convenio-select" class="border rounded text-[10px] px-2 py-1 w-44"></select>
+                                            <input id="oed-convenio-qty" type="number" min="1" step="1" value="1" placeholder="Cantidad" class="border rounded text-[10px] px-2 py-1 w-20 text-center">
+                                                <input id="oed-convenio-amount" type="number" min="0" step="0.01" placeholder="Monto Manual" class="border rounded text-[10px] px-2 py-1 w-28 text-right">
+                                            <button onclick="window.addOrderConvenioItem()" class="bg-gray-900 hover:bg-brand-red text-white px-3 py-1 rounded text-[10px] font-black uppercase">Agregar</button>
+                                        </div>
+                                        <div id="oed-convenio-list" class="space-y-2"></div>
+                                        <p class="mt-3 text-[10px] text-gray-400">Antes de finalizar la cotización se solicitarán de 3 a 5 fotografías como evidencia de la entrega acordada.</p>
+                                    </div>
+                                </div>
                             </div>
 
                             <div class="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm flex flex-col h-full">
@@ -457,11 +512,11 @@
                         <div class="h-full min-h-0 grid grid-cols-1 xl:grid-cols-[minmax(320px,0.82fr)_minmax(0,1.09fr)_minmax(0,1.09fr)] gap-4 2xl:gap-6 items-stretch">
                             <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden min-h-0 flex flex-col">
                                 <div class="px-5 py-4 border-b border-gray-200">
-                                    <h4 class="font-black text-sm uppercase text-gray-700">Resumen General</h4>
-                                    <p class="text-[11px] text-gray-500 mt-1">Vista consolidada de la cotización completa.</p>
+                                    <h4 id="sum-general-title" class="font-black text-sm uppercase text-gray-700">Resumen General</h4>
+                                    <p id="sum-general-copy" class="text-[11px] text-gray-500 mt-1">Vista consolidada de la cotización completa.</p>
                                 </div>
                                 <div class="grid grid-cols-1 text-xs order-panel-scroll custom-scroll">
-                                    <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100"><span class="font-bold text-gray-400">Cotización</span><span id="sum-quote-name" class="font-bold text-right text-gray-800 max-w-[220px] break-words">--</span></div>
+                                    <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100"><span id="sum-label-name" class="font-bold text-gray-400">Cotización</span><span id="sum-quote-name" class="font-bold text-right text-gray-800 max-w-[220px] break-words">--</span></div>
                                     <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100"><span class="font-bold text-gray-400">Cliente</span><span id="sum-client" class="font-bold text-right text-gray-800 max-w-[220px] break-words">--</span></div>
                                     <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100"><span class="font-bold text-gray-400">Fechas Globales</span><span id="sum-dates" class="font-bold text-right text-gray-800 max-w-[220px] break-words">--</span></div>
                                     <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100"><span class="font-bold text-gray-400">Espacios</span><span id="sum-spaces-count" class="font-bold text-right text-gray-800">0</span></div>
@@ -479,16 +534,16 @@
 
                             <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden min-h-0 flex flex-col">
                                 <div class="px-5 py-4 border-b border-gray-200">
-                                    <h4 class="font-black text-sm uppercase text-gray-700">Resumen Financiero</h4>
-                                    <p class="text-[11px] text-gray-500 mt-1">Concentrado total y desglose financiero por espacio.</p>
+                                    <h4 id="sum-financial-title" class="font-black text-sm uppercase text-gray-700">Resumen Financiero</h4>
+                                    <p id="sum-financial-copy" class="text-[11px] text-gray-500 mt-1">Concentrado total y desglose financiero por espacio.</p>
                                 </div>
                                 <div id="sum-financial-list" class="order-panel-scroll custom-scroll p-5 space-y-3 bg-white"></div>
                             </div>
 
                             <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden min-h-0 flex flex-col">
                                 <div class="px-5 py-4 border-b border-gray-200">
-                                    <h4 class="font-black text-sm uppercase text-gray-700">Detalle por Espacio</h4>
-                                    <p class="text-[11px] text-gray-500 mt-1">Consulta cada espacio y su relación con el resumen financiero.</p>
+                                    <h4 id="sum-spaces-title" class="font-black text-sm uppercase text-gray-700">Detalle por Espacio</h4>
+                                    <p id="sum-spaces-copy" class="text-[11px] text-gray-500 mt-1">Consulta cada espacio y su relación con el resumen financiero.</p>
                                 </div>
                                 <div id="sum-spaces-list" class="order-panel-scroll custom-scroll p-5 space-y-2 bg-white"></div>
                             </div>
@@ -498,8 +553,8 @@
                     <section data-order-panel="expediente" class="hidden p-4 sm:p-5 xl:p-6 h-full min-h-0">
                         <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden flex flex-col min-h-0">
                             <div class="px-5 py-4 border-b border-gray-200">
-                                <h4 class="font-black text-sm uppercase text-gray-700">Expediente de la Cotización</h4>
-                                <p class="text-[11px] text-gray-500 mt-1">Consulta previews de documentos, snapshots guardados y genera archivos clave desde aquí.</p>
+                                <h4 id="expediente-title" class="font-black text-sm uppercase text-gray-700">Expediente de la Cotización</h4>
+                                <p id="expediente-copy" class="text-[11px] text-gray-500 mt-1">Consulta previews de documentos, snapshots guardados y genera archivos clave desde aquí.</p>
                             </div>
                             <!-- Nuevos botones solicitados -->
                             <div id="expediente-buttons" class="bg-white border-b border-gray-200 p-4 shadow-sm flex flex-col gap-3">
@@ -520,6 +575,7 @@
                                 <div id="payments-sub-buttons" class="hidden flex flex-wrap gap-2 pt-2 border-t border-gray-100">
                                     <!-- Aquí se inyectarán los botones de pago -->
                                 </div>
+                                <div id="expediente-evidence-buttons" class="hidden flex flex-wrap gap-2 pt-2 border-t border-gray-100"></div>
                             </div>
 <div id="oed-expediente-grid" class="order-doc-grid p-4 sm:p-5 min-h-[24rem] max-h-[calc(100vh-18rem)] overflow-y-auto custom-scroll" data-order-status="pendiente">
                                 <!-- Fila hora aprobación -->
@@ -887,9 +943,6 @@
     </div>
     <div id="toast-container" class="fixed top-20 right-4 z-[310] flex flex-col items-end pointer-events-none"></div>
     <script src="../js/pdf-margin-guides.js"></script>
-<script src="orders.js?v=20260329-native-pb14"></script>
+<script src="orders.js?v=20260409-cp-orders-pdf-v3"></script>
 </body>
 </html>
-
-
-

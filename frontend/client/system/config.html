@@ -551,52 +551,99 @@
       </div>
     </div>
 
-    <div id="v_materials" class="view hidden fade-in">
-      <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-          <div class="p-5 border-b border-gray-100">
-            <div class="text-[10px] font-black uppercase tracking-wider text-brand-red">Plaza Mayor</div>
-            <div class="text-sm font-black text-gray-800 mt-1">Materiales Disponibles</div>
-            <div class="text-xs text-gray-500 mt-1">Administra los materiales que aparecerán en el cotizador de Plaza Mayor.</div>
-          </div>
-          <div class="p-5">
-            <div class="flex gap-2 mb-4">
-              <input type="text" id="mat-new-name" placeholder="Nombre del material (ej. Vinyl, Lona, Acrílico)" class="flex-1 border border-gray-200 rounded-lg p-2.5 text-sm font-bold outline-none focus:border-brand-red">
-              <button type="button" id="btn-mat-add" onclick="window.addMaterialItem()" class="bg-brand-red text-white px-5 rounded-lg text-xs font-black uppercase hover:bg-red-700 transition shadow"><i class="fa-solid fa-plus mr-1"></i> Agregar</button>
+    <div id="v_materials" class="view hidden fade-in space-y-6">
+      <div id="materials-pm-section" class="space-y-6">
+        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+          <div class="text-[10px] font-black uppercase tracking-wider text-brand-red">Plaza Mayor</div>
+          <div class="text-sm font-black text-gray-800 mt-1">Materiales, Ubicaciones y Convenios</div>
+          <div class="text-xs text-gray-500 mt-1">Administra los catálogos auxiliares que usa el cotizador de Plaza Mayor.</div>
+        </div>
+        <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+          <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+            <div class="p-5 border-b border-gray-100">
+              <div class="text-[10px] font-black uppercase tracking-wider text-brand-red">Plaza Mayor</div>
+              <div class="text-sm font-black text-gray-800 mt-1">Materiales Disponibles</div>
+              <div class="text-xs text-gray-500 mt-1">Administra los materiales que aparecerán en el cotizador de Plaza Mayor.</div>
             </div>
-            <div id="mat-list" class="space-y-2"></div>
-            <p id="mat-empty" class="text-xs text-gray-400 italic text-center py-4 hidden">No hay materiales configurados.</p>
+            <div class="p-5">
+              <div class="flex gap-2 mb-4">
+                <input type="text" id="mat-new-name" placeholder="Nombre del material (ej. Vinyl, Lona, Acrílico)" class="flex-1 border border-gray-200 rounded-lg p-2.5 text-sm font-bold outline-none focus:border-brand-red">
+                <button type="button" id="btn-mat-add" onclick="window.addMaterialItem()" class="bg-brand-red text-white px-5 rounded-lg text-xs font-black uppercase hover:bg-red-700 transition shadow"><i class="fa-solid fa-plus mr-1"></i> Agregar</button>
+              </div>
+              <div id="mat-list" class="space-y-2"></div>
+              <p id="mat-empty" class="text-xs text-gray-400 italic text-center py-4 hidden">No hay materiales configurados.</p>
+            </div>
+          </div>
+          <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+            <div class="p-5 border-b border-gray-100">
+              <div class="text-[10px] font-black uppercase tracking-wider text-brand-red">Plaza Mayor</div>
+              <div class="text-sm font-black text-gray-800 mt-1">Ubicaciones Disponibles</div>
+              <div class="text-xs text-gray-500 mt-1">Administra las ubicaciones que podrás asignar a locales e islas en el catálogo.</div>
+            </div>
+            <div class="p-5">
+              <div class="flex gap-2 mb-4">
+                <input type="text" id="loc-new-name" placeholder="Nombre de la ubicación (ej. Planta Baja, Pasillo Central)" class="flex-1 border border-gray-200 rounded-lg p-2.5 text-sm font-bold outline-none focus:border-brand-red">
+                <button type="button" id="btn-loc-add" onclick="window.addLocationItem()" class="bg-brand-red text-white px-5 rounded-lg text-xs font-black uppercase hover:bg-red-700 transition shadow"><i class="fa-solid fa-plus mr-1"></i> Agregar</button>
+              </div>
+              <div id="loc-list" class="space-y-2"></div>
+              <p id="loc-empty" class="text-xs text-gray-400 italic text-center py-4 hidden">No hay ubicaciones configuradas.</p>
+            </div>
+          </div>
+          <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+            <div class="p-5 border-b border-gray-100">
+              <div class="text-[10px] font-black uppercase tracking-wider text-brand-red">Plaza Mayor</div>
+              <div class="text-sm font-black text-gray-800 mt-1">Convenios Disponibles</div>
+              <div class="text-xs text-gray-500 mt-1">Administra las opciones que aparecerán al activar convenio dentro del cotizador de Plaza Mayor.</div>
+            </div>
+            <div class="p-5">
+              <div class="flex gap-2 mb-4">
+                <input type="text" id="conv-new-name" placeholder="Nombre del convenio (ej. Patrocinio, Intercambio, Activación)" class="flex-1 border border-gray-200 rounded-lg p-2.5 text-sm font-bold outline-none focus:border-brand-red">
+                <button type="button" id="btn-conv-save" onclick="window.saveConvenioItem()" class="bg-brand-red text-white px-5 rounded-lg text-xs font-black uppercase hover:bg-red-700 transition shadow"><i class="fa-solid fa-plus mr-1"></i> Guardar</button>
+                <button type="button" id="btn-conv-cancel" onclick="window.cancelConvenioEdit()" class="hidden bg-gray-100 text-gray-600 px-4 rounded-lg text-xs font-black uppercase hover:bg-gray-200 transition">Cancelar</button>
+              </div>
+              <div id="conv-list" class="space-y-2"></div>
+              <p id="conv-empty" class="text-xs text-gray-400 italic text-center py-4 hidden">No hay convenios configurados.</p>
+            </div>
           </div>
         </div>
-        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-          <div class="p-5 border-b border-gray-100">
-            <div class="text-[10px] font-black uppercase tracking-wider text-brand-red">Plaza Mayor</div>
-            <div class="text-sm font-black text-gray-800 mt-1">Ubicaciones Disponibles</div>
-            <div class="text-xs text-gray-500 mt-1">Administra las ubicaciones que podrás asignar a locales e islas en el catálogo.</div>
-          </div>
-          <div class="p-5">
-            <div class="flex gap-2 mb-4">
-              <input type="text" id="loc-new-name" placeholder="Nombre de la ubicación (ej. Planta Baja, Pasillo Central)" class="flex-1 border border-gray-200 rounded-lg p-2.5 text-sm font-bold outline-none focus:border-brand-red">
-              <button type="button" id="btn-loc-add" onclick="window.addLocationItem()" class="bg-brand-red text-white px-5 rounded-lg text-xs font-black uppercase hover:bg-red-700 transition shadow"><i class="fa-solid fa-plus mr-1"></i> Agregar</button>
-            </div>
-            <div id="loc-list" class="space-y-2"></div>
-            <p id="loc-empty" class="text-xs text-gray-400 italic text-center py-4 hidden">No hay ubicaciones configuradas.</p>
-          </div>
+      </div>
+      <div id="materials-cp-section" class="hidden space-y-6">
+        <div class="bg-white rounded-2xl border border-amber-100 shadow-sm p-5">
+          <div class="text-[10px] font-black uppercase tracking-wider text-amber-500">Casa de Piedra</div>
+          <div class="text-sm font-black text-gray-800 mt-1">Materiales y Convenios</div>
+          <div class="text-xs text-gray-500 mt-1">Administra los materiales y opciones de convenio que usarán los espacios de publicidad en Casa de Piedra.</div>
         </div>
-        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-          <div class="p-5 border-b border-gray-100">
-            <div class="text-[10px] font-black uppercase tracking-wider text-brand-red">Plaza Mayor</div>
-            <div class="text-sm font-black text-gray-800 mt-1">Convenios Disponibles</div>
-            <div class="text-xs text-gray-500 mt-1">Administra las opciones que aparecerán al activar convenio dentro del cotizador de Plaza Mayor.</div>
-          </div>
-          <div class="p-5">
-            <div class="flex gap-2 mb-4">
-              <input type="text" id="conv-new-name" placeholder="Nombre del convenio (ej. Patrocinio, Intercambio, Activación)" class="flex-1 border border-gray-200 rounded-lg p-2.5 text-sm font-bold outline-none focus:border-brand-red">
-              <button type="button" id="btn-conv-save" onclick="window.saveConvenioItem()" class="bg-brand-red text-white px-5 rounded-lg text-xs font-black uppercase hover:bg-red-700 transition shadow"><i class="fa-solid fa-plus mr-1"></i> Guardar</button>
-              <button type="button" id="btn-conv-cancel" onclick="window.cancelConvenioEdit()" class="hidden bg-gray-100 text-gray-600 px-4 rounded-lg text-xs font-black uppercase hover:bg-gray-200 transition">Cancelar</button>
+        <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+            <div class="p-5 border-b border-gray-100">
+              <div class="text-[10px] font-black uppercase tracking-wider text-amber-500">Casa de Piedra</div>
+              <div class="text-sm font-black text-gray-800 mt-1">Materiales Disponibles</div>
+              <div class="text-xs text-gray-500 mt-1">Administra los materiales sugeridos para la publicidad de Casa de Piedra.</div>
             </div>
-            <div id="conv-list" class="space-y-2"></div>
-            <p id="conv-empty" class="text-xs text-gray-400 italic text-center py-4 hidden">No hay convenios configurados.</p>
+            <div class="p-5">
+              <div class="flex gap-2 mb-4">
+                <input type="text" id="cp-mat-new-name" placeholder="Nombre del material (ej. Lona, Vinil, Coroplast)" class="flex-1 border border-gray-200 rounded-lg p-2.5 text-sm font-bold outline-none focus:border-brand-red">
+                <button type="button" id="btn-cp-mat-add" onclick="window.addCpMaterialItem()" class="bg-brand-red text-white px-5 rounded-lg text-xs font-black uppercase hover:bg-red-700 transition shadow"><i class="fa-solid fa-plus mr-1"></i> Agregar</button>
+              </div>
+              <div id="cp-mat-list" class="space-y-2"></div>
+              <p id="cp-mat-empty" class="text-xs text-gray-400 italic text-center py-4 hidden">No hay materiales configurados.</p>
+            </div>
+          </div>
+          <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+            <div class="p-5 border-b border-gray-100">
+              <div class="text-[10px] font-black uppercase tracking-wider text-amber-500">Casa de Piedra</div>
+              <div class="text-sm font-black text-gray-800 mt-1">Convenios Disponibles</div>
+              <div class="text-xs text-gray-500 mt-1">Administra las opciones de convenio que podrán activarse en los espacios de publicidad de Casa de Piedra.</div>
+            </div>
+            <div class="p-5">
+              <div class="flex gap-2 mb-4">
+                <input type="text" id="cp-conv-new-name" placeholder="Nombre del convenio (ej. Patrocinio, Intercambio, Activación)" class="flex-1 border border-gray-200 rounded-lg p-2.5 text-sm font-bold outline-none focus:border-brand-red">
+                <button type="button" id="btn-cp-conv-save" onclick="window.saveCpConvenioItem()" class="bg-brand-red text-white px-5 rounded-lg text-xs font-black uppercase hover:bg-red-700 transition shadow"><i class="fa-solid fa-plus mr-1"></i> Guardar</button>
+                <button type="button" id="btn-cp-conv-cancel" onclick="window.cancelCpConvenioEdit()" class="hidden bg-gray-100 text-gray-600 px-4 rounded-lg text-xs font-black uppercase hover:bg-gray-200 transition">Cancelar</button>
+              </div>
+              <div id="cp-conv-list" class="space-y-2"></div>
+              <p id="cp-conv-empty" class="text-xs text-gray-400 italic text-center py-4 hidden">No hay convenios configurados.</p>
+            </div>
           </div>
         </div>
       </div>
@@ -2767,6 +2814,8 @@
       const cpPrem = document.getElementById('cp-pricing-cfg');
       const cpHora = document.getElementById('cp-hora-extra-cfg');
       const cpMenu = document.getElementById('menu-cp-settings');
+      const pmMaterials = document.getElementById('materials-pm-section');
+      const cpMaterials = document.getElementById('materials-cp-section');
 
       if (currentTenant === 'pm') {
         label.innerText = 'Plaza Mayor';
@@ -2784,7 +2833,9 @@
         if (cpMenu) cpMenu.classList.remove('hidden');
       }
       const matMenu = document.getElementById('menu-materials');
-      if (matMenu) matMenu.classList.toggle('hidden', currentTenant !== 'pm');
+      if (matMenu) matMenu.classList.remove('hidden');
+      if (pmMaterials) pmMaterials.classList.toggle('hidden', currentTenant !== 'pm');
+      if (cpMaterials) cpMaterials.classList.toggle('hidden', currentTenant !== 'cp');
 
       const isCP = currentTenant === 'cp';
       const isCpConfigView = isCP && currentView === 'v_cp_settings';
@@ -2814,15 +2865,16 @@
       if (btnLtrDefault) btnLtrDefault.disabled = !isAdminUser;
       const btnPdfSave = document.getElementById('btn-save-pdf-editor');
       if (btnPdfSave) btnPdfSave.disabled = !isAdminUser;
+      const btnCpMatAdd = document.getElementById('btn-cp-mat-add');
+      if (btnCpMatAdd) btnCpMatAdd.disabled = !isAdminUser;
+      const btnCpConvSave = document.getElementById('btn-cp-conv-save');
+      if (btnCpConvSave) btnCpConvSave.disabled = !isAdminUser;
     }
 
     window.setTenant = async (t) => {
       currentTenant = (t === 'cp') ? 'cp' : 'pm';
       activePocketBase = (currentTenant === 'cp') ? cpPocketBase : pmPocketBase;
       if (currentTenant !== 'cp' && currentView === 'v_cp_settings') {
-        currentView = 'v_concepts';
-      }
-      if (currentTenant === 'cp' && currentView === 'v_materials') {
         currentView = 'v_concepts';
       }
 
@@ -2853,6 +2905,10 @@
         await window.loadMaterialsList();
         await window.loadLocationsList();
         await window.loadConveniosList();
+      }
+      if(viewId === 'v_materials' && currentTenant === 'cp') {
+        await window.loadCpMaterialsList();
+        await window.loadCpConveniosList();
       }
       paintTenantUI();
     };
@@ -3382,6 +3438,182 @@
         if (__editingConvenioId === id) resetConvenioForm();
         await __saveConveniosToDB();
         renderConveniosList();
+      };
+
+      // ====== MATERIALES + CONVENIOS CP ======
+      let __cpMaterialItems = [];
+      let __cpMaterialsRecordId = null;
+      const __cpMaterialsTenant = 'casa_de_piedra';
+      window.loadCpMaterialsList = async function() {
+        try {
+          const { data, error } = await cpPocketBase
+            .from('configuracion')
+            .select('id,clave,valor_json,updated,updated_at,created,created_at')
+            .eq('tenant', __cpMaterialsTenant)
+            .eq('clave', 'materiales_cp');
+          if (error) throw error;
+          const row = pickLatestConfigRow(Array.isArray(data) ? data : (data ? [data] : []));
+          __cpMaterialsRecordId = row?.id || null;
+          const items = parseConfigJson(row?.valor_json)?.items;
+          __cpMaterialItems = Array.isArray(items) ? items.filter(Boolean) : [];
+        } catch (e) {
+          __cpMaterialItems = [];
+          __cpMaterialsRecordId = null;
+        }
+        renderCpMaterialsList();
+      };
+      function renderCpMaterialsList() {
+        const list = document.getElementById('cp-mat-list');
+        const empty = document.getElementById('cp-mat-empty');
+        if (!list) return;
+        list.innerHTML = '';
+        if (__cpMaterialItems.length === 0) {
+          if (empty) empty.classList.remove('hidden');
+          return;
+        }
+        if (empty) empty.classList.add('hidden');
+        __cpMaterialItems.forEach((name, idx) => {
+          list.innerHTML += `<div class="flex justify-between items-center bg-gray-50 border border-gray-100 p-3 rounded-lg"><span class="text-sm font-bold text-gray-700"><i class="fa-solid fa-palette text-amber-500 mr-2"></i>${name}</span><button onclick="window.removeCpMaterialItem(${idx})" class="text-gray-400 hover:text-red-500 transition text-xs"><i class="fa-solid fa-trash"></i></button></div>`;
+        });
+      }
+      async function __saveCpMaterialsToDB() {
+        try {
+          const payload = { tenant: __cpMaterialsTenant, clave: 'materiales_cp', valor_json: { items: __cpMaterialItems } };
+          if (__cpMaterialsRecordId) {
+            await cpPocketBase.from('configuracion').update(payload).eq('id', __cpMaterialsRecordId);
+          } else {
+            const { data } = await cpPocketBase.from('configuracion').insert(payload);
+            __cpMaterialsRecordId = data?.id || null;
+          }
+          showToast('Materiales de Casa de Piedra guardados.', 'success');
+        } catch (e) {
+          showToast('Error al guardar materiales de Casa de Piedra: ' + (e.message || e), 'error');
+        }
+      }
+      window.addCpMaterialItem = async function() {
+        const input = document.getElementById('cp-mat-new-name');
+        const name = (input?.value || '').trim();
+        if (!name) return showToast('Ingresa un nombre de material.', 'error');
+        if (__cpMaterialItems.includes(name)) return showToast('Ese material ya existe.', 'error');
+        __cpMaterialItems.push(name);
+        await __saveCpMaterialsToDB();
+        if (input) input.value = '';
+        renderCpMaterialsList();
+      };
+      window.removeCpMaterialItem = async function(idx) {
+        __cpMaterialItems.splice(idx, 1);
+        await __saveCpMaterialsToDB();
+        renderCpMaterialsList();
+      };
+
+      let __cpConvenioItems = [];
+      let __cpConveniosRecordId = null;
+      let __cpEditingConvenioId = null;
+      const __cpConveniosTenant = 'casa_de_piedra';
+      function resetCpConvenioForm() {
+        __cpEditingConvenioId = null;
+        const input = document.getElementById('cp-conv-new-name');
+        const saveBtn = document.getElementById('btn-cp-conv-save');
+        const cancelBtn = document.getElementById('btn-cp-conv-cancel');
+        if (input) input.value = '';
+        if (saveBtn) saveBtn.innerHTML = '<i class="fa-solid fa-plus mr-1"></i> Guardar';
+        if (cancelBtn) cancelBtn.classList.add('hidden');
+      }
+      function renderCpConveniosList() {
+        const list = document.getElementById('cp-conv-list');
+        const empty = document.getElementById('cp-conv-empty');
+        if (!list) return;
+        list.innerHTML = '';
+        if (__cpConvenioItems.length === 0) {
+          if (empty) empty.classList.remove('hidden');
+          return;
+        }
+        if (empty) empty.classList.add('hidden');
+        __cpConvenioItems.forEach((item, idx) => {
+          list.innerHTML += `<div class="flex justify-between items-center bg-gray-50 border border-gray-100 p-3 rounded-lg gap-3">
+            <div class="min-w-0">
+              <span class="text-sm font-bold text-gray-700 block truncate"><i class="fa-solid fa-handshake text-amber-500 mr-2"></i>${item.nombre}</span>
+              <span class="text-[10px] text-gray-400 font-bold uppercase tracking-wide">Opción ${idx + 1}</span>
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+              <button type="button" onclick="window.editCpConvenioItem('${item.id}')" class="w-8 h-8 rounded-lg bg-white border border-gray-200 text-blue-600 hover:bg-blue-50 transition"><i class="fa-solid fa-pen"></i></button>
+              <button type="button" onclick="window.removeCpConvenioItem('${item.id}')" class="w-8 h-8 rounded-lg bg-white border border-gray-200 text-red-500 hover:bg-red-50 transition"><i class="fa-solid fa-trash"></i></button>
+            </div>
+          </div>`;
+        });
+      }
+      async function __saveCpConveniosToDB() {
+        try {
+          const payload = { tenant: __cpConveniosTenant, clave: 'convenios_cp', valor_json: { items: __cpConvenioItems } };
+          if (__cpConveniosRecordId) {
+            await cpPocketBase.from('configuracion').update(payload).eq('id', __cpConveniosRecordId);
+          } else {
+            const { data } = await cpPocketBase.from('configuracion').insert(payload);
+            __cpConveniosRecordId = data?.id || null;
+          }
+          showToast('Convenios de Casa de Piedra guardados.', 'success');
+        } catch (e) {
+          showToast('Error al guardar convenios de Casa de Piedra: ' + (e.message || e), 'error');
+          throw e;
+        }
+      }
+      window.loadCpConveniosList = async function() {
+        try {
+          const { data, error } = await cpPocketBase
+            .from('configuracion')
+            .select('id,clave,valor_json,updated,updated_at,created,created_at')
+            .eq('tenant', __cpConveniosTenant)
+            .eq('clave', 'convenios_cp');
+          if (error) throw error;
+          const row = pickLatestConfigRow(Array.isArray(data) ? data : (data ? [data] : []));
+          __cpConveniosRecordId = row?.id || null;
+          const items = parseConfigJson(row?.valor_json)?.items;
+          __cpConvenioItems = normalizeConvenioItems(items);
+        } catch (e) {
+          __cpConvenioItems = [];
+          __cpConveniosRecordId = null;
+        }
+        resetCpConvenioForm();
+        renderCpConveniosList();
+      };
+      window.saveCpConvenioItem = async function() {
+        const input = document.getElementById('cp-conv-new-name');
+        const nombre = normalizeConvenioName(input?.value || '');
+        if (!nombre) return showToast('Ingresa un nombre de convenio.', 'error');
+        const duplicate = __cpConvenioItems.find((item) => item.nombre.toLowerCase() === nombre.toLowerCase() && item.id !== __cpEditingConvenioId);
+        if (duplicate) return showToast('Ese convenio ya existe.', 'error');
+        if (__cpEditingConvenioId) {
+          __cpConvenioItems = __cpConvenioItems.map((item) => item.id === __cpEditingConvenioId ? { ...item, nombre } : item);
+        } else {
+          __cpConvenioItems.push({ id: `cp_conv_${Date.now()}_${Math.floor(Math.random() * 1000)}`, nombre });
+        }
+        __cpConvenioItems = normalizeConvenioItems(__cpConvenioItems);
+        await __saveCpConveniosToDB();
+        resetCpConvenioForm();
+        renderCpConveniosList();
+      };
+      window.editCpConvenioItem = function(id) {
+        const item = __cpConvenioItems.find((entry) => entry.id === id);
+        if (!item) return;
+        __cpEditingConvenioId = item.id;
+        const input = document.getElementById('cp-conv-new-name');
+        const saveBtn = document.getElementById('btn-cp-conv-save');
+        const cancelBtn = document.getElementById('btn-cp-conv-cancel');
+        if (input) {
+          input.value = item.nombre;
+          input.focus();
+        }
+        if (saveBtn) saveBtn.innerHTML = '<i class="fa-solid fa-floppy-disk mr-1"></i> Actualizar';
+        if (cancelBtn) cancelBtn.classList.remove('hidden');
+      };
+      window.cancelCpConvenioEdit = function() {
+        resetCpConvenioForm();
+      };
+      window.removeCpConvenioItem = async function(id) {
+        __cpConvenioItems = __cpConvenioItems.filter((item) => item.id !== id);
+        if (__cpEditingConvenioId === id) resetCpConvenioForm();
+        await __saveCpConveniosToDB();
+        renderCpConveniosList();
       };
 
       // --- LOGICA DE USUARIOS ---

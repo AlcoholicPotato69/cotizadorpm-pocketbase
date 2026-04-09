@@ -31,7 +31,11 @@ let chartInstances = {
     revenue: null,
     days: null,
     montajeDays: null,
-    conceptRevenue: null
+    conceptRevenue: null,
+    convenioTimeline: null,
+    convenioSpaces: null,
+    convenioDays: null,
+    convenioDeals: null
 };
 
 function hashColorKey(value) {
@@ -106,6 +110,74 @@ function getOrderSubtotal(order) {
     const sub = parseFloat(desg.subtotal_antes_impuestos ?? desg.total_sin_impuestos ?? desg.subtotal ?? 0);
     if (Number.isFinite(sub) && sub > 0) return sub;
     return parseFloat(order?.precio_final || 0) || 0;
+}
+
+function parseConvenioMeta(order) {
+    const details = safeObj(order?.detalles_evento);
+    const raw = safeObj(details?.convenio);
+    return {
+        activo: raw?.activo === true,
+        items: safeArray(raw?.items),
+        espacios: safeArray(raw?.espacios),
+        evidencias: safeArray(raw?.evidencias)
+    };
+}
+
+function isConvenioOrder(order) {
+    const meta = parseConvenioMeta(order);
+    if (meta.activo) return true;
+    return safeArray(order?.espacios_detalle).some(detail => detail?.convenio_activo === true || detail?.convenio_indefinido === true);
+}
+
+function normalizeConvenioItem(item, fallback = {}) {
+    const quantity = Math.max(1, parseInt(item?.cantidad_entrega || item?.cantidad || 1, 10) || 1);
+    const amount = Math.max(0, parseFloat(item?.monto ?? item?.amount ?? item?.value ?? 0) || 0);
+    return {
+        name: String(item?.nombre || item?.convenio_nombre || item?.description || 'Convenio').trim() || 'Convenio',
+        quantity,
+        amount,
+        spaceId: String(item?.espacio_id || item?.space_id || fallback.spaceId || '').trim(),
+        spaceName: String(item?.espacio_nombre || fallback.spaceName || '').trim()
+    };
+}
+
+function getConvenioItems(order) {
+    const meta = parseConvenioMeta(order);
+    const metaItems = meta.items.map(item => normalizeConvenioItem(item)).filter(item => item.name);
+    if (metaItems.length) return metaItems;
+
+    const detailItems = safeArray(order?.espacios_detalle).flatMap(detail => (
+        safeArray(detail?.convenio_items).map(item => normalizeConvenioItem(item, {
+            spaceId: detail?.espacio_id || detail?.space_id || '',
+            spaceName: detail?.espacio_nombre || ''
+        }))
+    )).filter(item => item.name);
+    if (detailItems.length) return detailItems;
+
+    return safeArray(order?.conceptos_adicionales)
+        .filter(concept => concept?.meta?.convenio_option_id || concept?.meta?.convenio_nombre)
+        .map(concept => normalizeConvenioItem({
+            nombre: concept?.meta?.convenio_nombre || concept?.description || concept?.nombre || 'Convenio',
+            cantidad_entrega: concept?.meta?.cantidad_entrega || 1,
+            monto: concept?.amount ?? concept?.value ?? 0,
+            espacio_id: concept?.meta?.space_id || concept?.meta?.spaceId || '',
+            espacio_nombre: concept?.meta?.space_name || ''
+        }))
+        .filter(item => item.name);
+}
+
+function getConvenioDealCount(order) {
+    return getConvenioItems(order).reduce((sum, item) => sum + item.quantity, 0);
+}
+
+function getConvenioItemsBySpace(order) {
+    const spaceEntries = getOrderSpaceEntries(order);
+    const items = getConvenioItems(order);
+    return spaceEntries.map(entry => {
+        let matched = items.filter(item => String(item.spaceId || '') === String(entry.spaceId || ''));
+        if (!matched.length && spaceEntries.length === 1) matched = items;
+        return { entry, items: matched };
+    });
 }
 
 function getOrderSpaceEntries(order) {
@@ -240,6 +312,48 @@ function renderClientAnalytics(activeOrders) {
     const scoped = spaceId ? (activeOrders || []).filter(o => orderContainsSpace(o, spaceId)) : activeOrders;
     const spaceRows = computeClientAnalytics(scoped).slice(0, 10);
     renderClientRows('tbl-top-clients-space', spaceRows);
+}
+
+function renderConvenioClientRows(tbodyId, rows) {
+    const tb = document.getElementById(tbodyId);
+    if (!tb) return;
+    tb.innerHTML = '';
+    if (!rows.length) {
+        tb.innerHTML = '<tr><td colspan="3" class="py-3 text-center text-gray-400 text-xs">Sin datos</td></tr>';
+        return;
+    }
+    rows.forEach(r => {
+        const tr = document.createElement('tr');
+        tr.className = 'border-b last:border-b-0';
+        tr.innerHTML = `
+            <td class="py-2">
+                <div class="font-bold text-gray-800 text-xs">${(r.name || '—')}</div>
+                <div class="text-[11px] text-gray-400">${r.email || ''}</div>
+            </td>
+            <td class="py-2 text-right font-black text-gray-700">${r.count}</td>
+            <td class="py-2 text-right font-black text-gray-700">${r.deals}</td>
+        `;
+        tb.appendChild(tr);
+    });
+}
+
+function computeConvenioClientAnalytics(orders) {
+    const map = {};
+    (orders || []).forEach(o => {
+        if (!o || !['aprobada', 'finalizada'].includes(o.status)) return;
+        const key = o.cliente_id || (o.cliente_email ? (`email:${o.cliente_email}`) : (`name:${o.cliente_nombre || ''}`));
+        if (!map[key]) map[key] = { key, count: 0, deals: 0, name: '', email: '' };
+        map[key].count += 1;
+        map[key].deals += getConvenioDealCount(o);
+        if (o.cliente_id && clientsById[o.cliente_id]) {
+            map[key].name = clientsById[o.cliente_id].nombre_completo || map[key].name;
+            map[key].email = clientsById[o.cliente_id].correo || map[key].email;
+        } else {
+            map[key].name = map[key].name || (o.cliente_nombre || '');
+            map[key].email = map[key].email || (o.cliente_email || '');
+        }
+    });
+    return Object.values(map).sort((a, b) => (b.count - a.count) || (b.deals - a.deals));
 }
 
 function initFilters() {
@@ -480,8 +594,10 @@ window.generateReports = function () {
     const typeFilter = document.getElementById('report-type-filter')?.value || 'all';
 
     const activeOrders = (allOrders || []).filter(o => {
-        if (!o?.fecha_inicio) return false;
-        const [y, m] = String(o.fecha_inicio).split('-');
+        if (isConvenioOrder(o)) return false;
+        const start = normalizeDate(o?.fecha_inicio);
+        if (!start) return false;
+        const [y, m] = start.split('-');
         if (yearFilter && y !== String(yearFilter)) return false;
         if (monthFilter && monthFilter !== 'all' && m !== monthFilter) return false;
         if (!orderMatchesType(o, typeFilter)) return false;
@@ -561,6 +677,218 @@ window.generateReports = function () {
     renderWeekdayCharts(dayCount, montajeDayCount);
     renderConceptRevenueChart(conceptRevenueMap);
     renderClientAnalytics(activeOrders);
+    if (!document.getElementById('convenio-reports-section')?.classList.contains('hidden')) {
+        try { window.generateConvenioReports(); } catch (_) {}
+    }
+};
+
+function updateConvenioToggleButton() {
+    const btn = document.getElementById('btn-toggle-convenio-reports');
+    const visible = !document.getElementById('convenio-reports-section')?.classList.contains('hidden');
+    if (!btn) return;
+    btn.innerHTML = visible
+        ? '<i class="fa-solid fa-chart-line"></i> Ver Generales'
+        : '<i class="fa-solid fa-handshake"></i> Ver Convenios';
+}
+
+function syncConvenioReportsView() {
+    const convenioVisible = !document.getElementById('convenio-reports-section')?.classList.contains('hidden');
+    const standardSection = document.getElementById('standard-reports-section');
+    if (standardSection) standardSection.classList.toggle('hidden', convenioVisible);
+}
+
+window.toggleConvenioReports = function toggleConvenioReports() {
+    const section = document.getElementById('convenio-reports-section');
+    if (!section) return;
+    const shouldShow = section.classList.contains('hidden');
+    section.classList.toggle('hidden', !shouldShow);
+    syncConvenioReportsView();
+    updateConvenioToggleButton();
+    if (shouldShow) window.generateConvenioReports();
+    else window.generateReports();
+};
+
+window.generateConvenioReports = function generateConvenioReports() {
+    const yearFilter = String(document.getElementById('report-year-filter')?.value || '');
+    const monthFilter = String(document.getElementById('report-month-filter')?.value || 'all');
+    const typeFilter = String(document.getElementById('report-type-filter')?.value || 'all');
+    const activeOrders = (allOrders || []).filter(order => {
+        if (!isConvenioOrder(order)) return false;
+        const start = normalizeDate(order?.fecha_inicio);
+        if (!start) return false;
+        const [year, month] = start.split('-');
+        if (yearFilter && year !== yearFilter) return false;
+        if (monthFilter !== 'all' && month !== monthFilter) return false;
+        if (!orderMatchesType(order, typeFilter)) return false;
+        return true;
+    });
+
+    const aprobados = activeOrders.filter(order => order.status === 'aprobada');
+    const finalizados = activeOrders.filter(order => order.status === 'finalizada');
+    const dealCount = activeOrders.reduce((sum, order) => sum + getConvenioDealCount(order), 0);
+    const conversionRate = activeOrders.length > 0 ? ((finalizados.length / activeOrders.length) * 100).toFixed(1) : '0.0';
+
+    const totalEl = document.getElementById('conv-rpt-total');
+    const approvedEl = document.getElementById('conv-rpt-approved');
+    const finalizedEl = document.getElementById('conv-rpt-finalized');
+    const rateEl = document.getElementById('conv-rpt-rate');
+    const dealsEl = document.getElementById('conv-rpt-deals');
+    if (totalEl) totalEl.innerText = activeOrders.length;
+    if (approvedEl) approvedEl.innerText = aprobados.length;
+    if (finalizedEl) finalizedEl.innerText = finalizados.length;
+    if (rateEl) rateEl.innerText = `${conversionRate}%`;
+    if (dealsEl) dealsEl.innerText = dealCount;
+
+    const timelineChart = document.getElementById('convenioTimelineChart');
+    if (timelineChart) {
+        if (chartInstances.convenioTimeline) chartInstances.convenioTimeline.destroy();
+        let labels = [];
+        let values = [];
+        if (monthFilter === 'all') {
+            labels = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+            values = new Array(12).fill(0);
+            activeOrders.forEach(order => {
+                const monthIndex = parseInt(String(order?.fecha_inicio || '').split('-')[1], 10) - 1;
+                if (monthIndex >= 0 && monthIndex < 12) values[monthIndex] += 1;
+            });
+        } else {
+            const daysInMonth = new Date(parseInt(yearFilter, 10), parseInt(monthFilter, 10), 0).getDate();
+            labels = Array.from({ length: daysInMonth }, (_, index) => String(index + 1));
+            values = new Array(daysInMonth).fill(0);
+            activeOrders.forEach(order => {
+                const dayIndex = parseInt(String(order?.fecha_inicio || '').split('-')[2], 10) - 1;
+                if (dayIndex >= 0 && dayIndex < daysInMonth) values[dayIndex] += 1;
+            });
+        }
+        const gradient = timelineChart.getContext('2d').createLinearGradient(0, 0, 0, 300);
+        gradient.addColorStop(0, 'rgba(245, 158, 11, 0.18)');
+        gradient.addColorStop(1, 'rgba(245, 158, 11, 0)');
+        chartInstances.convenioTimeline = new Chart(timelineChart, {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [{
+                    label: 'Convenios',
+                    data: values,
+                    borderColor: '#F59E0B',
+                    backgroundColor: gradient,
+                    borderWidth: 2,
+                    pointBackgroundColor: '#fff',
+                    pointBorderColor: '#F59E0B',
+                    pointRadius: 3,
+                    fill: true,
+                    tension: 0.35
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    y: { beginAtZero: true, ticks: { stepSize: 1 } },
+                    x: { grid: { display: false } }
+                }
+            }
+        });
+    }
+
+    const convenioSpaceSummary = {};
+    activeOrders.forEach(order => {
+        const groups = getConvenioItemsBySpace(order);
+        groups.forEach(group => {
+            const sid = String(group?.entry?.spaceId || '').trim();
+            if (!sid) return;
+            if (!convenioSpaceSummary[sid]) {
+                convenioSpaceSummary[sid] = {
+                    id: sid,
+                    label: group.entry.spaceName || 'Espacio',
+                    count: 0,
+                    deals: 0
+                };
+            }
+            convenioSpaceSummary[sid].count += 1;
+            convenioSpaceSummary[sid].deals += group.items.reduce((sum, item) => sum + item.quantity, 0);
+        });
+    });
+    const convenioSpaceEntries = Object.values(convenioSpaceSummary).sort((a, b) => (b.count - a.count) || (b.deals - a.deals));
+    const convenioSpacesChart = document.getElementById('convenioSpacesChart');
+    if (convenioSpacesChart) {
+        if (chartInstances.convenioSpaces) chartInstances.convenioSpaces.destroy();
+        const labels = convenioSpaceEntries.map(entry => entry.label);
+        const values = convenioSpaceEntries.map(entry => entry.count);
+        const colors = convenioSpaceEntries.map(entry => getSpaceColor(entry.id));
+        const tbody = document.getElementById('conv-rpt-table-spaces');
+        if (tbody) {
+            tbody.innerHTML = '';
+            convenioSpaceEntries.forEach((entry, index) => {
+                tbody.innerHTML += `<tr><td class="p-2 text-xs flex items-center gap-2 border-b border-gray-50"><span class="w-2 h-2 rounded-full flex-shrink-0" style="background:${colors[index]}"></span><span class="truncate font-medium text-gray-600">${entry.label}</span></td><td class="text-right text-xs font-bold text-gray-800 border-b border-gray-50">${entry.count}</td><td class="text-right text-xs text-gray-400 border-b border-gray-50 pr-2">${entry.deals}</td></tr>`;
+            });
+            if (!convenioSpaceEntries.length) tbody.innerHTML = '<tr><td colspan="3" class="py-3 text-center text-gray-400 text-xs">Sin datos</td></tr>';
+        }
+        chartInstances.convenioSpaces = new Chart(convenioSpacesChart, {
+            type: 'doughnut',
+            data: { labels, datasets: [{ data: values, backgroundColor: colors, borderWidth: 0, hoverOffset: 4 }] },
+            options: { responsive: true, maintainAspectRatio: false, cutout: '75%', plugins: { legend: { display: false } } }
+        });
+    }
+
+    const convenioDaysChart = document.getElementById('convenioDaysChart');
+    if (convenioDaysChart) {
+        if (chartInstances.convenioDays) chartInstances.convenioDays.destroy();
+        const dayCount = [0, 0, 0, 0, 0, 0, 0];
+        activeOrders.filter(order => ['aprobada', 'finalizada'].includes(order.status)).forEach(order => {
+            const idx = getWeekIndex(order?.fecha_inicio);
+            if (idx >= 0) dayCount[idx] += 1;
+        });
+        chartInstances.convenioDays = new Chart(convenioDaysChart, {
+            type: 'bar',
+            data: {
+                labels: WEEK_SHORT,
+                datasets: [{ label: 'Convenios', data: dayCount, backgroundColor: 'rgba(245, 158, 11, 0.55)', borderRadius: 4 }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    y: { beginAtZero: true, ticks: { stepSize: 1 } },
+                    x: { grid: { display: false } }
+                }
+            }
+        });
+    }
+
+    const dealSummary = {};
+    activeOrders.forEach(order => {
+        getConvenioItems(order).forEach(item => {
+            const key = item.name || 'Convenio';
+            dealSummary[key] = (dealSummary[key] || 0) + item.quantity;
+        });
+    });
+    const topDeals = Object.entries(dealSummary).sort((a, b) => b[1] - a[1]).slice(0, 6);
+    const convenioDealsChart = document.getElementById('convenioDealsChart');
+    if (convenioDealsChart) {
+        if (chartInstances.convenioDeals) chartInstances.convenioDeals.destroy();
+        chartInstances.convenioDeals = new Chart(convenioDealsChart, {
+            type: 'bar',
+            indexAxis: 'y',
+            data: {
+                labels: topDeals.map(item => item[0]),
+                datasets: [{ label: 'Entregas acordadas', data: topDeals.map(item => item[1]), backgroundColor: 'rgba(251, 191, 36, 0.65)', borderRadius: 4 }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { beginAtZero: true, ticks: { stepSize: 1 } },
+                    y: { grid: { display: false } }
+                }
+            }
+        });
+    }
+
+    renderConvenioClientRows('tbl-top-convenio-clients', computeConvenioClientAnalytics(activeOrders).slice(0, 10));
 };
 
 async function loadData() {
@@ -636,6 +964,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadData();
     initFilters();
     fillClientSpaceFilter();
+    syncConvenioReportsView();
+    updateConvenioToggleButton();
     window.generateReports();
 });
 

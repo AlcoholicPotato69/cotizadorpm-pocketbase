@@ -639,6 +639,22 @@ let pendingAction = null;
 let defaultTemplateFile = '';
 let __contractsTemplateLetterheadEnabled = true;
 
+function cpContractsParseJson(value) {
+    if (!value) return {};
+    if (typeof value === 'object') return value;
+    if (typeof value === 'string') {
+        try { return JSON.parse(value) || {}; } catch (_) { return {}; }
+    }
+    return {};
+}
+
+function cpContractsIsConvenioOrder(order = {}) {
+    const details = cpContractsParseJson(order?.detalles_evento);
+    if (details?.convenio?.activo === true) return true;
+    const spaces = cpContractsParseJson(order?.espacios_detalle);
+    return Array.isArray(spaces) && spaces.some((item) => item?.convenio_activo === true || item?.convenio_indefinido === true);
+}
+
 function cpContractsViewStateApi() {
     return window.__HUB_VIEW_STATE || null;
 }
@@ -3311,7 +3327,7 @@ async function loadApprovedOrders() {
         if (error) throw error;
 
         console.log(`Órdenes cargadas: ${data?.length || 0}`);
-        approvedOrders = data || [];
+        approvedOrders = (data || []).filter((order) => !cpContractsIsConvenioOrder(order));
         cpContractsRestoringViewState = true;
         cpContractsFilterApprovedOrders(document.getElementById('search-approved')?.value || '', { skipSave: true });
         cpContractsRestoringViewState = false;

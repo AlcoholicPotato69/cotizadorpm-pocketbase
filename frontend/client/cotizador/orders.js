@@ -1026,11 +1026,35 @@ function __pmIsConvenioOrder(order = {}) {
     return details.some((detail) => detail?.convenio_activo === true || detail?.convenio_indefinido === true);
 }
 
+function __pmConvenioCovered(baseValue, deliveredValue, balanceValue = undefined) {
+    const balance = parseFloat(balanceValue);
+    if (Number.isFinite(balance)) return balance <= 0.009;
+    const base = Math.max(0, parseFloat(baseValue || 0) || 0);
+    const delivered = Math.max(0, parseFloat(deliveredValue || 0) || 0);
+    if (base <= 0) return false;
+    return delivered + 0.009 >= base;
+}
+function __pmSpaceDetailBlocksIndefinitely(detail = {}) {
+    const row = detail && typeof detail === 'object' ? detail : {};
+    const flagged = row?.convenio_activo === true || row?.convenio_indefinido === true || row?.bloqueo_indefinido === true;
+    if (!flagged) return false;
+    return __pmConvenioCovered(
+        row?.subtotal_espacio ?? row?.baseValue,
+        row?.convenio_monto_entregado ?? row?.convenioValue,
+        row?.convenio_balance
+    );
+}
 function __pmOrderBlocksIndefinitely(order = {}) {
     const meta = __pmParseConvenioMeta(order);
-    if (meta.activo && meta.bloqueo_indefinido) return true;
     const details = __pmParseRecordJson(order?.espacios_detalle);
-    return Array.isArray(details) && details.some((detail) => detail?.convenio_indefinido === true || detail?.bloqueo_indefinido === true);
+    if (Array.isArray(details) && details.length) return details.some((detail) => __pmSpaceDetailBlocksIndefinitely(detail));
+    if (!(meta.activo && meta.bloqueo_indefinido)) return false;
+    const breakdown = __pmParseRecordJson(order?.desglose_precios);
+    return __pmConvenioCovered(
+        breakdown?.convenio_base_total,
+        breakdown?.convenio_entregable_total,
+        breakdown?.convenio_balance_total ?? order?.precio_final
+    );
 }
 
 function __pmNormalizeSpaceConvenioFlag(value, fallback = true) {
@@ -5523,7 +5547,7 @@ window.getOrderHTML = function(o, type) {
             const mUnidad = detailMaterialMeasure.medida_unidad || 'M';
             const mDetail = __pmResolvePdfSpaceDetail(sp, catalogSpace);
             const measuresStr = (mAncho !== null && mAncho !== undefined && mAlto !== null && mAlto !== undefined) ? `${mAncho}x${mAlto} ${mUnidad}` : '--';
-            const dateRangeLabel = (isConvenio && (sp?.convenio_indefinido === true || sp?.bloqueo_indefinido === true))
+            const dateRangeLabel = (isConvenio && __pmSpaceDetailBlocksIndefinitely(sp))
                 ? `${window.safeFormatDate(sp.fecha_inicio)}<br>Indefinido`
                 : `${window.safeFormatDate(sp.fecha_inicio)}<br>${window.safeFormatDate(sp.fecha_fin)}`;
             rowsHtml += `<tr><td class="py-2 px-3 align-top break-words">${__pmRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(mDetail)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(measuresStr)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${dateRangeLabel}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${__pmFormatMoneyHtml(spSubtotal)}</td></tr>`;
@@ -5538,7 +5562,7 @@ window.getOrderHTML = function(o, type) {
         const measuresStr = (mAncho !== null && mAncho !== undefined && mAlto !== null && mAlto !== undefined) ? `${mAncho}x${mAlto} ${mUnidad}` : '--';
         runningSubtotal = rentalTotal;
         convenioBaseTotal = rentalTotal;
-        rowsHtml = `<tr><td class="py-2 px-3 align-top break-words">${__pmRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(mDetail)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(measuresStr)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${isConvenio ? `${window.safeFormatDate(o.fecha_inicio)}<br>Indefinido` : `${window.safeFormatDate(o.fecha_inicio)}<br>${window.safeFormatDate(o.fecha_fin)}`}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${__pmFormatMoneyHtml(rentalTotal)}</td></tr>`;
+        rowsHtml = `<tr><td class="py-2 px-3 align-top break-words">${__pmRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(mDetail)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(measuresStr)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmOrderBlocksIndefinitely(o) ? `${window.safeFormatDate(o.fecha_inicio)}<br>Indefinido` : `${window.safeFormatDate(o.fecha_inicio)}<br>${window.safeFormatDate(o.fecha_fin)}`}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${__pmFormatMoneyHtml(rentalTotal)}</td></tr>`;
     }
     
     const cArray = __pmNormalizeConceptsArray(o.conceptos_adicionales);
@@ -5600,6 +5624,103 @@ window.getOrderHTML = function(o, type) {
     }
     
     const pageBaseHeight = Number(__pmContentBaseHeightPx().toFixed(2));
+    if (isConvenio && !isOrder) {
+        const venueName = 'Plaza Mayor';
+        const convenioMeta = __pmParseConvenioMeta(o);
+        const convenioItems = convenioMeta.items.length
+            ? convenioMeta.items
+            : (Array.isArray(cArray) ? cArray : [])
+                .filter((concept) => __pmIsConvenioConceptItem(concept))
+                .map((concept) => ({
+                    id: String(concept?.meta?.convenio_option_id || '').trim() || null,
+                    nombre: __pmNormalizeConvenioName(concept?.meta?.convenio_nombre || concept.description || 'Convenio') || 'Convenio',
+                    cantidad_entrega: Math.max(1, parseInt(concept?.meta?.cantidad_entrega || 1, 10) || 1),
+                    monto: Math.max(0, parseFloat(concept?.amount ?? concept?.value ?? 0) || 0)
+                }));
+        const publicityEntries = (detailSpaces.length ? detailSpaces : [o]).map((item) => {
+            const sid = item?.espacio_id || item?.space_id || o.espacio_id;
+            const catalogSpace = sid ? __pmFindCatalogSpace(sid) : space;
+            const identity = detailSpaces.length ? __pmResolveSpaceIdentity(item) : __pmResolveSpaceIdentity();
+            const materialMeasure = __pmResolveDetailMaterialMeasure(detailSpaces.length ? item : o, catalogSpace);
+            const detailLabel = __pmResolvePdfSpaceDetail(detailSpaces.length ? item : o, catalogSpace);
+            const width = materialMeasure.medida_ancho;
+            const height = materialMeasure.medida_alto;
+            const unit = materialMeasure.medida_unidad || 'M';
+            const measures = (width !== null && width !== undefined && height !== null && height !== undefined) ? `${width} x ${height} ${unit}` : 'Sin medida capturada';
+            const start = item?.fecha_inicio || o.fecha_inicio || '';
+            const end = item?.fecha_fin || o.fecha_fin || '';
+            const isIndefinite = __pmSpaceDetailBlocksIndefinitely(item) || __pmOrderBlocksIndefinitely(o);
+            return {
+                name: String(identity?.nombre || 'Espacio publicitario').trim() || 'Espacio publicitario',
+                key: String(identity?.clave || '').trim(),
+                detail: String(detailLabel || 'Publicidad').trim() || 'Publicidad',
+                measures,
+                range: isIndefinite
+                    ? `${window.safeFormatDate(start)} al indefinido`
+                    : `${window.safeFormatDate(start)} al ${window.safeFormatDate(end || start)}`,
+                amount: Math.max(0, parseFloat(item?.subtotal_espacio || item?.total_espacio || catalogSpace?.precio_base || 0) || 0)
+            };
+        });
+        const publicityItemsHtml = publicityEntries.length
+            ? publicityEntries.map((entry) => `
+                <li class="rounded-xl border border-gray-200 bg-white px-3 py-2">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <p class="font-black text-gray-800 text-[11px]">${__pmSafeHtml(entry.name)}</p>
+                            ${entry.key ? `<p class="text-[9px] font-mono text-gray-400 mt-0.5">${__pmSafeHtml(entry.key)}</p>` : ''}
+                        </div>
+                        <span class="text-[10px] font-bold text-brand-red">${__pmFormatMoneyHtml(entry.amount)}</span>
+                    </div>
+                    <p class="mt-1 text-[10px] text-gray-500">Soporte: ${__pmSafeHtml(entry.detail)}${entry.measures ? ` · Medidas: ${__pmSafeHtml(entry.measures)}` : ''}</p>
+                    <p class="mt-0.5 text-[10px] text-gray-400">Vigencia: ${__pmSafeHtml(entry.range)}</p>
+                </li>`).join('')
+            : '<li class="rounded-xl border border-dashed border-gray-200 bg-white px-3 py-4 text-[10px] font-bold text-gray-400">Sin espacios publicitarios capturados.</li>';
+        const tradeItemsHtml = convenioItems.length
+            ? convenioItems.map((item) => {
+                const qty = Math.max(1, parseInt(item?.cantidad_entrega || 1, 10) || 1);
+                const label = `${qty} ${qty === 1 ? 'entrega' : 'entregas'} de ${item?.nombre || 'Convenio'}`;
+                return `
+                    <li class="flex items-start justify-between gap-3 rounded-xl border border-gray-200 bg-white px-3 py-2">
+                        <span class="text-[11px] font-semibold text-gray-700">${__pmSafeHtml(label)}</span>
+                        <span class="text-[10px] font-bold text-brand-red">${__pmFormatMoneyHtml(item?.monto || 0)}</span>
+                    </li>`;
+            }).join('')
+            : '<li class="rounded-xl border border-dashed border-gray-200 bg-white px-3 py-4 text-[10px] font-bold text-gray-400">Sin tratos capturados.</li>';
+        const convenioMonthYear = now.toLocaleDateString('es-MX', { month: 'long', year: 'numeric' });
+        const convenioSubject = String(o.nombre_cotizacion || o.nombre || o.proyecto || clientName || 'Campaña vigente').trim() || 'Campaña vigente';
+        const convenioStart = detailSpaces[0]?.fecha_inicio || o.fecha_inicio || '';
+        const convenioEnd = detailSpaces[detailSpaces.length - 1]?.fecha_fin || o.fecha_fin || convenioStart;
+        const convenioValidityText = __pmOrderBlocksIndefinitely(o)
+            ? `Este convenio tendrá efecto a partir del ${window.safeFormatDate(convenioStart)} y permanecerá vigente hasta nuevo aviso, fecha en que la publicidad será retirada por instrucción de las partes.`
+            : `Este convenio tendrá efecto desde ${window.safeFormatDate(convenioStart)} hasta el día ${window.safeFormatDate(convenioEnd)}, fecha en que la publicidad será retirada.`;
+        const clientRoleLabel = String(quoteClientSubtitle || 'Cliente / Representante').trim() || 'Cliente / Representante';
+        const approverRoleLabel = String(quoteApproverSubtitle || venueName).trim() || venueName;
+        const convenioSignBlock = `
+            <div class="text-center w-56">
+                <div class="border-b border-black mb-2"></div>
+                <p class="font-bold text-xs text-brand-dark uppercase">${__pmSafeHtml(venueName)}</p>
+                <p class="text-[10px] text-gray-600 mt-1">${__pmSafeHtml(quoteApproverTitle || 'Quien aprueba')}</p>
+                <p class="text-[10px] text-gray-500 uppercase">${__pmSafeHtml(approverRoleLabel)}</p>
+            </div>
+            <div class="text-center w-56">
+                <div class="border-b border-black mb-2"></div>
+                <p class="font-bold text-xs text-brand-dark uppercase">${__pmSafeHtml(quoteClientTitle || clientName)}</p>
+                <p class="text-[10px] text-gray-500 uppercase mt-1">${__pmSafeHtml(clientRoleLabel)}</p>
+            </div>`;
+        const convenioRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageBaseHeight}px;height:${pageBaseHeight}px;overflow:visible;position:relative;"><div class="pm-pdf-page-frame" style="${__pmBuildPdfContentFrameStyle(pageBaseHeight, 'display:flex;flex-direction:column;justify-content:space-between;')}"><div>${renderHeader(docTitle)}<div class="pm-pdf-summary text-[11px] text-gray-600 text-right mb-4" data-base-resource="summary">León, Guanajuato; ${__pmSafeHtml(convenioMonthYear)}.</div><div class="pm-pdf-general-conditions text-[11px] text-gray-700 space-y-4 leading-relaxed" data-base-resource="conditions"><div class="text-center space-y-1"><p class="text-xl font-black text-gray-900 tracking-wide">CONVENIO DE INTERCAMBIO</p><p class="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-500">${__pmSafeHtml((quoteClientTitle || clientName).toUpperCase())} y ${__pmSafeHtml(venueName.toUpperCase())}</p></div><p><strong>${__pmSafeHtml(venueName.toUpperCase())}</strong> acuerda proporcionar espacio publicitario en sus instalaciones para la campaña <strong>${__pmSafeHtml(convenioSubject)}</strong>. La difusión se realizará en los soportes descritos a continuación y se documentará mediante evidencia fotográfica.</p><div class="grid grid-cols-[minmax(0,1.45fr)_220px] gap-4"><div class="rounded-2xl border border-gray-200 bg-slate-50/80 p-4"><p class="text-[10px] font-black uppercase tracking-wide text-gray-500 mb-2">Publicidad acordada</p><ul class="space-y-2">${publicityItemsHtml}</ul></div><div class="rounded-2xl border border-gray-200 bg-white p-4"><p class="text-[10px] font-black uppercase tracking-wide text-gray-500 mb-3">Resumen económico</p><div class="space-y-2 text-[11px]"><div class="flex items-center justify-between gap-3"><span class="text-gray-500">Valor base</span><span class="font-bold text-gray-800">${__pmFormatMoneyHtml(convenioBaseTotal)}</span></div><div class="flex items-center justify-between gap-3"><span class="text-gray-500">Contraprestación</span><span class="font-bold text-amber-700">${__pmFormatMoneyHtml(convenioDeliveredTotal, { prefix: '-' })}</span></div><div class="pt-2 mt-2 border-t border-gray-200 flex items-center justify-between gap-3"><span class="font-black uppercase text-gray-500 text-[10px]">Balance</span><span class="font-black text-brand-dark">${__pmFormatMoneyHtml(convenioBalance)}</span></div></div></div></div><div class="grid grid-cols-[minmax(0,1.45fr)_220px] gap-4"><div class="rounded-2xl border border-gray-200 bg-slate-50/80 p-4"><p class="text-[10px] font-black uppercase tracking-wide text-gray-500 mb-2">Contraprestación acordada</p><ul class="space-y-2">${tradeItemsHtml}</ul></div><div class="rounded-2xl border border-gray-200 bg-white p-4"><p class="text-[10px] font-black uppercase tracking-wide text-gray-500 mb-2">Vigencia del acuerdo</p><p class="text-[11px] text-gray-700">${__pmSafeHtml(convenioValidityText)}</p></div></div><div class="grid grid-cols-2 gap-4"><div class="rounded-2xl border border-gray-200 bg-white p-4"><p class="text-[10px] font-black uppercase tracking-wide text-gray-500 mb-2">Responsabilidades del cliente</p><ul class="list-disc pl-4 space-y-1 text-[10px] text-gray-700"><li>Entregar los artes digitales o materiales físicos necesarios para la exposición acordada.</li><li>Proporcionar las contraprestaciones pactadas en tiempo y forma conforme a este convenio.</li><li>Compartir la información operativa necesaria para que la instalación publicitaria se ejecute correctamente.</li></ul></div><div class="rounded-2xl border border-gray-200 bg-white p-4"><p class="text-[10px] font-black uppercase tracking-wide text-gray-500 mb-2">Responsabilidades de ${__pmSafeHtml(venueName)}</p><ul class="list-disc pl-4 space-y-1 text-[10px] text-gray-700"><li>Colocar los materiales publicitarios en los espacios acordados durante la vigencia del convenio.</li><li>Garantizar la presencia de la publicidad conforme a la disponibilidad operativa del espacio contratado.</li><li>Registrar evidencia fotográfica del cumplimiento para el cierre documental del convenio.</li></ul></div></div><p class="text-[11px] text-justify">Ambas partes acuerdan cumplir con los términos y condiciones de este convenio, firmando a continuación la aceptación de los compromisos expresados en el presente documento.</p></div></div><div class="pb-2"><div class="pm-pdf-sign flex justify-between items-start px-2 mt-4" data-base-resource="sign">${convenioSignBlock}</div>${footerHubHTML}</div></div>${__pmRenderPdfResources(pdfStyle, 1)}</div>`;
+        const convenioPages = [
+            __pmWrapLetterheadPage(__pmOrdersBoostPdfTypography(convenioRaw), { baseWidth: __PM_PDF_CONTENT_BASE_WIDTH_PX, baseHeight: pageBaseHeight })
+        ];
+        const convenioExtraPages = __pmClampStyleNumber(pdfStyle.extraPages, -1, 6, 0);
+        if (convenioExtraPages > 0) {
+            for (let i = 0; i < convenioExtraPages; i += 1) {
+                const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageBaseHeight}px;height:${pageBaseHeight}px;overflow:visible;position:relative;"><div class="pm-pdf-page-frame" style="${__pmBuildPdfContentFrameStyle(pageBaseHeight)}">${renderHeader(`ANEXO ${i + 1}`)}<div class="pm-pdf-general-conditions text-[13px] text-gray-700 leading-relaxed mt-6 border border-dashed border-gray-300 rounded-lg p-4" data-base-resource="conditions"><p class="font-black uppercase text-gray-500 text-[11px] mb-2">${__pmSafeHtml(pdfContent.annexHintTitle || 'Página adicional editable')}</p><p>${__pmSafeHtml(pdfContent.annexHintBody || '')}</p></div>${footerHubHTML}</div>${__pmRenderPdfResources(pdfStyle, 2 + i)}</div>`;
+                convenioPages.push(__pmWrapLetterheadPage(extraRaw, { baseWidth: __PM_PDF_CONTENT_BASE_WIDTH_PX, baseHeight: pageBaseHeight }));
+            }
+        }
+        const convenioRawHtml = `<div class="pm-pdf-root" style="width:816px;margin:0;padding:0;box-sizing:border-box;background:#ffffff;word-break:break-word;overflow-wrap:anywhere;${pdfStyleInlineVars}${__pmTableFitInline}">${pdfStyleTag}${pdfTableFitTag}${convenioPages.join('')}</div>`;
+        return __pmOrdersTransparentPdfHtml(convenioRawHtml);
+    }
 const page1Raw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageBaseHeight}px;height:${pageBaseHeight}px;overflow:visible;position:relative;"><div class="pm-pdf-page-frame" style="${__pmBuildPdfContentFrameStyle(pageBaseHeight, 'display:flex;flex-direction:column;justify-content:space-between;')}"><div>${renderHeader(docTitle)}${clientComponent}${isOrder ? `<div class="mb-2 bg-gray-100 p-2 rounded text-base"><span>Folio de Servicio: <strong class="font-black text-lg">${folio}</strong></span></div>` : ''}<table class="w-full text-left mb-2 mt-3 table-fixed border-separate border-spacing-0"><colgroup><col style="width:38%;"><col style="width:14%;"><col style="width:12%;"><col style="width:14%;"><col style="width:22%;"></colgroup><thead class="pm-pdf-table-head bg-gray-100 text-sm font-black text-gray-500 uppercase"><tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">${__pmSafeHtml(detailColumnLabel)}</th><th class="py-2 px-3 text-center">Medidas</th><th class="py-2 px-3 text-center">Fecha</th><th class="py-2 px-3 text-right rounded-r">Importe</th></tr></thead><tbody class="pm-pdf-table-body divide-y divide-gray-50 text-[12px]" data-base-resource="table-body">${rowsHtml}</tbody></table> ${totalsBlock}</div><div class="pb-2">${!isOrder ? `<div class="pm-pdf-quick grid grid-cols-2 gap-4 ${__pmQuickMarginClass} pt-4 border-t border-gray-100" data-base-resource="quick"><div><h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">${__pmSafeHtml(pdfContent.quickLeftTitle || 'Condiciones:')}</h4><ul class="list-none text-xs text-gray-600 space-y-0.5 leading-tight">${quickLeftItemsHtml}</ul></div><div><h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">${__pmSafeHtml(pdfContent.quickRightTitle || 'Vigencia:')}</h4><p class="text-xs text-gray-600">${__pmSafeHtml(pdfContent.quickRightBody || '')}</p></div></div>` : ''}<div class="pm-pdf-sign flex justify-between items-start px-2" data-base-resource="sign">${signBlock}</div>${footerHubHTML}</div></div>${__pmRenderPdfResources(pdfStyle, 1)}</div>`;
     const pages = [
         __pmWrapLetterheadPage(__pmOrdersBoostPdfTypography(page1Raw), { baseWidth: __PM_PDF_CONTENT_BASE_WIDTH_PX, baseHeight: pageBaseHeight })
@@ -5727,6 +5848,13 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     cantidad_entrega: Math.max(1, parseInt(concept?.meta?.cantidad_entrega || 1, 10) || 1),
     monto: Math.max(0, parseFloat(concept?.amount ?? concept?.value ?? 0) || 0)
   }));
+  const pmCfgConvenioValue = (cfg = null) => convenioConcepts(cfg?.concepts).reduce((sum, concept) => sum + (parseFloat(concept.amount ?? concept.value ?? 0) || 0), 0);
+  const pmCfgBlocksIndefinitely = (cfg = null, space = null) => {
+    if (!cfg?.convenioEnabled) return false;
+    const sp = space || getSpace(cfg?.spaceId);
+    const base = resolvePmBaseTotal(cfg, sp);
+    return __pmConvenioCovered(base, pmCfgConvenioValue(cfg));
+  };
   const syncOrderConvenioSelect = () => {
     const select = document.getElementById("oed-convenio-select");
     if (!select) return;
@@ -5817,6 +5945,20 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
   const getCfg = (sid) => pmSpaces.find((x) => String(x.spaceId) === String(sid)) || null;
   const selectedCfg = () => pmSpaces.filter((x) => x.selected);
   const activeCfg = () => getCfg(pmActive);
+  const canDisplayPmEditorSpace = (space) => {
+    if (!space) return false;
+    if (isEditorConvenioOrder() && !__pmSpaceAllowsConvenio(space)) return false;
+    return true;
+  };
+  const canAddPmEditorSpace = (sid, options = {}) => {
+    const space = getSpace(sid);
+    if (!space) return false;
+    if (isEditorConvenioOrder() && !__pmSpaceAllowsConvenio(space)) {
+      if (!options.silent) window.showToast("Ese espacio no está disponible para convenio.", "error");
+      return false;
+    }
+    return true;
+  };
   const ensureActive = () => {
     if (!selectedCfg().length && pmSpaces.length) pmSpaces[0].selected = true;
     if (!pmActive || !getCfg(pmActive)?.selected) pmActive = String(selectedCfg()[0]?.spaceId || pmSpaces[0]?.spaceId || "");
@@ -6701,7 +6843,6 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
           previewSrc: ocUrl,
           previewMessage: "No se pudo cargar la orden almacenada.",
           actions: [
-            { label: "Actualizar Snapshot", icon: "fa-solid fa-floppy-disk", tone: "purple", onclick: "window.savePmPurchaseOrderSnapshot(this)" },
             { label: "Abrir Documento", icon: "fa-solid fa-folder-open", tone: "slate", onclick: ocUrl ? `window.openPmExpedientePreview(${JSON.stringify(ocUrl)}, ${JSON.stringify("Orden de Compra")})` : `window.openStoredDocument(${JSON.stringify(order.url_orden_compra)})` }
           ]
         });
@@ -6723,7 +6864,6 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
           previewMessage: approvedStatus ? "" : "Aprueba la cotización para habilitar la orden de compra.",
           actions: approvedStatus
             ? [
-                { label: "Guardar Snapshot", icon: "fa-solid fa-floppy-disk", tone: "purple", onclick: "window.savePmPurchaseOrderSnapshot(this)" },
                 { label: "Vista Completa", icon: "fa-solid fa-expand", tone: "slate", onclick: `window.openPmExpedienteLivePreview("order", ${JSON.stringify("Orden de Compra")})` }
               ]
             : []
@@ -6738,7 +6878,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
             badge: "Pendiente",
             badgeTone: "amber",
             metaRows: [
-              { label: "Espacio bloqueado", value: convenioMeta.bloqueo_indefinido ? "Indefinido" : "Sí" },
+              { label: "Espacio bloqueado", value: __pmOrderBlocksIndefinitely(order) ? "Indefinido" : "Sí" },
               { label: "Rango requerido", value: "3 a 5 imágenes" },
               { label: "Documentación", value: "Solo evidencia" }
             ],
@@ -6938,7 +7078,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       if (el) el.textContent = value;
     };
     const rangeLabel = (cfg?.startDate && cfg?.endDate)
-      ? `${window.safeFormatDate(cfg.startDate)} - ${cfg?.convenioEnabled ? "Indefinido" : window.safeFormatDate(cfg.endDate)}`
+      ? `${window.safeFormatDate(cfg.startDate)} - ${pmCfgBlocksIndefinitely(cfg, space) ? "Indefinido" : window.safeFormatDate(cfg.endDate)}`
       : "--";
     const measureLabel = (detailInfo.medida_ancho !== null && detailInfo.medida_ancho !== undefined && detailInfo.medida_alto !== null && detailInfo.medida_alto !== undefined)
       ? `${detailInfo.medida_ancho} x ${detailInfo.medida_alto} ${detailInfo.medida_unidad || "M"}`
@@ -7220,7 +7360,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
           if (itemSid !== sid) return;
           const eventDates = safeArr(item.fechas_evento).map(iso).filter(Boolean);
           if (eventDates.length) eventDates.forEach(addDate);
-          else addRange(item.fecha_inicio, (item?.convenio_indefinido === true || item?.bloqueo_indefinido === true || orderBlocksIndefinitely) ? PM_CONVENIO_INDEFINITE_END : item.fecha_fin);
+          else addRange(item.fecha_inicio, __pmSpaceDetailBlocksIndefinitely(item) ? PM_CONVENIO_INDEFINITE_END : item.fecha_fin);
         });
         return;
       }
@@ -7283,7 +7423,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
             flush();
             return;
           }
-          pushEvent(order.id, item.fecha_inicio, (item?.convenio_indefinido === true || item?.bloqueo_indefinido === true || orderBlocksIndefinitely) ? PM_CONVENIO_INDEFINITE_END : item.fecha_fin, order.cliente_nombre || "Ocupado");
+          pushEvent(order.id, item.fecha_inicio, __pmSpaceDetailBlocksIndefinitely(item) ? PM_CONVENIO_INDEFINITE_END : item.fecha_fin, order.cliente_nombre || "Ocupado");
         });
       } else if (String(order.espacio_id || "") === String(cfg.spaceId)) {
         pushEvent(order.id, order.fecha_inicio, orderBlocksIndefinitely ? PM_CONVENIO_INDEFINITE_END : order.fecha_fin, order.cliente_nombre || "Ocupado");
@@ -7366,7 +7506,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     ensureActive();
     const locked = __pmIsLockedOrder();
     const selectedIds = selectedCfg().map((x) => String(x.spaceId));
-    const ids = [...selectedIds, ...allSpaces.map((s) => String(s.id)).filter((id) => !selectedIds.includes(id))];
+    const ids = [...selectedIds, ...allSpaces.map((s) => String(s.id)).filter((id) => !selectedIds.includes(id))].filter((id, index, arr) => arr.indexOf(id) === index);
     track.className = "grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2.5";
     track.style.display = "";
     track.style.gridAutoFlow = "";
@@ -7375,6 +7515,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     track.style.gap = "";
     track.innerHTML = ids.map((sid) => {
       const sp = getSpace(sid);
+      if (!canDisplayPmEditorSpace(sp)) return "";
       if (!sp) return "";
       let cfg = getCfg(sp.id);
       if (!cfg) cfg = mkCfg(sp.id, { selected: false });
@@ -7385,7 +7526,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
         ? "border-emerald-200 bg-emerald-100 text-emerald-700"
         : (sel ? "border-yellow-200 bg-yellow-100 text-yellow-700" : "border-gray-200 bg-gray-100 text-gray-500");
       const dateLabel = sel && cfg.startDate
-        ? `${window.safeFormatDate(cfg.startDate)} - ${cfg.convenioEnabled ? "Indefinido" : window.safeFormatDate(cfg.endDate || cfg.startDate)}`
+        ? `${window.safeFormatDate(cfg.startDate)} - ${pmCfgBlocksIndefinitely(cfg, sp) ? "Indefinido" : window.safeFormatDate(cfg.endDate || cfg.startDate)}`
         : "--";
       const permanenceLabel = sel ? (cfg.convenioEnabled ? "Convenio" : (cfg.customPermanence ? "Personalizada" : "Automática")) : "--";
       const baseLabel = sel ? money(resolvePmDisplayedBase(cfg, sp)) : money(pmBaseUnitPrice(sp));
@@ -7439,6 +7580,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       return;
     }
     if (!cfg) {
+      if (!canAddPmEditorSpace(sid)) return;
       const a = activeCfg();
       cfg = mkCfg(sid, { selected: true, customPermanence: !!a?.customPermanence, customPriceEnabled: !!a?.customPriceEnabled, customPriceMode: a?.customPriceMode || "total", convenioEnabled: !!a?.convenioEnabled, startDate: a?.startDate || "", endDate: a?.endDate || "", customBasePrice: a?.customBasePrice ?? "" });
       pmSpaces.push(cfg);
@@ -7456,6 +7598,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     saveActiveFromForm();
     let cfg = getCfg(sid);
     if (!cfg) {
+      if (!canAddPmEditorSpace(sid)) return;
       const a = activeCfg();
       cfg = mkCfg(sid, { selected: true, customPermanence: !!a?.customPermanence, customPriceEnabled: !!a?.customPriceEnabled, customPriceMode: a?.customPriceMode || "total", convenioEnabled: !!a?.convenioEnabled, startDate: a?.startDate || "", endDate: a?.endDate || "", customBasePrice: a?.customBasePrice ?? "" });
       pmSpaces.push(cfg);
@@ -7475,6 +7618,10 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     let cfg = getCfg(sid);
     if (enabled) {
       if (!cfg) {
+        if (!canAddPmEditorSpace(sid)) {
+          window.renderOrderSpaceCards();
+          return;
+        }
         const a = activeCfg();
         cfg = mkCfg(sid, { selected: true, customPermanence: !!a?.customPermanence, customPriceEnabled: !!a?.customPriceEnabled, customPriceMode: a?.customPriceMode || "total", convenioEnabled: !!a?.convenioEnabled, startDate: a?.startDate || "", endDate: a?.endDate || "", customBasePrice: a?.customBasePrice ?? "" });
         pmSpaces.push(cfg);
@@ -7534,6 +7681,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       if (customPriceField) customPriceField.value = "";
     }
     loadActiveToForm();
+    window.renderOrderSpaceCards();
     window.recalcTotal();
     __pmScheduleOrderDetailAutoSave();
   };
@@ -7656,7 +7804,8 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       const regularTotal = regularItems.reduce((a, c) => a + (parseFloat(c.amount || c.value || 0) || 0), 0);
       const convenioValue = convenioItems.reduce((a, c) => a + (parseFloat(c.amount || c.value || 0) || 0), 0);
       const conceptsTotal = isConvenio ? convenioValue : regularTotal;
-      const subtotalSpace = isConvenio ? (base - convenioValue) : (base + regularTotal);
+      const convenioCovered = isConvenio ? __pmConvenioCovered(base, convenioValue) : false;
+      const subtotalSpace = isConvenio ? Math.max(0, base - convenioValue) : (base + regularTotal);
       const taxIds = isConvenio ? [] : resolveCfgTaxIds(cfg, sp);
       return {
         cfg,
@@ -7664,6 +7813,8 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
         base,
         baseMeta,
         isConvenio,
+        convenioCovered,
+        blocksIndefinitely: convenioCovered,
         concepts: isConvenio ? convenioItems : regularItems,
         regularItems,
         convenioItems,
@@ -7873,8 +8024,9 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
 
     const min = rows.map((r) => r.cfg.startDate).filter(Boolean).sort()[0] || "";
     const max = rows.map((r) => r.cfg.endDate).filter(Boolean).sort().slice(-1)[0] || "";
+    const convenioBlocksIndefinitely = rows.some((row) => row.blocksIndefinitely);
     document.getElementById("sum-dates").innerText = (min && max)
-      ? (convenioMode ? `${window.safeFormatDate(min)} al Indefinido` : `${window.safeFormatDate(min)} al ${window.safeFormatDate(max)}`)
+      ? (convenioBlocksIndefinitely ? `${window.safeFormatDate(min)} al Indefinido` : `${window.safeFormatDate(min)} al ${window.safeFormatDate(max)}`)
       : "--";
     document.getElementById("sum-quote-name").innerText = (document.getElementById("oed-quote-name")?.value || currentPreviewOrder?.nombre_cotizacion || "---");
     document.getElementById("sum-status").innerText = String(document.getElementById("oed-status")?.value || "pendiente").toUpperCase();
@@ -7956,7 +8108,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
             : `border-gray-200 bg-white ${previewSummaryView ? "" : "hover:border-brand-red"}`;
           const stateLabel = active ? "En edición" : (previewSummaryView ? "Activo" : "Editar");
           const dateLabel = r.cfg.convenioEnabled
-            ? `${window.safeFormatDate(r.cfg.startDate)} - Indefinido`
+        ? `${window.safeFormatDate(r.cfg.startDate)} - ${r.blocksIndefinitely ? "Indefinido" : window.safeFormatDate(r.cfg.endDate || r.cfg.startDate)}`
             : `${window.safeFormatDate(r.cfg.startDate)} - ${window.safeFormatDate(r.cfg.endDate)}`;
           return `<button type="button" ${previewSummaryView ? "disabled" : `onclick="window.focusOrderSpaceCard('${r.cfg.spaceId}')"`} class="w-full text-left rounded-xl border ${stateClass} p-3 transition ${previewSummaryView ? "cursor-default" : "cursor-pointer"} ${idx > 0 ? "mt-2" : ""}">
               <div class="flex justify-between items-start gap-2">
@@ -7980,7 +8132,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
         list.innerHTML = rows.map((r) => {
           const active = String(r.cfg.spaceId) === String(pmActive);
           const dateLabel = r.cfg.convenioEnabled
-            ? `${window.safeFormatDate(r.cfg.startDate)} - Indefinido`
+        ? `${window.safeFormatDate(r.cfg.startDate)} - ${r.blocksIndefinitely ? "Indefinido" : window.safeFormatDate(r.cfg.endDate || r.cfg.startDate)}`
             : `${window.safeFormatDate(r.cfg.startDate)} - ${window.safeFormatDate(r.cfg.endDate)}`;
           return `<button type="button" onclick="window.selectOrderSpaceCard('${r.cfg.spaceId}')" class="w-full text-left rounded-lg border ${active ? "border-emerald-300 bg-emerald-50" : "border-gray-200 bg-gray-50 hover:border-brand-red"} p-2 transition"><div class="flex justify-between items-start gap-2"><div class="min-w-0"><p class="text-[10px] font-black uppercase text-gray-800 whitespace-normal break-words leading-tight">${r.sp?.nombre || r.cfg.spaceId}</p><p class="text-[10px] font-mono text-gray-500 mt-0.5 break-all">${r.sp?.clave ? `Clave: ${r.sp.clave}` : "--"}</p></div><span class="text-[10px] font-bold shrink-0 ${active ? "text-emerald-700" : "text-gray-400"}">${active ? "Editando" : "Editar"}</span></div><p class="text-[10px] text-gray-500 mt-1">${dateLabel}</p><p class="text-[10px] text-gray-500 mt-1">Base ${money(r.base)}</p><p class="text-[10px] font-bold text-gray-700 mt-1">${r.isConvenio ? signedMoney(r.total) : money(r.total)}</p></button>`;
         }).join("");
@@ -8010,7 +8162,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
         precio_personalizado_activo: !!r.cfg.customPriceEnabled,
         precio_personalizado_modo: r.cfg.customPriceMode || "total",
         convenio_activo: !!r.cfg.convenioEnabled,
-        convenio_indefinido: !!r.cfg.convenioEnabled,
+        convenio_indefinido: false, // Don't force 'indefinido' date range printing explicitly
         convenio_items: convenioItems,
         subtotal_espacio: r.isConvenio ? (r.base || 0) : r.adjustedSubtotal,
         convenio_monto_entregado: r.isConvenio ? (r.convenioValue || 0) : 0,
@@ -8114,7 +8266,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     const { data, error } = await __pmQuotesList({ filter: 'status = "aprobada" || status = "finalizada"', perPage: 500 });
     if (error) throw error;
     for (const cfg of selected) {
-      const s = iso(cfg.startDate); const e = cfg.convenioEnabled ? PM_CONVENIO_INDEFINITE_END : iso(cfg.endDate); const sid = String(cfg.spaceId);
+      const s = iso(cfg.startDate); const e = pmCfgBlocksIndefinitely(cfg) ? PM_CONVENIO_INDEFINITE_END : iso(cfg.endDate); const sid = String(cfg.spaceId);
       for (const row of (data || [])) {
         if (String(row.id) === String(orderId)) continue;
         const d = parseDetail(row.espacios_detalle);
@@ -8123,7 +8275,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
         if (d.length) d.forEach((x) => {
           const id = String(x.espacio_id || x.space_id || "");
           const fi = iso(x.fecha_inicio || "");
-          const ff = (x?.convenio_indefinido === true || x?.bloqueo_indefinido === true || orderBlocksIndefinitely) ? PM_CONVENIO_INDEFINITE_END : iso(x.fecha_fin || "");
+          const ff = __pmSpaceDetailBlocksIndefinitely(x) ? PM_CONVENIO_INDEFINITE_END : iso(x.fecha_fin || "");
           if (id === sid && fi && ff) ranges.push({ fi, ff });
         });
         else if (String(row.espacio_id || "") === sid) {
@@ -8204,6 +8356,14 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       if (approvalSnapshotMeta?.path) formData.url_cotizacion_final = approvalSnapshotMeta.path;
       if (convenioTransition && __pmGetConvenioEvidence({ ...currentPreviewOrder, ...formData }).length < 3) {
         throw new Error("Finaliza el convenio desde Expediente para adjuntar de 3 a 5 evidencias.");
+      }
+      const missingConvenio = pmTotals.spaces.find((row) => row.isConvenio && !row.convenioItems.length);
+      if (missingConvenio) {
+        throw new Error(`Agrega al menos un trato de convenio para ${missingConvenio.sp?.nombre || missingConvenio.cfg?.spaceId || "el espacio seleccionado"}.`);
+      }
+      const uncoveredConvenio = pmTotals.spaces.find((row) => row.isConvenio && !row.convenioCovered);
+      if (uncoveredConvenio) {
+        throw new Error(`El convenio de ${uncoveredConvenio.sp?.nombre || uncoveredConvenio.cfg?.spaceId || "el espacio seleccionado"} debe cubrir al menos el valor total del espacio.`);
       }
       if (approvalTransition) {
         const missing = [];
@@ -8398,6 +8558,12 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
         if (cfg) cfg.concepts.push(c);
       });
     }
+    pmSpaces.forEach((cfg) => {
+      const space = getSpace(cfg.spaceId);
+      if (__pmSpaceAllowsConvenio(space)) return;
+      cfg.convenioEnabled = false;
+      cfg.concepts = regularConcepts(cfg.concepts);
+    });
 
     if (document.getElementById("oed-adj-type")) {
       document.getElementById("oed-adj-type").value = order.tipo_ajuste || "ninguno";

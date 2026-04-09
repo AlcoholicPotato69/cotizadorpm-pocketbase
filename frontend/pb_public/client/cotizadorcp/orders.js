@@ -10,6 +10,12 @@
 let orderClientProfiles = []; let orderClientProfilesById = {};
 let cpOrdersRestoringViewState = false;
 const CP_ORDERS_VIEW_STATE_SCOPE = 'cp_orders';
+const CP_ORDER_CONVENIOS_CFG_KEY = 'convenios_cp';
+const CP_ORDER_CONVENIO_INDEFINITE_END = '2099-12-31';
+let cpOrderConvenioCatalog = [];
+let __cpEvidenceUploadObjectUrls = [];
+let __cpEvidenceGalleryItems = [];
+let __cpEvidenceGalleryIndex = 0;
 
 window.finalMontajeDates = [];
 window.tempMontajeDates = [];
@@ -83,13 +89,13 @@ async function loadClientProfilesForOrderModal() {
             const id = sel.value; if (!id) { if (hid) hid.value = ''; return; }
             const c = orderClientProfilesById[id]; if (!c) return;
             if (hid) hid.value = id;
-            if(document.getElementById('oed-client')) document.getElementById('oed-client').value = c.nombre_completo || '';
-            if(document.getElementById('oed-phone')) document.getElementById('oed-phone').value = (c.telefono || '');
-            if(document.getElementById('oed-email')) document.getElementById('oed-email').value = (c.correo || '');
-            if(document.getElementById('fiscal-rfc-re')) document.getElementById('fiscal-rfc-re').value = (c.rfc || '');
+            if (document.getElementById('oed-client')) document.getElementById('oed-client').value = c.nombre_completo || '';
+            if (document.getElementById('oed-phone')) document.getElementById('oed-phone').value = (c.telefono || '');
+            if (document.getElementById('oed-email')) document.getElementById('oed-email').value = (c.correo || '');
+            if (document.getElementById('fiscal-rfc-re')) document.getElementById('fiscal-rfc-re').value = (c.rfc || '');
         };
         const clearAssoc = () => { if (sel.value) sel.value = ''; if (hid) hid.value = ''; };
-        ['oed-client','oed-phone','oed-email','fiscal-rfc-re'].forEach(id => { const el = document.getElementById(id); if (el) el.addEventListener('input', clearAssoc); });
+        ['oed-client', 'oed-phone', 'oed-email', 'fiscal-rfc-re'].forEach(id => { const el = document.getElementById(id); if (el) el.addEventListener('input', clearAssoc); });
     } catch (e) { console.warn("No se pudo cargar clientes", e); }
 }
 
@@ -157,7 +163,7 @@ function __orderParseRecordJson(value) {
         try {
             const parsed = JSON.parse(value);
             return parsed && typeof parsed === 'object' ? parsed : {};
-        } catch (_) {}
+        } catch (_) { }
     }
     return {};
 }
@@ -177,6 +183,177 @@ function __orderNormalizeConceptsArray(value) {
         if (Array.isArray(candidate)) return candidate;
     }
     return [];
+}
+function __orderNormalizeExtraConcept(concept = {}) {
+    const amount = Math.max(0, parseFloat(concept?.amount ?? concept?.value ?? 0) || 0);
+    return {
+        description: String(concept?.description || concept?.concepto || concept?.nombre || 'Concepto').trim() || 'Concepto',
+        amount,
+        value: amount,
+        unit: concept?.unit || 'fixed',
+        type: concept?.type || 'aumento',
+        meta: (concept?.meta && typeof concept.meta === 'object') ? { ...concept.meta } : {}
+    };
+}
+function __orderNormalizeConvenioName(value = '') {
+    return String(value || '').trim().replace(/\s+/g, ' ');
+}
+function __orderNormalizeSpaceConvenioFlag(value, fallback = true) {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value !== 0;
+    const raw = String(value ?? '').trim().toLowerCase();
+    if (!raw) return fallback;
+    if (['1', 'true', 'si', 'sí', 'yes'].includes(raw)) return true;
+    if (['0', 'false', 'no'].includes(raw)) return false;
+    return fallback;
+}
+function __orderIsConvenioConceptItem(concept = {}) {
+    return !!(concept?.meta && concept.meta.convenio_item === true);
+}
+function __orderBuildConvenioConcept(option = {}, cantidad, amount) {
+    const qty = Math.max(1, parseInt(cantidad, 10) || 1);
+    const value = Math.max(0, parseFloat(amount || 0) || 0);
+    const nombre = __orderNormalizeConvenioName(option?.nombre || option?.name || option?.label || '');
+    return __orderNormalizeExtraConcept({
+        description: `${nombre || 'Convenio'} (${qty} ${qty === 1 ? 'entrega' : 'entregas'})`,
+        amount: value,
+        value,
+        unit: 'fixed',
+        type: 'aumento',
+        meta: {
+            convenio_item: true,
+            convenio_option_id: String(option?.id || '').trim(),
+            convenio_nombre: nombre,
+            cantidad_entrega: qty
+        }
+    });
+}
+function __orderBuildConvenioConceptsFromPayload(items = []) {
+    return __orderSafeArray(items).map((item) => __orderBuildConvenioConcept(
+        { id: item?.id || item?.convenio_option_id, nombre: item?.nombre || item?.convenio_nombre || item?.description || 'Convenio' },
+        item?.cantidad_entrega || item?.cantidad || 1,
+        item?.monto || item?.amount || item?.value || 0
+    ));
+}
+function __orderGetConvenioConcepts(cfg = null) {
+    return __orderSafeArray(cfg?.concepts).map(__orderNormalizeExtraConcept).filter(__orderIsConvenioConceptItem);
+}
+function __orderBuildConvenioPayloadItems(cfg = null) {
+    return __orderGetConvenioConcepts(cfg).map((concept) => ({
+        id: String(concept?.meta?.convenio_option_id || '').trim() || null,
+        nombre: __orderNormalizeConvenioName(concept?.meta?.convenio_nombre || concept.description || 'Convenio') || 'Convenio',
+        cantidad_entrega: Math.max(1, parseInt(concept?.meta?.cantidad_entrega || 1, 10) || 1),
+        monto: Math.max(0, parseFloat(concept?.amount ?? concept?.value ?? 0) || 0)
+    }));
+}
+function __orderSanitizeConvenioItems(items = []) {
+    return __orderSafeArray(items).map((item) => {
+        const qty = Math.max(1, parseInt(item?.cantidad_entrega || item?.cantidad || 1, 10) || 1);
+        const amount = Math.max(0, parseFloat(item?.monto ?? item?.amount ?? item?.value ?? 0) || 0);
+        return {
+            id: String(item?.id || item?.convenio_option_id || '').trim() || null,
+            nombre: __orderNormalizeConvenioName(item?.nombre || item?.convenio_nombre || item?.description || 'Convenio') || 'Convenio',
+            cantidad_entrega: qty,
+            monto: amount
+        };
+    }).filter((item) => !!item.nombre);
+}
+function __orderSanitizeConvenioEvidenceItems(items = []) {
+    return __orderSafeArray(items).map((item, idx) => {
+        const path = String(item?.path || item?.url || '').trim();
+        if (!path) return null;
+        return {
+            id: String(item?.id || `evidence_${idx + 1}`).trim(),
+            path,
+            file_name: String(item?.file_name || item?.nombre_archivo || path.split('/').pop() || `evidencia_${idx + 1}.jpg`).trim(),
+            uploaded_at: String(item?.uploaded_at || item?.fecha || '').trim() || null,
+            mime_type: String(item?.mime_type || item?.tipo_mime || '').trim() || 'image/jpeg',
+            size: Math.max(0, parseInt(item?.size || item?.tamano || 0, 10) || 0)
+        };
+    }).filter(Boolean);
+}
+function __orderParseConvenioMeta(source = {}) {
+    const details = (source && typeof source === 'object' && Object.prototype.hasOwnProperty.call(source, 'detalles_evento'))
+        ? __orderParseRecordJson(source.detalles_evento)
+        : __orderParseRecordJson(source);
+    const raw = details?.convenio && typeof details.convenio === 'object' ? details.convenio : {};
+    return {
+        activo: raw?.activo === true,
+        bloqueo_indefinido: raw?.bloqueo_indefinido !== false,
+        requiere_evidencia: raw?.requiere_evidencia !== false,
+        evidencia_minima: Math.max(1, parseInt(raw?.evidencia_minima || 3, 10) || 3),
+        evidencia_maxima: Math.max(1, parseInt(raw?.evidencia_maxima || 5, 10) || 5),
+        requiere_factura: raw?.requiere_factura === true,
+        requiere_recibo: raw?.requiere_recibo === true,
+        requiere_contrato: raw?.requiere_contrato === true,
+        items: __orderSanitizeConvenioItems(raw?.items || raw?.tratos || []),
+        espacios: Array.isArray(raw?.espacios) ? raw.espacios : [],
+        evidencias: __orderSanitizeConvenioEvidenceItems(raw?.evidencias || raw?.evidence || [])
+    };
+}
+function __orderGetConvenioEvidence(order = {}) {
+    return __orderParseConvenioMeta(order).evidencias;
+}
+function __orderSpaceAllowsConvenio(space) {
+    return __orderIsPublicidadSpace(space) && __orderNormalizeSpaceConvenioFlag(space?.permite_convenio, true);
+}
+function __orderGetQuoteDocumentMeta(orderLike = {}) {
+    const isConvenio = __orderIsConvenioOrder(orderLike);
+    return {
+        isConvenio,
+        itemLabel: isConvenio ? 'Convenio' : 'Cotización',
+        draftTitle: isConvenio ? 'Borrador de Convenio' : 'Borrador de Cotización',
+        approvedTitle: isConvenio ? 'Carta Convenio Aprobada' : 'Cotización Aprobada',
+        draftStorageBase: isConvenio ? 'convenio_borrador' : 'cotizacion_borrador',
+        approvedStorageBase: isConvenio ? 'carta_convenio_aprobada' : 'cotizacion_aprobada',
+        draftFileBase: isConvenio ? 'CONVENIO_BORRADOR' : 'COTIZACION_BORRADOR',
+        approvedFileBase: isConvenio ? 'CARTA_CONVENIO_APROBADA' : 'COTIZACION_APROBADA'
+    };
+}
+function __orderIsConvenioOrder(order = {}) {
+    const convenioMeta = __orderParseConvenioMeta(order);
+    if (convenioMeta.activo) return true;
+    const spaces = parseSpacesDetail ? parseSpacesDetail(order?.espacios_detalle) : __orderSafeArray(order?.espacios_detalle);
+    return Array.isArray(spaces) && spaces.some((item) => item?.convenio_activo === true || item?.convenio_indefinido === true);
+}
+function __orderConvenioCovered(baseValue, deliveredValue, balanceValue = undefined) {
+    const balance = parseFloat(balanceValue);
+    if (Number.isFinite(balance)) return balance <= 0.009;
+    const base = Math.max(0, parseFloat(baseValue || 0) || 0);
+    const delivered = Math.max(0, parseFloat(deliveredValue || 0) || 0);
+    if (base <= 0) return false;
+    return delivered + 0.009 >= base;
+}
+function __orderDetailBlocksIndefinitely(detail = {}) {
+    const row = detail && typeof detail === 'object' ? detail : {};
+    const flagged = row?.convenio_activo === true || row?.convenio_indefinido === true || row?.bloqueo_indefinido === true;
+    if (!flagged) return false;
+    return __orderConvenioCovered(
+        row?.subtotal_espacio ?? row?.baseValue,
+        row?.convenio_monto_entregado ?? row?.convenioValue,
+        row?.convenio_balance
+    );
+}
+function __orderBlocksIndefinitely(order = {}) {
+    const convenioMeta = __orderParseConvenioMeta(order);
+    const spaces = parseSpacesDetail ? parseSpacesDetail(order?.espacios_detalle) : __orderSafeArray(order?.espacios_detalle);
+    if (Array.isArray(spaces) && spaces.length) return spaces.some((item) => __orderDetailBlocksIndefinitely(item));
+    if (!(convenioMeta.activo && convenioMeta.bloqueo_indefinido)) return false;
+    const breakdown = __orderParseRecordJson(order?.desglose_precios);
+    return __orderConvenioCovered(
+        breakdown?.convenio_base_total,
+        breakdown?.convenio_entregable_total,
+        breakdown?.convenio_balance_total ?? order?.precio_final
+    );
+}
+function __orderCfgConvenioValue(cfg = null) {
+    return __orderGetConvenioConcepts(cfg).reduce((sum, concept) => sum + (parseFloat(concept.amount ?? concept.value ?? 0) || 0), 0);
+}
+function __orderCfgBlocksIndefinitely(cfg = null) {
+    if (!cfg?.convenioEnabled || !__orderIsPublicidadSpace(cfg)) return false;
+    const space = __orderGetSpaceById(cfg.spaceId);
+    const base = parseFloat(space?.precio_base || 0) || 0;
+    return __orderConvenioCovered(base, __orderCfgConvenioValue(cfg));
 }
 function __orderResolveTaxIdsFromDetails(order) {
     const detailRaw = __orderParseRecordJson(order?.espacios_detalle);
@@ -306,6 +483,59 @@ function __orderHydrateQuotePricing(order) {
             impuestos_detalle: pricing.taxIds,
             tax_total: pricing.taxTotal
         }
+    };
+}
+function __orderParsePaymentsList(order = {}) {
+    if (Array.isArray(order?.historial_pagos)) return order.historial_pagos.filter(Boolean);
+    try {
+        const parsed = JSON.parse(order?.historial_pagos || '[]');
+        return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+    } catch (_) {
+        return [];
+    }
+}
+function __orderOrderTotalPaid(order = {}) {
+    return __orderRoundCurrency(__orderParsePaymentsList(order).reduce((sum, payment) => {
+        const amount = __orderToFiniteNumber(
+            payment?.monto ?? payment?.amount ?? payment?.importe ?? payment?.valor ?? 0,
+            0
+        );
+        return sum + Math.max(0, amount);
+    }, 0));
+}
+function __orderOrderRemainingBalance(order = {}) {
+    const remaining = __orderRoundCurrency(__orderResolveQuotePricing(order).total - __orderOrderTotalPaid(order));
+    return remaining < 0 ? 0 : remaining;
+}
+function __orderResolveOrderTableAmountState(order = {}) {
+    const isConvenio = __orderIsConvenioOrder(order);
+    const pricing = __orderResolveQuotePricing(order);
+    const status = String(order?.status || '').toLowerCase();
+    if (isConvenio) {
+        const remaining = Math.max(0, parseFloat(pricing?.breakdown?.convenio_balance_total ?? pricing.total ?? 0) || 0);
+        return {
+            amount: remaining,
+            textClass: remaining > 0.01 ? 'text-red-600' : 'text-emerald-600',
+            label: remaining > 0.01 ? 'Faltante' : '',
+            badgeHtml: '<span class="rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-amber-800">Convenio</span>'
+        };
+    }
+    const payments = __orderParsePaymentsList(order);
+    const shouldShowRemaining = ['aprobada', 'finalizada'].includes(status) && payments.length > 0;
+    if (shouldShowRemaining) {
+        const remaining = __orderOrderRemainingBalance(order);
+        return {
+            amount: remaining,
+            textClass: remaining > 0.01 ? 'text-red-600' : 'text-emerald-600',
+            label: remaining > 0.01 ? 'Faltante' : '',
+            badgeHtml: ''
+        };
+    }
+    return {
+        amount: pricing.total,
+        textClass: 'text-gray-800',
+        label: '',
+        badgeHtml: ''
     };
 }
 
@@ -478,7 +708,7 @@ function __cpClosePreviewTabIfNeeded() {
                 window.__HUB_ALLOW_NEXT_UNLOAD('cp_preview_tab_close');
             }
             window.close();
-        } catch (_) {}
+        } catch (_) { }
     };
     setTimeout(() => {
         attemptClose();
@@ -493,7 +723,7 @@ function __cpClosePreviewTabIfNeeded() {
             if (tries >= 6) {
                 clearInterval(timer);
                 if (!window.closed) {
-                    try { window.showToast("No se pudo cerrar automáticamente la pestaña. Ciérrala manualmente.", "info"); } catch (_) {}
+                    try { window.showToast("No se pudo cerrar automáticamente la pestaña. Ciérrala manualmente.", "info"); } catch (_) { }
                 }
             }
         }, 120);
@@ -501,7 +731,7 @@ function __cpClosePreviewTabIfNeeded() {
 }
 
 let allOrders = [], allSpaces = [], catalogConcepts = [], dbTaxes = [], currentPreviewOrder = null;
-let currentConcepts = []; 
+let currentConcepts = [];
 let myPermissions = { access: false, orders_edit: false };
 let currentUserProfile = null;
 let __orderDetailDirty = false;
@@ -611,20 +841,20 @@ async function __cpQuotesDelete(id) {
     return { error: result && result.error ? result.error : null };
 }
 
-window.safeFormatDate = function(dateStr) { if (!dateStr) return '--'; const parts = dateStr.split('-'); if (parts.length !== 3) return dateStr; return `${parts[2]}/${parts[1]}/${parts[0]}`; };
-window.parseIds = function(v){ if(!v) return []; if(Array.isArray(v)) return v; if(typeof v === 'string'){ try { const parsed = JSON.parse(v); return Array.isArray(parsed) ? parsed : []; } catch(e){ return v.split(',').map(x=>x.trim()).filter(Boolean); } } return []; };
-function __orderTodayISO(){ return new Date().toISOString().split('T')[0]; }
-function __orderMonthLabel(year, month){ return new Date(year, month, 1).toLocaleDateString('es-MX', { month: 'long', year: 'numeric' }); }
-function __orderAddDays(ds, delta){
+window.safeFormatDate = function (dateStr) { if (!dateStr) return '--'; const parts = dateStr.split('-'); if (parts.length !== 3) return dateStr; return `${parts[2]}/${parts[1]}/${parts[0]}`; };
+window.parseIds = function (v) { if (!v) return []; if (Array.isArray(v)) return v; if (typeof v === 'string') { try { const parsed = JSON.parse(v); return Array.isArray(parsed) ? parsed : []; } catch (e) { return v.split(',').map(x => x.trim()).filter(Boolean); } } return []; };
+function __orderTodayISO() { return new Date().toISOString().split('T')[0]; }
+function __orderMonthLabel(year, month) { return new Date(year, month, 1).toLocaleDateString('es-MX', { month: 'long', year: 'numeric' }); }
+function __orderAddDays(ds, delta) {
     const n = __orderNormalizeDate(ds);
-    if(!n) return '';
+    if (!n) return '';
     const d = new Date(`${n}T00:00:00`);
     d.setDate(d.getDate() + (delta || 0));
     const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
     return `${y}-${m}-${day}`;
 }
-function __orderToYMD(dateObj){
-    if(!dateObj) return '';
+function __orderToYMD(dateObj) {
+    if (!dateObj) return '';
     const d = new Date(dateObj);
     if (Number.isNaN(d.getTime())) return '';
     const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
@@ -634,7 +864,7 @@ function __orderToYMD(dateObj){
 function __orderRefreshCalendarLayout(calendar) {
     if (!calendar || typeof calendar.updateSize !== 'function') return;
     const refresh = () => {
-        try { calendar.updateSize(); } catch (e) {}
+        try { calendar.updateSize(); } catch (e) { }
     };
     requestAnimationFrame(() => {
         refresh();
@@ -642,14 +872,14 @@ function __orderRefreshCalendarLayout(calendar) {
         setTimeout(refresh, 180);
     });
 }
-function __orderIsBlockingStatus(status){
+function __orderIsBlockingStatus(status) {
     const s = String(status || '').toLowerCase();
     return s === 'aprobada' || s === 'finalizada';
 }
 function __orderBroadcastRefresh(reason = 'updated') {
     try {
         localStorage.setItem(__ORDER_REFRESH_KEY, JSON.stringify({ at: Date.now(), reason }));
-    } catch (e) {}
+    } catch (e) { }
 }
 
 function __orderReadSnapshotQueue() {
@@ -668,7 +898,7 @@ function __orderWriteSnapshotQueue(list) {
         const clean = Array.from(new Set((Array.isArray(list) ? list : []).filter(Boolean).map(String)));
         if (!clean.length) localStorage.removeItem(__ORDER_SNAPSHOT_QUEUE_KEY);
         else localStorage.setItem(__ORDER_SNAPSHOT_QUEUE_KEY, JSON.stringify(clean));
-    } catch (e) {}
+    } catch (e) { }
 }
 
 function __orderQueueSnapshot(orderId) {
@@ -696,10 +926,10 @@ function __orderHasPendingSnapshot() {
     return !!pendingId && !!currentId && pendingId === currentId;
 }
 
-window.__HUB_HAS_UNSAVED_CHANGES = function() {
+window.__HUB_HAS_UNSAVED_CHANGES = function () {
     try {
         if (IS_ORDER_DETAIL_PAGE) return __orderDetailDirty === true;
-    } catch (_) {}
+    } catch (_) { }
     return false;
 };
 
@@ -826,11 +1056,11 @@ function __orderNormalizeQuoteUpdatePayload(payload = {}) {
     return next;
 }
 
-window.toggleCustomHorario = function(prefix) {
+window.toggleCustomHorario = function (prefix) {
     const sel = document.getElementById(`${prefix}-horario`);
     const container = document.getElementById(`${prefix}-horario-custom`);
-    if(sel && container) {
-        if(sel.value === 'personalizado') container.classList.remove('hidden');
+    if (sel && container) {
+        if (sel.value === 'personalizado') container.classList.remove('hidden');
         else container.classList.add('hidden');
     }
 }
@@ -839,24 +1069,24 @@ function calculateDayByDayTotal(space, startStr, endStr, guests, options = {}) {
     if (!startStr) return { total: 0, details: [] };
     const endS = endStr || startStr;
     let rules = [];
-    try { rules = typeof space.precios_por_dia === 'string' ? JSON.parse(space.precios_por_dia) : (space.precios_por_dia || []); } catch(e){}
-    if (!Array.isArray(rules) || rules.length === 0) rules = [{ min: 0, max: 999999, precios: {lunes: space.precio_base||0, martes:space.precio_base||0, miercoles:space.precio_base||0, jueves:space.precio_base||0, viernes:space.precio_base||0, sabado:space.precio_base||0, domingo:space.precio_base||0} }];
-    
+    try { rules = typeof space.precios_por_dia === 'string' ? JSON.parse(space.precios_por_dia) : (space.precios_por_dia || []); } catch (e) { }
+    if (!Array.isArray(rules) || rules.length === 0) rules = [{ min: 0, max: 999999, precios: { lunes: space.precio_base || 0, martes: space.precio_base || 0, miercoles: space.precio_base || 0, jueves: space.precio_base || 0, viernes: space.precio_base || 0, sabado: space.precio_base || 0, domingo: space.precio_base || 0 } }];
+
     const guestCount = parseInt(guests) || 1;
     let activeRule = rules.find(r => guestCount >= r.min && guestCount <= r.max);
     if (!activeRule) activeRule = rules[rules.length - 1];
-    
+
     const prices = activeRule ? (activeRule.precios || {}) : {};
     let total = 0; let details = [];
     const start = new Date(startStr + 'T00:00:00'); const end = new Date(endS + 'T00:00:00'); const keys = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado']; const names = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
-    let blockedDays = []; try { blockedDays = typeof space.dias_bloqueados === 'string' ? JSON.parse(space.dias_bloqueados) : (space.dias_bloqueados || []); } catch(e){}
-    
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) { 
-        const dayIdx = d.getDay(); const key = keys[dayIdx]; 
-        let price = parseFloat(prices[key] || 0); 
+    let blockedDays = []; try { blockedDays = typeof space.dias_bloqueados === 'string' ? JSON.parse(space.dias_bloqueados) : (space.dias_bloqueados || []); } catch (e) { }
+
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        const dayIdx = d.getDay(); const key = keys[dayIdx];
+        let price = parseFloat(prices[key] || 0);
         if (!options.ignoreBlocks && blockedDays.includes(key)) price = 0;
-        total += price; 
-        details.push({ date: d.toLocaleDateString('es-MX'), dayName: names[dayIdx], price: price }); 
+        total += price;
+        details.push({ date: d.toLocaleDateString('es-MX'), dayName: names[dayIdx], price: price });
     }
     return { total, details };
 }
@@ -922,14 +1152,14 @@ window.closeModal = (id, opts = {}) => {
     }
     if (id === 'preview-modal') __cpPreviewModalSuppressCloseSnapshot = false;
 };
-window.showToast = (msg, type='success') => {
+window.showToast = (msg, type = 'success') => {
     const c = document.getElementById('toast-container');
     if (!c) {
-        try { console[type === 'error' ? 'error' : 'log'](String(msg || '')); } catch (_) {}
+        try { console[type === 'error' ? 'error' : 'log'](String(msg || '')); } catch (_) { }
         return;
     }
     const e = document.createElement('div');
-    e.className = `p-4 rounded-lg shadow-lg text-white text-xs font-bold uppercase tracking-wider mb-2 animate-bounce ${type==='error'?'bg-red-500':'bg-green-500'}`;
+    e.className = `p-4 rounded-lg shadow-lg text-white text-xs font-bold uppercase tracking-wider mb-2 animate-bounce ${type === 'error' ? 'bg-red-500' : 'bg-green-500'}`;
     e.innerText = msg;
     c.appendChild(e);
     setTimeout(() => e.remove(), 3000);
@@ -945,7 +1175,7 @@ function __cpEnsureBusyOverlay() {
     return overlay;
 }
 let __cpBusyOverlayDepth = 0;
-window.__cpShowBusyOverlay = function(message = 'Guardando cotización...') {
+window.__cpShowBusyOverlay = function (message = 'Guardando cotización...') {
     const overlay = __cpEnsureBusyOverlay();
     const title = document.getElementById('cp-pdf-busy-title');
     if (title) title.innerText = String(message || 'Guardando cotización...');
@@ -953,7 +1183,7 @@ window.__cpShowBusyOverlay = function(message = 'Guardando cotización...') {
     overlay.classList.remove('hidden');
     overlay.classList.add('flex');
 };
-window.__cpHideBusyOverlay = function() {
+window.__cpHideBusyOverlay = function () {
     const overlay = document.getElementById('cp-pdf-busy-overlay');
     if (!overlay) return;
     __cpBusyOverlayDepth = Math.max(0, __cpBusyOverlayDepth - 1);
@@ -978,11 +1208,11 @@ function __cpOpenBlobInViewer(blob, title = 'Documento', popupRef = null) {
     popup.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${safeTitle}</title><style>html,body{margin:0;height:100%;background:#111827;}iframe{border:0;width:100%;height:100%;background:#fff;}</style></head><body><iframe src="${objectUrl}" title="${safeTitle}"></iframe></body></html>`);
     popup.document.close();
     setTimeout(() => {
-        try { URL.revokeObjectURL(objectUrl); } catch (_) {}
+        try { URL.revokeObjectURL(objectUrl); } catch (_) { }
     }, 300000);
     return true;
 }
-window.openStoredDocument = async function(path) {
+window.openStoredDocument = async function (path) {
     const safePath = String(path || '').trim();
     if (!safePath) return window.showToast("Documento no disponible", "error");
     window.showToast("Abriendo documento...", "info");
@@ -992,7 +1222,7 @@ window.openStoredDocument = async function(path) {
             popup.document.open();
             popup.document.write('<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Cargando documento</title><style>html,body{height:100%;margin:0;font-family:Segoe UI,sans-serif;background:#111827;color:#fff;display:flex;align-items:center;justify-content:center;}</style></head><body>Cargando documento...</body></html>');
             popup.document.close();
-        } catch (_) {}
+        } catch (_) { }
     }
     try {
         const { data, error } = await window.globalPocketBase.storage.from('documentos-cp').createSignedUrl(safePath, 3600);
@@ -1005,32 +1235,32 @@ window.openStoredDocument = async function(path) {
             const objectUrl = URL.createObjectURL(blob);
             window.open(objectUrl, '_blank');
             setTimeout(() => {
-                try { URL.revokeObjectURL(objectUrl); } catch (_) {}
+                try { URL.revokeObjectURL(objectUrl); } catch (_) { }
             }, 300000);
         }
     } catch (e) {
-        try { if (popup && !popup.closed) popup.close(); } catch (_) {}
+        try { if (popup && !popup.closed) popup.close(); } catch (_) { }
         window.showToast("Error de acceso al archivo", "error");
     }
 };
 
 let confirmCallback = null;
 let cancelCallback = null;
-window.openConfirm = function(msg, confirmCb, isWarning = false, confirmTxt = "Confirmar", cancelTxt = "Cancelar", cancelCb = null) { 
-    const titleEl = document.getElementById('confirm-title'); 
-    titleEl.innerHTML = isWarning ? `<i class="fa-solid fa-triangle-exclamation text-red-600 mb-2 text-2xl block"></i> ${msg}` : msg; 
-    confirmCallback = confirmCb; 
+window.openConfirm = function (msg, confirmCb, isWarning = false, confirmTxt = "Confirmar", cancelTxt = "Cancelar", cancelCb = null) {
+    const titleEl = document.getElementById('confirm-title');
+    titleEl.innerHTML = isWarning ? `<i class="fa-solid fa-triangle-exclamation text-red-600 mb-2 text-2xl block"></i> ${msg}` : msg;
+    confirmCallback = confirmCb;
     cancelCallback = cancelCb;
     document.getElementById('btn-confirm-action').innerText = confirmTxt;
     document.getElementById('btn-cancel-action').innerText = cancelTxt;
-    window.openModal('generic-confirm-modal'); 
+    window.openModal('generic-confirm-modal');
 };
 
-window.askCloseEditModal = function() {
+window.askCloseEditModal = function () {
     if (IS_ORDER_DETAIL_PAGE) return window.closeOrderEditorPage();
     window.openConfirm(
         "¿Deseas guardar los cambios en la cotización?",
-        () => { window.processSaveOrder(); }, 
+        () => { window.processSaveOrder(); },
         false,
         "Guardar Cambios",
         "Cerrar sin guardar",
@@ -1038,7 +1268,7 @@ window.askCloseEditModal = function() {
     );
 };
 
-window.askDeleteOrder = function(id, e) {
+window.askDeleteOrder = function (id, e) {
     if (e) e.stopPropagation();
     if (!__cpIsAdminProfile()) {
         window.showToast("Solo administradores pueden eliminar cotizaciones.", "error");
@@ -1067,7 +1297,7 @@ window.askDeleteOrder = function(id, e) {
     }, true);
 };
 
-window.addEventListener('click', function(e) {
+window.addEventListener('click', function (e) {
     const editModal = document.getElementById('order-edit-modal');
     const docsModal = document.getElementById('docs-modal');
     const previewModal = document.getElementById('preview-modal');
@@ -1076,8 +1306,8 @@ window.addEventListener('click', function(e) {
     const orderDateModal = document.getElementById('order-date-modal');
 
     if (confirmModal && !confirmModal.classList.contains('hidden')) {
-        if(e.target === confirmModal) window.closeModal('generic-confirm-modal');
-        return; 
+        if (e.target === confirmModal) window.closeModal('generic-confirm-modal');
+        return;
     }
 
     if (editModal && e.target === editModal && !IS_ORDER_DETAIL_PAGE) window.askCloseEditModal();
@@ -1092,12 +1322,12 @@ window.addEventListener('click', function(e) {
 
 document.addEventListener('DOMContentLoaded', async () => {
     if (window.__HUB_LAYOUT_READY && typeof window.__HUB_LAYOUT_READY.then === 'function') {
-        try { await window.__HUB_LAYOUT_READY; } catch (_) {}
+        try { await window.__HUB_LAYOUT_READY; } catch (_) { }
     }
     if (window.__HUB_PAGE_ACCESS_DENIED) return;
     if (window.PB_CLIENT) {
-        if(!window.tenantPocketBase) window.tenantPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY, { db: { schema: FIN_SCHEMA } });
-        if(!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
+        if (!window.tenantPocketBase) window.tenantPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY, { db: { schema: FIN_SCHEMA } });
+        if (!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
     }
     const authCtx = window.HUB_SESSION?.ensureAuth
         ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, redirectOnFail: true })
@@ -1117,17 +1347,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     __cpInitPdfStyleEditor();
     cpOrdersApplyViewStateControls();
 
-    document.getElementById('btn-confirm-action')?.addEventListener('click', () => { if(confirmCallback) confirmCallback(); window.closeModal('generic-confirm-modal'); });
-    document.getElementById('btn-cancel-action')?.addEventListener('click', () => { if(cancelCallback) cancelCallback(); window.closeModal('generic-confirm-modal'); });
+    document.getElementById('btn-confirm-action')?.addEventListener('click', () => { if (confirmCallback) confirmCallback(); window.closeModal('generic-confirm-modal'); });
+    document.getElementById('btn-cancel-action')?.addEventListener('click', () => { if (cancelCallback) cancelCallback(); window.closeModal('generic-confirm-modal'); });
     document.getElementById('oed-status')?.addEventListener('change', () => {
         __orderApplyStatusVisual();
         __orderScheduleAutoSave();
     });
 
     document.getElementById('search-orders')?.addEventListener('input', (e) => filterOrders(e.target.value));
-    document.getElementById('oed-start')?.addEventListener('change', function() { document.getElementById('oed-end').min = this.value; window.recalcTotal(); }); 
-    document.getElementById('oed-end')?.addEventListener('change', () => window.recalcTotal()); 
-    document.getElementById('oed-space')?.addEventListener('change', () => { window.updateB2bSelects(); window.recalcTotal(); const s = allSpaces.find(x => x.id == document.getElementById('oed-space').value); if(s) window.renderTaxesForSpace(s); });
+    document.getElementById('oed-start')?.addEventListener('change', function () { document.getElementById('oed-end').min = this.value; window.recalcTotal(); });
+    document.getElementById('oed-end')?.addEventListener('change', () => window.recalcTotal());
+    document.getElementById('oed-space')?.addEventListener('change', () => { window.updateB2bSelects(); window.recalcTotal(); const s = allSpaces.find(x => x.id == document.getElementById('oed-space').value); if (s) window.renderTaxesForSpace(s); });
     ['oed-premontaje', 'oed-premontaje-cortesia', 'oed-horas', 'oed-horas-cortesia'].forEach(id => {
         document.getElementById(id)?.addEventListener('input', __orderApplyCourtesyLimitsFromInputs);
     });
@@ -1136,13 +1366,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         __orderSaveActiveFromForm();
         window.recalcTotal();
     };
-    ['oed-guests','oed-start','oed-end','oed-premontaje','oed-premontaje-cortesia','oed-horas','oed-horas-cortesia','oed-horas-price','oed-horario','oed-horario-start','oed-horario-end','oed-horario-price'].forEach(id => {
+    ['oed-guests', 'oed-start', 'oed-end', 'oed-premontaje', 'oed-premontaje-cortesia', 'oed-horas', 'oed-horas-cortesia', 'oed-horas-price', 'oed-horario', 'oed-horario-start', 'oed-horario-end', 'oed-horario-price'].forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
         el.addEventListener('input', __orderLiveRefresh);
         el.addEventListener('change', __orderLiveRefresh);
     });
-    document.getElementById('new-concept-select')?.addEventListener('change', function() { const c = catalogConcepts.find(x => x.id == this.value); if(c) document.getElementById('new-concept-amount').value = c.precio_sugerido; });
+    document.getElementById('new-concept-select')?.addEventListener('change', function () { const c = catalogConcepts.find(x => x.id == this.value); if (c) document.getElementById('new-concept-amount').value = c.precio_sugerido; });
     const today = __orderTodayISO();
     const startEl = document.getElementById('oed-start');
     const endEl = document.getElementById('oed-end');
@@ -1153,7 +1383,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (ev.key === __ORDER_REFRESH_KEY) window.loadOrders();
         });
     }
-    await Promise.all([loadTaxes(), loadSpaces(), loadConcepts()]); await window.loadOrders();
+    await Promise.all([loadTaxes(), loadSpaces(), loadConcepts(), __orderLoadConvenioCatalog()]); await window.loadOrders();
     await __orderProcessSnapshotQueue();
     if (IS_ORDER_PREVIEW_PAGE) {
         const params = new URLSearchParams(window.location.search || '');
@@ -1197,7 +1427,7 @@ async function loadTaxes() {
         try {
             const { data } = await window.globalPocketBase.from('impuestos').select('*').eq('tenant', tenant);
             dbTaxes = __orderFilterRowsByTenant(data || [], tenant);
-        } catch (_) {}
+        } catch (_) { }
     }
 }
 async function loadSpaces() {
@@ -1453,16 +1683,16 @@ async function __orderPrimeOrderUsers(orders = []) {
             try {
                 const { data } = await source.from('app_users').select('*').in('id', chunk);
                 (data || []).forEach(__orderRegisterUserRecord);
-            } catch (_) {}
+            } catch (_) { }
             if (textChunk.length) {
                 try {
                     const { data } = await source.from('app_users').select('*').in('login_username', textChunk);
                     (data || []).forEach(__orderRegisterUserRecord);
-                } catch (_) {}
+                } catch (_) { }
                 try {
                     const { data } = await source.from('app_users').select('*').in('username', textChunk);
                     (data || []).forEach(__orderRegisterUserRecord);
-                } catch (_) {}
+                } catch (_) { }
             }
         }
     }
@@ -1474,11 +1704,11 @@ async function __orderPrimeOrderUsers(orders = []) {
                 .from('app_users')
                 .select('*');
             (data || []).forEach(__orderRegisterUserRecord);
-        } catch (_) {}
+        } catch (_) { }
     }
 }
 
-window.loadOrders = async function() {
+window.loadOrders = async function () {
     const viewState = cpOrdersSaveViewState();
     cpOrdersApplyViewStateControls(viewState);
     const { data, error } = await __cpQuotesList({ sort: '-created_at' });
@@ -1500,14 +1730,25 @@ window.loadOrders = async function() {
 };
 
 function renderOrdersTable(data) {
-    const t = document.getElementById('orders-table'); if(!t) return; t.innerHTML = ''; 
-    if(!data.length) { t.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-gray-400">Sin registros.</td></tr>'; return; }
+    const t = document.getElementById('orders-table'); if (!t) return; t.innerHTML = '';
+    if (!data.length) { t.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-gray-400">Sin registros.</td></tr>'; return; }
     const canDelete = __cpIsAdminProfile();
     data.forEach(o => {
-        let sColor = 'bg-gray-100 text-gray-600', sText = 'Pendiente', missingIcons = []; 
-        if(o.status === 'aprobada') { sColor = 'bg-blue-100 text-blue-700'; sText = 'Aprobada'; if (!o.factura_xml_url) missingIcons.push('<i class="fa-solid fa-file-invoice" title="Falta Factura"></i>'); if (!o.historial_pagos || o.historial_pagos.length === 0) missingIcons.push('<i class="fa-solid fa-money-bill-wave" title="Falta Pago"></i>'); }
-        if(o.status === 'finalizada') { sColor = 'bg-green-100 text-green-700 border border-green-200'; sText = 'Finalizada'; }
-        if(o.status === 'rechazada') { sColor = 'bg-red-50 text-red-600'; sText = 'Rechazada'; }
+        let sColor = 'bg-gray-100 text-gray-600', sText = 'Pendiente', missingIcons = [];
+        const isConvenio = __orderIsConvenioOrder(o);
+        const convenioEvidenceCount = __orderGetConvenioEvidence(o).length;
+        if (o.status === 'aprobada') {
+            sColor = 'bg-blue-100 text-blue-700';
+            sText = 'Aprobada';
+            if (isConvenio) {
+                if (convenioEvidenceCount < 3) missingIcons.push('<i class="fa-solid fa-camera" title="Falta Evidencia"></i>');
+            } else {
+                if (!o.factura_xml_url) missingIcons.push('<i class="fa-solid fa-file-invoice" title="Falta Factura"></i>');
+                if (__orderParsePaymentsList(o).length === 0) missingIcons.push('<i class="fa-solid fa-money-bill-wave" title="Falta Pago"></i>');
+            }
+        }
+        if (o.status === 'finalizada') { sColor = 'bg-green-100 text-green-700 border border-green-200'; sText = 'Finalizada'; }
+        if (o.status === 'rechazada') { sColor = 'bg-red-50 text-red-600'; sText = 'Rechazada'; }
         let alertsHTML = ''; if (missingIcons.length > 0 && o.status === 'aprobada') alertsHTML = `<div class="flex gap-2 justify-center mt-1.5 text-[10px] text-red-400">${missingIcons.join('')}</div>`;
 
         const tr = document.createElement('tr'); tr.className = "border-b hover:bg-gray-50 transition group cursor-pointer";
@@ -1518,7 +1759,7 @@ function renderOrdersTable(data) {
                 window.openOrderEditorPage(o.id);
             }
         };
-        
+
         const folioUnificado = __orderResolveQuoteFolio(o);
         const details = parseSpacesDetail(o.espacios_detalle);
         const spaceLabel = details.length > 1
@@ -1527,7 +1768,7 @@ function renderOrdersTable(data) {
         const dateLabel = (o.fecha_inicio && o.fecha_fin)
             ? (o.fecha_inicio === o.fecha_fin ? window.safeFormatDate(o.fecha_inicio) : `${window.safeFormatDate(o.fecha_inicio)} - ${window.safeFormatDate(o.fecha_fin)}`)
             : '--';
-        
+
         const quoteName = (o.nombre_cotizacion || o.detalles_evento?.nombre_cotizacion || '').trim();
         const createdBy = __orderResolveOrderActorName(o, 'created');
         const updatedBy = __orderResolveOrderActorName(o, 'updated');
@@ -1538,19 +1779,33 @@ function renderOrdersTable(data) {
         const deleteCell = canDelete
             ? `<button type="button" onclick="window.askDeleteOrder('${o.id}', event)" class="text-gray-400 hover:text-red-600"><i class="fa-solid fa-trash"></i></button>`
             : `<span class="text-[10px] text-gray-300">—</span>`;
-        const pricing = __orderResolveQuotePricing(o);
-        tr.innerHTML = `<td class="p-4 font-black text-brand-dark">${folioUnificado}</td><td class="p-4 font-bold text-xs text-gray-700">${quoteName ? `<span class="text-brand-dark block">${quoteName}</span><span class="text-[10px] text-gray-500 font-semibold">${o.cliente_nombre}</span>` : o.cliente_nombre}</td><td class="p-4 text-xs"><span class="font-bold block">${spaceLabel}</span><span class="text-gray-500 font-mono">${dateLabel}</span></td><td class="p-4 text-right font-mono font-bold text-xs">${new Intl.NumberFormat('es-MX', {style:'currency',currency:'MXN'}).format(pricing.total)}</td><td class="p-4 text-center"><span class="${sColor} px-2 py-1 rounded text-[9px] font-black uppercase tracking-wider">${sText}</span>${alertsHTML}</td><td class="p-4 text-[10px] font-bold text-gray-600 text-center"${createdTooltipAttr}>${createdBy}</td><td class="p-4 text-[10px] font-bold text-gray-600 text-center"${updatedTooltipAttr}>${updatedBy}</td><td class="p-4 text-center"><button type="button" onclick="event.stopPropagation(); window.openDocsModal('${o.id}')" class="bg-white border border-gray-300 text-gray-600 hover:bg-gray-50 hover:text-brand-dark px-3 py-1.5 rounded-lg text-xs font-bold transition shadow-sm flex items-center gap-2 mx-auto"><i class="fa-solid fa-folder-open text-brand-red"></i> Expediente</button></td><td class="p-4 text-center">${deleteCell}</td>`;
+        const amountState = __orderResolveOrderTableAmountState(o);
+        const totalDisplayHtml = isConvenio
+            ? `<div class="flex flex-col items-end gap-1">
+                <div class="flex items-center justify-end gap-2">
+                    ${amountState.badgeHtml}
+                    <span class="${amountState.textClass}">${new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(amountState.amount)}</span>
+                </div>
+                ${amountState.label ? `<span class="text-[10px] font-black ${amountState.textClass} uppercase tracking-wide">${amountState.label}</span>` : ''}
+            </div>`
+            : `<div class="flex flex-col items-end gap-1">
+                <div class="flex items-center justify-end gap-2">
+                    <span class="${amountState.textClass}">${new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(amountState.amount)}</span>
+                </div>
+                ${amountState.label ? `<span class="text-[10px] font-black ${amountState.textClass} uppercase tracking-wide">${amountState.label}</span>` : ''}
+            </div>`;
+        tr.innerHTML = `<td class="p-4 font-black text-brand-dark">${folioUnificado}</td><td class="p-4 font-bold text-xs text-gray-700">${quoteName ? `<span class="text-brand-dark block">${quoteName}</span><span class="text-[10px] text-gray-500 font-semibold">${o.cliente_nombre}</span>` : o.cliente_nombre}</td><td class="p-4 text-xs"><span class="font-bold block">${spaceLabel}</span><span class="text-gray-500 font-mono">${dateLabel}</span></td><td class="p-4 text-right font-mono font-bold text-xs">${totalDisplayHtml}</td><td class="p-4 text-center"><span class="${sColor} px-2 py-1 rounded text-[9px] font-black uppercase tracking-wider">${sText}</span>${alertsHTML}</td><td class="p-4 text-[10px] font-bold text-gray-600 text-center"${createdTooltipAttr}>${createdBy}</td><td class="p-4 text-[10px] font-bold text-gray-600 text-center"${updatedTooltipAttr}>${updatedBy}</td><td class="p-4 text-center"><button type="button" onclick="event.stopPropagation(); window.openDocsModal('${o.id}')" class="bg-white border border-gray-300 text-gray-600 hover:bg-gray-50 hover:text-brand-dark px-3 py-1.5 rounded-lg text-xs font-bold transition shadow-sm flex items-center gap-2 mx-auto"><i class="fa-solid fa-folder-open text-brand-red"></i> Expediente</button></td><td class="p-4 text-center">${deleteCell}</td>`;
         t.appendChild(tr);
     });
 }
 
-window.openOrderEditorPage = function(id) {
+window.openOrderEditorPage = function (id) {
     cpOrdersSaveViewState({ selectedOrderId: id });
     const url = `order_detail.html?quote=${encodeURIComponent(id)}`;
     window.open(url, '_blank', 'noopener');
 };
 
-window.openOrderPreviewTab = function(id, docType = 'quote', action = 'view') {
+window.openOrderPreviewTab = function (id, docType = 'quote', action = 'view') {
     const safeId = String(id || '').trim();
     if (!safeId) return;
     const safeDoc = String(docType || '').toLowerCase() === 'order' ? 'order' : 'quote';
@@ -1564,14 +1819,14 @@ function filterOrders(term = '', options = {}) {
     renderOrdersTable(allOrders.filter(o => {
         const folioUnificado = __orderResolveQuoteFolio(o);
         const quoteName = (o.nombre_cotizacion || o.detalles_evento?.nombre_cotizacion || '');
-        return (o.cliente_nombre || '').toLowerCase().includes(lower) || 
-               folioUnificado.toLowerCase().includes(lower) ||
-               quoteName.toLowerCase().includes(lower);
-    })); 
+        return (o.cliente_nombre || '').toLowerCase().includes(lower) ||
+            folioUnificado.toLowerCase().includes(lower) ||
+            quoteName.toLowerCase().includes(lower);
+    }));
     if (!options.skipSave && !cpOrdersRestoringViewState) cpOrdersSaveViewState();
 }
 
-window.handleMontajeInput = function(prefix) {
+window.handleMontajeInput = function (prefix) {
     const val = parseInt(document.getElementById(prefix + '-premontaje').value) || 0;
     const btn = document.getElementById(prefix + '-btn-montaje');
     if (val > 0) btn.classList.remove('hidden'); else btn.classList.add('hidden');
@@ -1580,7 +1835,7 @@ window.handleMontajeInput = function(prefix) {
     window.recalcTotal();
 }
 
-window.actualizarLabelMontaje = function(prefix) {
+window.actualizarLabelMontaje = function (prefix) {
     const lbl = document.getElementById(prefix + '-lbl-fechas-montaje');
     if (window.finalMontajeDates.length > 0) {
         lbl.innerText = window.finalMontajeDates.map(d => window.safeFormatDate(d)).join(', ');
@@ -1590,51 +1845,51 @@ window.actualizarLabelMontaje = function(prefix) {
     }
 }
 
-window.abrirModalMontaje = function(prefix) {
+window.abrirModalMontaje = function (prefix) {
     window.currentMontajePrefix = prefix;
     const diasM = parseInt(document.getElementById(prefix + '-premontaje').value) || 0;
     if (diasM <= 0) return window.showToast("Ingresa la cantidad de días primero.", "error");
-    
+
     const sDate = document.getElementById('oed-start').value;
     if (!sDate) return window.showToast("Primero selecciona la Fecha Inicio del evento.", "error");
 
     document.getElementById('montaje-limit-num').innerText = diasM;
     window.tempMontajeDates = [...window.finalMontajeDates].slice(0, diasM);
-    
+
     const dp = document.getElementById('montaje-date-input');
-    const maxD = new Date(sDate + 'T00:00:00'); 
+    const maxD = new Date(sDate + 'T00:00:00');
     maxD.setDate(maxD.getDate() - 1);
     dp.max = maxD.toISOString().split('T')[0];
     dp.value = '';
-    
+
     window.renderListaMontaje();
     window.openModal('montaje-modal');
 }
 
-window.addMontajeDate = function() {
+window.addMontajeDate = function () {
     const dp = document.getElementById('montaje-date-input');
     const dateVal = dp.value;
-    if(!dateVal) return window.showToast("Selecciona una fecha.", "error");
-    
+    if (!dateVal) return window.showToast("Selecciona una fecha.", "error");
+
     const limit = parseInt(document.getElementById(window.currentMontajePrefix + '-premontaje').value) || 0;
-    if(window.tempMontajeDates.length >= limit) return window.showToast(`Solo puedes seleccionar ${limit} día(s).`, "error");
-    if(window.tempMontajeDates.includes(dateVal)) return window.showToast("Esta fecha ya fue agregada.", "error");
-    
+    if (window.tempMontajeDates.length >= limit) return window.showToast(`Solo puedes seleccionar ${limit} día(s).`, "error");
+    if (window.tempMontajeDates.includes(dateVal)) return window.showToast("Esta fecha ya fue agregada.", "error");
+
     const maxD = new Date(dp.max + 'T00:00:00');
     const selD = new Date(dateVal + 'T00:00:00');
-    if(selD > maxD) return window.showToast("La fecha debe ser antes del evento.", "error");
-    
+    if (selD > maxD) return window.showToast("La fecha debe ser antes del evento.", "error");
+
     window.tempMontajeDates.push(dateVal);
     window.tempMontajeDates.sort();
     window.renderListaMontaje();
 }
 
-window.removeMontajeDate = function(idx) {
+window.removeMontajeDate = function (idx) {
     window.tempMontajeDates.splice(idx, 1);
     window.renderListaMontaje();
 }
 
-window.renderListaMontaje = function() {
+window.renderListaMontaje = function () {
     const list = document.getElementById('montaje-dates-list');
     list.innerHTML = '';
     window.tempMontajeDates.forEach((d, i) => {
@@ -1642,37 +1897,37 @@ window.renderListaMontaje = function() {
     });
 }
 
-window.confirmMontajeDates = function() {
+window.confirmMontajeDates = function () {
     const limit = parseInt(document.getElementById(window.currentMontajePrefix + '-premontaje').value) || 0;
-    if(window.tempMontajeDates.length !== limit) return window.showToast(`Debes seleccionar exactamente ${limit} día(s).`, "error");
-    
+    if (window.tempMontajeDates.length !== limit) return window.showToast(`Debes seleccionar exactamente ${limit} día(s).`, "error");
+
     window.finalMontajeDates = [...window.tempMontajeDates];
     window.actualizarLabelMontaje(window.currentMontajePrefix);
     window.closeModal('montaje-modal');
     window.recalcTotal();
 }
 
-window.updateB2bSelects = function(skipDefaults = false) {
+window.updateB2bSelects = function (skipDefaults = false) {
     const spaceId = document.getElementById('oed-space').value;
-    const spaceObj = allSpaces.find(s => s.id == spaceId); 
+    const spaceObj = allSpaces.find(s => s.id == spaceId);
     const selHorario = document.getElementById('oed-horario');
     selHorario.innerHTML = '';
-    
-    let b2b = {}; try { b2b = typeof spaceObj?.config_b2b === 'string' ? JSON.parse(spaceObj.config_b2b) : (spaceObj?.config_b2b || {}); } catch(e){}
+
+    let b2b = {}; try { b2b = typeof spaceObj?.config_b2b === 'string' ? JSON.parse(spaceObj.config_b2b) : (spaceObj?.config_b2b || {}); } catch (e) { }
     let h = b2b.horarios || [];
-    if (!Array.isArray(h)) { 
-        const mapNames = { matutino: 'Matutino', vespertino: 'Vespertino', nocturno: 'Nocturno', todo_dia: 'Todo el día' }; 
-        h = Object.keys(h).map(k => ({ nombre: mapNames[k] || k, start: h[k]?.start, end: h[k]?.end, price: h[k]?.price })).filter(item => item.start && item.end); 
+    if (!Array.isArray(h)) {
+        const mapNames = { matutino: 'Matutino', vespertino: 'Vespertino', nocturno: 'Nocturno', todo_dia: 'Todo el día' };
+        h = Object.keys(h).map(k => ({ nombre: mapNames[k] || k, start: h[k]?.start, end: h[k]?.end, price: h[k]?.price })).filter(item => item.start && item.end);
     }
-    
-    if (h.length > 0) { 
-        h.forEach(item => { 
-            selHorario.innerHTML += `<option value="${item.nombre}" data-price="${item.price}">${item.nombre} (${item.start} a ${item.end})</option>`; 
-        }); 
+
+    if (h.length > 0) {
+        h.forEach(item => {
+            selHorario.innerHTML += `<option value="${item.nombre}" data-price="${item.price}">${item.nombre} (${item.start} a ${item.end})</option>`;
+        });
     }
     selHorario.innerHTML += '<option value="personalizado" data-price="0">Personalizado...</option>';
 
-    if(!skipDefaults) {
+    if (!skipDefaults) {
         document.getElementById('oed-premontaje-price').value = parseFloat(b2b.precio_montaje) || 0;
         document.getElementById('oed-horas-price').value = parseFloat(b2b.precio_hora_extra) || 0;
         document.getElementById('oed-premontaje').value = 0;
@@ -1686,12 +1941,12 @@ window.updateB2bSelects = function(skipDefaults = false) {
     }
 }
 
-window.openOrderEditModal = async function(id) { 
+window.openOrderEditModal = async function (id) {
     const order = allOrders.find(o => o.id === id); if (!order) return;
     await loadClientProfilesForOrderModal();
     currentPreviewOrder = order;
 
-    document.getElementById('oed-id').value = order.id; document.getElementById('oed-client').value = order.cliente_nombre || ''; document.getElementById('oed-status').value = order.status; 
+    document.getElementById('oed-id').value = order.id; document.getElementById('oed-client').value = order.cliente_nombre || ''; document.getElementById('oed-status').value = order.status;
     const statusSelect = document.getElementById('oed-status'); const currentLevel = STATUS_LEVEL[order.status] || 0; Array.from(statusSelect.options).forEach(opt => opt.disabled = (STATUS_LEVEL[opt.value] || 0) < currentLevel);
     document.getElementById('oed-phone').value = order.cliente_contacto || ''; document.getElementById('oed-email').value = order.cliente_email || ''; document.getElementById('fiscal-rfc-re').value = order.cliente_rfc || ''; document.getElementById('oed-guests').value = order.personas || 1;
 
@@ -1708,13 +1963,13 @@ window.openOrderEditModal = async function(id) {
         }
     }
 
-    document.getElementById('oed-start').value = order.fecha_inicio; document.getElementById('oed-end').value = order.fecha_fin; 
-    
-    const sel = document.getElementById('oed-space'); sel.innerHTML = ''; 
+    document.getElementById('oed-start').value = order.fecha_inicio; document.getElementById('oed-end').value = order.fecha_fin;
+
+    const sel = document.getElementById('oed-space'); sel.innerHTML = '';
     allSpaces.forEach(s => sel.innerHTML += `<option value="${s.id}" ${s.id == order.espacio_id ? 'selected' : ''}>${s.nombre}</option>`);
-    
+
     window.updateB2bSelects(true);
-    
+
     let dbConcepts = __orderNormalizeConceptsArray(order.conceptos_adicionales);
 
     let pureConcepts = []; let cHorarioText = null, cMontaje = 0, cHoras = 0;
@@ -1724,46 +1979,46 @@ window.openOrderEditModal = async function(id) {
     window.finalMontajeDates = [];
 
     dbConcepts.forEach(c => {
-        if(c.type === 'b2b_horario' || (c.description && c.description.startsWith('Horario:'))) {
+        if (c.type === 'b2b_horario' || (c.description && c.description.startsWith('Horario:'))) {
             cHorarioText = c.meta?.selected || c.description.replace('Horario:', '').trim();
-            if(c.meta?.selected === 'personalizado' || !c.meta?.selected) {
-                isCustomHorario = true; 
+            if (c.meta?.selected === 'personalizado' || !c.meta?.selected) {
+                isCustomHorario = true;
                 customHorarioPrice = parseFloat(c.amount) || 0;
                 let savedName = c.meta?.custom_name || cHorarioText;
                 let times = savedName.match(/\d{2}:\d{2}/g);
-                if(times && times.length >= 2) { customStart = times[0]; customEnd = times[1]; }
+                if (times && times.length >= 2) { customStart = times[0]; customEnd = times[1]; }
             }
         }
-        else if(c.type === 'b2b_montaje' || (c.description && c.description.startsWith('Montaje'))) {
+        else if (c.type === 'b2b_montaje' || (c.description && c.description.startsWith('Montaje'))) {
             cMontaje = c.meta?.days || parseInt(c.description.match(/\d+/)?.[0] || 0);
-            cMontajePrice = c.meta?.unit_price || (cMontaje > 0 ? parseFloat(c.amount)/cMontaje : 0);
-            if(c.meta?.dates) window.finalMontajeDates = c.meta.dates;
+            cMontajePrice = c.meta?.unit_price || (cMontaje > 0 ? parseFloat(c.amount) / cMontaje : 0);
+            if (c.meta?.dates) window.finalMontajeDates = c.meta.dates;
         }
-        else if(c.type === 'b2b_horas' || (c.description && c.description.startsWith('Horas Extras'))) {
+        else if (c.type === 'b2b_horas' || (c.description && c.description.startsWith('Horas Extras'))) {
             cHoras = c.meta?.hours || parseInt(c.description.match(/\d+/)?.[0] || 0);
-            cHorasPrice = c.meta?.unit_price || (cHoras > 0 ? parseFloat(c.amount)/cHoras : 0);
+            cHorasPrice = c.meta?.unit_price || (cHoras > 0 ? parseFloat(c.amount) / cHoras : 0);
         }
         else pureConcepts.push(c);
     });
-    
+
     currentConcepts = pureConcepts;
-    
+
     const selHorario = document.getElementById('oed-horario');
     let found = false;
-    
-    if(cHorarioText && !isCustomHorario) {
-        Array.from(selHorario.options).forEach(opt => { 
-            if(opt.text.includes(cHorarioText) || cHorarioText.includes(opt.value)) { opt.selected = true; found = true; } 
+
+    if (cHorarioText && !isCustomHorario) {
+        Array.from(selHorario.options).forEach(opt => {
+            if (opt.text.includes(cHorarioText) || cHorarioText.includes(opt.value)) { opt.selected = true; found = true; }
         });
     }
-    
-    if(isCustomHorario || (!found && cHorarioText && cHorarioText !== 'Sin horario configurado')) {
+
+    if (isCustomHorario || (!found && cHorarioText && cHorarioText !== 'Sin horario configurado')) {
         selHorario.value = 'personalizado';
         document.getElementById('oed-horario-start').value = customStart;
         document.getElementById('oed-horario-end').value = customEnd;
         document.getElementById('oed-horario-price').value = customHorarioPrice || (dbConcepts.find(c => c.type === 'b2b_horario' || (c.description && c.description.startsWith('Horario:')))?.amount || 0);
     }
-    
+
     window.toggleCustomHorario('oed');
 
     document.getElementById('oed-premontaje').value = cMontaje;
@@ -1772,12 +2027,12 @@ window.openOrderEditModal = async function(id) {
 
     document.getElementById('oed-horas').value = cHoras;
     document.getElementById('oed-horas-price').value = cHorasPrice;
-    
-    if(document.getElementById('oed-adj-type')) { document.getElementById('oed-adj-type').value = order.tipo_ajuste || 'ninguno'; document.getElementById('oed-adj-val').value = order.valor_ajuste || 0; document.getElementById('oed-adj-unit').value = order.ajuste_es_porcentaje ? 'percent' : 'fixed'; }
-    
+
+    if (document.getElementById('oed-adj-type')) { document.getElementById('oed-adj-type').value = order.tipo_ajuste || 'ninguno'; document.getElementById('oed-adj-val').value = order.valor_ajuste || 0; document.getElementById('oed-adj-unit').value = order.ajuste_es_porcentaje ? 'percent' : 'fixed'; }
+
     const isLocked = ['aprobada', 'finalizada'].includes(order.status);
-    document.querySelectorAll('#order-edit-modal input, #order-edit-modal select').forEach(i => { if(i.id !== 'btn-save-progress' && i.id !== 'oed-status') i.disabled = isLocked; });
-    ['oed-quote-name','oed-status'].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = isLocked && id !== 'oed-status'; });
+    document.querySelectorAll('#order-edit-modal input, #order-edit-modal select').forEach(i => { if (i.id !== 'btn-save-progress' && i.id !== 'oed-status') i.disabled = isLocked; });
+    ['oed-quote-name', 'oed-status'].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = isLocked && id !== 'oed-status'; });
     document.getElementById('oed-btn-montaje').disabled = isLocked;
 
     const spaceObj = allSpaces.find(s => s.id == order.espacio_id);
@@ -1786,8 +2041,8 @@ window.openOrderEditModal = async function(id) {
         breakdownForEditor?.impuestos_detalle
         || __orderResolveTaxIdsFromDetails(order)
     );
-    if(spaceObj) window.renderTaxesForSpace(spaceObj, activeTaxIds);
-    
+    if (spaceObj) window.renderTaxesForSpace(spaceObj, activeTaxIds);
+
     const conceptSel = document.getElementById('new-concept-select'); conceptSel.innerHTML = '<option value="">-- Agregar --</option>'; catalogConcepts.forEach(c => conceptSel.innerHTML += `<option value="${c.id}">${c.nombre}</option>`);
     const extraConceptsToggle = document.getElementById('oed-has-extra-concepts'); if (extraConceptsToggle) extraConceptsToggle.checked = (currentConcepts || []).length > 0;
 
@@ -1797,8 +2052,8 @@ window.openOrderEditModal = async function(id) {
     window.updateExpedienteUI(order);
 };
 
-window.renderTaxesForSpace = function(spaceObj, activeTaxIds = null) {
-    const container = document.getElementById('oed-taxes-list'); if(!container) return;
+window.renderTaxesForSpace = function (spaceObj, activeTaxIds = null) {
+    const container = document.getElementById('oed-taxes-list'); if (!container) return;
     const selectedTaxIds = (Array.isArray(activeTaxIds) && activeTaxIds.length ? activeTaxIds : window.parseIds(spaceObj.impuestos_ids || spaceObj.impuestos)).map((v) => String(v));
     container.dataset.taxIds = JSON.stringify(selectedTaxIds);
     const taxes = selectedTaxIds.map((taxId) => __orderResolveTaxRecord(taxId, spaceObj)).filter(Boolean);
@@ -1807,10 +2062,10 @@ window.renderTaxesForSpace = function(spaceObj, activeTaxIds = null) {
         : '<p class="text-[10px] text-gray-400 italic">Sin impuestos configurados.</p>';
 };
 
-window.updateConceptAmount = function(index, newVal) { currentConcepts[index].amount = parseFloat(newVal) || 0; currentConcepts[index].value = parseFloat(newVal) || 0; window.recalcTotal(); };
-window.updateConceptName = function(index, newName) { currentConcepts[index].description = newName; };
+window.updateConceptAmount = function (index, newVal) { currentConcepts[index].amount = parseFloat(newVal) || 0; currentConcepts[index].value = parseFloat(newVal) || 0; window.recalcTotal(); };
+window.updateConceptName = function (index, newName) { currentConcepts[index].description = newName; };
 
-window.toggleExtraConceptsSection = function(forceChecked = null) {
+window.toggleExtraConceptsSection = function (forceChecked = null) {
     const toggle = document.getElementById('oed-has-extra-concepts');
     const section = document.getElementById('oed-extra-concepts-section');
     if (!toggle || !section) return;
@@ -1819,8 +2074,8 @@ window.toggleExtraConceptsSection = function(forceChecked = null) {
     section.classList.toggle('hidden', !toggle.checked);
 };
 
-window.renderConceptsList = function() { 
-    const tbody = document.getElementById('concepts-list'); if(!tbody) return; tbody.innerHTML = ''; 
+window.renderConceptsList = function () {
+    const tbody = document.getElementById('concepts-list'); if (!tbody) return; tbody.innerHTML = '';
     const isLocked = currentPreviewOrder && ['aprobada', 'finalizada'].includes(currentPreviewOrder.status);
     window.toggleExtraConceptsSection();
     if (!currentConcepts || currentConcepts.length === 0) { tbody.innerHTML = '<tr><td colspan="3" class="p-3 text-center text-gray-400 italic text-[10px]">Sin conceptos adicionales extra.</td></tr>'; return; }
@@ -1835,42 +2090,42 @@ window.renderConceptsList = function() {
     });
 };
 
-window.updateSummaryUI = function() {
+window.updateSummaryUI = function () {
     const sDate = document.getElementById('oed-start').value;
     const eDate = document.getElementById('oed-end').value;
     document.getElementById('sum-dates').innerText = (sDate && eDate) ? (sDate === eDate ? window.safeFormatDate(sDate) : `${window.safeFormatDate(sDate)} al ${window.safeFormatDate(eDate)}`) : '--';
     document.getElementById('sum-guests').innerText = (document.getElementById('oed-guests').value || '0') + ' px';
-    
+
     const selOpt = document.getElementById('oed-horario').options[document.getElementById('oed-horario').selectedIndex];
     let timeText = selOpt ? selOpt.text : '--';
-    if(selOpt && selOpt.value === 'personalizado') {
+    if (selOpt && selOpt.value === 'personalizado') {
         const tStart = document.getElementById('oed-horario-start').value;
         const tEnd = document.getElementById('oed-horario-end').value;
         timeText = (tStart && tEnd) ? `${tStart} a ${tEnd}` : 'Personalizado';
     }
     document.getElementById('sum-schedule').innerText = timeText;
-    
+
     const diasM = parseInt(document.getElementById('oed-premontaje').value) || 0;
     let mtjTxt = diasM > 0 ? `${diasM} día(s)` : '--';
-    if(diasM > 0 && window.finalMontajeDates.length) mtjTxt += `<br><span class="text-[9px] font-normal text-gray-400">(${window.finalMontajeDates.map(d=>window.safeFormatDate(d)).join(', ')})</span>`;
+    if (diasM > 0 && window.finalMontajeDates.length) mtjTxt += `<br><span class="text-[9px] font-normal text-gray-400">(${window.finalMontajeDates.map(d => window.safeFormatDate(d)).join(', ')})</span>`;
     document.getElementById('sum-montaje').innerHTML = mtjTxt;
-    
+
     const hrsE = parseInt(document.getElementById('oed-horas').value) || 0;
     document.getElementById('sum-hextras').innerText = hrsE > 0 ? `${hrsE} hr(s)` : '--';
 };
 
-window.recalcTotal = function() { 
-    const spaceId = document.getElementById('oed-space').value; const spaceObj = allSpaces.find(s => s.id == spaceId); 
-    const sDate = document.getElementById('oed-start').value; const eDate = document.getElementById('oed-end').value; const guests = parseInt(document.getElementById('oed-guests').value, 10) || 1; 
+window.recalcTotal = function () {
+    const spaceId = document.getElementById('oed-space').value; const spaceObj = allSpaces.find(s => s.id == spaceId);
+    const sDate = document.getElementById('oed-start').value; const eDate = document.getElementById('oed-end').value; const guests = parseInt(document.getElementById('oed-guests').value, 10) || 1;
 
     let base = 0; if (spaceObj && sDate && eDate) { base = calculateDayByDayTotal(spaceObj, sDate, eDate, guests).total; } else if (spaceObj) { base = parseFloat(spaceObj.precio_base); }
-    
+
     let pHora = parseFloat(document.getElementById('oed-horas-price').value) || 0;
-    
+
     const selOpt = document.getElementById('oed-horario').options[document.getElementById('oed-horario').selectedIndex];
     let costoHorario = 0;
-    if(selOpt && selOpt.value === 'personalizado') costoHorario = parseFloat(document.getElementById('oed-horario-price').value) || 0;
-    else if(selOpt) costoHorario = parseFloat(selOpt.getAttribute('data-price')) || 0;
+    if (selOpt && selOpt.value === 'personalizado') costoHorario = parseFloat(document.getElementById('oed-horario-price').value) || 0;
+    else if (selOpt) costoHorario = parseFloat(selOpt.getAttribute('data-price')) || 0;
 
     const diasM = parseInt(document.getElementById('oed-premontaje').value) || 0; const hrsE = parseInt(document.getElementById('oed-horas').value) || 0;
 
@@ -1886,20 +2141,20 @@ window.recalcTotal = function() {
     }
 
     let b2bCost = costoHorario + montajeTotal + (hrsE * pHora);
-    
+
     let conceptsHtml = '';
     let conceptsSum = 0;
-    (currentConcepts || []).forEach(c => { 
+    (currentConcepts || []).forEach(c => {
         let amt = parseFloat(c.amount || c.value || 0);
-        conceptsSum += amt; 
-        conceptsHtml += `<div class="flex justify-between text-[10px] text-gray-500"><span><i class="fa-solid fa-plus text-gray-300 mr-1"></i> ${c.description}</span><span>+${amt.toLocaleString('es-MX', {style:'currency',currency:'MXN'})}</span></div>`;
-    }); 
+        conceptsSum += amt;
+        conceptsHtml += `<div class="flex justify-between text-[10px] text-gray-500"><span><i class="fa-solid fa-plus text-gray-300 mr-1"></i> ${c.description}</span><span>+${amt.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span></div>`;
+    });
     document.getElementById('oed-summary-concepts').innerHTML = conceptsHtml;
-    
+
     let sub = base + conceptsSum + b2bCost;
-    
+
     const adjType = document.getElementById('oed-adj-type').value; const adjVal = parseFloat(document.getElementById('oed-adj-val').value) || 0; const isPercent = document.getElementById('oed-adj-unit').value === 'percent';
-    let adjAmount = 0; if (adjType !== 'ninguno') { adjAmount = isPercent ? sub * (adjVal/100) : adjVal; if (adjType === 'descuento') sub -= adjAmount; else sub += adjAmount; }
+    let adjAmount = 0; if (adjType !== 'ninguno') { adjAmount = isPercent ? sub * (adjVal / 100) : adjVal; if (adjType === 'descuento') sub -= adjAmount; else sub += adjAmount; }
 
     const activeTaxIds = (() => {
         const box = document.getElementById('oed-taxes-list');
@@ -1907,34 +2162,34 @@ window.recalcTotal = function() {
         return fromBox.length ? fromBox : window.parseIds(spaceObj?.impuestos_ids || spaceObj?.impuestos).map(String);
     })();
     let taxTotal = 0; let taxHtml = '';
-    activeTaxIds.forEach(taxId => { const t = __orderResolveTaxRecord(taxId, spaceObj); if(t) { const taxVal = sub * __orderResolveTaxRate(t); taxTotal += taxVal; taxHtml += `<div class="flex justify-between text-[10px] text-gray-500"><span>${t.nombre}</span><span>+${taxVal.toLocaleString('es-MX', {style:'currency',currency:'MXN'})}</span></div>`; } });
+    activeTaxIds.forEach(taxId => { const t = __orderResolveTaxRecord(taxId, spaceObj); if (t) { const taxVal = sub * __orderResolveTaxRate(t); taxTotal += taxVal; taxHtml += `<div class="flex justify-between text-[10px] text-gray-500"><span>${t.nombre}</span><span>+${taxVal.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span></div>`; } });
 
     document.getElementById('oed-tax-summary-display').innerHTML = taxHtml;
-    const taxEl = document.getElementById('lbl-tax-total'); if (taxEl) taxEl.innerText = taxTotal.toLocaleString('es-MX', {style:'currency',currency:'MXN'});
-    const rawEl = document.getElementById('lbl-subtotal-raw'); if (rawEl) rawEl.innerText = (base + b2bCost + conceptsSum).toLocaleString('es-MX', {style:'currency',currency:'MXN'});
-    const catEl = document.getElementById('lbl-catalog-base-total'); if (catEl) catEl.innerText = base.toLocaleString('es-MX', {style:'currency',currency:'MXN'});
-    const subEl = document.getElementById('lbl-subtotal'); if (subEl) subEl.innerText = sub.toLocaleString('es-MX', {style:'currency',currency:'MXN'});
-    document.getElementById('lbl-subtotal-base').innerText = (base + b2bCost).toLocaleString('es-MX', {style:'currency',currency:'MXN'});
-    document.getElementById('lbl-adjustment').innerText = (adjType==='descuento'?'-':'+') + adjAmount.toLocaleString('es-MX', {style:'currency',currency:'MXN'});
+    const taxEl = document.getElementById('lbl-tax-total'); if (taxEl) taxEl.innerText = taxTotal.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
+    const rawEl = document.getElementById('lbl-subtotal-raw'); if (rawEl) rawEl.innerText = (base + b2bCost + conceptsSum).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
+    const catEl = document.getElementById('lbl-catalog-base-total'); if (catEl) catEl.innerText = base.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
+    const subEl = document.getElementById('lbl-subtotal'); if (subEl) subEl.innerText = sub.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
+    document.getElementById('lbl-subtotal-base').innerText = (base + b2bCost).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
+    document.getElementById('lbl-adjustment').innerText = (adjType === 'descuento' ? '-' : '+') + adjAmount.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
     document.getElementById('oed-price').value = (sub + taxTotal).toFixed(2);
     window.updatePriceColor();
 
-    if(window.updateSummaryUI) window.updateSummaryUI();
+    if (window.updateSummaryUI) window.updateSummaryUI();
 };
 
-window.updatePriceColor = function() { const spaceId = document.getElementById('oed-space').value; const priceInput = document.getElementById('oed-price'); const val = parseFloat(priceInput.value) || 0; const space = allSpaces.find(s => s.id == spaceId); if(!space) return; const base = parseFloat(space.precio_base); priceInput.classList.remove('text-green-600', 'text-red-600', 'text-gray-700'); if (val < base) priceInput.classList.add('text-green-600'); else if (val > base) priceInput.classList.add('text-red-600'); else priceInput.classList.add('text-gray-700'); };
+window.updatePriceColor = function () { const spaceId = document.getElementById('oed-space').value; const priceInput = document.getElementById('oed-price'); const val = parseFloat(priceInput.value) || 0; const space = allSpaces.find(s => s.id == spaceId); if (!space) return; const base = parseFloat(space.precio_base); priceInput.classList.remove('text-green-600', 'text-red-600', 'text-gray-700'); if (val < base) priceInput.classList.add('text-green-600'); else if (val > base) priceInput.classList.add('text-red-600'); else priceInput.classList.add('text-gray-700'); };
 
-window.addConceptRow = function() { 
+window.addConceptRow = function () {
     const id = document.getElementById('new-concept-select').value; const amount = parseFloat(document.getElementById('new-concept-amount').value);
     if (!id && isNaN(amount)) return;
-    if (id) { const c = catalogConcepts.find(x => x.id == id); currentConcepts.push({ description: c.nombre, amount: amount || c.precio_sugerido, value: amount || c.precio_sugerido, unit: 'fixed', type: 'aumento' }); } 
+    if (id) { const c = catalogConcepts.find(x => x.id == id); currentConcepts.push({ description: c.nombre, amount: amount || c.precio_sugerido, value: amount || c.precio_sugerido, unit: 'fixed', type: 'aumento' }); }
     else { currentConcepts.push({ description: 'Concepto libre', amount: amount, value: amount, unit: 'fixed', type: 'aumento' }); }
     document.getElementById('new-concept-select').value = ""; document.getElementById('new-concept-amount').value = "";
     window.toggleExtraConceptsSection(true);
     window.renderConceptsList(); window.recalcTotal();
 };
 
-window.removeConceptRow = function(index) { currentConcepts.splice(index, 1); if (!currentConcepts.length) window.toggleExtraConceptsSection(false); window.renderConceptsList(); window.recalcTotal(); };
+window.removeConceptRow = function (index) { currentConcepts.splice(index, 1); if (!currentConcepts.length) window.toggleExtraConceptsSection(false); window.renderConceptsList(); window.recalcTotal(); };
 
 function __orderPrepareApprovalPreview(formData = {}, options = {}) {
     const opts = (options && typeof options === 'object') ? options : {};
@@ -1978,7 +2233,7 @@ function __orderPdfOptions(filename) {
 }
 
 function __orderPreparePdfElement(element) {
-    if (!element) return { source: null, restore: () => {} };
+    if (!element) return { source: null, restore: () => { } };
     const clone = element.cloneNode(true);
     clone.classList.remove('hidden');
     clone.removeAttribute('id');
@@ -2112,11 +2367,13 @@ async function __orderRenderPdfBlob(element, filename) {
 
 function __orderBuildApprovalSnapshotMeta(orderId, formData = {}) {
     const id = String(orderId || '').trim();
+    const docMeta = __orderGetQuoteDocumentMeta({ ...currentPreviewOrder, ...formData });
     const folioUnificado = formData?.numero_orden
         || __orderResolveQuoteFolio(currentPreviewOrder, id);
     return {
+        folio: folioUnificado,
         folioUnificado,
-        path: id ? `${id}/cotizacion_aprobada_${folioUnificado}.pdf` : ''
+        path: id ? `${id}/${docMeta.approvedStorageBase}_${folioUnificado}.pdf` : ''
     };
 }
 
@@ -2126,15 +2383,16 @@ async function __orderUploadApprovalSnapshotBlob(orderId, blob, formData = {}, o
     if (!blob || !(blob.size > 0)) throw new Error('Snapshot vacío.');
     const opts = options && typeof options === 'object' ? options : {};
     const resolved = __orderBuildApprovalSnapshotMeta(id, formData);
+    const docMeta = __orderGetQuoteDocumentMeta({ ...currentPreviewOrder, ...formData });
     const folioUnificado = String(opts.folioUnificado || resolved.folioUnificado).trim();
-    const path = String(opts.path || resolved.path || `${id}/cotizacion_aprobada_${folioUnificado}.pdf`).trim();
+    const path = String(opts.path || resolved.path || `${id}/${docMeta.approvedStorageBase}_${folioUnificado}.pdf`).trim();
     const { error: upErr } = await window.globalPocketBase.storage.from('documentos-cp').upload(path, blob, { upsert: true });
     if (upErr) throw upErr;
     if (opts.persistQuote !== false) {
         const { error: updErr } = await __cpQuotesUpdate(id, { status: 'aprobada', url_cotizacion_final: path });
         if (updErr) throw updErr;
     }
-    return { path, folioUnificado };
+    return { path, folio: folioUnificado, folioUnificado };
 }
 
 function __orderDownloadBlob(blob, fileName = 'Documento.pdf') {
@@ -2147,7 +2405,7 @@ function __orderDownloadBlob(blob, fileName = 'Documento.pdf') {
     link.click();
     link.remove();
     setTimeout(() => {
-        try { URL.revokeObjectURL(url); } catch (_) {}
+        try { URL.revokeObjectURL(url); } catch (_) { }
     }, 1500);
 }
 
@@ -2228,7 +2486,7 @@ async function __orderProcessSnapshotQueue() {
     }
 }
 
-window.initiateApprovalSnapshot = async function(options = {}) {
+window.initiateApprovalSnapshot = async function (options = {}) {
     const opts = (options && typeof options === 'object') ? options : {};
     await __cpEnsurePdfStyleProfile('quote', { forceReload: !__cpIsAdminProfile() });
     const prepared = __orderPrepareApprovalPreview(opts.formData || {}, { skipModalData: true });
@@ -2252,28 +2510,28 @@ window.initiateApprovalSnapshot = async function(options = {}) {
     return prepared;
 };
 
-window.getFormDataFromModal = function() {
-    const spaceId = document.getElementById('oed-space').value; const spaceObj = allSpaces.find(s => s.id == spaceId); 
+window.getFormDataFromModal = function () {
+    const spaceId = document.getElementById('oed-space').value; const spaceObj = allSpaces.find(s => s.id == spaceId);
     const sDate = document.getElementById('oed-start').value; const eDate = document.getElementById('oed-end').value; const guests = parseInt(document.getElementById('oed-guests').value) || 1;
     let base = 0; if (spaceObj && sDate && eDate) { base = calculateDayByDayTotal(spaceObj, sDate, eDate, guests).total; } else if (spaceObj) { base = parseFloat(spaceObj.precio_base); }
 
-    let pMontaje = parseFloat(document.getElementById('oed-premontaje-price').value) || 0; 
+    let pMontaje = parseFloat(document.getElementById('oed-premontaje-price').value) || 0;
     let pHora = parseFloat(document.getElementById('oed-horas-price').value) || 0;
-    
+
     let b2bConceptsToSave = [];
     const selOpt = document.getElementById('oed-horario').options[document.getElementById('oed-horario').selectedIndex];
-    
+
     let costoHorario = 0; let textoHorario = '';
-    if(selOpt && selOpt.value === 'personalizado') { 
-        costoHorario = parseFloat(document.getElementById('oed-horario-price').value) || 0; 
+    if (selOpt && selOpt.value === 'personalizado') {
+        costoHorario = parseFloat(document.getElementById('oed-horario-price').value) || 0;
         const ts = document.getElementById('oed-horario-start').value;
         const te = document.getElementById('oed-horario-end').value;
-        textoHorario = (ts && te) ? `${ts} a ${te}` : 'Horario Personalizado'; 
+        textoHorario = (ts && te) ? `${ts} a ${te}` : 'Horario Personalizado';
     }
-    else if(selOpt) { costoHorario = parseFloat(selOpt.getAttribute('data-price')) || 0; textoHorario = selOpt.text; }
+    else if (selOpt) { costoHorario = parseFloat(selOpt.getAttribute('data-price')) || 0; textoHorario = selOpt.text; }
 
-    if(selOpt) b2bConceptsToSave.push({ description: `Horario: ${textoHorario}`, amount: costoHorario, value: costoHorario, unit: 'fixed', type: 'b2b_horario', meta: { selected: selOpt.value, custom_name: textoHorario } });
-    
+    if (selOpt) b2bConceptsToSave.push({ description: `Horario: ${textoHorario}`, amount: costoHorario, value: costoHorario, unit: 'fixed', type: 'b2b_horario', meta: { selected: selOpt.value, custom_name: textoHorario } });
+
     const diasM = parseInt(document.getElementById('oed-premontaje').value) || 0;
     let premCalc = { total: 0, breakdown: [] };
     if (diasM > 0 && spaceObj && window.finalMontajeDates.length === diasM) {
@@ -2282,8 +2540,8 @@ window.getFormDataFromModal = function() {
         document.getElementById('oed-premontaje-price').value = pMontaje.toFixed(2);
     }
     const montajeAmount = diasM > 0 ? (premCalc.total || (diasM * pMontaje)) : 0;
-    if(diasM > 0) b2bConceptsToSave.push({
-        description: `Montaje extra (${diasM} días)${window.finalMontajeDates.length ? ' - ' + window.finalMontajeDates.map(d=>window.safeFormatDate(d)).join(', ') : ''}`,
+    if (diasM > 0) b2bConceptsToSave.push({
+        description: `Montaje extra (${diasM} días)${window.finalMontajeDates.length ? ' - ' + window.finalMontajeDates.map(d => window.safeFormatDate(d)).join(', ') : ''}`,
         amount: montajeAmount,
         value: montajeAmount,
         unit: 'fixed',
@@ -2296,9 +2554,9 @@ window.getFormDataFromModal = function() {
             per_day_base: premCalc.breakdown
         }
     });
-    
+
     const hrsE = parseInt(document.getElementById('oed-horas').value) || 0;
-    if(hrsE > 0) b2bConceptsToSave.push({ description: `Horas Extras (${hrsE} hrs)`, amount: hrsE * pHora, value: hrsE * pHora, unit: 'fixed', type: 'b2b_horas', meta: { hours: hrsE, unit_price: pHora } });
+    if (hrsE > 0) b2bConceptsToSave.push({ description: `Horas Extras (${hrsE} hrs)`, amount: hrsE * pHora, value: hrsE * pHora, unit: 'fixed', type: 'b2b_horas', meta: { hours: hrsE, unit_price: pHora } });
 
     const finalConcepts = [...b2bConceptsToSave, ...currentConcepts];
 
@@ -2340,12 +2598,12 @@ window.getFormDataFromModal = function() {
 
     return {
         cliente_nombre: document.getElementById('oed-client').value, cliente_email: document.getElementById('oed-email').value, cliente_contacto: document.getElementById('oed-phone').value, cliente_rfc: document.getElementById('fiscal-rfc-re').value, cliente_id: (document.getElementById('oed-client-id') ? (document.getElementById('oed-client-id').value || null) : null), fecha_inicio: sDate, fecha_fin: eDate, precio_final: priceFinal, espacio_id: spaceId, espacio_nombre: spaceObj ? spaceObj.nombre : '', espacio_clave: spaceObj ? spaceObj.clave : '', tipo_ajuste: adjType, valor_ajuste: adjVal, ajuste_es_porcentaje: isPercent,
-        conceptos_adicionales: finalConcepts, desglose_precios: { subtotal_antes_impuestos: __orderRoundCurrency(sub), impuestos_detalle: activeTaxIds, tax_total: taxTotal }, personas: guests, espacios_detalle: detailsToSave, detalles_evento: { multi_espacio: detailsToSave.length > 1, total_espacios: detailsToSave.length } 
+        conceptos_adicionales: finalConcepts, desglose_precios: { subtotal_antes_impuestos: __orderRoundCurrency(sub), impuestos_detalle: activeTaxIds, tax_total: taxTotal }, personas: guests, espacios_detalle: detailsToSave, detalles_evento: { multi_espacio: detailsToSave.length > 1, total_espacios: detailsToSave.length }
     };
 };
 
 // Guarda la cotización y, si entra a aprobada, prepara el flujo diferido de snapshot.
-window.processSaveOrder = async function(options = {}) {
+window.processSaveOrder = async function (options = {}) {
     const opts = (options && typeof options === 'object') ? options : {};
     const silent = !!opts.silent;
     const relaxed = !!opts.relaxed;
@@ -2359,25 +2617,34 @@ window.processSaveOrder = async function(options = {}) {
     }
     const btn = document.getElementById('btn-save-progress');
     if (btn && !silent) { btn.disabled = true; btn.innerText = "Guardando..."; }
-    try { 
+    try {
         __orderSaveActiveFromForm();
         window.recalcTotal();
         if (!relaxed) {
-            const invalidCapacity = (__orderTotals.spaces || []).find(sp => sp.capacityOk === false);
+            const invalidCapacity = (__orderTotals.spaces || []).find(sp => !sp.isPublicidad && sp.capacityOk === false);
             if (invalidCapacity) throw new Error(`El aforo para ${invalidCapacity.spaceName} excede su capacidad máxima.`);
-            const invalidBlocked = (__orderTotals.spaces || []).find(sp => sp.blockedOk === false);
+            const invalidBlocked = (__orderTotals.spaces || []).find(sp => !sp.isPublicidad && sp.blockedOk === false);
             if (invalidBlocked) throw new Error(`La selección para ${invalidBlocked.spaceName} incluye días bloqueados.`);
             const invalidPast = (__orderTotals.spaces || []).find(sp => (sp.startDate && sp.startDate < __orderTodayISO()) || (sp.endDate && sp.endDate < __orderTodayISO()));
             if (invalidPast) throw new Error(`No se permiten fechas pasadas en ${invalidPast.spaceName}.`);
-            const invalidPrem = (__orderTotals.spaces || []).find(sp => (parseInt(sp.premontajeDays, 10) || 0) > 0 && __orderSafeArray(sp.premontajeDates).length !== (parseInt(sp.premontajeDays, 10) || 0));
+            const missingConvenio = (__orderTotals.spaces || []).find(sp => !!sp.convenioEnabled && !(Array.isArray(sp.concepts) && sp.concepts.length));
+            if (missingConvenio) throw new Error(`Agrega al menos un trato de convenio para ${missingConvenio.spaceName}.`);
+            const uncoveredConvenio = (__orderTotals.spaces || []).find(sp => !!sp.convenioEnabled && !sp.convenioCovered);
+            if (uncoveredConvenio) throw new Error(`El convenio de ${uncoveredConvenio.spaceName} debe cubrir al menos el valor total del espacio.`);
+            const invalidPrem = (__orderTotals.spaces || []).find(sp => !sp.isPublicidad && (parseInt(sp.premontajeDays, 10) || 0) > 0 && __orderSafeArray(sp.premontajeDates).length !== (parseInt(sp.premontajeDays, 10) || 0));
             if (invalidPrem) throw new Error(`Revisa las fechas de premontaje para ${invalidPrem.spaceName}.`);
             const conflict = __orderQuoteSpaces.find(cfg => {
                 const reserved = __orderGetReservedDatesForSpace(cfg.spaceId);
+                if (__orderCfgBlocksIndefinitely(cfg)) return Array.from(reserved).some((date) => date >= String(cfg.startDate || ''));
+                if (__orderIsPublicidadSpace(cfg)) return false;
                 const needed = [...__orderDatesBetween(cfg.startDate, cfg.endDate), ...__orderSafeArray(cfg.premontajeDates).map(__orderNormalizeDate).filter(Boolean)];
                 return needed.find(d => reserved.has(d));
             });
             if (conflict) {
-                const conflictDate = [...__orderDatesBetween(conflict.startDate, conflict.endDate), ...__orderSafeArray(conflict.premontajeDates).map(__orderNormalizeDate).filter(Boolean)].find(d => __orderGetReservedDatesForSpace(conflict.spaceId).has(d));
+                const reserved = __orderGetReservedDatesForSpace(conflict.spaceId);
+                const conflictDate = __orderCfgBlocksIndefinitely(conflict)
+                    ? Array.from(reserved).filter((date) => date >= String(conflict.startDate || '')).sort()[0]
+                    : [...__orderDatesBetween(conflict.startDate, conflict.endDate), ...__orderSafeArray(conflict.premontajeDates).map(__orderNormalizeDate).filter(Boolean)].find(d => reserved.has(d));
                 const sp = __orderGetSpaceById(conflict.spaceId);
                 throw new Error(`${sp?.nombre || conflict.spaceId} está ocupado ${conflictDate ? '(' + window.safeFormatDate(conflictDate) + ')' : ''}.`);
             }
@@ -2388,6 +2655,7 @@ window.processSaveOrder = async function(options = {}) {
         const prevStatus = String(currentPreviewOrder?.status || '').toLowerCase();
         const nextStatus = String(formData.status || '').toLowerCase();
         const approvalTransition = nextStatus === 'aprobada' && prevStatus !== 'aprobada' && prevStatus !== 'finalizada';
+        const convenioTransition = nextStatus === 'finalizada' && __orderIsConvenioOrder({ ...currentPreviewOrder, ...formData });
         const orderId = String(document.getElementById('oed-id')?.value || currentPreviewOrder?.id || '').trim();
         if (!orderId) throw new Error('Cotización inválida.');
         if (!formData.numero_orden) {
@@ -2396,6 +2664,9 @@ window.processSaveOrder = async function(options = {}) {
         }
         const approvalSnapshotMeta = approvalTransition ? __orderBuildApprovalSnapshotMeta(orderId, formData) : null;
         if (approvalSnapshotMeta?.path) formData.url_cotizacion_final = approvalSnapshotMeta.path;
+        if (convenioTransition && __orderGetConvenioEvidence({ ...currentPreviewOrder, ...formData }).length < 3) {
+            throw new Error('Finaliza el convenio desde Expediente para adjuntar de 3 a 5 evidencias.');
+        }
 
         const { error } = await __cpQuotesUpdate(orderId, formData);
         if (error) throw error;
@@ -2437,7 +2708,9 @@ window.processSaveOrder = async function(options = {}) {
                         || formData.numero_orden
                         || __orderResolveQuoteFolio(currentPreviewOrder, orderId)
                     ).trim();
-                    const quoteFileName = `COTIZACION_${folioUnificado}.pdf`;
+                    const docMeta = __orderGetQuoteDocumentMeta({ ...currentPreviewOrder, ...formData, status: 'aprobada' });
+                    const approvalLabel = docMeta.isConvenio ? 'Convenio aprobado' : 'Cotización aprobada';
+                    const quoteFileName = `${docMeta.approvedFileBase}_${folioUnificado}.pdf`;
                     const snapshotBlob = await __cpWithBusyOverlay('Guardando cotización...', async () => {
                         const blob = await __orderRenderPdfBlob(previewNode, quoteFileName);
                         await __orderUploadApprovalSnapshotBlob(orderId, blob, formData, {
@@ -2451,12 +2724,13 @@ window.processSaveOrder = async function(options = {}) {
                     __orderDequeueSnapshot(orderId);
                     __orderDownloadBlob(snapshotBlob, quoteFileName);
                     snapshotGeneratedNow = true;
-                    if (!silent) window.showToast("Cotización aprobada y snapshot generada correctamente.", "success");
+                    if (!silent) window.showToast(`${approvalLabel} y snapshot generada correctamente.`, "success");
                 } catch (snapshotError) {
                     __orderQueueSnapshot(orderId);
                     if (!silent) {
+                        const docMeta = __orderGetQuoteDocumentMeta({ ...currentPreviewOrder, ...formData, status: 'aprobada' });
                         window.showToast(
-                            `Cotización aprobada. Snapshot pendiente: ${snapshotError?.message || snapshotError}`,
+                            `${docMeta.isConvenio ? 'Convenio aprobado' : 'Cotización aprobada'}. Snapshot pendiente: ${snapshotError?.message || snapshotError}`,
                             "error"
                         );
                     }
@@ -2465,7 +2739,8 @@ window.processSaveOrder = async function(options = {}) {
             if (!snapshotGeneratedNow) {
                 __orderQueueSnapshot(orderId);
                 if (!silent && !openApprovalPreview) {
-                    window.showToast("Cotización aprobada. Snapshot pendiente de generación.", "success");
+                    const docMeta = __orderGetQuoteDocumentMeta({ ...currentPreviewOrder, ...formData, status: 'aprobada' });
+                    window.showToast(`${docMeta.isConvenio ? 'Convenio aprobado' : 'Cotización aprobada'}. Snapshot pendiente de generación.`, "success");
                 }
             }
         } else if (!silent) {
@@ -2478,7 +2753,7 @@ window.processSaveOrder = async function(options = {}) {
         cpOrdersSaveViewState({ selectedOrderId: orderId });
         if (!skipReload) await window.loadOrders();
         return true;
-    } catch(e) {
+    } catch (e) {
         if (!silent) window.showToast("Error: " + e.message, "error");
         return false;
     } finally {
@@ -2520,7 +2795,7 @@ function __orderBindDetailAutoSave() {
         el.addEventListener('input', __orderScheduleAutoSave);
         el.addEventListener('change', __orderScheduleAutoSave);
     });
-    ['oed-quote-name','oed-status'].forEach(id => {
+    ['oed-quote-name', 'oed-status'].forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
         el.addEventListener('input', __orderScheduleAutoSave);
@@ -2534,7 +2809,7 @@ function __orderBindDetailAutoSave() {
     __orderAutoSaveBound = true;
 }
 
-window.closeOrderEditorPage = async function() {
+window.closeOrderEditorPage = async function () {
     if (!IS_ORDER_DETAIL_PAGE) return window.askCloseEditModal();
     await window.processSaveOrder({ silent: true, relaxed: true, keepOpen: true, skipReload: true });
     if (__orderHasPendingSnapshot()) {
@@ -2549,7 +2824,7 @@ window.closeOrderEditorPage = async function() {
                 window.__HUB_ALLOW_NEXT_UNLOAD('cp_order_editor_close');
             }
             window.close();
-        } catch (_) {}
+        } catch (_) { }
     };
     attemptClose();
     setTimeout(() => {
@@ -2562,10 +2837,11 @@ window.closeOrderEditorPage = async function() {
     }, 120);
 };
 
-window.previewOrderForGeneration = async function(id) {
+window.previewOrderForGeneration = async function (id) {
     await __cpEnsurePdfStyleProfile('order', { forceReload: !__cpIsAdminProfile() });
     const order = allOrders.find(o => o.id === id);
     if (!order) return;
+    if (__orderIsConvenioOrder(order)) return window.showToast("Los convenios no generan orden de compra.", "error");
     currentPreviewOrder = { ...order, docType: 'order' };
     const content = window.getOrderHTML(order, 'order');
     const pdfContainer = document.getElementById('pdf-content');
@@ -2585,11 +2861,12 @@ window.previewOrderForGeneration = async function(id) {
     window.openModal('preview-modal');
 };
 
-window.confirmAndGeneratePurchaseOrder = async function() {
+window.confirmAndGeneratePurchaseOrder = async function () {
     window.openConfirm("¿Generar Orden de Compra Oficial? Se guardará una copia exacta.", async () => {
         const btn = document.getElementById('btn-download-preview');
         if (btn) { btn.disabled = true; btn.innerText = "Generando OC..."; }
         try {
+            if (__orderIsConvenioOrder(currentPreviewOrder || {})) throw new Error("Los convenios no generan orden de compra.");
             const pdfBlob = await __cpWithBusyOverlay('Generando orden de compra...', async () => {
                 const element = document.getElementById('pdf-content');
                 if (!__cpIsAdminProfile() && element && currentPreviewOrder) {
@@ -2623,7 +2900,7 @@ window.confirmAndGeneratePurchaseOrder = async function() {
             window.closeModal('preview-modal');
             window.closeModal('docs-modal');
             __cpClosePreviewTabIfNeeded();
-        } catch(e) {
+        } catch (e) {
             window.showToast("Error al generar OC", "error");
         } finally {
             if (btn) btn.disabled = false;
@@ -2631,19 +2908,21 @@ window.confirmAndGeneratePurchaseOrder = async function() {
     });
 };
 
-window.openDocsModal = function(id) {
+window.openDocsModal = function (id) {
     cpOrdersSaveViewState({ selectedOrderId: id });
-    const order = allOrders.find(o => o.id === id); if(!order) return; document.getElementById('doc-client').innerText = order.cliente_nombre; 
+    const order = allOrders.find(o => o.id === id); if (!order) return; document.getElementById('doc-client').innerText = order.cliente_nombre;
     const folioUnificado = __orderResolveQuoteFolio(order);
-    document.getElementById('doc-folio').innerText = folioUnificado; 
+    document.getElementById('doc-folio').innerText = folioUnificado;
     const details = parseSpacesDetail(order.espacios_detalle);
     const firstSpaceRef = details[0]?.espacio_clave || details[0]?.espacio_nombre || order.espacio_clave || order.espacio_nombre || 'Espacio';
     const docSpace = details.length > 1 ? `${firstSpaceRef} + ${details.length - 1}` : firstSpaceRef;
     document.getElementById('doc-space').innerText = docSpace;
-    document.getElementById('doc-dates').innerText = `${window.safeFormatDate(order.fecha_inicio)} - ${window.safeFormatDate(order.fecha_fin)}`; const list = document.getElementById('docs-list'); list.innerHTML = '';
+    document.getElementById('doc-dates').innerText = __orderBlocksIndefinitely(order)
+        ? `${window.safeFormatDate(order.fecha_inicio)} - Indefinido`
+        : `${window.safeFormatDate(order.fecha_inicio)} - ${window.safeFormatDate(order.fecha_fin)}`; const list = document.getElementById('docs-list'); list.innerHTML = '';
     const createBtn = (label, icon, color, action) => { list.innerHTML += `<button type="button" onclick="${action}" class="w-full text-left px-4 py-3 rounded-xl border border-gray-200 hover:bg-gray-50 flex items-center gap-3 transition shadow-sm group bg-white mb-2"><div class="w-8 h-8 rounded-full bg-${color}-100 text-${color}-600 flex items-center justify-center shrink-0"><i class="${icon}"></i></div><div class="flex-grow"><p class="text-xs font-bold text-gray-700">${label}</p></div><i class="fa-solid fa-arrow-right text-xs text-gray-300"></i></button>`; };
     const createLocked = (label, icon) => { list.innerHTML += `<div class="w-full px-4 py-3 rounded-xl border border-gray-100 bg-gray-50 flex items-center gap-3 mb-2 opacity-60"><i class="${icon} text-gray-400"></i><span class="text-xs font-bold text-gray-400">${label}</span></div>`; };
-    window.toggleDocsPayments = function(sectionId) {
+    window.toggleDocsPayments = function (sectionId) {
         const section = document.getElementById(sectionId);
         const chevron = document.querySelector(`[data-docs-pay-toggle="${sectionId}"]`);
         if (!section) return;
@@ -2651,14 +2930,17 @@ window.openDocsModal = function(id) {
         if (chevron) chevron.classList.toggle('rotate-180', !hidden);
     };
     // Cotización
+    const docMeta = __orderGetQuoteDocumentMeta(order);
     if (order.url_cotizacion_final) {
-        createBtn('Ver Cotización Aprobada', 'fa-solid fa-file-circle-check', 'blue', `window.openStoredDocument('${order.url_cotizacion_final}')`);
+        createBtn(`Ver ${docMeta.approvedTitle}`, 'fa-solid fa-file-circle-check', 'blue', `window.openStoredDocument('${order.url_cotizacion_final}')`);
     } else {
-        createBtn('Ver Borrador Cotización', 'fa-solid fa-file-pen', 'gray', `window.openOrderPreviewTab('${order.id}', 'quote', 'view')`);
+        createBtn(`Ver ${docMeta.draftTitle}`, 'fa-solid fa-file-pen', 'gray', `window.openOrderPreviewTab('${order.id}', 'quote', 'view')`);
     }
 
     // Orden de compra
-    if (order.url_orden_compra) {
+    if (__orderIsConvenioOrder(order)) {
+        createLocked('Orden de Compra (No aplica en convenio)', 'fa-solid fa-lock');
+    } else if (order.url_orden_compra) {
         createBtn('Ver Orden de Compra', 'fa-solid fa-file-contract', 'purple', `window.openStoredDocument('${order.url_orden_compra}')`);
     } else if (['aprobada', 'finalizada'].includes(order.status)) {
         createBtn('Generar Orden de Compra', 'fa-solid fa-plus', 'purple', `window.openOrderPreviewTab('${order.id}', 'order', 'generate')`);
@@ -2717,7 +2999,7 @@ window.openDocsModal = function(id) {
     window.openModal('docs-modal');
 };
 
-window.openPDFPreview = async function(id, type) {
+window.openPDFPreview = async function (id, type) {
     const safeId = String(id || '').trim();
     if (!safeId) return;
     try {
@@ -2751,7 +3033,7 @@ window.openPDFPreview = async function(id, type) {
         window.showToast(`No se pudo abrir la vista previa: ${e?.message || e}`, 'error');
     }
 };
-window.downloadPDFFromPreview = async function() {
+window.downloadPDFFromPreview = async function () {
     const element = document.getElementById('pdf-content');
     const orderId = String(currentPreviewOrder?.id || '').trim();
     if (!orderId) return window.showToast("No se pudo identificar la cotización.", "error");
@@ -3273,7 +3555,7 @@ function __cpLoadPdfStyleUiState() {
 function __cpSavePdfStyleUiState() {
     try {
         localStorage.setItem(__CP_PDF_STYLE_UI_STATE_KEY, JSON.stringify(__cpPdfStyleUiState));
-    } catch (_) {}
+    } catch (_) { }
 }
 
 function __cpGetPdfStyleConfig() {
@@ -3572,7 +3854,7 @@ function __cpBindFloatingPanelDrag(panel, host) {
         document.body.style.userSelect = 'none';
         document.body.style.cursor = 'grabbing';
         if (typeof handle.setPointerCapture === 'function') {
-            try { handle.setPointerCapture(event.pointerId); } catch (_) {}
+            try { handle.setPointerCapture(event.pointerId); } catch (_) { }
         }
         event.preventDefault();
     });
@@ -3722,7 +4004,7 @@ function __cpSetPdfEditLocked(locked) {
     if (!wasLocked && __cpPdfEditLocked && __cpIsAdminProfile()) {
         Promise.resolve()
             .then(() => __cpPersistSharedPdfStyleConfig(__cpGetPdfStyleConfig(), { force: true }))
-            .catch(() => {});
+            .catch(() => { });
     }
 }
 
@@ -3818,8 +4100,8 @@ function __cpRenderPdfInspector() {
             ? `<div class="space-y-3 rounded-2xl border border-gray-100 bg-gray-50 px-3 py-3">
                 <p class="text-[10px] font-black uppercase tracking-widest text-gray-400">Contenido</p>
                 ${contentFields.map((field) => field.multiline
-                    ? `<label class="flex flex-col gap-1 text-xs text-gray-600"><span class="text-[10px] font-black uppercase tracking-wide text-gray-400">${field.label}</span><textarea data-pdf-inspector-field="${__cpSafeHtml(field.key)}" data-target-kind="base" data-target-id="${__cpSafeHtml(target.id)}" rows="${field.rows || 4}" class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 outline-none transition focus:border-brand-red">${__cpSafeHtml(field.value || '')}</textarea></label>`
-                    : `<label class="flex flex-col gap-1 text-xs text-gray-600"><span class="text-[10px] font-black uppercase tracking-wide text-gray-400">${field.label}</span><input data-pdf-inspector-field="${__cpSafeHtml(field.key)}" data-target-kind="base" data-target-id="${__cpSafeHtml(target.id)}" type="text" value="${__cpSafeHtml(field.value || '')}" class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 outline-none transition focus:border-brand-red"></label>`).join('')}
+                ? `<label class="flex flex-col gap-1 text-xs text-gray-600"><span class="text-[10px] font-black uppercase tracking-wide text-gray-400">${field.label}</span><textarea data-pdf-inspector-field="${__cpSafeHtml(field.key)}" data-target-kind="base" data-target-id="${__cpSafeHtml(target.id)}" rows="${field.rows || 4}" class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 outline-none transition focus:border-brand-red">${__cpSafeHtml(field.value || '')}</textarea></label>`
+                : `<label class="flex flex-col gap-1 text-xs text-gray-600"><span class="text-[10px] font-black uppercase tracking-wide text-gray-400">${field.label}</span><input data-pdf-inspector-field="${__cpSafeHtml(field.key)}" data-target-kind="base" data-target-id="${__cpSafeHtml(target.id)}" type="text" value="${__cpSafeHtml(field.value || '')}" class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 outline-none transition focus:border-brand-red"></label>`).join('')}
             </div>`
             : '';
         const resetButton = target.canMove
@@ -4359,7 +4641,7 @@ async function __cpLoadCurrentUserProfile(user) {
             try {
                 const { data } = await pbClient.from(table).select('*').eq(field, value).maybeSingle();
                 if (data) return data;
-            } catch (_) {}
+            } catch (_) { }
         }
         return null;
     };
@@ -4507,7 +4789,7 @@ async function __cpLoadModernPdfStyleRecord(profileKey) {
                     raw: row.config_json || row.elements || {}
                 };
             }
-        } catch (_) {}
+        } catch (_) { }
     }
     return null;
 }
@@ -4698,7 +4980,7 @@ function __cpOpenPdfNoteModal() {
     window.showToast('El sistema de notas está deshabilitado.', 'info');
 }
 
-window.submitPdfNoteFromModal = async function() {
+window.submitPdfNoteFromModal = async function () {
     window.showToast('El sistema de notas está deshabilitado.', 'info');
 };
 
@@ -5150,7 +5432,7 @@ function __cpInitPdfStyleEditor() {
     editorWrap.classList.add('hidden');
 }
 
-window.resetPdfStyleEditor = function() {
+window.resetPdfStyleEditor = function () {
     if (!__cpIsAdminProfile()) return;
     const reset = __cpNormalizePdfStyle(__CP_PDF_STYLE_DEFAULTS);
     __cpSetPdfStyleConfig(reset, { applyToDom: true });
@@ -5158,29 +5440,34 @@ window.resetPdfStyleEditor = function() {
     __cpScheduleSharedPdfStyleSync(reset);
 };
 
-window.getOrderHTML = function(o, type) { 
-    const isOrder = type === 'order'; 
-    const logoImg = ''; 
+window.getOrderHTML = function (o, type) {
+    const isOrder = type === 'order';
+    const logoImg = '';
     const pdfStyle = __cpGetPdfStyleConfig();
     const pdfContent = __cpNormalizePdfContent(pdfStyle.content);
     const pdfStyleInlineVars = __cpPdfStyleVarsInline(pdfStyle);
     const pdfStyleTag = `<style>.cp-pdf-root{font-family:var(--cp-font-family)!important;}.cp-pdf-root .cp-pdf-shift{transform:translate(var(--cp-offset-x),var(--cp-offset-y));position:relative;}.cp-pdf-root .cp-pdf-header{border-bottom-width:var(--cp-header-line)!important;justify-content:var(--cp-header-justify)!important;}.cp-pdf-root .cp-pdf-header>div:last-child{text-align:var(--cp-header-align)!important;}.cp-pdf-root .cp-pdf-title{font-size:var(--cp-title-size)!important;line-height:1.05!important;text-align:var(--cp-header-align)!important;}.cp-pdf-root .cp-pdf-folio{font-size:var(--cp-meta-size)!important;text-align:var(--cp-meta-align)!important;}.cp-pdf-root .cp-pdf-date{font-size:var(--cp-date-size)!important;text-align:var(--cp-meta-align)!important;}.cp-pdf-root .cp-pdf-table-head th{font-size:var(--cp-table-head-size)!important;}.cp-pdf-root .cp-pdf-table-body td,.cp-pdf-root .cp-pdf-table-body p,.cp-pdf-root .cp-pdf-table-body span{font-size:var(--cp-table-body-size)!important;line-height:var(--cp-line-height)!important;}.cp-pdf-root .cp-pdf-table-body td:first-child,.cp-pdf-root .cp-pdf-table-body td:first-child *{text-align:var(--cp-table-align)!important;}.cp-pdf-root .cp-pdf-summary,.cp-pdf-root .cp-pdf-summary *{text-align:var(--cp-summary-align)!important;}.cp-pdf-root .cp-pdf-quick,.cp-pdf-root .cp-pdf-quick *{font-size:var(--cp-quick-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-quick-align)!important;}.cp-pdf-root .cp-pdf-general-conditions,.cp-pdf-root .cp-pdf-general-conditions *{font-size:var(--cp-conditions-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-conditions-align)!important;}.cp-pdf-root .cp-pdf-sign,.cp-pdf-root .cp-pdf-sign *{font-size:var(--cp-sign-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-sign-align)!important;}.cp-pdf-root .cp-pdf-footer-text{font-size:var(--cp-footer-size)!important;text-align:var(--cp-footer-align)!important;}.cp-pdf-root .cp-pdf-amount,.cp-pdf-root .cp-pdf-table-body td:last-child,.cp-pdf-root .cp-pdf-summary td:last-child{white-space:nowrap!important;word-break:normal!important;overflow-wrap:normal!important;font-variant-numeric:tabular-nums;}.cp-pdf-root .cp-pdf-summary-table-wrap{width:20rem;max-width:100%;margin-left:auto;}.cp-pdf-root [data-base-resource]{position:relative;transform-origin:top left;}.cp-pdf-root .cp-pdf-resource,.cp-pdf-root .cp-pdf-editable{cursor:default;box-sizing:border-box;outline:none;outline-offset:2px;}.cp-pdf-root .cp-pdf-editable::after{content:'';position:absolute;right:-7px;bottom:-7px;width:12px;height:12px;border-radius:999px;background:#c1621e;box-shadow:0 0 0 2px #fff;opacity:0;}.cp-pdf-root .cp-pdf-base-selected,.cp-pdf-root .cp-pdf-edit-selected{outline:none;outline-offset:2px;}.cp-pdf-root.cp-pdf-admin-enabled .cp-pdf-resource,.cp-pdf-root.cp-pdf-admin-enabled .cp-pdf-editable{cursor:move;}.cp-pdf-root.cp-pdf-admin-enabled .cp-pdf-editable{outline:1px dashed rgba(193,98,30,.45);}.cp-pdf-root.cp-pdf-admin-enabled .cp-pdf-editable::after{opacity:.9;}.cp-pdf-root.cp-pdf-admin-enabled .cp-pdf-base-selected,.cp-pdf-root.cp-pdf-admin-enabled .cp-pdf-edit-selected{outline:2px solid #c1621e;}.cp-pdf-delete-btn{position:absolute;top:-8px;right:-8px;width:22px;height:22px;border-radius:50%;background:#c1621e;color:#fff;display:none;align-items:center;justify-content:center;cursor:pointer;font-size:11px;z-index:80;box-shadow:0 0 0 2px #fff;pointer-events:auto;}.cp-pdf-root.cp-pdf-admin-enabled .cp-pdf-edit-selected .cp-pdf-delete-btn{display:flex;}.cp-pdf-delete-btn:hover{background:#9a4f18;transform:scale(1.08);transition:all .2s;}</style>`;
     const pdfTableFitTag = `<style>.cp-pdf-root .cp-pdf-table-head th{font-size:var(--cp-fit-head-size,var(--cp-table-head-size))!important;padding-top:var(--cp-fit-cell-py,.5rem)!important;padding-bottom:var(--cp-fit-cell-py,.5rem)!important;padding-left:var(--cp-fit-cell-px,.75rem)!important;padding-right:var(--cp-fit-cell-px,.75rem)!important;}.cp-pdf-root .cp-pdf-table-body td,.cp-pdf-root .cp-pdf-table-body p,.cp-pdf-root .cp-pdf-table-body span{font-size:var(--cp-fit-body-size,var(--cp-table-body-size))!important;line-height:var(--cp-fit-line-height,var(--cp-line-height))!important;}.cp-pdf-root .cp-pdf-table-body td{padding-top:var(--cp-fit-cell-py,.5rem)!important;padding-bottom:var(--cp-fit-cell-py,.5rem)!important;padding-left:var(--cp-fit-cell-px,.75rem)!important;padding-right:var(--cp-fit-cell-px,.75rem)!important;}</style>`;
-    const now = new Date(); const dateStr = now.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' }); const genDateTime = now.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'medium' }); let docTitle = isOrder ? "ORDEN DE COMPRA" : "COTIZACIÓN"; 
-    
+    const now = new Date(); const dateStr = now.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' }); const genDateTime = now.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'medium' }); let docTitle = isOrder ? "ORDEN DE COMPRA" : "COTIZACIÓN";
+
     const folioUnificado = __orderResolveQuoteFolio(o);
-    const space = allSpaces.find(s=>s.id==o.espacio_id);
+    const space = allSpaces.find(s => s.id == o.espacio_id);
     const descHTML = isOrder ? '' : `<p class="text-[9px] text-gray-500 italic mt-0.5 truncate max-w-xs">${space?.descripcion || ''}</p>`;
-    const footerHubHTML = `<div class="w-full text-center mt-10"><p class="cp-pdf-footer-text text-[10px] text-gray-400 font-medium leading-tight" data-base-resource="footer">Generado el ${genDateTime}<br>a través de Marketing Hub</p></div>`; 
-    
-    const renderHeader = (title) => `<div class="cp-pdf-header flex justify-end items-start border-b-4 border-brand-red pb-3 mb-2">${logoImg}<div class="text-right"><h1 class="cp-pdf-title text-2xl font-black text-gray-800 tracking-tighter uppercase" data-base-resource="header-title">${title}</h1><p class="cp-pdf-folio text-sm font-mono text-brand-red font-bold mt-1" data-base-resource="header-meta">FOLIO: ${folioUnificado}</p><p class="cp-pdf-date text-[10px] text-gray-500 mt-1" data-base-resource="header-meta">${dateStr}</p></div></div>`; 
-    
-    let clientName = o.cliente_nombre || 'Cliente'; let clientRfc = o.cliente_rfc; let nameSizeClass = 'text-xl'; if (clientName.length > 35) nameSizeClass = 'text-xs'; else if (clientName.length > 25) nameSizeClass = 'text-sm'; 
+    const footerHubHTML = `<div class="w-full text-center mt-10"><p class="cp-pdf-footer-text text-[10px] text-gray-400 font-medium leading-tight" data-base-resource="footer">Generado el ${genDateTime}<br>a través de Marketing Hub</p></div>`;
+
+    const renderHeader = (title) => `<div class="cp-pdf-header flex justify-end items-start border-b-4 border-brand-red pb-3 mb-2">${logoImg}<div class="text-right"><h1 class="cp-pdf-title text-2xl font-black text-gray-800 tracking-tighter uppercase" data-base-resource="header-title">${title}</h1><p class="cp-pdf-folio text-sm font-mono text-brand-red font-bold mt-1" data-base-resource="header-meta">FOLIO: ${folioUnificado}</p><p class="cp-pdf-date text-[10px] text-gray-500 mt-1" data-base-resource="header-meta">${dateStr}</p></div></div>`;
+
+    let clientName = o.cliente_nombre || 'Cliente'; let clientRfc = o.cliente_rfc; let nameSizeClass = 'text-xl'; if (clientName.length > 35) nameSizeClass = 'text-xs'; else if (clientName.length > 25) nameSizeClass = 'text-sm';
+    const quoteStatus = String(o?.status || '').toLowerCase();
+    const docMeta = __orderGetQuoteDocumentMeta(o);
+    const isConvenio = !isOrder && docMeta.isConvenio;
+    const isApprovedQuote = !isOrder && ['aprobada', 'finalizada'].includes(quoteStatus);
+    if (!isOrder && isConvenio) docTitle = isApprovedQuote ? 'CARTA CONVENIO' : 'CONVENIO';
     const guests = o.personas || 1;
     const clientComponent = isOrder
         ? `<div class="cp-pdf-summary flex flex-row justify-between items-center mb-2 p-2 bg-gray-50 rounded border border-gray-100" data-base-resource="summary"><div class="w-1/2 border-r border-gray-200 pr-2"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Cliente / Empresa</p><p class="font-black ${nameSizeClass} text-gray-800 leading-tight">${clientName}</p></div><div class="w-1/2 pl-2"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Contacto / Fiscal</p><p class="font-mono text-xs text-gray-700 truncate">${o.cliente_email || 'Sin correo'}</p>${clientRfc ? `<p class="font-mono text-xs text-gray-700 mt-0.5">RFC: <strong>${clientRfc}</strong></p>` : ''}<p class="font-mono text-xs text-brand-red font-bold mt-1">Personas: ${guests}</p></div></div>`
-        : `<div class="cp-pdf-summary flex flex-row justify-between items-center mb-2 p-2 bg-gray-50 rounded border border-gray-100" data-base-resource="summary"><div class="w-full"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Cliente / Empresa</p><p class="font-black ${nameSizeClass} text-gray-800 leading-tight">${clientName}</p></div></div>`; 
-    
+        : `<div class="cp-pdf-summary flex flex-row justify-between items-center mb-2 p-2 bg-gray-50 rounded border border-gray-100" data-base-resource="summary"><div class="w-full"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Cliente / Empresa</p><p class="font-black ${nameSizeClass} text-gray-800 leading-tight">${clientName}</p></div></div>`;
+
     const __orderEscapeHtml = (v) => String(v || '')
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
@@ -5243,6 +5530,32 @@ window.getOrderHTML = function(o, type) {
         if (secondaryDate) return `${first}<br>${__orderEscapeHtml(secondaryDate)}${scheduleHtml}`;
         return `${first}${scheduleHtml}`;
     };
+    const __orderFindCatalogSpace = (spaceId) => allSpaces.find((spaceItem) => String(spaceItem.id) === String(spaceId)) || null;
+    const __orderResolveSpaceIdentity = (detail) => {
+        const sid = String(detail?.espacio_id || detail?.space_id || o.espacio_id || '').trim();
+        const catalogSpace = sid ? __orderFindCatalogSpace(sid) : space;
+        return {
+            nombre: detail?.espacio_nombre || catalogSpace?.nombre || o.espacio_nombre || '--',
+            clave: detail?.espacio_clave || catalogSpace?.clave || o.espacio_clave || ''
+        };
+    };
+    const __orderRenderSpaceCell = (identity) => {
+        const safeName = __orderEscapeHtml(identity?.nombre || '--');
+        const safeKey = __orderEscapeHtml(identity?.clave || '');
+        return `<div class="break-words"><p class="font-bold text-gray-800 text-xs break-words">${safeName}</p>${safeKey ? `<span class="bg-gray-100 text-gray-500 px-1 py-0.5 rounded text-[10px] font-mono mt-0.5 inline-block">${safeKey}</span>` : ''}</div>`;
+    };
+    const __orderResolveDetailMaterialMeasure = (detailSpace, catalogSpace) => {
+        const width = __orderNormalizeMeasureValue(detailSpace?.medida_ancho ?? detailSpace?.ancho ?? catalogSpace?.medida_ancho ?? catalogSpace?.ancho);
+        const height = __orderNormalizeMeasureValue(detailSpace?.medida_alto ?? detailSpace?.alto ?? catalogSpace?.medida_alto ?? catalogSpace?.alto);
+        const unit = __orderNormalizeMeasureUnit(detailSpace?.medida_unidad || detailSpace?.unidad_medida || catalogSpace?.medida_unidad || catalogSpace?.unidad_medida || 'M');
+        const material = String(detailSpace?.material || catalogSpace?.material || '').trim();
+        return { material, medida_ancho: width, medida_alto: height, medida_unidad: unit };
+    };
+    const __orderResolvePdfSpaceDetail = (detailSpace, catalogSpace) => {
+        const detailMaterialMeasure = __orderResolveDetailMaterialMeasure(detailSpace, catalogSpace);
+        return String(detailMaterialMeasure.material || '').trim() || '--';
+    };
+    const __orderResolvePdfDetailHeader = () => 'Material';
 
     let rentalRows = ''; let rentalTotal = 0;
     const detailSpaces = parseSpacesDetail(o.espacios_detalle);
@@ -5281,7 +5594,7 @@ window.getOrderHTML = function(o, type) {
     };
     const __orderBuildTaxRows = (subtotal, activeTaxIds, storedTaxTotal = 0) => {
         const rows = [
-            `<tr><td class="py-1 px-3 text-[10px] font-bold text-gray-500 text-right" colspan="2">Subtotal</td><td class="py-1 px-3 text-right text-xs font-bold text-gray-800">${__orderFormatMoneyHtml(subtotal)}</td></tr>`
+            `<tr><td class="py-1 px-3 text-[10px] font-bold text-gray-500 text-right" colspan="4">Subtotal</td><td class="py-1 px-3 text-right text-xs font-bold text-gray-800">${__orderFormatMoneyHtml(subtotal)}</td></tr>`
         ];
         const resolvedTaxes = parseIds(activeTaxIds)
             .map((tid) => __orderResolveTaxRecord(tid))
@@ -5306,64 +5619,102 @@ window.getOrderHTML = function(o, type) {
                 if (storedTaxTotal > 0 && index < resolvedTaxes.length - 1) {
                     remainingStoredTax = __orderRoundMoney(remainingStoredTax - amount);
                 }
-                rows.push(`<tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="2">${__cpSafeHtml(entry.name)}${entry.percentage > 0 ? ` (${entry.percentage}%)` : ''}</td><td class="py-1 px-3 text-right text-xs text-red-500 font-bold">${__orderFormatMoneyHtml(amount, { prefix: '+' })}</td></tr>`);
+                rows.push(`<tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="4">${__cpSafeHtml(entry.name)}${entry.percentage > 0 ? ` (${entry.percentage}%)` : ''}</td><td class="py-1 px-3 text-right text-xs text-red-500 font-bold">${__orderFormatMoneyHtml(amount, { prefix: '+' })}</td></tr>`);
             });
         } else if (storedTaxTotal > 0) {
-            rows.push(`<tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="2">IVA</td><td class="py-1 px-3 text-right text-xs text-red-500 font-bold">${__orderFormatMoneyHtml(storedTaxTotal, { prefix: '+' })}</td></tr>`);
+            rows.push(`<tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="4">IVA</td><td class="py-1 px-3 text-right text-xs text-red-500 font-bold">${__orderFormatMoneyHtml(storedTaxTotal, { prefix: '+' })}</td></tr>`);
         }
 
         return rows.join('');
     };
+    let convenioBaseTotal = 0;
     if (detailSpaces.length > 0) {
-        detailSpaces.forEach((sp, spIdx) => {
+        detailSpaces.forEach((sp) => {
             const sid = sp.espacio_id || sp.space_id;
-            const spObj = allSpaces.find(x => String(x.id) === String(sid)) || null;
-            const spName = sp.espacio_nombre || spObj?.nombre || `Espacio ${sid}`;
-            const spKey = sp.espacio_clave || spObj?.clave || '';
+            const spObj = __orderFindCatalogSpace(sid);
+            const identity = __orderResolveSpaceIdentity(sp);
             const spGuests = parseInt(sp.personas, 10) || guests;
             const fi = sp.fecha_inicio || o.fecha_inicio;
             const ff = sp.fecha_fin || o.fecha_fin;
+            const detailIsPublicidad = __orderIsPublicidadSpace(spObj || { tipo: sp.espacio_tipo || sp.tipo || '' });
+            const detailSubtotal = parseFloat(sp.subtotal_espacio || sp.total_espacio || 0) || 0;
+            const detailMaterialMeasure = __orderResolveDetailMaterialMeasure(sp, spObj);
+            const mAncho = detailMaterialMeasure.medida_ancho;
+            const mAlto = detailMaterialMeasure.medida_alto;
+            const mUnidad = detailMaterialMeasure.medida_unidad || 'M';
+            const detailValue = __orderResolvePdfSpaceDetail(sp, spObj);
+            const measuresStr = (mAncho !== null && mAncho !== undefined && mAlto !== null && mAlto !== undefined) ? `${mAncho}x${mAlto} ${mUnidad}` : '--';
+            const detailDateLabel = (isConvenio && __orderDetailBlocksIndefinitely(sp))
+                ? `${window.safeFormatDate(fi)}<br>Indefinido`
+                : `${window.safeFormatDate(fi)}${ff && ff !== fi ? `<br>${window.safeFormatDate(ff)}` : ''}`;
 
-            if (spObj && fi && ff) {
+            if (spObj && fi && ff && !detailIsPublicidad && !isConvenio) {
                 const breakdown = calculateDayByDayTotal(spObj, fi, ff, spGuests);
                 rentalTotal += breakdown.total;
+                convenioBaseTotal += breakdown.total;
                 breakdown.details.forEach((day, idx) => {
-                    rentalRows += `<tr><td class="py-2 px-3 align-top text-[11px] text-gray-700 leading-snug break-words"><span class="font-bold">${spName}</span> - Renta ${day.dayName}${(idx === 0 && spKey) ? `<br><span class="text-[9px] text-gray-400 italic">${spKey}</span>` : ''}</td><td class="py-2 px-3 text-left text-[10px] text-gray-500">${idx === 0 ? __orderBuildPeopleCellHtml(spGuests) : ''}</td><td class="py-2 px-3 text-left text-[10px] text-gray-500">${__orderBuildDateCellHtml(day.date, '', sid)}</td><td class="py-2 px-3 text-right font-bold text-[11px] text-gray-700">${__orderFormatMoneyHtml(day.price)}</td></tr>`;
+                    rentalRows += `<tr><td class="py-2 px-3 align-top text-[11px] text-gray-700 leading-snug break-words"><span class="font-bold">${__orderEscapeHtml(identity.nombre)}</span> - Renta ${day.dayName}${(idx === 0 && identity.clave) ? `<br><span class="text-[9px] text-gray-400 italic">${__orderEscapeHtml(identity.clave)}</span>` : ''}</td><td class="py-2 px-3 text-center text-[10px] text-gray-400">--</td><td class="py-2 px-3 text-center text-[10px] text-gray-400">--</td><td class="py-2 px-3 text-left text-[10px] text-gray-500">${__orderBuildDateCellHtml(day.date, '', sid)}</td><td class="py-2 px-3 text-right font-bold text-[11px] text-gray-700">${__orderFormatMoneyHtml(day.price)}</td></tr>`;
                 });
             } else {
-                const rawSubtotal = parseFloat(sp.subtotal_espacio || sp.subtotal || 0);
-                rentalTotal += rawSubtotal;
-                rentalRows += `<tr><td class="py-2 px-3 align-top text-[11px] leading-snug break-words"><p class="font-bold text-gray-800 text-[11px]">${spName}</p>${spKey ? `<span class="bg-gray-100 text-gray-500 px-1 py-0.5 rounded text-[10px] font-mono mt-0.5 inline-block">${spKey}</span>` : ''}</td><td class="py-2 px-3 align-top text-left text-gray-500 text-[10px]">${__orderBuildPeopleCellHtml(spGuests)}</td><td class="py-2 px-3 align-top text-left text-gray-500 text-[10px]">${__orderBuildDateCellHtml(window.safeFormatDate(fi), window.safeFormatDate(ff), sid)}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-[11px]">${__orderFormatMoneyHtml(rawSubtotal)}</td></tr>`;
+                rentalTotal += detailSubtotal;
+                convenioBaseTotal += detailSubtotal;
+                rentalRows += `<tr><td class="py-2 px-3 align-top break-words">${__orderRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__orderEscapeHtml(detailValue)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__orderEscapeHtml(measuresStr)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${detailDateLabel}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${__orderFormatMoneyHtml(detailSubtotal)}</td></tr>`;
             }
-            if (spIdx === detailSpaces.length - 1) rentalRows += '';
         });
     } else if (space && o.fecha_inicio && o.fecha_fin) {
-        const dayBreakdown = calculateDayByDayTotal(space, o.fecha_inicio, o.fecha_fin, guests);
-        rentalTotal = dayBreakdown.total;
-        dayBreakdown.details.forEach((day, idx) => { rentalRows += `<tr><td class="py-2 px-3 align-top text-[11px] text-gray-700 leading-snug break-words"><span class="font-bold">${space.nombre}</span> - Renta ${day.dayName}${idx === 0 ? `<br><span class="text-[9px] text-gray-400 italic">${space.clave}</span>` : ''}</td><td class="py-2 px-3 text-left text-[10px] text-gray-500">${idx === 0 ? __orderBuildPeopleCellHtml(guests) : ''}</td><td class="py-2 px-3 text-left text-[10px] text-gray-500">${__orderBuildDateCellHtml(day.date, '', space.id || o.espacio_id)}</td><td class="py-2 px-3 text-right font-bold text-[11px] text-gray-700">${__orderFormatMoneyHtml(day.price)}</td></tr>`; });
+        const identity = __orderResolveSpaceIdentity();
+        const detailMaterialMeasure = __orderResolveDetailMaterialMeasure(o, space);
+        const mAncho = detailMaterialMeasure.medida_ancho;
+        const mAlto = detailMaterialMeasure.medida_alto;
+        const mUnidad = detailMaterialMeasure.medida_unidad || 'M';
+        const detailValue = __orderResolvePdfSpaceDetail(o, space);
+        const measuresStr = (mAncho !== null && mAncho !== undefined && mAlto !== null && mAlto !== undefined) ? `${mAncho}x${mAlto} ${mUnidad}` : '--';
+        if (__orderIsPublicidadSpace(space) || isConvenio) {
+            rentalTotal = parseFloat(o?.desglose_precios?.subtotal_antes_impuestos || o?.precio_final || space?.precio_base || 0) || 0;
+            convenioBaseTotal = rentalTotal;
+            rentalRows = `<tr><td class="py-2 px-3 align-top break-words">${__orderRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__orderEscapeHtml(detailValue)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__orderEscapeHtml(measuresStr)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__orderBlocksIndefinitely(o) ? `${window.safeFormatDate(o.fecha_inicio)}<br>Indefinido` : __orderBuildDateCellHtml(window.safeFormatDate(o.fecha_inicio), window.safeFormatDate(o.fecha_fin), space.id || o.espacio_id)}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${__orderFormatMoneyHtml(rentalTotal)}</td></tr>`;
+        } else {
+            const dayBreakdown = calculateDayByDayTotal(space, o.fecha_inicio, o.fecha_fin, guests);
+            rentalTotal = dayBreakdown.total;
+            convenioBaseTotal = rentalTotal;
+            dayBreakdown.details.forEach((day, idx) => { rentalRows += `<tr><td class="py-2 px-3 align-top text-[11px] text-gray-700 leading-snug break-words"><span class="font-bold">${__orderEscapeHtml(identity.nombre)}</span> - Renta ${day.dayName}${idx === 0 && identity.clave ? `<br><span class="text-[9px] text-gray-400 italic">${__orderEscapeHtml(identity.clave)}</span>` : ''}</td><td class="py-2 px-3 text-center text-[10px] text-gray-400">--</td><td class="py-2 px-3 text-center text-[10px] text-gray-400">--</td><td class="py-2 px-3 text-left text-[10px] text-gray-500">${__orderBuildDateCellHtml(day.date, '', space.id || o.espacio_id)}</td><td class="py-2 px-3 text-right font-bold text-[11px] text-gray-700">${__orderFormatMoneyHtml(day.price)}</td></tr>`; });
+        }
     } else {
-        const basePrice = parseFloat(space ? space.precio_base : 0); rentalTotal = basePrice;
-        rentalRows = `<tr><td class="py-2 px-3 align-top text-[11px] leading-snug break-words"><p class="font-bold text-gray-800 text-[11px]">${o.espacio_nombre}</p>${descHTML}<span class="bg-gray-100 text-gray-500 px-1 py-0.5 rounded text-[10px] font-mono mt-0.5 inline-block">${o.espacio_clave || ''}</span></td><td class="py-2 px-3 align-top text-left text-gray-500 text-[10px]">${__orderBuildPeopleCellHtml(guests)}</td><td class="py-2 px-3 align-top text-left text-gray-500 text-[10px]">${__orderBuildDateCellHtml(window.safeFormatDate(o.fecha_inicio), window.safeFormatDate(o.fecha_fin), o.espacio_id)}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-[11px]">${__orderFormatMoneyHtml(basePrice)}</td></tr>`;
+        const basePrice = parseFloat(space ? space.precio_base : 0) || 0;
+        const identity = __orderResolveSpaceIdentity();
+        const detailMaterialMeasure = __orderResolveDetailMaterialMeasure(o, space);
+        const mAncho = detailMaterialMeasure.medida_ancho;
+        const mAlto = detailMaterialMeasure.medida_alto;
+        const mUnidad = detailMaterialMeasure.medida_unidad || 'M';
+        const detailValue = __orderResolvePdfSpaceDetail(o, space);
+        const measuresStr = (mAncho !== null && mAncho !== undefined && mAlto !== null && mAlto !== undefined) ? `${mAncho}x${mAlto} ${mUnidad}` : '--';
+        rentalTotal = basePrice;
+        convenioBaseTotal = basePrice;
+        rentalRows = `<tr><td class="py-2 px-3 align-top break-words">${__orderRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__orderEscapeHtml(detailValue)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__orderEscapeHtml(measuresStr)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__orderBlocksIndefinitely(o) ? `${window.safeFormatDate(o.fecha_inicio)}<br>Indefinido` : __orderBuildDateCellHtml(window.safeFormatDate(o.fecha_inicio), window.safeFormatDate(o.fecha_fin), o.espacio_id)}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${__orderFormatMoneyHtml(basePrice)}</td></tr>`;
     }
-    
-    let runningSubtotal = rentalTotal; let rowsHtml = rentalRows; 
+
+    let runningSubtotal = rentalTotal; let rowsHtml = rentalRows;
+    let convenioDeliveredTotal = 0;
     cArray.forEach(c => {
         let val = parseFloat(c.amount !== undefined ? c.amount : (c.value || 0));
         let amount = val;
         if (c.unit === 'percent') amount = rentalTotal * (val / 100);
-        if (c.type === 'descuento') runningSubtotal -= amount; else runningSubtotal += amount;
+        const convenioConcept = isConvenio || __orderIsConvenioConceptItem(c);
+        if (convenioConcept || c.type === 'descuento') runningSubtotal -= amount; else runningSubtotal += amount;
+        if (convenioConcept) convenioDeliveredTotal += amount;
         const conceptType = String(c.type || '').toLowerCase();
         if (conceptType === 'b2b_horario') return;
-        const sign = (c.type === 'descuento') ? '-' : '+';
+        const sign = (convenioConcept || c.type === 'descuento') ? '-' : '+';
 
         let desc = c.description || c.nombre || 'Adicional';
         const descHtml = __orderFormatConceptDescription(desc);
-
-        // Solo mostrar personas en conceptos de tipo espacio
+        const meta = c && typeof c.meta === 'object' ? c.meta : {};
+        const sid = String(meta.space_id || meta.spaceId || '').trim();
+        const spName = sid ? (detailSpaces.find((item) => String(item.espacio_id || item.space_id || '') === sid)?.espacio_nombre || '') : '';
         const isNonSpaceConcept = ['b2b_montaje', 'b2b_horas', 'descuento', 'b2b_horario'].includes(conceptType) || !conceptType.startsWith('b2b_espacio');
-        const conceptPeopleHtml = isNonSpaceConcept ? '' : __orderBuildPeopleCellHtml(__orderResolveConceptPeople(c));
-
-        // Mostrar fechas de premontaje en la columna de fecha
+        const conceptPeople = isNonSpaceConcept ? 0 : __orderResolveConceptPeople(c);
+        const peopleSuffix = conceptPeople > 0 ? ` (${conceptPeople} persona${conceptPeople === 1 ? '' : 's'})` : '';
+        const conceptLabel = `${spName ? `${__orderEscapeHtml(spName)} - ` : ''}${descHtml}${peopleSuffix}`;
         let conceptDateHtml = '';
         if (conceptType === 'b2b_montaje' && c.meta?.dates?.length) {
             conceptDateHtml = c.meta.dates.map(d => window.safeFormatDate(d)).join(', ');
@@ -5372,10 +5723,10 @@ window.getOrderHTML = function(o, type) {
         const amountCell = (Math.abs(parseFloat(amount || 0)) < 0.000001)
             ? '---'
             : __orderFormatMoneyHtml(amount, { prefix: sign });
-        rowsHtml += `<tr><td class="py-2 px-3 align-top text-[13px] font-medium text-gray-600 leading-snug break-words">${descHtml}</td><td class="py-2 px-3 text-left text-[11px] text-gray-500">${conceptPeopleHtml}</td><td class="py-2 px-3 text-left text-[10px] text-gray-500">${conceptDateHtml}</td><td class="py-2 px-3 text-right text-[13px] font-medium text-gray-600">${amountCell}</td></tr>`;
+        rowsHtml += `<tr><td class="py-2 px-3 align-top text-[13px] font-medium text-gray-600 leading-snug break-words">${conceptLabel}</td><td class="py-2 px-3"></td><td class="py-2 px-3"></td><td class="py-2 px-3 text-left text-[10px] text-gray-500">${conceptDateHtml}</td><td class="py-2 px-3 text-right text-[13px] font-medium text-gray-600">${amountCell}</td></tr>`;
     });
 
-    if (o.tipo_ajuste && o.tipo_ajuste !== 'ninguno') { let val = parseFloat(o.valor_ajuste); let displayAmount = val; if (o.ajuste_es_porcentaje) { displayAmount = runningSubtotal * (val / 100); } const sign = o.tipo_ajuste === 'descuento' ? '-' : '+'; if (o.tipo_ajuste === 'descuento') runningSubtotal -= displayAmount; else runningSubtotal += displayAmount; rowsHtml += `<tr class="bg-gray-50"><td class="py-2 px-3 italic text-[12px] text-gray-500">Ajuste Global</td><td class="py-2 px-3 text-left text-[11px] text-gray-300">---</td><td></td><td class="py-2 px-3 text-right font-bold text-[12px] text-gray-600">${__orderFormatMoneyHtml(displayAmount, { prefix: sign })}</td></tr>`; }
+    if (o.tipo_ajuste && o.tipo_ajuste !== 'ninguno') { let val = parseFloat(o.valor_ajuste); let displayAmount = val; if (o.ajuste_es_porcentaje) { displayAmount = runningSubtotal * (val / 100); } const sign = o.tipo_ajuste === 'descuento' ? '-' : '+'; if (o.tipo_ajuste === 'descuento') runningSubtotal -= displayAmount; else runningSubtotal += displayAmount; rowsHtml += `<tr class="bg-gray-50"><td class="py-2 px-3 italic text-[12px] text-gray-500">Ajuste Global</td><td></td><td></td><td></td><td class="py-2 px-3 text-right font-bold text-[12px] text-gray-600">${__orderFormatMoneyHtml(displayAmount, { prefix: sign })}</td></tr>`; }
     const __orderTableRows = (String(rowsHtml).match(/<tr\b/gi) || []).length;
     const __orderTableChars = String(rowsHtml).replace(/<[^>]+>/g, '').length;
     let __orderDensityLevel = 0;
@@ -5389,8 +5740,11 @@ window.getOrderHTML = function(o, type) {
     const __orderFitLineHeight = __orderDensityLevel >= 3 ? '105%' : (__orderDensityLevel >= 2 ? '112%' : '120%');
     const __orderTableFitInline = `--cp-fit-head-size:${__orderFitHeadPx}px;--cp-fit-body-size:${__orderFitBodyPx}px;--cp-fit-cell-py:${__orderFitCellPy}px;--cp-fit-cell-px:${__orderFitCellPx}px;--cp-fit-line-height:${__orderFitLineHeight};`;
     const __orderQuickMarginClass = __orderDensityLevel >= 2 ? 'mb-8' : (__orderDensityLevel === 1 ? 'mb-12' : 'mb-20');
-    const pricing = __orderResolveQuotePricing(o); const taxIds = pricing.taxIds; const storedTaxTotal = pricing.taxTotal > 0 ? pricing.taxTotal : Math.max(0, __orderRoundMoney(pricing.total - runningSubtotal)); const taxRows = __orderBuildTaxRows(runningSubtotal, taxIds, storedTaxTotal); const totalsBlock = `<div class="cp-pdf-summary flex justify-end mb-2 pr-4" data-base-resource="summary"><div class="cp-pdf-summary-table-wrap"><table class="w-full border-collapse">${taxRows}<tr><td class="pt-2 border-t-2 border-gray-800 align-middle text-right" colspan="2"><span class="text-[10px] font-bold uppercase text-gray-500 mr-2">Total Neto</span></td><td class="pt-2 border-t-2 border-gray-800 align-middle text-right"><span class="text-xl font-black text-gray-900">${__orderFormatMoneyHtml(pricing.total)}</span></td></tr></table></div></div>`; 
-    
+    const detailColumnLabel = __orderResolvePdfDetailHeader();
+    const pricing = __orderResolveQuotePricing(o); const taxIds = isConvenio ? [] : pricing.taxIds; const storedTaxTotal = isConvenio ? 0 : (pricing.taxTotal > 0 ? pricing.taxTotal : Math.max(0, __orderRoundMoney(pricing.total - runningSubtotal))); const taxRows = __orderBuildTaxRows(runningSubtotal, taxIds, storedTaxTotal); const totalsBlock = isConvenio
+        ? `<div class="cp-pdf-summary flex justify-end mb-2 pr-4" data-base-resource="summary"><div class="cp-pdf-summary-table-wrap"><table class="w-full border-collapse"><tr><td class="py-1 px-3 text-[10px] font-bold text-gray-500 text-right" colspan="4">Valor base del espacio</td><td class="py-1 px-3 text-right text-xs font-bold text-gray-800">${__orderFormatMoneyHtml(convenioBaseTotal)}</td></tr><tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="4">Tratos del convenio</td><td class="py-1 px-3 text-right text-xs text-amber-600 font-bold">${__orderFormatMoneyHtml(convenioDeliveredTotal, { prefix: '-' })}</td></tr><tr><td class="pt-2 border-t-2 border-gray-800 align-middle text-right" colspan="4"><span class="text-[10px] font-bold uppercase text-gray-500 mr-2">Balance del convenio</span></td><td class="pt-2 border-t-2 border-gray-800 align-middle text-right"><span class="text-xl font-black text-gray-900">${__orderFormatMoneyHtml(runningSubtotal)}</span></td></tr></table></div></div>`
+        : `<div class="cp-pdf-summary flex justify-end mb-2 pr-4" data-base-resource="summary"><div class="cp-pdf-summary-table-wrap"><table class="w-full border-collapse">${taxRows}<tr><td class="pt-2 border-t-2 border-gray-800 align-middle text-right" colspan="4"><span class="text-[10px] font-bold uppercase text-gray-500 mr-2">Total Neto</span></td><td class="pt-2 border-t-2 border-gray-800 align-middle text-right"><span class="text-xl font-black text-gray-900">${__orderFormatMoneyHtml(pricing.total)}</span></td></tr></table></div></div>`;
+
     const quickLeftItems = String(pdfContent.quickLeftLines || '')
         .split(/\r?\n/)
         .map(line => line.trim())
@@ -5434,6 +5788,170 @@ window.getOrderHTML = function(o, type) {
     }
 
     const pageBaseHeight = Number(__orderContentBaseHeightPx().toFixed(2));
+    if (isConvenio && !isOrder) {
+        const venueName = 'Casa de Piedra';
+        const convenioMeta = __orderParseConvenioMeta(o);
+        const convenioItems = convenioMeta.items.length ? convenioMeta.items : __orderBuildConvenioPayloadItems({ concepts: cArray });
+        const publicityEntries = (detailSpaces.length ? detailSpaces : [o]).map((item) => {
+            const sid = item?.espacio_id || item?.space_id || o.espacio_id;
+            const catalogSpace = allSpaces.find((spaceItem) => String(spaceItem.id) === String(sid)) || space || null;
+            const material = String(item?.material || catalogSpace?.material || '').trim() || 'Publicidad';
+            const width = item?.medida_ancho ?? item?.ancho ?? catalogSpace?.medida_ancho ?? catalogSpace?.ancho;
+            const height = item?.medida_alto ?? item?.alto ?? catalogSpace?.medida_alto ?? catalogSpace?.alto;
+            const unit = String(item?.medida_unidad || catalogSpace?.medida_unidad || 'M').trim();
+            const measures = (width !== null && width !== undefined && String(width) !== '' && height !== null && height !== undefined && String(height) !== '')
+                ? `${width} x ${height} ${unit}`
+                : 'Sin medida capturada';
+            const start = item?.fecha_inicio || o.fecha_inicio || '';
+            const end = item?.fecha_fin || o.fecha_fin || '';
+            const isIndefinite = __orderDetailBlocksIndefinitely(item) || __orderBlocksIndefinitely(o);
+            return {
+                name: String(item?.espacio_nombre || catalogSpace?.nombre || o.espacio_nombre || 'Espacio publicitario').trim() || 'Espacio publicitario',
+                key: String(item?.espacio_clave || catalogSpace?.clave || o.espacio_clave || '').trim(),
+                material,
+                measures,
+                range: isIndefinite
+                    ? `${window.safeFormatDate(start)} al indefinido`
+                    : `${window.safeFormatDate(start)} al ${window.safeFormatDate(end || start)}`,
+                amount: Math.max(0, parseFloat(item?.subtotal_espacio || item?.total_espacio || catalogSpace?.precio_base || 0) || 0)
+            };
+        });
+        const publicityItemsHtml = publicityEntries.length
+            ? publicityEntries.map((entry) => `
+                <li class="rounded-xl border border-gray-200 bg-white px-3 py-2">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <p class="font-black text-gray-800 text-[11px]">${__orderEscapeHtml(entry.name)}</p>
+                            ${entry.key ? `<p class="text-[9px] font-mono text-gray-400 mt-0.5">${__orderEscapeHtml(entry.key)}</p>` : ''}
+                        </div>
+                        <span class="text-[10px] font-bold text-brand-red">${__orderFormatMoneyHtml(entry.amount)}</span>
+                    </div>
+                    <p class="mt-1 text-[10px] text-gray-500">Soporte: ${__orderEscapeHtml(entry.material)}${entry.measures ? ` · Medidas: ${__orderEscapeHtml(entry.measures)}` : ''}</p>
+                    <p class="mt-0.5 text-[10px] text-gray-400">Vigencia: ${__orderEscapeHtml(entry.range)}</p>
+                </li>`).join('')
+            : '<li class="rounded-xl border border-dashed border-gray-200 bg-white px-3 py-4 text-[10px] font-bold text-gray-400">Sin espacios publicitarios capturados.</li>';
+        const tradeItemsHtml = convenioItems.length
+            ? convenioItems.map((item) => {
+                const qty = Math.max(1, parseInt(item?.cantidad_entrega || 1, 10) || 1);
+                const label = `${qty} ${qty === 1 ? 'entrega' : 'entregas'} de ${item?.nombre || 'Convenio'}`;
+                return `
+                    <li class="flex items-start justify-between gap-3 rounded-xl border border-gray-200 bg-white px-3 py-2">
+                        <span class="text-[11px] font-semibold text-gray-700">${__orderEscapeHtml(label)}</span>
+                        <span class="text-[10px] font-bold text-brand-red">${__orderFormatMoneyHtml(item?.monto || 0)}</span>
+                    </li>`;
+            }).join('')
+            : '<li class="rounded-xl border border-dashed border-gray-200 bg-white px-3 py-4 text-[10px] font-bold text-gray-400">Sin tratos capturados.</li>';
+        const convenioBaseAmount = __orderRoundMoney(convenioBaseTotal);
+        const convenioBalance = __orderRoundMoney(runningSubtotal);
+        const convenioMonthYear = now.toLocaleDateString('es-MX', { month: 'long', year: 'numeric' });
+        const convenioSubject = String(o.nombre_cotizacion || o.nombre || o.proyecto || clientName || 'Campaña vigente').trim() || 'Campaña vigente';
+        const convenioStart = detailSpaces[0]?.fecha_inicio || o.fecha_inicio || '';
+        const convenioEnd = detailSpaces[detailSpaces.length - 1]?.fecha_fin || o.fecha_fin || convenioStart;
+        const convenioValidityText = __orderBlocksIndefinitely(o)
+            ? `Este convenio tendrá efecto a partir del ${window.safeFormatDate(convenioStart)} y permanecerá vigente hasta nuevo aviso, fecha en que la publicidad será retirada por instrucción de las partes.`
+            : `Este convenio tendrá efecto desde ${window.safeFormatDate(convenioStart)} hasta el día ${window.safeFormatDate(convenioEnd)}, fecha en que la publicidad será retirada.`;
+        const clientRoleLabel = String(quoteClientSubtitle || 'Cliente / Representante').trim() || 'Cliente / Representante';
+        const approverRoleLabel = String(quoteApproverSubtitle || venueName).trim() || venueName;
+        const convenioSignBlock = `
+            <div class="text-center w-56">
+                <div class="border-b border-black mb-2"></div>
+                <p class="font-bold text-xs text-brand-dark uppercase">${__cpSafeHtml(venueName)}</p>
+                <p class="text-[10px] text-gray-600 mt-1">${__cpSafeHtml(quoteApproverTitle || 'Quien aprueba')}</p>
+                <p class="text-[10px] text-gray-500 uppercase">${__cpSafeHtml(approverRoleLabel)}</p>
+            </div>
+            <div class="text-center w-56">
+                <div class="border-b border-black mb-2"></div>
+                <p class="font-bold text-xs text-brand-dark uppercase">${__cpSafeHtml(quoteClientTitle || clientName)}</p>
+                <p class="text-[10px] text-gray-500 uppercase mt-1">${__cpSafeHtml(clientRoleLabel)}</p>
+            </div>`;
+        const convenioRaw = `
+            <div class="cp-pdf-shift" style="width:100%;min-height:${pageBaseHeight}px;height:${pageBaseHeight}px;overflow:visible;position:relative;">
+                <div class="cp-pdf-page-frame" style="${__cpBuildPdfContentFrameStyle(pageBaseHeight, 'display:flex;flex-direction:column;justify-content:space-between;')}">
+                    <div>
+                        ${renderHeader(docTitle)}
+                        <div class="cp-pdf-summary text-[11px] text-gray-600 text-right mb-4" data-base-resource="summary">León, Guanajuato; ${__cpSafeHtml(convenioMonthYear)}.</div>
+                        <div class="cp-pdf-general-conditions text-[11px] text-gray-700 space-y-4 leading-relaxed" data-base-resource="conditions">
+                            <div class="text-center space-y-1">
+                                <p class="text-xl font-black text-gray-900 tracking-wide">CONVENIO DE INTERCAMBIO</p>
+                                <p class="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-500">${__cpSafeHtml((quoteClientTitle || clientName).toUpperCase())} y ${__cpSafeHtml(venueName.toUpperCase())}</p>
+                            </div>
+                            <p><strong>${__cpSafeHtml(venueName.toUpperCase())}</strong> acuerda proporcionar espacio publicitario en sus instalaciones para la campaña <strong>${__orderEscapeHtml(convenioSubject)}</strong>. La difusión se realizará en los soportes descritos a continuación y se documentará mediante evidencia fotográfica.</p>
+                            <div class="grid grid-cols-[minmax(0,1.45fr)_220px] gap-4">
+                                <div class="rounded-2xl border border-gray-200 bg-slate-50/80 p-4">
+                                    <p class="text-[10px] font-black uppercase tracking-wide text-gray-500 mb-2">Publicidad acordada</p>
+                                    <ul class="space-y-2">${publicityItemsHtml}</ul>
+                                </div>
+                                <div class="rounded-2xl border border-gray-200 bg-white p-4">
+                                    <p class="text-[10px] font-black uppercase tracking-wide text-gray-500 mb-3">Resumen económico</p>
+                                    <div class="space-y-2 text-[11px]">
+                                        <div class="flex items-center justify-between gap-3"><span class="text-gray-500">Valor base</span><span class="font-bold text-gray-800">${__orderFormatMoneyHtml(convenioBaseAmount)}</span></div>
+                                        <div class="flex items-center justify-between gap-3"><span class="text-gray-500">Contraprestación</span><span class="font-bold text-amber-700">${__orderFormatMoneyHtml(convenioDeliveredTotal, { prefix: '-' })}</span></div>
+                                        <div class="pt-2 mt-2 border-t border-gray-200 flex items-center justify-between gap-3"><span class="font-black uppercase text-gray-500 text-[10px]">Balance</span><span class="font-black text-brand-dark">${__orderFormatMoneyHtml(convenioBalance)}</span></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-[minmax(0,1.45fr)_220px] gap-4">
+                                <div class="rounded-2xl border border-gray-200 bg-slate-50/80 p-4">
+                                    <p class="text-[10px] font-black uppercase tracking-wide text-gray-500 mb-2">Contraprestación acordada</p>
+                                    <ul class="space-y-2">${tradeItemsHtml}</ul>
+                                </div>
+                                <div class="rounded-2xl border border-gray-200 bg-white p-4">
+                                    <p class="text-[10px] font-black uppercase tracking-wide text-gray-500 mb-2">Vigencia del acuerdo</p>
+                                    <p class="text-[11px] text-gray-700">${__orderEscapeHtml(convenioValidityText)}</p>
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div class="rounded-2xl border border-gray-200 bg-white p-4">
+                                    <p class="text-[10px] font-black uppercase tracking-wide text-gray-500 mb-2">Responsabilidades del cliente</p>
+                                    <ul class="list-disc pl-4 space-y-1 text-[10px] text-gray-700">
+                                        <li>Entregar los artes digitales o materiales físicos necesarios para la exposición acordada.</li>
+                                        <li>Proporcionar las contraprestaciones pactadas en tiempo y forma conforme a este convenio.</li>
+                                        <li>Compartir la información operativa necesaria para que la instalación publicitaria se ejecute correctamente.</li>
+                                    </ul>
+                                </div>
+                                <div class="rounded-2xl border border-gray-200 bg-white p-4">
+                                    <p class="text-[10px] font-black uppercase tracking-wide text-gray-500 mb-2">Responsabilidades de ${__cpSafeHtml(venueName)}</p>
+                                    <ul class="list-disc pl-4 space-y-1 text-[10px] text-gray-700">
+                                        <li>Colocar los materiales publicitarios en los espacios acordados durante la vigencia del convenio.</li>
+                                        <li>Garantizar la presencia de la publicidad conforme a la disponibilidad operativa del espacio contratado.</li>
+                                        <li>Registrar evidencia fotográfica del cumplimiento para el cierre documental del convenio.</li>
+                                    </ul>
+                                </div>
+                            </div>
+                            <p class="text-[11px] text-justify">Ambas partes acuerdan cumplir con los términos y condiciones de este convenio, firmando a continuación la aceptación de los compromisos expresados en el presente documento.</p>
+                        </div>
+                    </div>
+                    <div class="pb-2">
+                        <div class="cp-pdf-sign flex justify-between items-start px-2 mt-4" data-base-resource="sign">${convenioSignBlock}</div>
+                        ${footerHubHTML}
+                    </div>
+                </div>
+                ${__cpRenderPdfResources(pdfStyle, 1)}
+            </div>`;
+        const convenioPages = [
+            __orderWrapLetterheadPage(__cpOrdersBoostPdfTypography(convenioRaw), { baseWidth: __ORDER_PDF_CONTENT_BASE_WIDTH_PX, baseHeight: pageBaseHeight })
+        ];
+        const convenioExtraPages = __cpClampStyleNumber(pdfStyle.extraPages, -1, 6, 0);
+        if (convenioExtraPages > 0) {
+            for (let i = 0; i < convenioExtraPages; i += 1) {
+                const extraRaw = `
+                    <div class="cp-pdf-shift" style="width:100%;min-height:${pageBaseHeight}px;height:${pageBaseHeight}px;overflow:visible;position:relative;">
+                        <div class="cp-pdf-page-frame" style="${__cpBuildPdfContentFrameStyle(pageBaseHeight)}">
+                            ${renderHeader(`ANEXO ${i + 1}`)}
+                            <div class="cp-pdf-general-conditions text-[13px] text-gray-700 leading-relaxed mt-6 border border-dashed border-gray-300 rounded-lg p-4" data-base-resource="conditions">
+                                <p class="font-black uppercase text-gray-500 text-[11px] mb-2">${__cpSafeHtml(pdfContent.annexHintTitle || 'Página adicional editable')}</p>
+                                <p>${__cpSafeHtml(pdfContent.annexHintBody || '')}</p>
+                            </div>
+                            ${footerHubHTML}
+                        </div>
+                        ${__cpRenderPdfResources(pdfStyle, 2 + i)}
+                    </div>`;
+                convenioPages.push(__orderWrapLetterheadPage(__cpOrdersBoostPdfTypography(extraRaw), { baseWidth: __ORDER_PDF_CONTENT_BASE_WIDTH_PX, baseHeight: pageBaseHeight }));
+            }
+        }
+        const convenioRawHtml = `<div class="cp-pdf-root" style="width:816px;margin:0;padding:0;box-sizing:border-box;background:#ffffff;${pdfStyleInlineVars}${__orderTableFitInline}">${pdfStyleTag}${pdfTableFitTag}${convenioPages.join('')}</div>`;
+        return __cpOrdersTransparentPdfHtml(convenioRawHtml);
+    }
     const page1Raw = `
         <div class="cp-pdf-shift" style="width:100%;min-height:${pageBaseHeight}px;height:${pageBaseHeight}px;overflow:visible;position:relative;">
             <div class="cp-pdf-page-frame" style="${__cpBuildPdfContentFrameStyle(pageBaseHeight, 'display:flex;flex-direction:column;justify-content:space-between;')}">
@@ -5443,13 +5961,14 @@ window.getOrderHTML = function(o, type) {
                     ${isOrder ? `<div class="mb-2 bg-gray-100 p-2 rounded text-base"><span>Folio de Servicio: <strong class="font-black text-lg">${folioUnificado}</strong></span></div>` : ''}
                     <table class="w-full text-left mb-2 mt-3 table-fixed border-separate border-spacing-0">
                         <colgroup>
-                            <col style="width: 52%;">
-                            <col style="width: 14%;">
-                            <col style="width: 14%;">
-                            <col style="width: 20%;">
+                            <col style="width:38%;">
+                            <col style="width:14%;">
+                            <col style="width:12%;">
+                            <col style="width:14%;">
+                            <col style="width:22%;">
                         </colgroup>
                         <thead class="cp-pdf-table-head bg-gray-100 text-sm font-black text-gray-500 uppercase">
-                            <tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-left">Personas</th><th class="py-2 px-3 text-left">Fecha</th><th class="py-2 px-3 text-right rounded-r">Importe</th></tr>
+                            <tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">${__cpSafeHtml(detailColumnLabel)}</th><th class="py-2 px-3 text-center">Medidas</th><th class="py-2 px-3 text-center">Fecha</th><th class="py-2 px-3 text-right rounded-r">Importe</th></tr>
                         </thead>
                         <tbody class="cp-pdf-table-body divide-y divide-gray-50 text-[12px]" data-base-resource="table-body">${rowsHtml}</tbody>
                     </table>
@@ -5499,7 +6018,7 @@ window.getOrderHTML = function(o, type) {
         }
     }
     const raw = `<div class="cp-pdf-root" style="width:816px;margin:0;padding:0;box-sizing:border-box;background:#ffffff;${pdfStyleInlineVars}${__orderTableFitInline}">${pdfStyleTag}${pdfTableFitTag}${pages.join('')}</div>`;
-    return __cpOrdersTransparentPdfHtml(raw); 
+    return __cpOrdersTransparentPdfHtml(raw);
 };
 
 // =========================================================================
@@ -5605,7 +6124,7 @@ function __orderGetSpaceMaxCapacity(space) {
     let rules = [];
     try {
         rules = typeof space?.precios_por_dia === 'string' ? JSON.parse(space.precios_por_dia) : (space?.precios_por_dia || []);
-    } catch (e) {}
+    } catch (e) { }
     if (!Array.isArray(rules) || !rules.length) return 999999;
     const finite = rules.map(r => parseInt(r?.max, 10)).filter(v => Number.isFinite(v) && v > 0 && v < 999999);
     return finite.length ? Math.max(...finite) : 999999;
@@ -5618,7 +6137,7 @@ function __orderDayKey(dateStr) {
 }
 function __orderIsBlockedDate(space, dateStr, guests) {
     let blocked = [];
-    try { blocked = typeof space?.dias_bloqueados === 'string' ? JSON.parse(space.dias_bloqueados) : (space?.dias_bloqueados || []); } catch(e){ blocked = []; }
+    try { blocked = typeof space?.dias_bloqueados === 'string' ? JSON.parse(space.dias_bloqueados) : (space?.dias_bloqueados || []); } catch (e) { blocked = []; }
     const dayKey = __orderDayKey(dateStr);
     if (Array.isArray(blocked) && blocked.includes(dayKey)) return true;
     const base = calculateDayByDayTotal(space, dateStr, dateStr, guests).total || 0;
@@ -5627,7 +6146,7 @@ function __orderIsBlockedDate(space, dateStr, guests) {
 
 function __orderIsPremontajeBlockedDate(space, dateStr) {
     let blockedP = [];
-    try { blockedP = typeof space?.dias_bloqueados_premontaje === 'string' ? JSON.parse(space.dias_bloqueados_premontaje) : (space?.dias_bloqueados_premontaje || []); } catch(e){ blockedP = []; }
+    try { blockedP = typeof space?.dias_bloqueados_premontaje === 'string' ? JSON.parse(space.dias_bloqueados_premontaje) : (space?.dias_bloqueados_premontaje || []); } catch (e) { blockedP = []; }
     const dayKey = __orderDayKey(dateStr);
     return Array.isArray(blockedP) && blockedP.includes(dayKey);
 }
@@ -5635,6 +6154,7 @@ function __orderIsPremontajeBlockedDate(space, dateStr) {
 function __orderCfgHasBlockedDates(cfg) {
     const space = __orderGetSpaceById(cfg?.spaceId);
     if (!space) return false;
+    if (__orderIsPublicidadSpace(space)) return false;
     const guests = parseInt(cfg?.guests, 10) || 1;
     const eventDates = [];
     const s = __orderNormalizeDate(cfg?.startDate || '');
@@ -5731,6 +6251,7 @@ function __orderApplyStatusVisual() {
 
 function __orderCreateSpaceCfg(spaceId, seed = {}) {
     const space = __orderGetSpaceById(spaceId);
+    const isPublicidad = __orderIsPublicidadSpace(space);
     let b2b = {};
     try {
         b2b = typeof space?.config_b2b === 'string' ? JSON.parse(space.config_b2b) : (space?.config_b2b || {});
@@ -5748,11 +6269,11 @@ function __orderCreateSpaceCfg(spaceId, seed = {}) {
     const hasSeedHoraUnit = seed.horasExtraUnit !== undefined && seed.horasExtraUnit !== null && String(seed.horasExtraUnit) !== '';
     const defaultHoraUnit = hasSeedHoraUnit ? (parseFloat(seed.horasExtraUnit) || 0) : __orderResolveHoraExtraUnit(space);
     const heCfg = __orderGetHoraExtraCfg();
-    return {
+    const cfg = {
         spaceId: String(spaceId),
         startDate: __orderNormalizeDate(seed.startDate || ''),
         endDate: __orderNormalizeDate(seed.endDate || seed.startDate || ''),
-        guests: parseInt(seed.guests, 10) || 1,
+        guests: isPublicidad ? 1 : (parseInt(seed.guests, 10) || 1),
         horarioValue: seed.horarioValue || (firstHorario?.nombre || ''),
         horarioText: seed.horarioText || '',
         horarioPrice: parseFloat(seed.horarioPrice ?? firstHorario?.price ?? 0) || 0,
@@ -5766,8 +6287,43 @@ function __orderCreateSpaceCfg(spaceId, seed = {}) {
         horasExtra: parseInt(seed.horasExtra, 10) || 0,
         horasExtraCourtesy: parseInt(seed.horasExtraCourtesy, 10) || 0,
         horasExtraUnit: heCfg.allowCustom ? defaultHoraUnit : __orderResolveHoraExtraUnit(space),
-        taxIds: Array.isArray(seed.taxIds) ? __orderNormalizeTaxIds(seed.taxIds) : __orderDefaultTaxIds(space)
+        taxIds: Array.isArray(seed.taxIds) ? __orderNormalizeTaxIds(seed.taxIds) : __orderDefaultTaxIds(space),
+        spaceType: seed.spaceType || space?.tipo || '',
+        material: String(seed.material || space?.material || '').trim(),
+        medidaAncho: __orderNormalizeMeasureValue(seed.medidaAncho ?? seed.medida_ancho ?? seed.ancho ?? space?.medida_ancho ?? space?.ancho),
+        medidaAlto: __orderNormalizeMeasureValue(seed.medidaAlto ?? seed.medida_alto ?? seed.alto ?? space?.medida_alto ?? space?.alto),
+        medidaUnit: __orderNormalizeMeasureUnit(seed.medidaUnit || seed.medida_unidad || seed.unidad_medida || space?.medida_unidad || space?.unidad_medida || 'M'),
+        customPermanence: !!seed.customPermanence,
+        customPriceEnabled: !!seed.customPriceEnabled,
+        customPriceMode: String(seed.customPriceMode || 'total'),
+        customBasePrice: (seed.customBasePrice === undefined || seed.customBasePrice === null || seed.customBasePrice === '')
+            ? ''
+            : (parseFloat(seed.customBasePrice) || 0),
+        convenioEnabled: seed.convenioEnabled === true || seed.convenio_activo === true || seed.convenio_indefinido === true,
+        concepts: __orderSafeArray(seed.concepts).map(__orderNormalizeExtraConcept)
     };
+    if (isPublicidad) {
+        cfg.guests = 1;
+        cfg.horarioValue = '';
+        cfg.horarioText = '';
+        cfg.horarioPrice = 0;
+        cfg.horarioCustomStart = '';
+        cfg.horarioCustomEnd = '';
+        cfg.premontajeEnabled = false;
+        cfg.premontajeDays = 0;
+        cfg.premontajeCourtesyDays = 0;
+        cfg.premontajeDates = [];
+        cfg.horasExtraEnabled = false;
+        cfg.horasExtra = 0;
+        cfg.horasExtraCourtesy = 0;
+        cfg.horasExtraUnit = 0;
+        if (cfg.convenioEnabled) {
+            cfg.customPriceEnabled = false;
+            cfg.customBasePrice = '';
+        }
+        __orderNormalizePublicidadDates(cfg);
+    }
+    return cfg;
 }
 
 const __ORDER_DETAIL_TABS = ['client', 'spaces', 'financial', 'summary', 'expediente'];
@@ -5791,13 +6347,82 @@ function __orderReadDetailTab() {
 }
 
 function __orderWriteDetailTab() {
-    try { sessionStorage.setItem(__orderResolveDetailTabStorageKey(), __orderDetailTab); } catch (_) {}
+    try { sessionStorage.setItem(__orderResolveDetailTabStorageKey(), __orderDetailTab); } catch (_) { }
 }
 
 let __orderDetailTab = __orderReadDetailTab();
 
 function __orderRangeDays(startDate, endDate) {
     return Math.max(1, __orderDatesBetween(startDate || '', endDate || startDate || '').length || 0);
+}
+
+function __orderNormalizeSpaceTag(value) {
+    const raw = String(value || '').trim();
+    const normalized = typeof raw.normalize === 'function' ? raw.normalize('NFD') : raw;
+    return normalized.replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
+
+function __orderNormalizeMeasureValue(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const parsed = parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function __orderNormalizeMeasureUnit(value) {
+    const normalized = String(value || 'M').trim().toUpperCase();
+    if (normalized === 'CM') return 'CM';
+    if (normalized === 'M2') return 'M2';
+    return 'M';
+}
+
+function __orderIsPublicidadSpace(target) {
+    const space = target?.spaceId ? __orderGetSpaceById(target.spaceId) : target;
+    return __orderNormalizeSpaceTag(space?.tipo) === 'publicidad';
+}
+
+function __orderGetPublicidadMonthBounds(anchor = '') {
+    const base = __orderNormalizeDate(anchor) || __orderTodayISO();
+    const start = new Date(`${base}T00:00:00`);
+    if (Number.isNaN(start.getTime())) {
+        const today = __orderTodayISO();
+        return { start: today, end: today };
+    }
+    const end = new Date(`${base}T00:00:00`);
+    end.setDate(end.getDate() + 29);
+    return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+}
+
+function __orderNormalizePublicidadDates(cfg) {
+    if (!cfg) return;
+    const anchor = __orderNormalizeDate(cfg.startDate || cfg.endDate || __orderTodayISO());
+    if (cfg.customPermanence) {
+        cfg.startDate = __orderNormalizeDate(cfg.startDate || anchor);
+        cfg.endDate = __orderNormalizeDate(cfg.endDate || cfg.startDate || anchor);
+    } else {
+        const month = __orderGetPublicidadMonthBounds(anchor);
+        cfg.startDate = month.start;
+        cfg.endDate = month.end;
+    }
+    if (cfg.startDate && cfg.endDate && cfg.endDate < cfg.startDate) cfg.endDate = cfg.startDate;
+}
+
+function __orderSyncActiveSpaceModeUi(cfg) {
+    const active = cfg || __orderGetActiveCfg();
+    const isPublicidad = __orderIsPublicidadSpace(active);
+    const guestsField = document.getElementById('oed-event-guests-field');
+    const eventWrap = document.getElementById('oed-event-options-wrap');
+    if (guestsField) guestsField.classList.toggle('hidden', isPublicidad);
+    if (eventWrap) eventWrap.classList.toggle('hidden', isPublicidad);
+    if (isPublicidad) {
+        const guestsEl = document.getElementById('oed-guests');
+        const premChk = document.getElementById('oed-chk-premontaje');
+        const horasChk = document.getElementById('oed-chk-horas');
+        if (guestsEl) guestsEl.value = '1';
+        if (premChk) premChk.checked = false;
+        if (horasChk) horasChk.checked = false;
+    }
+    __orderSyncPublicidadCustomUi(active);
+    __orderSyncConvenioUi(active);
 }
 
 function __orderFormatMoneyMx(value) {
@@ -5814,6 +6439,18 @@ function __orderFormatRangeLabel(startDate, endDate) {
 
 function __orderResolveBaseTotal(cfg, space, guests) {
     if (!cfg || !space) return 0;
+    if (__orderIsPublicidadSpace(space)) {
+        if (cfg.convenioEnabled) return parseFloat(space.precio_base || 0) || 0;
+        const hasCustom = !!cfg.customPriceEnabled && cfg.customBasePrice !== '' && cfg.customBasePrice !== null && cfg.customBasePrice !== undefined;
+        let subtotal = hasCustom ? (parseFloat(cfg.customBasePrice) || 0) : (parseFloat(space.precio_base || 0) || 0);
+        if (hasCustom && String(cfg.customPriceMode || 'total') === 'per_day') {
+            subtotal *= __orderRangeDays(cfg.startDate, cfg.endDate);
+        } else if (!hasCustom) {
+            if (space.ajuste_tipo === 'aumento') subtotal += subtotal * ((parseFloat(space.ajuste_porcentaje) || 0) / 100);
+            if (space.ajuste_tipo === 'descuento') subtotal -= subtotal * ((parseFloat(space.ajuste_porcentaje) || 0) / 100);
+        }
+        return subtotal;
+    }
     if (cfg.startDate && cfg.endDate) return calculateDayByDayTotal(space, cfg.startDate, cfg.endDate, guests).total || 0;
     return 0;
 }
@@ -5822,11 +6459,124 @@ function __orderResolveDisplayedBase(cfg, space) {
     if (!cfg || !space) return 0;
     return parseFloat((cfg?.__pricing?.base ?? __orderResolveBaseTotal(cfg, space, parseInt(cfg?.guests, 10) || 1)) || 0) || 0;
 }
+async function __orderLoadConvenioCatalog() {
+    cpOrderConvenioCatalog = [];
+    try {
+        const tenant = __orderResolveTenantSlug('casa_de_piedra');
+        const { data, error } = await window.tenantPocketBase
+            .from('configuracion')
+            .select('clave,valor_json,updated,updated_at,created,created_at')
+            .eq('tenant', tenant)
+            .eq('clave', CP_ORDER_CONVENIOS_CFG_KEY);
+        if (error) throw error;
+        const row = __cpPickLatestRecord(Array.isArray(data) ? data : []);
+        const cfg = __orderParseRecordJson(row?.valor_json);
+        const rawItems = Array.isArray(cfg)
+            ? cfg
+            : (Array.isArray(cfg?.items) ? cfg.items : (Array.isArray(cfg?.convenios) ? cfg.convenios : []));
+        cpOrderConvenioCatalog = rawItems
+            .map((item) => ({
+                id: String(item?.id || item?.clave || item?.slug || item?.nombre || '').trim(),
+                nombre: __orderNormalizeConvenioName(item?.nombre || item?.name || item?.label || item?.descripcion || '')
+            }))
+            .filter((item) => item.id && item.nombre)
+            .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' }));
+    } catch (e) {
+        cpOrderConvenioCatalog = [];
+        console.warn('No se pudo cargar el catálogo de convenios de CP:', e);
+    }
+}
+function __orderSyncConvenioCatalogSelect() {
+    const select = document.getElementById('oed-convenio-select');
+    if (!select) return;
+    const current = String(select.value || '').trim();
+    select.innerHTML = '<option value="">Selecciona una opción...</option>' + cpOrderConvenioCatalog.map((item) => `<option value="${item.id}">${item.nombre}</option>`).join('');
+    if (current && cpOrderConvenioCatalog.some((item) => item.id === current)) select.value = current;
+}
+function __orderRenderConvenioItems() {
+    const list = document.getElementById('oed-convenio-list');
+    if (!list) return;
+    const cfg = __orderGetActiveCfg();
+    const items = __orderBuildConvenioPayloadItems(cfg);
+    const locked = ['aprobada', 'finalizada'].includes(String(currentPreviewOrder?.status || '').toLowerCase()) || !cfg?.convenioEnabled;
+    if (!items.length) {
+        list.innerHTML = '<div class="rounded-xl border border-dashed border-amber-200 bg-amber-50/40 px-4 py-4 text-[11px] font-bold text-amber-700/70">Aún no agregas tratos de convenio.</div>';
+        return;
+    }
+    list.innerHTML = items.map((item, index) => `<div class="flex items-center justify-between gap-3 rounded-xl border border-amber-100 bg-amber-50/70 px-4 py-3">
+        <div class="min-w-0">
+            <p class="text-xs font-black text-gray-800 truncate">${item.nombre}</p>
+            <p class="text-[10px] font-bold uppercase tracking-wide text-amber-900/70">${item.cantidad_entrega} ${item.cantidad_entrega === 1 ? 'entrega' : 'entregas'} acordadas</p>
+        </div>
+        <div class="flex items-center gap-3 shrink-0">
+            <span class="text-xs font-black text-gray-800">${__orderFormatMoneyMx(item.monto)}</span>
+            ${locked ? '' : `<button type="button" onclick="window.removeOrderConvenioItem(${index})" class="w-8 h-8 rounded-full border border-amber-100 bg-white text-gray-400 transition hover:text-red-500"><i class="fa-solid fa-xmark"></i></button>`}
+        </div>
+    </div>`).join('');
+}
+function __orderSyncPublicidadCustomUi(cfg = __orderGetActiveCfg()) {
+    const active = cfg || __orderGetActiveCfg();
+    const isPublicidad = __orderIsPublicidadSpace(active);
+    const controls = document.getElementById('oed-publicidad-controls');
+    const wrap = document.getElementById('oed-custom-price-wrap');
+    const modeSelect = document.getElementById('oed-space-custom-price-mode');
+    const input = document.getElementById('oed-space-custom-price');
+    const label = document.getElementById('oed-space-custom-price-label');
+    const hint = document.getElementById('oed-space-custom-price-hint');
+    const chkPerm = document.getElementById('oed-custom-permanence');
+    const chkPrice = document.getElementById('oed-custom-price-enabled');
+    if (controls) controls.classList.toggle('hidden', !isPublicidad);
+    if (chkPerm) chkPerm.checked = !!active?.customPermanence;
+    if (chkPrice) {
+        chkPrice.checked = !!active?.customPriceEnabled && !active?.convenioEnabled;
+        chkPrice.disabled = !!active?.convenioEnabled;
+    }
+    if (modeSelect) modeSelect.value = String(active?.customPriceMode || 'total');
+    if (input) input.value = (active && active.customBasePrice !== '' && active.customBasePrice !== null && active.customBasePrice !== undefined) ? String(active.customBasePrice) : '';
+    if (wrap) wrap.classList.toggle('hidden', !active?.customPriceEnabled || !!active?.convenioEnabled || !isPublicidad);
+    const perDay = String(active?.customPriceMode || 'total') === 'per_day';
+    if (label) label.textContent = perDay ? 'Precio Personalizado por Día' : 'Precio Personalizado del Espacio (antes de impuestos)';
+    if (hint) hint.textContent = perDay ? 'Se multiplicará por el número de días disponibles en la fecha seleccionada.' : 'Define el total manual de la estancia seleccionada.';
+}
+function __orderSyncConvenioUi(cfg = __orderGetActiveCfg()) {
+    const active = cfg || __orderGetActiveCfg();
+    const activeSpace = __orderGetSpaceById(active?.spaceId);
+    const allowsConvenio = __orderSpaceAllowsConvenio(activeSpace) || !!active?.convenioEnabled;
+    const card = document.getElementById('oed-convenio-card');
+    const chk = document.getElementById('oed-convenio-enabled');
+    const section = document.getElementById('oed-convenio-section');
+    if (!allowsConvenio && active && !active.convenioEnabled) {
+        active.convenioEnabled = false;
+        active.concepts = __orderSafeArray(active.concepts).map(__orderNormalizeExtraConcept).filter((concept) => !__orderIsConvenioConceptItem(concept));
+    }
+    if (card) card.classList.toggle('hidden', !allowsConvenio);
+    if (chk) {
+        chk.checked = !!active?.convenioEnabled;
+        chk.disabled = !allowsConvenio;
+    }
+    if (section) section.classList.toggle('hidden', !active?.convenioEnabled || !allowsConvenio);
+    __orderSyncConvenioCatalogSelect();
+    __orderRenderConvenioItems();
+    __orderSyncPublicidadCustomUi(active);
+    __orderApplyDetailTabUi();
+}
 
 function __orderApplyDetailTabUi() {
+    const isConvenio = __orderQuoteSpaces.some((cfg) => !!cfg?.convenioEnabled) || __orderIsConvenioOrder(currentPreviewOrder || {});
+    const financialTabBtn = document.querySelector('[data-order-tab="financial"]');
+    const financialPanel = document.querySelector('[data-order-panel="financial"]');
+    const convenioSection = document.getElementById('oed-convenio-section');
+    const financialHost = document.getElementById('oed-convenio-host-financial');
+    const spacesHost = document.getElementById('oed-convenio-host-spaces');
+    const setText = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = value;
+    };
+    if (financialTabBtn) financialTabBtn.classList.toggle('hidden', isConvenio);
+    if (isConvenio && __orderDetailTab === 'financial') __orderDetailTab = 'spaces';
     document.querySelectorAll('[data-order-panel]').forEach((panel) => {
         const panelKey = panel.getAttribute('data-order-panel');
-        panel.classList.toggle('hidden', panelKey !== __orderDetailTab);
+        panel.classList.toggle('hidden', panelKey !== __orderDetailTab || (isConvenio && panelKey === 'financial'));
     });
     document.querySelectorAll('.order-detail-tab-btn').forEach((btn) => {
         const active = btn.getAttribute('data-order-tab') === __orderDetailTab;
@@ -5838,9 +6588,24 @@ function __orderApplyDetailTabUi() {
         btn.classList.toggle('text-white', true);
         btn.classList.toggle('hover:bg-white/20', !active);
     });
+    if (financialPanel) financialPanel.classList.toggle('hidden', isConvenio || __orderDetailTab !== 'financial');
+    if (convenioSection) {
+        const targetHost = isConvenio ? (spacesHost || financialHost) : (financialHost || spacesHost);
+        if (targetHost && convenioSection.parentElement !== targetHost) targetHost.appendChild(convenioSection);
+    }
+    setText('sum-general-title', isConvenio ? 'Resumen del Convenio' : 'Resumen General');
+    setText('sum-general-copy', isConvenio ? 'Vista consolidada del convenio y su balance actual.' : 'Vista consolidada de la cotización completa.');
+    setText('sum-label-name', isConvenio ? 'Convenio' : 'Cotización');
+    setText('sum-financial-title', isConvenio ? 'Trato del Convenio' : 'Resumen Financiero');
+    setText('sum-financial-copy', isConvenio ? 'Relación entre el valor del espacio y lo acordado a entregar.' : 'Concentrado total y desglose financiero por espacio.');
+    setText('sum-spaces-title', isConvenio ? 'Espacios Comprometidos' : 'Detalle por Espacio');
+    setText('sum-spaces-copy', isConvenio ? 'Consulta cada espacio bloqueado y los tratos capturados para el convenio.' : 'Consulta cada espacio y su relación con el resumen financiero.');
+    setText('expediente-title', isConvenio ? 'Expediente del Convenio' : 'Expediente de la Cotización');
+    setText('expediente-copy', isConvenio ? 'Consulta borradores, carta convenio aprobada y la evidencia fotográfica desde aquí.' : 'Consulta previews de documentos, snapshots guardados y genera archivos clave desde aquí.');
+    __orderWriteDetailTab();
 }
 
-window.switchOrderDetailTab = function(tab) {
+window.switchOrderDetailTab = function (tab) {
     __orderDetailTab = __ORDER_DETAIL_TABS.includes(String(tab || '')) ? String(tab) : 'client';
     __orderApplyDetailTabUi();
     __orderWriteDetailTab();
@@ -5860,7 +6625,7 @@ const __orderExpedienteMoney = (value) => new Intl.NumberFormat('es-MX', { style
 
 function __orderClearExpedienteObjectUrls() {
     (__orderExpedienteObjectUrls || []).forEach((url) => {
-        try { URL.revokeObjectURL(url); } catch (_) {}
+        try { URL.revokeObjectURL(url); } catch (_) { }
     });
     __orderExpedienteObjectUrls = [];
 }
@@ -5868,11 +6633,12 @@ function __orderClearExpedienteObjectUrls() {
 function __orderResolveDraftSnapshotMeta(record = {}) {
     const orderId = String(record?.id || document.getElementById('oed-id')?.value || currentPreviewOrder?.id || '').trim();
     const folio = __orderResolveQuoteFolio(record, orderId);
+    const docMeta = __orderGetQuoteDocumentMeta(record);
     return {
         orderId,
         folio,
-        path: orderId ? `${orderId}/cotizacion_borrador_${folio}.pdf` : '',
-        fileName: `COTIZACION_BORRADOR_${folio}.pdf`
+        path: orderId ? `${orderId}/${docMeta.draftStorageBase}_${folio}.pdf` : '',
+        fileName: `${docMeta.draftFileBase}_${folio}.pdf`
     };
 }
 
@@ -5909,6 +6675,21 @@ async function __orderComposeExpedienteSourceOrder() {
     };
     if (!merged.numero_orden) merged.numero_orden = __orderResolveQuoteFolio(merged, merged.id);
     return merged;
+}
+
+async function __orderEnsureOrderRecord(id) {
+    const orderId = String(id || currentPreviewOrder?.id || '').trim();
+    if (!orderId) return null;
+    let order = allOrders.find((item) => String(item?.id || '') === orderId) || null;
+    if (!order && currentPreviewOrder && String(currentPreviewOrder.id || '') === orderId) {
+        order = { ...currentPreviewOrder };
+    }
+    if (order) return order;
+    const { data, error } = await __cpQuoteGetById(orderId);
+    if (error || !data) return null;
+    order = __orderHydrateQuotePricing(data);
+    if (!allOrders.some((item) => String(item?.id || '') === orderId)) allOrders.push(order);
+    return order;
 }
 
 async function __orderCreateSignedStorageUrl(path) {
@@ -5969,7 +6750,7 @@ function __cpConfigurePreviewActionButton(config = {}) {
     btn.disabled = false;
     btn.className = className;
     btn.innerHTML = `<i class="${icon}"></i> <span class="hidden sm:inline">${label}</span>`;
-    btn.onclick = typeof config.onClick === 'function' ? config.onClick : (() => {});
+    btn.onclick = typeof config.onClick === 'function' ? config.onClick : (() => { });
 }
 
 function __cpResetPreviewSurface() {
@@ -5985,7 +6766,7 @@ function __cpResetPreviewSurface() {
     }
 }
 
-window.downloadCpExpedientePreview = async function(src, title = 'Documento') {
+window.downloadCpExpedientePreview = async function (src, title = 'Documento') {
     const safeSrc = String(src || '').trim();
     const safeTitle = String(title || 'Documento').trim() || 'Documento';
     if (!safeSrc) return window.showToast('Documento no disponible', 'error');
@@ -6000,7 +6781,7 @@ window.downloadCpExpedientePreview = async function(src, title = 'Documento') {
         window.showToast(`No se pudo descargar el documento: ${e?.message || e}`, 'error');
     }
 };
-window.openCpExpedientePreview = async function(src, title = 'Documento') {
+window.openCpExpedientePreview = async function (src, title = 'Documento') {
     const safeSrc = String(src || '').trim();
     const safeTitle = String(title || 'Documento').trim() || 'Documento';
     if (!safeSrc) return window.showToast('Documento no disponible', 'error');
@@ -6020,7 +6801,7 @@ window.openCpExpedientePreview = async function(src, title = 'Documento') {
     });
     window.openModal('preview-modal');
 };
-window.openCpExpedienteLivePreview = async function(docType = 'quote', title = 'Vista Previa') {
+window.openCpExpedienteLivePreview = async function (docType = 'quote', title = 'Vista Previa') {
     const safeDocType = String(docType || 'quote').toLowerCase() === 'order' ? 'order' : 'quote';
     const safeTitle = String(title || 'Vista Previa').trim() || 'Vista Previa';
     try {
@@ -6111,7 +6892,7 @@ async function __orderBuildPreviewObjectUrl(docType, orderOverride = null) {
 window.currentCpExpedienteView = window.currentCpExpedienteView || "main";
 window.currentCpExpedientePayload = window.currentCpExpedientePayload || null;
 
-window.setCpExpedienteView = async function(view, payload = null) {
+window.setCpExpedienteView = async function (view, payload = null) {
     window.currentCpExpedienteView = view;
     window.currentCpExpedientePayload = payload;
     await window.__orderRenderExpedientePanel();
@@ -6121,7 +6902,338 @@ window.togglePaymentsSection = () => {
     window.setCpExpedienteView("pagos", { page: 1 });
 };
 
-window.__orderRenderExpedientePanel = async function() {
+const __orderRevokeEvidenceUploadUrls = () => {
+    (__cpEvidenceUploadObjectUrls || []).forEach((url) => {
+        try { URL.revokeObjectURL(url); } catch (_) { }
+    });
+    __cpEvidenceUploadObjectUrls = [];
+};
+
+const __orderEnsureEvidenceModals = () => {
+    if (!document.getElementById('cp-evidence-upload-modal')) {
+        const uploadModal = document.createElement('div');
+        uploadModal.id = 'cp-evidence-upload-modal';
+        uploadModal.className = 'fixed inset-0 z-[205] hidden items-center justify-center bg-black/80 p-4 backdrop-blur-sm';
+        uploadModal.innerHTML = `<div class="w-full max-w-4xl overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div class="flex items-center justify-between gap-3 border-b border-gray-200 px-5 py-4">
+                <div>
+                    <h3 class="text-sm font-black uppercase tracking-wide text-gray-800">Finalizar Convenio</h3>
+                    <p class="text-[11px] text-gray-500">Sube de 3 a 5 fotografías o evidencias para cerrar la cotización.</p>
+                </div>
+                <button type="button" onclick="window.closeCpEvidenceUploadModal()" class="flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 text-gray-500 transition hover:bg-gray-200"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="space-y-4 p-5">
+                <input id="cp-evidence-order-id" type="hidden">
+                <div class="flex flex-col gap-3 rounded-2xl border border-dashed border-amber-200 bg-amber-50/40 p-4 md:flex-row md:items-center md:justify-between">
+                    <div>
+                        <p class="text-xs font-black uppercase tracking-wide text-amber-800">Evidencia obligatoria</p>
+                        <p class="mt-1 text-[11px] font-semibold text-amber-900/80">Solo se aceptan imágenes. El convenio se marcará como finalizado al completar la carga.</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <input id="cp-evidence-input" type="file" accept="image/*" multiple class="hidden" onchange="window.handleCpEvidenceSelection(event)">
+                        <button type="button" onclick="document.getElementById('cp-evidence-input')?.click()" class="rounded-full bg-amber-500 px-4 py-2 text-[11px] font-black uppercase tracking-wide text-white transition hover:bg-amber-600">
+                            <i class="fa-solid fa-upload mr-1"></i>Seleccionar
+                        </button>
+                    </div>
+                </div>
+                <div id="cp-evidence-upload-summary" class="text-[11px] font-bold text-gray-500">Aún no seleccionas evidencias.</div>
+                <div id="cp-evidence-upload-grid" class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3"></div>
+            </div>
+            <div class="flex flex-col-reverse gap-3 border-t border-gray-200 bg-slate-50 px-5 py-4 sm:flex-row sm:items-center sm:justify-end">
+                <button type="button" onclick="window.closeCpEvidenceUploadModal()" class="rounded-full border border-gray-200 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-wide text-gray-600 transition hover:bg-gray-50">Cancelar</button>
+                <button id="cp-evidence-upload-confirm" type="button" onclick="window.submitCpEvidenceUpload()" class="rounded-full bg-brand-red px-5 py-2 text-[11px] font-black uppercase tracking-wide text-white transition hover:bg-red-700">
+                    <i class="fa-solid fa-camera mr-1"></i>Finalizar Cotización
+                </button>
+            </div>
+        </div>`;
+        uploadModal.addEventListener('click', (event) => {
+            if (event.target === uploadModal) window.closeCpEvidenceUploadModal();
+        });
+        document.body.appendChild(uploadModal);
+    }
+    if (!document.getElementById('cp-evidence-gallery-modal')) {
+        const galleryModal = document.createElement('div');
+        galleryModal.id = 'cp-evidence-gallery-modal';
+        galleryModal.className = 'fixed inset-0 z-[206] hidden items-center justify-center bg-black/90 p-4';
+        galleryModal.innerHTML = `<div class="flex h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div class="flex items-center justify-between gap-3 bg-gray-900 px-5 py-4 text-white">
+                <div>
+                    <h3 class="text-sm font-black uppercase tracking-wide">Galería de Evidencias</h3>
+                    <p id="cp-evidence-gallery-counter" class="text-[11px] text-gray-300">0 / 0</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button type="button" onclick="window.downloadCurrentCpEvidence()" class="rounded-full bg-brand-red px-4 py-2 text-[11px] font-black uppercase tracking-wide text-white transition hover:bg-red-700"><i class="fa-solid fa-download mr-1"></i>Descargar</button>
+                    <button type="button" onclick="window.closeCpEvidenceGallery()" class="rounded-full border border-white/20 px-4 py-2 text-[11px] font-black uppercase tracking-wide text-white transition hover:bg-white/10">Cerrar</button>
+                </div>
+            </div>
+            <div class="relative flex min-h-0 flex-1 items-center justify-center bg-gray-950">
+                <button type="button" onclick="window.prevCpEvidence()" class="absolute left-4 top-1/2 z-10 -translate-y-1/2 rounded-full bg-white/10 px-3 py-3 text-white transition hover:bg-white/20"><i class="fa-solid fa-chevron-left"></i></button>
+                <img id="cp-evidence-gallery-image" alt="Evidencia" class="max-h-full max-w-full object-contain">
+                <button type="button" onclick="window.nextCpEvidence()" class="absolute right-4 top-1/2 z-10 -translate-y-1/2 rounded-full bg-white/10 px-3 py-3 text-white transition hover:bg-white/20"><i class="fa-solid fa-chevron-right"></i></button>
+            </div>
+            <div class="border-t border-gray-200 bg-white px-5 py-4">
+                <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                        <p id="cp-evidence-gallery-title" class="text-sm font-black text-gray-800">Evidencia</p>
+                        <p id="cp-evidence-gallery-meta" class="text-[11px] text-gray-500">Sin información.</p>
+                    </div>
+                </div>
+                <div id="cp-evidence-gallery-thumbs" class="mt-4 flex gap-3 overflow-x-auto pb-1"></div>
+            </div>
+        </div>`;
+        galleryModal.addEventListener('click', (event) => {
+            if (event.target === galleryModal) window.closeCpEvidenceGallery();
+        });
+        document.body.appendChild(galleryModal);
+    }
+};
+
+const __orderRenderEvidenceSelection = () => {
+    __orderEnsureEvidenceModals();
+    __orderRevokeEvidenceUploadUrls();
+    const input = document.getElementById('cp-evidence-input');
+    const summary = document.getElementById('cp-evidence-upload-summary');
+    const grid = document.getElementById('cp-evidence-upload-grid');
+    const files = Array.from(input?.files || []);
+    if (summary) {
+        summary.textContent = files.length
+            ? `${files.length} archivo(s) seleccionado(s). Debes cargar entre 3 y 5 evidencias.`
+            : 'Aún no seleccionas evidencias.';
+        summary.className = `text-[11px] font-bold ${files.length >= 3 && files.length <= 5 ? 'text-emerald-600' : 'text-gray-500'}`;
+    }
+    if (!grid) return;
+    if (!files.length) {
+        grid.innerHTML = '<div class="col-span-full rounded-2xl border border-dashed border-gray-200 bg-slate-50 px-5 py-6 text-center text-sm font-bold text-gray-400">Aquí verás la vista previa de las evidencias seleccionadas.</div>';
+        return;
+    }
+    grid.innerHTML = files.map((file, index) => {
+        const objectUrl = URL.createObjectURL(file);
+        __cpEvidenceUploadObjectUrls.push(objectUrl);
+        return `<div class="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+            <div class="aspect-[4/3] overflow-hidden bg-slate-100"><img src="${objectUrl}" alt="Evidencia ${index + 1}" class="h-full w-full object-cover"></div>
+            <div class="space-y-1 px-4 py-3">
+                <p class="truncate text-xs font-black text-gray-800">Evidencia ${index + 1}</p>
+                <p class="truncate text-[11px] text-gray-500">${file.name}</p>
+                <p class="text-[10px] font-bold uppercase tracking-wide text-gray-400">${Math.max(1, Math.round((file.size || 0) / 1024))} KB</p>
+            </div>
+        </div>`;
+    }).join('');
+};
+
+window.handleCpEvidenceSelection = function () {
+    __orderRenderEvidenceSelection();
+};
+
+window.closeCpEvidenceUploadModal = function () {
+    const input = document.getElementById('cp-evidence-input');
+    const orderField = document.getElementById('cp-evidence-order-id');
+    if (input) input.value = '';
+    if (orderField) orderField.value = '';
+    __orderRevokeEvidenceUploadUrls();
+    const grid = document.getElementById('cp-evidence-upload-grid');
+    const summary = document.getElementById('cp-evidence-upload-summary');
+    if (grid) grid.innerHTML = '';
+    if (summary) {
+        summary.textContent = 'Aún no seleccionas evidencias.';
+        summary.className = 'text-[11px] font-bold text-gray-500';
+    }
+    window.closeModal?.('cp-evidence-upload-modal');
+};
+
+window.openCpEvidenceUploadModal = async function (orderId) {
+    __orderEnsureEvidenceModals();
+    const safeOrderId = String(orderId || currentPreviewOrder?.id || '').trim();
+    if (!safeOrderId) return window.showToast('No se encontró la cotización.', 'error');
+    const order = await __orderEnsureOrderRecord(safeOrderId);
+    if (!order) return window.showToast('No se encontró la cotización.', 'error');
+    if (!__orderIsConvenioOrder(order)) return window.showToast('Esta cotización no usa convenio.', 'error');
+    if (String(order.status || '').toLowerCase() === 'finalizada') return window.showToast('La cotización ya está finalizada.', 'info');
+    const orderField = document.getElementById('cp-evidence-order-id');
+    if (orderField) orderField.value = safeOrderId;
+    __orderRenderEvidenceSelection();
+    window.openModal?.('cp-evidence-upload-modal');
+};
+
+window.submitCpEvidenceUpload = async function () {
+    __orderEnsureEvidenceModals();
+    const btn = document.getElementById('cp-evidence-upload-confirm');
+    const orderId = String(document.getElementById('cp-evidence-order-id')?.value || currentPreviewOrder?.id || '').trim();
+    const input = document.getElementById('cp-evidence-input');
+    const files = Array.from(input?.files || []);
+    if (!orderId) return window.showToast('Cotización inválida.', 'error');
+    if (files.length < 3 || files.length > 5) return window.showToast('Debes subir entre 3 y 5 evidencias.', 'error');
+    if (files.some((file) => !String(file.type || '').startsWith('image/'))) return window.showToast('Solo se permiten imágenes como evidencia.', 'error');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-1"></i>Subiendo...'; }
+    try {
+        const order = await __orderEnsureOrderRecord(orderId);
+        if (!order) throw new Error('No se encontró la cotización.');
+        const convenioMeta = __orderParseConvenioMeta(order);
+        if (!convenioMeta.activo && !__orderIsConvenioOrder(order)) throw new Error('La cotización no está marcada como convenio.');
+        const stamp = Date.now();
+        const uploadedAt = new Date().toISOString();
+        const evidenceItems = [];
+        for (let index = 0; index < files.length; index += 1) {
+            const file = files[index];
+            const cleanName = String(file?.name || `evidencia_${index + 1}.jpg`).replace(/[^a-z0-9._-]+/gi, '_');
+            const path = `${orderId}/evidencias/${stamp}_${index + 1}_${cleanName}`;
+            const { error: uploadError } = await window.globalPocketBase.storage.from('documentos-cp').upload(path, file);
+            if (uploadError) throw uploadError;
+            evidenceItems.push({
+                id: `evidence_${stamp}_${index + 1}`,
+                path,
+                file_name: cleanName,
+                uploaded_at: uploadedAt,
+                mime_type: file.type || 'image/jpeg',
+                size: file.size || 0
+            });
+        }
+        const detailsEvent = __orderParseRecordJson(order.detalles_evento);
+        const payload = {
+            status: 'finalizada',
+            detalles_evento: {
+                ...detailsEvent,
+                convenio: {
+                    ...convenioMeta,
+                    activo: true,
+                    bloqueo_indefinido: true,
+                    requiere_evidencia: true,
+                    evidencia_minima: 3,
+                    evidencia_maxima: 5,
+                    requiere_factura: false,
+                    requiere_recibo: false,
+                    requiere_contrato: false,
+                    evidencias: evidenceItems
+                }
+            }
+        };
+        const { error } = await __cpQuotesUpdate(orderId, payload);
+        if (error) throw error;
+        currentPreviewOrder = currentPreviewOrder && String(currentPreviewOrder.id || '') === orderId
+            ? { ...currentPreviewOrder, ...payload }
+            : currentPreviewOrder;
+        const statusSelect = document.getElementById('oed-status');
+        if (statusSelect) statusSelect.value = 'finalizada';
+        if (typeof __orderApplyStatusVisual === 'function') __orderApplyStatusVisual();
+        allOrders = (allOrders || []).map((item) => String(item?.id || '') === orderId ? { ...item, ...payload } : item);
+        signalOrdersRefresh('convenio_evidence');
+        window.showToast('Convenio finalizado con evidencias.', 'success');
+        window.closeCpEvidenceUploadModal();
+        if (__orderDetailTab === 'expediente') await __orderRenderExpedientePanel();
+        if (!(IS_ORDER_PREVIEW_PAGE || __cpIsPreviewOnlyQueryMode() || IS_ORDER_DETAIL_PAGE)) await window.loadOrders();
+    } catch (e) {
+        window.showToast(`No se pudieron guardar las evidencias: ${e?.message || e}`, 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-camera mr-1"></i>Finalizar Cotización'; }
+    }
+};
+
+window.closeCpEvidenceGallery = function () {
+    __cpEvidenceGalleryItems = [];
+    __cpEvidenceGalleryIndex = 0;
+    const img = document.getElementById('cp-evidence-gallery-image');
+    const title = document.getElementById('cp-evidence-gallery-title');
+    const meta = document.getElementById('cp-evidence-gallery-meta');
+    const thumbs = document.getElementById('cp-evidence-gallery-thumbs');
+    const counter = document.getElementById('cp-evidence-gallery-counter');
+    if (img) img.removeAttribute('src');
+    if (title) title.textContent = 'Evidencia';
+    if (meta) meta.textContent = 'Sin información.';
+    if (thumbs) thumbs.innerHTML = '';
+    if (counter) counter.textContent = '0 / 0';
+    window.closeModal?.('cp-evidence-gallery-modal');
+};
+
+const __orderRenderEvidenceGallery = () => {
+    __orderEnsureEvidenceModals();
+    const items = __cpEvidenceGalleryItems || [];
+    if (!items.length) return;
+    __cpEvidenceGalleryIndex = Math.max(0, Math.min(__cpEvidenceGalleryIndex, items.length - 1));
+    const item = items[__cpEvidenceGalleryIndex];
+    const img = document.getElementById('cp-evidence-gallery-image');
+    const title = document.getElementById('cp-evidence-gallery-title');
+    const meta = document.getElementById('cp-evidence-gallery-meta');
+    const thumbs = document.getElementById('cp-evidence-gallery-thumbs');
+    const counter = document.getElementById('cp-evidence-gallery-counter');
+    if (img) img.src = item.signedUrl || '';
+    if (title) title.textContent = item.label || `Evidencia ${__cpEvidenceGalleryIndex + 1}`;
+    if (meta) meta.textContent = `${item.file_name || 'archivo'}${item.uploaded_at ? ` • ${window.safeFormatDate(String(item.uploaded_at).slice(0, 10))}` : ''}`;
+    if (counter) counter.textContent = `${__cpEvidenceGalleryIndex + 1} / ${items.length}`;
+    if (thumbs) {
+        thumbs.innerHTML = items.map((entry, index) => `<button type="button" onclick="window.selectCpEvidence(${index})" class="overflow-hidden rounded-xl border ${index === __cpEvidenceGalleryIndex ? 'border-brand-red ring-2 ring-brand-red/20' : 'border-gray-200'} bg-white">
+            <img src="${__orderExpedienteEscape(entry.signedUrl || '')}" alt="${__orderExpedienteEscape(entry.label || `Evidencia ${index + 1}`)}" class="h-20 w-24 object-cover">
+        </button>`).join('');
+    }
+};
+
+window.selectCpEvidence = function (index) {
+    if (!__cpEvidenceGalleryItems.length) return;
+    __cpEvidenceGalleryIndex = Math.max(0, Math.min(parseInt(index, 10) || 0, __cpEvidenceGalleryItems.length - 1));
+    __orderRenderEvidenceGallery();
+};
+
+window.prevCpEvidence = function () {
+    if (!__cpEvidenceGalleryItems.length) return;
+    __cpEvidenceGalleryIndex = (__cpEvidenceGalleryIndex - 1 + __cpEvidenceGalleryItems.length) % __cpEvidenceGalleryItems.length;
+    __orderRenderEvidenceGallery();
+};
+
+window.nextCpEvidence = function () {
+    if (!__cpEvidenceGalleryItems.length) return;
+    __cpEvidenceGalleryIndex = (__cpEvidenceGalleryIndex + 1) % __cpEvidenceGalleryItems.length;
+    __orderRenderEvidenceGallery();
+};
+
+window.downloadCpEvidenceFile = async function (path, fileName = 'evidencia.jpg') {
+    const signed = await __orderCreateSignedStorageUrl(path);
+    if (!signed) return window.showToast('No se pudo preparar la evidencia.', 'error');
+    try {
+        const response = await fetch(signed, { method: 'GET', credentials: 'omit' });
+        if (!response.ok) throw new Error(`No se pudo descargar la evidencia (${response.status}).`);
+        const blob = await response.blob();
+        if (typeof window.downloadBlobAsFile === 'function') {
+            window.downloadBlobAsFile(blob, fileName);
+        } else {
+            const objectUrl = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = objectUrl;
+            link.download = fileName;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+        }
+    } catch (e) {
+        window.showToast(`No se pudo descargar la evidencia: ${e?.message || e}`, 'error');
+    }
+};
+
+window.downloadCurrentCpEvidence = async function () {
+    const item = __cpEvidenceGalleryItems[__cpEvidenceGalleryIndex];
+    if (!item) return;
+    await window.downloadCpEvidenceFile(item.path, item.file_name || `evidencia_${__cpEvidenceGalleryIndex + 1}.jpg`);
+};
+
+window.openCpEvidenceGallery = async function (orderId, startIndex = 0) {
+    __orderEnsureEvidenceModals();
+    const safeOrderId = String(orderId || currentPreviewOrder?.id || '').trim();
+    if (!safeOrderId) return window.showToast('No se encontró la cotización.', 'error');
+    const order = await __orderEnsureOrderRecord(safeOrderId);
+    if (!order) return window.showToast('No se encontró la cotización.', 'error');
+    const evidences = __orderGetConvenioEvidence(order);
+    if (!evidences.length) return window.showToast('Aún no hay evidencias registradas.', 'info');
+    const items = await Promise.all(evidences.map(async (item, index) => ({
+        ...item,
+        label: `Evidencia ${index + 1}`,
+        signedUrl: await __orderCreateSignedStorageUrl(item.path)
+    })));
+    __cpEvidenceGalleryItems = items.filter((item) => !!item.signedUrl);
+    if (!__cpEvidenceGalleryItems.length) return window.showToast('No se pudieron cargar las evidencias.', 'error');
+    __cpEvidenceGalleryIndex = Math.max(0, Math.min(parseInt(startIndex, 10) || 0, __cpEvidenceGalleryItems.length - 1));
+    __orderRenderEvidenceGallery();
+    window.openModal?.('cp-evidence-gallery-modal');
+};
+
+window.__orderRenderExpedientePanel = async function () {
     const grid = document.getElementById('oed-expediente-grid');
     if (!grid) return;
     const renderSeq = ++__orderExpedienteRenderSeq;
@@ -6152,12 +7264,35 @@ window.__orderRenderExpedientePanel = async function() {
             subButtons.innerHTML = "";
             subButtons.classList.add("hidden");
         }
+        const isConvenio = __orderIsConvenioOrder(order);
+        const convenioMeta = __orderParseConvenioMeta(order);
+        const convenioEvidence = __orderGetConvenioEvidence(order);
+        const evidenceButtonsWrap = document.getElementById("expediente-evidence-buttons");
+        const paymentsToggleBtn = document.getElementById("btn-pagos-toggle");
+        const facturaBtn = document.getElementById("btn-factura");
+        const contratoBtn = document.getElementById("btn-contrato");
+        if (paymentsToggleBtn) paymentsToggleBtn.classList.toggle("hidden", isConvenio);
+        if (facturaBtn) facturaBtn.classList.toggle("hidden", isConvenio);
+        if (contratoBtn) contratoBtn.classList.toggle("hidden", isConvenio);
+        if (evidenceButtonsWrap) {
+            const toolbarButtons = [];
+            if (isConvenio && String(order.status || "").toLowerCase() === "aprobada" && convenioEvidence.length < 3) {
+                toolbarButtons.push(`<button type="button" onclick="window.openCpEvidenceUploadModal('${order.id}')" class="bg-amber-500 hover:bg-amber-600 text-white px-5 py-2.5 rounded-xl font-bold text-sm uppercase tracking-wide shadow-lg transition flex items-center gap-2"><i class="fa-solid fa-camera"></i> Finalizar con Evidencia</button>`);
+            }
+            convenioEvidence.forEach((item, index) => {
+                toolbarButtons.push(`<button type="button" onclick="window.openCpEvidenceGallery('${order.id}', ${index})" class="bg-amber-100 hover:bg-amber-200 text-amber-900 px-4 py-2 rounded-xl font-bold text-sm uppercase tracking-wide transition flex items-center gap-2"><i class="fa-solid fa-image"></i> Evidencia ${index + 1}</button>`);
+            });
+            evidenceButtonsWrap.innerHTML = toolbarButtons.join("");
+            evidenceButtonsWrap.classList.toggle("hidden", !toolbarButtons.length);
+        }
         const details = parseSpacesDetail(order.espacios_detalle);
+        const docMeta = __orderGetQuoteDocumentMeta(order);
         const spacesCount = details.length || (order.espacio_id ? 1 : 0);
         const totalNet = __orderExpedienteMoney(order.precio_final || __orderTotals?.final || 0);
         const draftMeta = __orderResolveDraftSnapshotMeta(order);
         const draftSnapshotUrl = draftMeta.path ? await __orderCreateSignedStorageUrl(draftMeta.path) : '';
         const draftPreviewSrc = draftSnapshotUrl || await __orderBuildPreviewObjectUrl('quote', order);
+        const draftPreviewTitle = docMeta.isConvenio ? 'Convenio' : docMeta.draftTitle;
         const docs = [];
 
         const extractTs = (path, fallback) => {
@@ -6169,9 +7304,8 @@ window.__orderRenderExpedientePanel = async function() {
         };
 
         if (window.currentCpExpedienteView === "main") {
-            if (!approvedStatus) {
-                docs.push({
-                title: 'Borrador de Cotización',
+            docs.push({
+                title: docMeta.draftTitle,
                 description: draftSnapshotUrl ? 'Documento archivado actualmente en el expediente.' : 'Vista previa viva del documento actual editable.',
                 badge: draftSnapshotUrl ? 'Archivado' : 'Editable',
                 badgeTone: draftSnapshotUrl ? 'emerald' : 'amber',
@@ -6186,37 +7320,35 @@ window.__orderRenderExpedientePanel = async function() {
                 previewType: 'iframe',
                 previewSrc: draftPreviewSrc,
                 actions: [
-                    { label: draftSnapshotUrl ? 'Actualizar Snapshot' : 'Guardar Snapshot', icon: 'fa-solid fa-floppy-disk', tone: 'brand', onclick: 'window.saveCpDraftSnapshot(this)' },
-                    { label: 'Vista Completa', icon: 'fa-solid fa-expand', tone: 'slate', onclick: `window.openCpExpedienteLivePreview("quote", ${JSON.stringify('Borrador de Cotización')})` },
-                    ...(draftSnapshotUrl ? [{ label: 'Abrir Archivada', icon: 'fa-solid fa-folder-open', tone: 'emerald', onclick: `window.openCpExpedientePreview(${JSON.stringify(draftPreviewSrc)}, ${JSON.stringify('Borrador de Cotización')})` }] : [])
+                    { label: 'Vista Completa', icon: 'fa-solid fa-expand', tone: 'slate', onclick: `window.openCpExpedienteLivePreview("quote", ${JSON.stringify(draftPreviewTitle)})` },
+                    ...(draftSnapshotUrl ? [{ label: 'Abrir Archivada', icon: 'fa-solid fa-folder-open', tone: 'emerald', onclick: `window.openCpExpedientePreview(${JSON.stringify(draftPreviewSrc)}, ${JSON.stringify(draftPreviewTitle)})` }] : [])
                 ]
             });
-            } else {
-                const approvedUrl = order.url_cotizacion_final ? await __orderCreateSignedStorageUrl(order.url_cotizacion_final) : "";
+
+            if (order.url_cotizacion_final) {
+                const approvedUrl = await __orderCreateSignedStorageUrl(order.url_cotizacion_final);
                 docs.push({
-                    title: 'Cotización Aprobada',
-                    description: order.url_cotizacion_final ? 'Snapshot oficial almacenada en el expediente.' : 'El documento oficial no ha sido generado o archivado aún.',
-                    badge: order.url_cotizacion_final ? 'Oficial' : 'Pendiente',
-                    badgeTone: order.url_cotizacion_final ? 'emerald' : 'amber',
+                    title: docMeta.approvedTitle,
+                    description: 'Snapshot oficial almacenada en el expediente.',
+                    badge: 'Oficial',
+                    badgeTone: 'emerald',
                     metaRows: [
                         { label: 'Aprobada', value: order.fecha_aprobacion ? new Date(order.fecha_aprobacion).toLocaleString() : (order.updated ? new Date(order.updated).toLocaleString() : '--') },
                         { label: 'Folio', value: draftMeta.folio || '--' },
                         { label: 'Estado', value: String(order.status || 'aprobada').toUpperCase() },
-                        { label: 'Archivo', value: order.url_cotizacion_final ? (order.url_cotizacion_final.split('/').pop() || 'cotizacion_aprobada.pdf') : 'Sin archivo' },
+                        { label: 'Archivo', value: order.url_cotizacion_final.split('/').pop() || `${docMeta.approvedStorageBase}.pdf` },
                         { label: 'Total Neto', value: totalNet }
                     ],
                     previewType: approvedUrl ? 'iframe' : 'message',
                     previewSrc: approvedUrl,
-                    previewMessage: 'El documento oficial oficial no está disponible. Es necesario guardar un snapshot final.',
-                    actions: approvedUrl ? [
-                        { label: 'Abrir Documento', icon: 'fa-solid fa-folder-open', tone: 'emerald', onclick: `window.openCpExpedientePreview(${JSON.stringify(approvedUrl)}, ${JSON.stringify("Cotización Aprobada")})` }
-                    ] : [
-                        { label: 'Vista en Vivo', icon: 'fa-solid fa-expand', tone: 'slate', onclick: `window.openCpExpedienteLivePreview("quote", ${JSON.stringify("Cotización Aprobada")})` }
+                    previewMessage: 'No se pudo generar la vista firmada del archivo aprobado.',
+                    actions: [
+                        { label: 'Abrir Documento', icon: 'fa-solid fa-folder-open', tone: 'emerald', onclick: approvedUrl ? `window.openCpExpedientePreview(${JSON.stringify(approvedUrl)}, ${JSON.stringify(docMeta.approvedTitle)})` : `window.openStoredDocument(${JSON.stringify(order.url_cotizacion_final)})` }
                     ]
                 });
             }
 
-            if (order.url_orden_compra) {
+            if (!isConvenio && order.url_orden_compra) {
                 const ocUrl = await __orderCreateSignedStorageUrl(order.url_orden_compra);
                 docs.push({
                     title: 'Orden de Compra',
@@ -6234,11 +7366,10 @@ window.__orderRenderExpedientePanel = async function() {
                     previewSrc: ocUrl,
                     previewMessage: 'No se pudo cargar la orden almacenada.',
                     actions: [
-                        { label: 'Actualizar Snapshot', icon: 'fa-solid fa-floppy-disk', tone: 'purple', onclick: 'window.saveCpPurchaseOrderSnapshot(this)' },
                         { label: 'Abrir Documento', icon: 'fa-solid fa-folder-open', tone: 'slate', onclick: ocUrl ? `window.openCpExpedientePreview(${JSON.stringify(ocUrl)}, ${JSON.stringify('Orden de Compra')})` : `window.openStoredDocument(${JSON.stringify(order.url_orden_compra)})` }
                     ]
                 });
-            } else {
+            } else if (!isConvenio) {
                 const orderPreviewSrc = approvedStatus ? await __orderBuildPreviewObjectUrl('order', order) : '';
                 docs.push({
                     title: 'Orden de Compra',
@@ -6256,10 +7387,53 @@ window.__orderRenderExpedientePanel = async function() {
                     previewMessage: approvedStatus ? '' : 'Aprueba la cotización para habilitar la orden de compra.',
                     actions: approvedStatus
                         ? [
-                            { label: 'Guardar Snapshot', icon: 'fa-solid fa-floppy-disk', tone: 'purple', onclick: 'window.saveCpPurchaseOrderSnapshot(this)' },
                             { label: 'Vista Completa', icon: 'fa-solid fa-expand', tone: 'slate', onclick: `window.openCpExpedienteLivePreview("order", ${JSON.stringify('Orden de Compra')})` }
                         ]
                         : []
+                });
+            }
+
+            if (isConvenio) {
+                if (String(order.status || "").toLowerCase() === "aprobada" && convenioEvidence.length < 3) {
+                    docs.push({
+                        title: 'Evidencia Pendiente',
+                        description: 'Este convenio no solicita factura, contrato ni recibos. Para finalizarlo debes subir de 3 a 5 fotografías de evidencia.',
+                        badge: 'Pendiente',
+                        badgeTone: 'amber',
+                        metaRows: [
+                            { label: 'Espacio bloqueado', value: __orderBlocksIndefinitely(order) ? 'Indefinido' : 'Sí' },
+                            { label: 'Rango requerido', value: '3 a 5 imágenes' },
+                            { label: 'Documentación', value: 'Solo evidencia' }
+                        ],
+                        previewType: 'message',
+                        previewMessage: 'Sube la evidencia fotográfica para finalizar el convenio.',
+                        actions: [
+                            { label: 'Subir Evidencias', icon: 'fa-solid fa-camera', tone: 'brand', onclick: `window.openCpEvidenceUploadModal(${JSON.stringify(order.id)})` }
+                        ]
+                    });
+                }
+                convenioEvidence.forEach((evidence, index) => {
+                    docs.push({
+                        title: `Evidencia ${index + 1}`,
+                        description: 'Registro fotográfico del cumplimiento del convenio.',
+                        badge: 'Evidencia',
+                        badgeTone: 'amber',
+                        metaRows: [
+                            { label: 'Archivo', value: evidence.file_name || `evidencia_${index + 1}.jpg` },
+                            { label: 'Fecha', value: evidence.uploaded_at ? window.safeFormatDate(String(evidence.uploaded_at).slice(0, 10)) : '--' },
+                            { label: 'Documento', value: 'Evidencia fotográfica' }
+                        ],
+                        previewType: 'message',
+                        previewMessage: 'Cargando evidencia...',
+                        previewSrcPromise: __orderCreateSignedStorageUrl(evidence.path),
+                        previewAsImage: true,
+                        path: evidence.path,
+                        fileName: evidence.file_name || `evidencia_${index + 1}.jpg`,
+                        actions: [
+                            { label: 'Abrir Galería', icon: 'fa-solid fa-images', tone: 'slate', onclick: `window.openCpEvidenceGallery(${JSON.stringify(order.id)}, ${index})` },
+                            { label: 'Descargar', icon: 'fa-solid fa-download', tone: 'emerald', onclick: `window.downloadCpEvidenceFile(${JSON.stringify(evidence.path)}, ${JSON.stringify(evidence.file_name || `evidencia_${index + 1}.jpg`)})` }
+                        ]
+                    });
                 });
             }
         } else if (window.currentCpExpedienteView === "contrato") {
@@ -6269,8 +7443,8 @@ window.__orderRenderExpedientePanel = async function() {
                 badge: "Archivado",
                 badgeTone: "emerald",
                 metaRows: [
-                  { label: "Generado el", value: extractTs(order.contrato_url, order.fecha_aprobacion || order.updated) },
-                  { label: "Archivo", value: order.contrato_url?.split("/").pop() || "contrato.pdf" }
+                    { label: "Generado el", value: extractTs(order.contrato_url, order.fecha_aprobacion || order.updated) },
+                    { label: "Archivo", value: order.contrato_url?.split("/").pop() || "contrato.pdf" }
                 ],
                 previewType: order.contrato_url ? "iframe" : "message",
                 previewSrc: order.contrato_url ? await __orderCreateSignedStorageUrl(order.contrato_url) : "",
@@ -6287,8 +7461,8 @@ window.__orderRenderExpedientePanel = async function() {
                 badge: "Emitida",
                 badgeTone: "emerald",
                 metaRows: [
-                  { label: "Subida el", value: extractTs(order.factura_pdf_url, order.fecha_aprobacion || order.updated) },
-                  { label: "Archivo", value: order.factura_pdf_url?.split("/").pop() || "factura.pdf" }
+                    { label: "Subida el", value: extractTs(order.factura_pdf_url, order.fecha_aprobacion || order.updated) },
+                    { label: "Archivo", value: order.factura_pdf_url?.split("/").pop() || "factura.pdf" }
                 ],
                 previewType: order.factura_pdf_url ? "iframe" : "message",
                 previewSrc: order.factura_pdf_url ? await __orderCreateSignedStorageUrl(order.factura_pdf_url) : "",
@@ -6300,7 +7474,7 @@ window.__orderRenderExpedientePanel = async function() {
             });
         } else if (window.currentCpExpedienteView === "pagos") {
             const pagosList = __orderParsePaymentsForExpediente(order).filter(p => String(p?.file_path || p?.path || p?.url || "").trim());
-            
+
             if (pagosList.length === 0) {
                 docs.push({
                     title: "Pagos",
@@ -6320,10 +7494,10 @@ window.__orderRenderExpedientePanel = async function() {
                 if (subButtons) {
                     subButtons.classList.remove("hidden");
                     subButtons.innerHTML = `<div class="flex items-center gap-3 w-full"><span class="text-xs font-bold text-gray-500 py-2 flex-grow">Mostrando ${startIndex + 1} - ${Math.min(startIndex + itemsPerPage, pagosList.length)} de ${pagosList.length} pagos</span></div>`;
-                    
+
                     const paginationControls = document.createElement("div");
                     paginationControls.className = "flex items-center gap-2";
-                    
+
                     if (currentPage > 1) {
                         const btnPrev = document.createElement("button");
                         btnPrev.className = "bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1";
@@ -6331,7 +7505,7 @@ window.__orderRenderExpedientePanel = async function() {
                         btnPrev.onclick = () => window.setCpExpedienteView("pagos", { page: currentPage - 1 });
                         paginationControls.appendChild(btnPrev);
                     }
-                    
+
                     if (currentPage < totalPages) {
                         const btnNext = document.createElement("button");
                         btnNext.className = "bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1";
@@ -6347,9 +7521,9 @@ window.__orderRenderExpedientePanel = async function() {
                     const globalIdx = startIndex + i;
                     const safePath = String(payment?.file_path || payment?.path || payment?.url || "").trim();
                     const isClosure = String(payment?.type || payment?.tipo || "").toLowerCase() === "constancia_liquidacion" || payment?.closed === true || payment?.is_closure === true;
-                    
+
                     const promiseUrl = __orderCreateSignedStorageUrl(safePath);
-                    
+
                     const amt = parseFloat(payment.amount || payment.monto || 0);
                     const formattedAmt = typeof __orderExpedienteMoney === "function" ? __orderExpedienteMoney(amt) : `$${amt.toFixed(2)}`;
                     const ref = payment.reference || payment.referencia || "--";
@@ -6381,7 +7555,9 @@ window.__orderRenderExpedientePanel = async function() {
 
         const btnContract = document.getElementById("btn-contrato");
         if (btnContract) {
-            if (order.contrato_url) {
+            if (isConvenio) {
+                btnContract.disabled = true;
+            } else if (order.contrato_url) {
                 btnContract.disabled = false;
                 btnContract.onclick = async () => {
                     window.setCpExpedienteView("contrato");
@@ -6393,7 +7569,9 @@ window.__orderRenderExpedientePanel = async function() {
 
         const btnInvoice = document.getElementById("btn-factura");
         if (btnInvoice) {
-            if (order.factura_pdf_url) {
+            if (isConvenio) {
+                btnInvoice.disabled = true;
+            } else if (order.factura_pdf_url) {
                 btnInvoice.disabled = false;
                 btnInvoice.onclick = async () => {
                     window.setCpExpedienteView("factura");
@@ -6440,7 +7618,7 @@ window.__orderRenderExpedientePanel = async function() {
     }
 }
 
-window.saveCpDraftSnapshot = async function(btnEl = null) {
+window.saveCpDraftSnapshot = async function (btnEl = null) {
     const btn = btnEl instanceof HTMLElement ? btnEl : null;
     const original = btn?.innerHTML || '';
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span>Guardando...</span>'; }
@@ -6448,27 +7626,28 @@ window.saveCpDraftSnapshot = async function(btnEl = null) {
         const order = await __orderComposeExpedienteSourceOrder();
         const status = String(order?.status || currentPreviewOrder?.status || "").toLowerCase();
         const isApproved = ["aprobada", "finalizada"].includes(status);
+        const docMeta = __orderGetQuoteDocumentMeta(order);
         const { blob } = await __orderBuildDocumentBlob('quote', order);
-        
+
         let downloadName = "";
-        
+
         if (isApproved) {
             const formData = { ...currentPreviewOrder, ...order };
-            const snapshotMeta = window.__cpBuildApprovalSnapshotMeta ? window.__cpBuildApprovalSnapshotMeta(order.id, formData) : { path: `${order.id}/cotizacion_aprobada_${order.numero_orden || order.id}.pdf`, folio: order.numero_orden || order.id };
+            const snapshotMeta = window.__cpBuildApprovalSnapshotMeta ? window.__cpBuildApprovalSnapshotMeta(order.id, formData) : { path: `${order.id}/${docMeta.approvedStorageBase}_${order.numero_orden || order.id}.pdf`, folio: order.numero_orden || order.id };
             await window.globalPocketBase.storage.from('documentos-cp').upload(snapshotMeta.path, blob, { upsert: true });
             const { error } = await window.__cpQuotesUpdate(order.id, { url_cotizacion_final: snapshotMeta.path });
             if (error) throw error;
             currentPreviewOrder = { ...currentPreviewOrder, ...order, url_cotizacion_final: snapshotMeta.path };
-            downloadName = `Cotizacion_Aprobada_${snapshotMeta.folio}.pdf`;
+            downloadName = `${docMeta.approvedFileBase}_${snapshotMeta.folio}.pdf`;
             signalOrdersRefresh("approved_snapshot");
-            window.showToast("Cotización Aprobada archivada correctamente.", "success");
+            window.showToast(`${docMeta.approvedTitle} archivada correctamente.`, "success");
         } else {
             const draftMeta = __orderResolveDraftSnapshotMeta(order);
             if (!draftMeta.orderId || !draftMeta.path) throw new Error('No se pudo identificar la cotización.');
             await window.globalPocketBase.storage.from('documentos-cp').upload(draftMeta.path, blob, { upsert: true });
             currentPreviewOrder = { ...currentPreviewOrder, __draft_snapshot_path: draftMeta.path };
-            downloadName = `Snapshot_${draftMeta.folio || 'Cotizacion'}.pdf`;
-            window.showToast('Snapshot de borrador guardada en el expediente.', 'success');
+            downloadName = draftMeta.fileName || `Snapshot_${draftMeta.folio || docMeta.itemLabel}.pdf`;
+            window.showToast(`Snapshot de ${docMeta.draftTitle.toLowerCase()} guardada en el expediente.`, 'success');
         }
 
         if (typeof window.downloadBlobAsFile === "function") window.downloadBlobAsFile(blob, downloadName);
@@ -6492,7 +7671,7 @@ window.saveCpDraftSnapshot = async function(btnEl = null) {
     }
 };
 
-window.saveCpPurchaseOrderSnapshot = async function(btnEl = null) {
+window.saveCpPurchaseOrderSnapshot = async function (btnEl = null) {
     const btn = btnEl instanceof HTMLElement ? btnEl : null;
     const original = btn?.innerHTML || '';
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span>Guardando...</span>'; }
@@ -6508,7 +7687,7 @@ window.saveCpPurchaseOrderSnapshot = async function(btnEl = null) {
         const { error } = await __cpQuotesUpdate(order.id, { url_orden_compra: path, fecha_orden_compra: fechaOrden });
         if (error) throw error;
         currentPreviewOrder = { ...currentPreviewOrder, ...order, url_orden_compra: path, fecha_orden_compra: fechaOrden };
-        
+
         if (typeof window.downloadBlobAsFile === "function") window.downloadBlobAsFile(blob, `Orden_Compra_${folio}.pdf`);
         else {
             const link = document.createElement("a");
@@ -6519,7 +7698,7 @@ window.saveCpPurchaseOrderSnapshot = async function(btnEl = null) {
             link.remove();
             setTimeout(() => URL.revokeObjectURL(link.href), 1500);
         }
-        
+
         signalOrdersRefresh('purchase_order');
         window.showToast('Orden de compra archivada correctamente.', 'success');
         await __orderRenderExpedientePanel();
@@ -6535,6 +7714,7 @@ window.saveCpPurchaseOrderSnapshot = async function(btnEl = null) {
 function __orderRenderActiveSpaceSummary(activePricing = null) {
     const cfg = __orderGetActiveCfg();
     const space = __orderGetSpaceById(cfg?.spaceId);
+    const isPublicidad = __orderIsPublicidadSpace(cfg || space);
     const pricing = activePricing || (__orderTotals?.spaces || []).find((item) => String(item.spaceId || '') === String(__orderActiveSpaceId || '')) || null;
     const setText = (id, value) => {
         const el = document.getElementById(id);
@@ -6555,11 +7735,11 @@ function __orderRenderActiveSpaceSummary(activePricing = null) {
     setText('oed-active-space-key', space?.clave || '--');
     setText('oed-active-space-range', rangeLabel);
     setText('oed-active-space-days', cfg?.startDate ? `${__orderRangeDays(cfg.startDate, cfg.endDate)} dia(s)` : '--');
-    setText('oed-active-space-guests', `${parseInt(cfg?.guests, 10) || 0} px`);
-    setText('oed-active-space-schedule', cfg?.horarioText || cfg?.horarioValue || '--');
-    setText('oed-active-space-montaje', `${Math.max(0, (parseInt(cfg?.premontajeDays, 10) || 0) - (parseInt(cfg?.premontajeCourtesyDays, 10) || 0))} facturable(s)`);
-    setText('oed-active-space-hours', `${Math.max(0, (parseInt(cfg?.horasExtra, 10) || 0) - (parseInt(cfg?.horasExtraCourtesy, 10) || 0))} facturable(s)`);
-    setText('oed-active-space-mode', cfg?.startDate ? (__orderRangeDays(cfg.startDate, cfg.endDate) > 1 ? 'Evento multi-dia' : 'Evento de un dia') : '--');
+    setText('oed-active-space-guests', isPublicidad ? 'No aplica' : `${parseInt(cfg?.guests, 10) || 0} px`);
+    setText('oed-active-space-schedule', isPublicidad ? 'No aplica' : (cfg?.horarioText || cfg?.horarioValue || '--'));
+    setText('oed-active-space-montaje', isPublicidad ? 'No aplica' : `${Math.max(0, (parseInt(cfg?.premontajeDays, 10) || 0) - (parseInt(cfg?.premontajeCourtesyDays, 10) || 0))} facturable(s)`);
+    setText('oed-active-space-hours', isPublicidad ? 'No aplica' : `${Math.max(0, (parseInt(cfg?.horasExtra, 10) || 0) - (parseInt(cfg?.horasExtraCourtesy, 10) || 0))} facturable(s)`);
+    setText('oed-active-space-mode', cfg?.startDate ? (isPublicidad ? (cfg?.customPermanence ? 'Publicidad personalizada' : 'Publicidad mensual') : (__orderRangeDays(cfg.startDate, cfg.endDate) > 1 ? 'Evento multi-dia' : 'Evento de un dia')) : '--');
     setText('oed-active-space-base', (parseFloat(pricing?.base || __orderResolveBaseTotal(cfg, space, parseInt(cfg?.guests, 10) || 1) || 0)).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }));
     setText('oed-active-space-status', reviewLabel);
     setText('oed-active-space-total', (parseFloat(pricing?.totalSpace || pricing?.subtotalSpace || 0)).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }));
@@ -6573,12 +7753,57 @@ function __orderGetCfg(spaceId) {
     return __orderQuoteSpaces.find(cfg => String(cfg.spaceId) === String(spaceId)) || null;
 }
 
+function __orderGetSpaceCategoryKey(space) {
+    return __orderIsPublicidadSpace(space) ? 'publicidad' : 'espacio';
+}
+
+function __orderGetEditorCategoryMode() {
+    const categories = Array.from(new Set(__orderQuoteSpaces.map((cfg) => __orderGetSpaceCategoryKey(__orderGetSpaceById(cfg.spaceId) || cfg))));
+    if (!categories.length) return '';
+    return categories.length === 1 ? categories[0] : 'mixed';
+}
+
+function __orderIsEditorConvenioMode() {
+    return __orderQuoteSpaces.some((cfg) => !!cfg?.convenioEnabled) || __orderIsConvenioOrder(currentPreviewOrder || {});
+}
+
+function __orderCanDisplaySpaceInEditor(space) {
+    const sid = String(space?.id || space?.spaceId || '').trim();
+    if (!sid) return false;
+    const isSelected = __orderQuoteSpaces.some((cfg) => String(cfg.spaceId) === sid);
+    if (__orderIsEditorConvenioMode() && !__orderSpaceAllowsConvenio(space)) return false;
+    if (isSelected) return true;
+    const categoryMode = __orderGetEditorCategoryMode();
+    if (categoryMode === 'mixed') return false;
+    return !categoryMode || categoryMode === __orderGetSpaceCategoryKey(space);
+}
+
+function __orderCanAddSpaceToEditor(spaceId, options = {}) {
+    const space = __orderGetSpaceById(spaceId);
+    if (!space) return false;
+    if (__orderIsEditorConvenioMode() && !__orderSpaceAllowsConvenio(space)) {
+        if (!options.silent) window.showToast('Ese espacio no está disponible para convenio.', 'error');
+        return false;
+    }
+    const categoryMode = __orderGetEditorCategoryMode();
+    if (categoryMode === 'mixed') {
+        if (!options.silent) window.showToast('Quita espacios de una categoría antes de agregar otro. No se puede mezclar ESPACIO con PUBLICIDAD.', 'error');
+        return false;
+    }
+    const nextCategory = __orderGetSpaceCategoryKey(space);
+    if (categoryMode && categoryMode !== nextCategory) {
+        if (!options.silent) window.showToast('No se puede mezclar ESPACIO con PUBLICIDAD en la misma cotización.', 'error');
+        return false;
+    }
+    return true;
+}
+
 function __orderRenderSpaceAddSelect() {
     const sel = document.getElementById('oed-space-add');
     if (!sel) return;
     const selected = new Set(__orderQuoteSpaces.map(cfg => String(cfg.spaceId)));
     sel.innerHTML = '<option value="">Selecciona espacio...</option>';
-    allSpaces.forEach(space => {
+    allSpaces.filter((space) => __orderCanDisplaySpaceInEditor(space)).forEach(space => {
         const disabled = selected.has(String(space.id)) ? 'disabled' : '';
         sel.innerHTML += `<option value="${space.id}" ${disabled}>${space.nombre}</option>`;
     });
@@ -6615,7 +7840,7 @@ function __orderRenderSpacePicker() {
     if (!container) return;
     const selected = new Set(__orderQuoteSpaces.map(cfg => String(cfg.spaceId)));
     container.innerHTML = '';
-    allSpaces.forEach(space => {
+    allSpaces.filter((space) => __orderCanDisplaySpaceInEditor(space)).forEach(space => {
         const sid = String(space.id);
         const isSelected = selected.has(sid);
         const isActive = String(__orderActiveSpaceId) === sid;
@@ -6626,8 +7851,12 @@ function __orderRenderSpacePicker() {
             ? 'border-emerald-200 bg-emerald-100 text-emerald-700'
             : (isSelected ? 'border-yellow-200 bg-yellow-100 text-yellow-700' : 'border-gray-200 bg-gray-100 text-gray-500');
         const cfg = __orderGetCfg(sid);
+        const categoryLabel = __orderIsPublicidadSpace(space) ? 'PUBLICIDAD' : 'ESPACIO';
+        const categoryBadgeCls = __orderIsPublicidadSpace(space)
+            ? 'border-red-200 bg-red-50 text-red-700'
+            : 'border-slate-200 bg-slate-50 text-slate-700';
         const dateLabel = (cfg?.startDate && cfg?.endDate) ? __orderFormatRangeLabel(cfg.startDate, cfg.endDate) : '--';
-        const guestsLabel = cfg ? `${parseInt(cfg.guests, 10) || 0} px` : '--';
+        const guestsLabel = __orderIsPublicidadSpace(space) ? 'No aplica' : (cfg ? `${parseInt(cfg.guests, 10) || 0} px` : '--');
         const baseValue = cfg ? __orderResolveDisplayedBase(cfg, space) : 0;
         const baseLabel = baseValue > 0 ? __orderFormatMoneyMx(baseValue) : '--';
         const stateLabel = isActive ? 'En edición' : (isSelected ? 'Activa' : 'Libre');
@@ -6638,6 +7867,10 @@ function __orderRenderSpacePicker() {
                     <div class="min-w-0 flex-1">
                         <p class="text-[10px] font-black uppercase text-gray-800 leading-tight break-words">${space.nombre}</p>
                         <p class="text-[9px] font-mono text-gray-400 mt-1 truncate">${space.clave || '--'}</p>
+                        <div class="mt-1 flex flex-wrap gap-1">
+                            <span class="rounded-full border px-2 py-0.5 text-[8px] font-black uppercase tracking-wide ${categoryBadgeCls}">${categoryLabel}</span>
+                            ${cfg?.convenioEnabled ? '<span class="rounded-full border border-amber-200 bg-amber-100 px-2 py-0.5 text-[8px] font-black uppercase tracking-wide text-amber-800">Convenio</span>' : ''}
+                        </div>
                     </div>
                     <span class="shrink-0 rounded-full border px-2 py-0.5 text-[8px] font-black uppercase tracking-wide ${badgeCls}">${stateLabel}</span>
                 </div>
@@ -6667,10 +7900,11 @@ function __orderRenderSpacePicker() {
     });
 }
 
-window.activateOrderSpaceCard = function(spaceId) {
+window.activateOrderSpaceCard = function (spaceId) {
     const sid = String(spaceId);
     __orderSaveActiveFromForm();
     const exists = __orderQuoteSpaces.some(x => String(x.spaceId) === sid);
+    if (!exists && !__orderCanAddSpaceToEditor(sid)) return;
     if (!exists) {
         const active = __orderGetActiveCfg();
         const seed = active ? { startDate: active.startDate, endDate: active.endDate, guests: active.guests } : {};
@@ -6684,11 +7918,15 @@ window.activateOrderSpaceCard = function(spaceId) {
     __orderScheduleAutoSave();
 };
 
-window.toggleOrderSpaceSwitch = function(spaceId, enabled) {
+window.toggleOrderSpaceSwitch = function (spaceId, enabled) {
     const sid = String(spaceId);
     __orderSaveActiveFromForm();
     const exists = __orderQuoteSpaces.some(x => String(x.spaceId) === sid);
     if (enabled && !exists) {
+        if (!__orderCanAddSpaceToEditor(sid)) {
+            __orderRenderSpaceTabs();
+            return;
+        }
         const active = __orderGetActiveCfg();
         const seed = active ? { startDate: active.startDate, endDate: active.endDate, guests: active.guests } : {};
         __orderQuoteSpaces.push(__orderCreateSpaceCfg(sid, seed));
@@ -6756,7 +7994,7 @@ function __orderRenderTaxesForActive() {
     container.innerHTML = __orderRenderAutoTaxSummary(cfg.taxIds, space);
 }
 
-window.onActiveOrderTaxesChanged = function() {
+window.onActiveOrderTaxesChanged = function () {
     const cfg = __orderGetActiveCfg();
     if (!cfg) return;
     const space = __orderGetSpaceById(cfg.spaceId);
@@ -6802,9 +8040,23 @@ function __orderSaveActiveFromForm() {
     const endEl = document.getElementById('oed-end');
     if (startEl && startEl.value !== cfg.startDate) startEl.value = cfg.startDate || '';
     if (endEl && endEl.value !== cfg.endDate) endEl.value = cfg.endDate || '';
-    cfg.guests = parseInt(document.getElementById('oed-guests')?.value, 10) || 1;
-    cfg.premontajeEnabled = !!document.getElementById('oed-chk-premontaje')?.checked;
-    cfg.horasExtraEnabled = !!document.getElementById('oed-chk-horas')?.checked;
+    const space = __orderGetSpaceById(cfg.spaceId);
+    const isPublicidad = __orderIsPublicidadSpace(space || cfg);
+    cfg.customPermanence = !!document.getElementById('oed-custom-permanence')?.checked;
+    cfg.convenioEnabled = !!document.getElementById('oed-convenio-enabled')?.checked;
+    cfg.customPriceEnabled = cfg.convenioEnabled ? false : !!document.getElementById('oed-custom-price-enabled')?.checked;
+    cfg.customPriceMode = String(document.getElementById('oed-space-custom-price-mode')?.value || cfg.customPriceMode || 'total');
+    cfg.customBasePrice = cfg.customPriceEnabled
+        ? (() => {
+            const raw = document.getElementById('oed-space-custom-price')?.value;
+            if (raw === '' || raw === null || raw === undefined) return '';
+            return Math.max(0, parseFloat(raw) || 0);
+        })()
+        : '';
+    cfg.concepts = __orderSafeArray(cfg.concepts).map(__orderNormalizeExtraConcept);
+    cfg.guests = isPublicidad ? 1 : (parseInt(document.getElementById('oed-guests')?.value, 10) || 1);
+    cfg.premontajeEnabled = isPublicidad ? false : !!document.getElementById('oed-chk-premontaje')?.checked;
+    cfg.horasExtraEnabled = isPublicidad ? false : !!document.getElementById('oed-chk-horas')?.checked;
     cfg.premontajeDays = cfg.premontajeEnabled ? (parseInt(document.getElementById('oed-premontaje')?.value, 10) || 0) : 0;
     cfg.premontajeCourtesyDays = cfg.premontajeEnabled ? Math.max(0, parseInt(document.getElementById('oed-premontaje-cortesia')?.value, 10) || 0) : 0;
     if (cfg.premontajeCourtesyDays > cfg.premontajeDays) cfg.premontajeCourtesyDays = cfg.premontajeDays;
@@ -6813,7 +8065,6 @@ function __orderSaveActiveFromForm() {
     cfg.horasExtra = cfg.horasExtraEnabled ? (parseInt(document.getElementById('oed-horas')?.value, 10) || 0) : 0;
     cfg.horasExtraCourtesy = cfg.horasExtraEnabled ? Math.max(0, parseInt(document.getElementById('oed-horas-cortesia')?.value, 10) || 0) : 0;
     const heCfg = __orderGetHoraExtraCfg();
-    const space = __orderGetSpaceById(cfg.spaceId);
     if (heCfg.allowCustom) {
         cfg.horasExtraUnit = parseFloat(document.getElementById('oed-horas-price')?.value || 0) || 0;
     } else {
@@ -6827,7 +8078,55 @@ function __orderSaveActiveFromForm() {
     cfg.premontajeDates = __orderSafeArray(window.finalMontajeDates).slice(0, cfg.premontajeDays);
     const sel = document.getElementById('oed-horario');
     const opt = sel?.options?.[sel.selectedIndex];
-    if (sel?.value === 'personalizado') {
+    if (isPublicidad) {
+        cfg.guests = 1;
+        cfg.horarioValue = '';
+        cfg.horarioText = '';
+        cfg.horarioPrice = 0;
+        cfg.horarioCustomStart = '';
+        cfg.horarioCustomEnd = '';
+        cfg.premontajeEnabled = false;
+        cfg.premontajeDays = 0;
+        cfg.premontajeCourtesyDays = 0;
+        cfg.premontajeDates = [];
+        cfg.horasExtraEnabled = false;
+        cfg.horasExtra = 0;
+        cfg.horasExtraCourtesy = 0;
+        cfg.horasExtraUnit = 0;
+        if (cfg.convenioEnabled) {
+            cfg.customPriceEnabled = false;
+            cfg.customBasePrice = '';
+            const priceInput = document.getElementById('oed-space-custom-price');
+            if (priceInput) priceInput.value = '';
+        }
+        window.finalMontajeDates = [];
+        __orderNormalizePublicidadDates(cfg);
+        if (startEl && startEl.value !== cfg.startDate) startEl.value = cfg.startDate || '';
+        if (endEl && endEl.value !== cfg.endDate) endEl.value = cfg.endDate || '';
+        const guestsEl = document.getElementById('oed-guests');
+        if (guestsEl) guestsEl.value = '1';
+        const premChk = document.getElementById('oed-chk-premontaje');
+        const horasChk = document.getElementById('oed-chk-horas');
+        if (premChk) premChk.checked = false;
+        if (horasChk) horasChk.checked = false;
+        if (sel) sel.value = '';
+        const horarioStartEl = document.getElementById('oed-horario-start');
+        const horarioEndEl = document.getElementById('oed-horario-end');
+        const horarioPriceEl = document.getElementById('oed-horario-price');
+        if (horarioStartEl) horarioStartEl.value = '';
+        if (horarioEndEl) horarioEndEl.value = '';
+        if (horarioPriceEl) horarioPriceEl.value = '0';
+        const premEl = document.getElementById('oed-premontaje');
+        const premCourtesyEl = document.getElementById('oed-premontaje-cortesia');
+        const horasEl = document.getElementById('oed-horas');
+        const horasCourtesyEl = document.getElementById('oed-horas-cortesia');
+        const horasPriceEl = document.getElementById('oed-horas-price');
+        if (premEl) premEl.value = '0';
+        if (premCourtesyEl) premCourtesyEl.value = '0';
+        if (horasEl) horasEl.value = '0';
+        if (horasCourtesyEl) horasCourtesyEl.value = '0';
+        if (horasPriceEl) horasPriceEl.value = '0';
+    } else if (sel?.value === 'personalizado') {
         const hs = document.getElementById('oed-horario-start')?.value || '';
         const he = document.getElementById('oed-horario-end')?.value || '';
         const hp = parseFloat(document.getElementById('oed-horario-price')?.value || 0) || 0;
@@ -6845,6 +8144,7 @@ function __orderSaveActiveFromForm() {
     }
     cfg.taxIds = __orderResolveCfgTaxIds(cfg, space);
     __orderApplyHoraExtraInputState(cfg);
+    __orderSyncActiveSpaceModeUi(cfg);
 }
 
 function __orderLoadActiveToForm() {
@@ -6865,6 +8165,16 @@ function __orderLoadActiveToForm() {
     document.getElementById('oed-horas').value = cfg.horasExtra || 0;
     document.getElementById('oed-horas-cortesia').value = cfg.horasExtraCourtesy || 0;
     document.getElementById('oed-horas-price').value = cfg.horasExtraUnit || 0;
+    const customPermChk = document.getElementById('oed-custom-permanence');
+    const customPriceChk = document.getElementById('oed-custom-price-enabled');
+    const customModeSel = document.getElementById('oed-space-custom-price-mode');
+    const customPriceInput = document.getElementById('oed-space-custom-price');
+    const convenioChk = document.getElementById('oed-convenio-enabled');
+    if (customPermChk) customPermChk.checked = !!cfg.customPermanence;
+    if (customPriceChk) customPriceChk.checked = !!cfg.customPriceEnabled && !cfg.convenioEnabled;
+    if (customModeSel) customModeSel.value = cfg.customPriceMode || 'total';
+    if (customPriceInput) customPriceInput.value = (cfg.customBasePrice !== '' && cfg.customBasePrice !== null && cfg.customBasePrice !== undefined) ? String(cfg.customBasePrice) : '';
+    if (convenioChk) convenioChk.checked = !!cfg.convenioEnabled;
     __orderApplyCourtesyLimitsFromInputs();
     window.toggleOrderPremontaje(true);
     window.toggleOrderHoras(true);
@@ -6883,12 +8193,13 @@ function __orderLoadActiveToForm() {
     }
     __orderUpdateSpaceConfigTitle();
     window.toggleCustomHorario('oed');
+    __orderSyncActiveSpaceModeUi(cfg);
     __orderRenderTaxesForActive();
     window.handleMontajeInput('oed');
     __orderRenderActiveSpaceSummary();
 }
 
-window.selectOrderQuoteSpace = function(spaceId) {
+window.selectOrderQuoteSpace = function (spaceId) {
     __orderSaveActiveFromForm();
     __orderActiveSpaceId = String(spaceId);
     __orderRenderSpaceTabs();
@@ -6897,17 +8208,18 @@ window.selectOrderQuoteSpace = function(spaceId) {
     __orderScheduleAutoSave();
 };
 
-window.addSpaceToOrderQuote = function() {
+window.addSpaceToOrderQuote = function () {
     const sel = document.getElementById('oed-space-add');
     const newId = sel?.value;
     if (!newId) return;
     window.addSpaceToOrderQuoteById(newId);
 };
 
-window.addSpaceToOrderQuoteById = function(spaceId) {
+window.addSpaceToOrderQuoteById = function (spaceId) {
     const newId = String(spaceId || '');
     if (!newId || __orderQuoteSpaces.some(cfg => String(cfg.spaceId) === String(newId))) return;
     __orderSaveActiveFromForm();
+    if (!__orderCanAddSpaceToEditor(newId)) return;
     const active = __orderGetActiveCfg();
     const seed = active ? { startDate: active.startDate, endDate: active.endDate, guests: active.guests } : {};
     __orderQuoteSpaces.push(__orderCreateSpaceCfg(newId, seed));
@@ -6919,7 +8231,7 @@ window.addSpaceToOrderQuoteById = function(spaceId) {
     __orderScheduleAutoSave();
 };
 
-window.removeSpaceFromOrderQuote = function(spaceId) {
+window.removeSpaceFromOrderQuote = function (spaceId) {
     if (__orderQuoteSpaces.length <= 1) return;
     __orderSaveActiveFromForm();
     __orderQuoteSpaces = __orderQuoteSpaces.filter(cfg => String(cfg.spaceId) !== String(spaceId));
@@ -6931,7 +8243,107 @@ window.removeSpaceFromOrderQuote = function(spaceId) {
     __orderScheduleAutoSave();
 };
 
-window.updateB2bSelects = function() {
+window.toggleOrderCustomPermanence = function () {
+    const cfg = __orderGetActiveCfg();
+    if (!cfg || !__orderIsPublicidadSpace(cfg)) return;
+    cfg.customPermanence = !!document.getElementById('oed-custom-permanence')?.checked;
+    if (!cfg.customPermanence) {
+        __orderNormalizePublicidadDates(cfg);
+        const startEl = document.getElementById('oed-start');
+        const endEl = document.getElementById('oed-end');
+        if (startEl) startEl.value = cfg.startDate || '';
+        if (endEl) endEl.value = cfg.endDate || '';
+    }
+    __orderSyncPublicidadCustomUi(cfg);
+    window.recalcTotal();
+    __orderScheduleAutoSave();
+};
+
+window.toggleOrderCustomPrice = function () {
+    const cfg = __orderGetActiveCfg();
+    if (!cfg || !__orderIsPublicidadSpace(cfg)) return;
+    if (cfg.convenioEnabled) return;
+    cfg.customPriceEnabled = !!document.getElementById('oed-custom-price-enabled')?.checked;
+    if (!cfg.customPriceEnabled) cfg.customBasePrice = '';
+    __orderSyncPublicidadCustomUi(cfg);
+    window.recalcTotal();
+    __orderScheduleAutoSave();
+};
+
+window.changeOrderCustomPriceMode = function () {
+    const cfg = __orderGetActiveCfg();
+    if (!cfg || !__orderIsPublicidadSpace(cfg)) return;
+    cfg.customPriceMode = String(document.getElementById('oed-space-custom-price-mode')?.value || 'total');
+    __orderSyncPublicidadCustomUi(cfg);
+    window.recalcTotal();
+    __orderScheduleAutoSave();
+};
+
+window.toggleOrderConvenio = function () {
+    const cfg = __orderGetActiveCfg();
+    if (!cfg) return;
+    const activeSpace = __orderGetSpaceById(cfg.spaceId);
+    if (!__orderSpaceAllowsConvenio(activeSpace) && !cfg.convenioEnabled) {
+        const checkbox = document.getElementById('oed-convenio-enabled');
+        if (checkbox) checkbox.checked = false;
+        return window.showToast('Este espacio no tiene permitido usar convenio.', 'error');
+    }
+    cfg.convenioEnabled = !!document.getElementById('oed-convenio-enabled')?.checked;
+    if (!cfg.convenioEnabled) {
+        cfg.concepts = __orderSafeArray(cfg.concepts).map(__orderNormalizeExtraConcept).filter((concept) => !__orderIsConvenioConceptItem(concept));
+    } else {
+        cfg.customPriceEnabled = false;
+        cfg.customBasePrice = '';
+        const priceInput = document.getElementById('oed-space-custom-price');
+        if (priceInput) priceInput.value = '';
+    }
+    __orderSyncConvenioUi(cfg);
+    __orderRenderSpaceAddSelect();
+    __orderRenderSpacePicker();
+    window.recalcTotal();
+    __orderScheduleAutoSave();
+};
+
+window.addOrderConvenioItem = function () {
+    const cfg = __orderGetActiveCfg();
+    const locked = ['aprobada', 'finalizada'].includes(String(currentPreviewOrder?.status || '').toLowerCase());
+    if (!cfg || locked || !cfg.convenioEnabled) return;
+    const optionId = String(document.getElementById('oed-convenio-select')?.value || '').trim();
+    const cantidad = Math.max(1, parseInt(document.getElementById('oed-convenio-qty')?.value || 1, 10) || 1);
+    const amountRaw = document.getElementById('oed-convenio-amount')?.value;
+    const amount = Math.max(0, parseFloat(amountRaw || 0) || 0);
+    if (!optionId) return window.showToast('Selecciona una opción de convenio.', 'error');
+    if (amount <= 0) return window.showToast('Indica el monto manual del trato.', 'error');
+    const option = cpOrderConvenioCatalog.find((item) => item.id === optionId);
+    if (!option) return window.showToast('La opción de convenio ya no está disponible.', 'error');
+    cfg.concepts = __orderSafeArray(cfg.concepts).map(__orderNormalizeExtraConcept);
+    cfg.concepts.push(__orderBuildConvenioConcept(option, cantidad, amount));
+    const select = document.getElementById('oed-convenio-select');
+    const qtyInput = document.getElementById('oed-convenio-qty');
+    const amountInput = document.getElementById('oed-convenio-amount');
+    if (select) select.value = '';
+    if (qtyInput) qtyInput.value = '1';
+    if (amountInput) amountInput.value = '';
+    __orderRenderConvenioItems();
+    window.recalcTotal();
+    __orderScheduleAutoSave();
+};
+
+window.removeOrderConvenioItem = function (index) {
+    const cfg = __orderGetActiveCfg();
+    if (!cfg) return;
+    let visibleIndex = -1;
+    cfg.concepts = __orderSafeArray(cfg.concepts).map(__orderNormalizeExtraConcept).filter((concept) => {
+        if (!__orderIsConvenioConceptItem(concept)) return true;
+        visibleIndex += 1;
+        return visibleIndex !== index;
+    });
+    __orderRenderConvenioItems();
+    window.recalcTotal();
+    __orderScheduleAutoSave();
+};
+
+window.updateB2bSelects = function () {
     const selected = document.getElementById('oed-space')?.value;
     if (selected && String(selected) !== String(__orderActiveSpaceId) && __orderGetCfg(selected)) {
         window.selectOrderQuoteSpace(selected);
@@ -6943,7 +8355,7 @@ window.updateB2bSelects = function() {
     __orderRenderTaxesForActive();
 };
 
-window.renderTaxesForSpace = function() {
+window.renderTaxesForSpace = function () {
     __orderRenderTaxesForActive();
 };
 
@@ -6953,6 +8365,7 @@ function __orderGetReservedDatesForSpace(spaceId) {
     allOrders.forEach(order => {
         if (String(order.id) === String(currentPreviewOrder?.id)) return;
         if (!__orderIsBlockingStatus(order.status)) return;
+        const orderBlocksIndefinitely = __orderBlocksIndefinitely(order);
         const addDate = (ds) => {
             const n = __orderNormalizeDate(ds);
             if (n) reserved.add(n);
@@ -6973,11 +8386,16 @@ function __orderGetReservedDatesForSpace(spaceId) {
                 if (itemSid !== sid) return;
                 const fechasEvento = __orderSafeArray(item.fechas_evento).map(__orderNormalizeDate).filter(Boolean);
                 if (fechasEvento.length) fechasEvento.forEach(addDate);
-                else addRange(item.fecha_inicio, item.fecha_fin);
+                else addRange(
+                    item.fecha_inicio,
+                    __orderDetailBlocksIndefinitely(item)
+                        ? CP_ORDER_CONVENIO_INDEFINITE_END
+                        : item.fecha_fin
+                );
                 __orderSafeArray(item.premontaje_fechas).forEach(addDate);
             });
         } else if (String(order.espacio_id) === sid) {
-            addRange(order.fecha_inicio, order.fecha_fin);
+            addRange(order.fecha_inicio, orderBlocksIndefinitely ? CP_ORDER_CONVENIO_INDEFINITE_END : order.fecha_fin);
         }
         __orderSafeArray(order.conceptos_adicionales).forEach(c => {
             if (String(c?.type || '').toLowerCase() !== 'b2b_montaje') return;
@@ -6992,11 +8410,16 @@ function __orderGetReservedDatesForSpace(spaceId) {
 function __orderSetDateOnForm(startDate, endDate) {
     const cfg = __orderGetActiveCfg();
     if (!cfg) return;
-    const start = __orderNormalizeDate(startDate);
-    const end = __orderNormalizeDate(endDate || start);
+    let start = __orderNormalizeDate(startDate);
+    let end = __orderNormalizeDate(endDate || start);
     const today = __orderTodayISO();
     if (start && start < today) return window.showToast('No se permiten fechas pasadas.', 'error');
     if (end && end < today) return window.showToast('No se permiten fechas pasadas.', 'error');
+    if (__orderIsPublicidadSpace(cfg) && !cfg.customPermanence) {
+        const month = __orderGetPublicidadMonthBounds(start || end || today);
+        start = month.start;
+        end = month.end;
+    }
     const sEl = document.getElementById('oed-start');
     const eEl = document.getElementById('oed-end');
     if (sEl) sEl.value = start || '';
@@ -7159,7 +8582,7 @@ async function __orderRenderDatePicker() {
 }
 
 // Abre modal de calendario de evento y aplica ajuste visual del FullCalendar.
-window.openOrderDatePicker = async function(target = 'start') {
+window.openOrderDatePicker = async function (target = 'start') {
     const cfg = __orderGetActiveCfg();
     if (!cfg) return;
     const baseDate = __orderNormalizeDate(document.getElementById('oed-start')?.value || cfg.startDate || __orderTodayISO());
@@ -7174,13 +8597,13 @@ window.openOrderDatePicker = async function(target = 'start') {
     __orderRefreshCalendarLayout(__orderEventPickerCal);
 };
 
-window.shiftOrderDatePickerMonth = async function(delta) {
+window.shiftOrderDatePickerMonth = async function (delta) {
     if (!__orderEventPickerCal) return;
     if ((delta || 0) < 0) __orderEventPickerCal.prev();
     else __orderEventPickerCal.next();
 };
 
-window.pickOrderDate = async function(ds) {
+window.pickOrderDate = async function (ds) {
     if (ds < __orderTodayISO()) return;
     if (__ORDER_DATE_PICKER.reserved?.has(ds)) return window.showToast(`La fecha ${window.safeFormatDate(ds)} ya está ocupada para este espacio.`, 'error');
     const cfg = __orderGetActiveCfg();
@@ -7205,13 +8628,13 @@ window.pickOrderDate = async function(ds) {
     await __orderRenderDatePicker();
 };
 
-window.applyOrderDatePickerSelection = function() {
+window.applyOrderDatePickerSelection = function () {
     if (!__ORDER_DATE_PICKER.start) return window.showToast('Selecciona al menos una fecha.', 'error');
     __orderSetDateOnForm(__ORDER_DATE_PICKER.start, __ORDER_DATE_PICKER.end || __ORDER_DATE_PICKER.start);
     window.closeModal('order-date-modal');
 };
 
-window.toggleOrderPremontaje = function(skipSync) {
+window.toggleOrderPremontaje = function (skipSync) {
     const enabled = !!document.getElementById('oed-chk-premontaje')?.checked;
     const days = document.getElementById('oed-premontaje');
     const courtesy = document.getElementById('oed-premontaje-cortesia');
@@ -7236,7 +8659,7 @@ window.toggleOrderPremontaje = function(skipSync) {
     }
 };
 
-window.toggleOrderHoras = function(skipSync) {
+window.toggleOrderHoras = function (skipSync) {
     const cfg = __orderGetActiveCfg();
     const enabled = !!document.getElementById('oed-chk-horas')?.checked;
     const hrs = document.getElementById('oed-horas');
@@ -7262,7 +8685,7 @@ window.toggleOrderHoras = function(skipSync) {
     }
 };
 
-window.handleMontajeInput = function(prefix) {
+window.handleMontajeInput = function (prefix) {
     const cfg = __orderGetActiveCfg();
     if (!cfg) return;
     const enabled = !!document.getElementById('oed-chk-premontaje')?.checked;
@@ -7283,7 +8706,7 @@ window.handleMontajeInput = function(prefix) {
     window.recalcTotal();
 };
 
-window.actualizarLabelMontaje = function(prefix) {
+window.actualizarLabelMontaje = function (prefix) {
     const cfg = __orderGetActiveCfg();
     const lbl = document.getElementById(prefix + '-lbl-fechas-montaje');
     const dates = __orderSafeArray(cfg?.premontajeDates || []);
@@ -7462,7 +8885,7 @@ async function __orderRenderMontajeDatePicker() {
     }
 }
 
-window.abrirModalMontaje = async function(prefix) {
+window.abrirModalMontaje = async function (prefix) {
     const cfg = __orderGetActiveCfg();
     if (!cfg) return;
     window.currentMontajePrefix = prefix;
@@ -7494,13 +8917,13 @@ window.abrirModalMontaje = async function(prefix) {
     __orderRefreshCalendarLayout(__orderMontajePickerCal);
 };
 
-window.shiftMontajePickerMonth = async function(delta) {
+window.shiftMontajePickerMonth = async function (delta) {
     if (!__orderMontajePickerCal) return;
     if ((delta || 0) < 0) __orderMontajePickerCal.prev();
     else __orderMontajePickerCal.next();
 };
 
-window.pickMontajeDate = async function(ds) {
+window.pickMontajeDate = async function (ds) {
     const cfg = __orderGetActiveCfg();
     if (!cfg) return;
     const space = __orderGetSpaceById(cfg.spaceId);
@@ -7522,7 +8945,7 @@ window.pickMontajeDate = async function(ds) {
     await __orderRenderMontajeDatePicker();
 };
 
-window.applyMontajeDatePickerSelection = function() {
+window.applyMontajeDatePickerSelection = function () {
     const cfg = __orderGetActiveCfg();
     if (!cfg) return;
     const state = __ORDER_MONTAJE_PICKER;
@@ -7569,7 +8992,7 @@ function __orderCalcPremontaje(space, cfg) {
     return { total, breakdown };
 }
 
-window.updateSummaryUI = function() {
+window.updateSummaryUI = function () {
     const spaces = (__orderTotals?.spaces && __orderTotals.spaces.length)
         ? __orderTotals.spaces
         : __orderQuoteSpaces.map(cfg => {
@@ -7578,6 +9001,8 @@ window.updateSummaryUI = function() {
                 spaceId: cfg.spaceId,
                 spaceName: sp?.nombre || String(cfg.spaceId),
                 spaceKey: sp?.clave || '',
+                spaceType: cfg.spaceType || sp?.tipo || '',
+                isPublicidad: __orderIsPublicidadSpace(cfg),
                 startDate: cfg.startDate || '',
                 endDate: cfg.endDate || cfg.startDate || '',
                 guests: parseInt(cfg.guests, 10) || 0,
@@ -7587,6 +9012,7 @@ window.updateSummaryUI = function() {
                 premontajeDates: __orderSafeArray(cfg.premontajeDates),
                 horasExtra: parseInt(cfg.horasExtra, 10) || 0,
                 horasExtraCourtesy: parseInt(cfg.horasExtraCourtesy, 10) || 0,
+                convenioEnabled: !!cfg.convenioEnabled,
                 capacityOk: true,
                 blockedOk: true
             };
@@ -7609,13 +9035,17 @@ window.updateSummaryUI = function() {
 
     const starts = spaces.map(s => s.startDate).filter(Boolean).sort();
     const ends = spaces.map(s => s.endDate || s.startDate).filter(Boolean).sort();
-    const globalDates = starts.length ? rangeLabel(starts[0], ends[ends.length - 1]) : '--';
+    const hasConvenioSummary = spaces.some((sp) => !!sp.blocksIndefinitely);
+    const globalDates = starts.length
+        ? (hasConvenioSummary ? `${window.safeFormatDate(starts[0])} al Indefinido` : rangeLabel(starts[0], ends[ends.length - 1]))
+        : '--';
 
-    const totalGuests = spaces.reduce((acc, sp) => acc + (parseInt(sp.guests, 10) || 0), 0);
-    const totalPrem = spaces.reduce((acc, sp) => acc + (parseInt(sp.premontajeDays, 10) || 0), 0);
-    const totalPremCourtesy = spaces.reduce((acc, sp) => acc + Math.min(parseInt(sp.premontajeDays, 10) || 0, parseInt(sp.premontajeCourtesyDays, 10) || 0), 0);
-    const totalHours = spaces.reduce((acc, sp) => acc + (parseInt(sp.horasExtra, 10) || 0), 0);
-    const totalHoursCourtesy = spaces.reduce((acc, sp) => acc + Math.min(parseInt(sp.horasExtra, 10) || 0, parseInt(sp.horasExtraCourtesy, 10) || 0), 0);
+    const nonPublicidadSpaces = spaces.filter(sp => !sp.isPublicidad);
+    const totalGuests = nonPublicidadSpaces.reduce((acc, sp) => acc + (parseInt(sp.guests, 10) || 0), 0);
+    const totalPrem = nonPublicidadSpaces.reduce((acc, sp) => acc + (parseInt(sp.premontajeDays, 10) || 0), 0);
+    const totalPremCourtesy = nonPublicidadSpaces.reduce((acc, sp) => acc + Math.min(parseInt(sp.premontajeDays, 10) || 0, parseInt(sp.premontajeCourtesyDays, 10) || 0), 0);
+    const totalHours = nonPublicidadSpaces.reduce((acc, sp) => acc + (parseInt(sp.horasExtra, 10) || 0), 0);
+    const totalHoursCourtesy = nonPublicidadSpaces.reduce((acc, sp) => acc + Math.min(parseInt(sp.horasExtra, 10) || 0, parseInt(sp.horasExtraCourtesy, 10) || 0), 0);
     const blockedIssue = spaces.some(sp => sp.blockedOk === false);
     const capacityIssue = spaces.some(sp => sp.capacityOk === false);
 
@@ -7626,7 +9056,7 @@ window.updateSummaryUI = function() {
     setText('sum-client', clientName);
     setText('sum-dates', globalDates);
     setText('sum-spaces-count', String(spaces.length));
-    setText('sum-guests', `${totalGuests} px`);
+    setText('sum-guests', nonPublicidadSpaces.length ? `${totalGuests} px` : 'No aplica');
 
     const statusEl = document.getElementById('sum-status');
     const statusText = (blockedIssue || capacityIssue) ? 'Requiere revisión' : 'Sin conflictos';
@@ -7646,6 +9076,7 @@ window.updateSummaryUI = function() {
     const previewSummaryView = IS_ORDER_PREVIEW_PAGE || __cpIsPreviewOnlyQueryMode();
     const spacesHtml = spaces.map((sp, idx) => {
         const isActive = String(sp.spaceId || '') === String(__orderActiveSpaceId || '');
+        const isPublicidad = !!sp.isPublicidad;
         const premDays = parseInt(sp.premontajeDays, 10) || 0;
         const premCourtesy = Math.min(premDays, parseInt(sp.premontajeCourtesyDays, 10) || 0);
         const premBillable = Math.max(0, premDays - premCourtesy);
@@ -7666,19 +9097,24 @@ window.updateSummaryUI = function() {
                         <p class="text-[11px] font-black uppercase text-gray-800">${sp.spaceName || 'Espacio'}</p>
                         <p class="text-[10px] font-mono text-gray-400">${sp.spaceKey || '---'}</p>
                     </div>
-                    <span class="text-[9px] font-bold uppercase tracking-wide text-right ${isActive ? 'text-emerald-700' : 'text-gray-400'}">${stateLabel}</span>
+                    <div class="flex flex-col items-end gap-1">
+                        <span class="text-[9px] font-bold uppercase tracking-wide text-right ${isActive ? 'text-emerald-700' : 'text-gray-400'}">${stateLabel}</span>
+                        ${sp.convenioEnabled ? '<span class="rounded-full border border-amber-200 bg-amber-100 px-2 py-0.5 text-[8px] font-black uppercase tracking-wide text-amber-800">Convenio</span>' : ''}
+                    </div>
                 </div>
                 <div class="mt-2 space-y-1 text-[10px] text-gray-600">
-                    <div class="flex justify-between gap-2"><span class="font-bold text-gray-400">Fechas</span><span class="text-right">${rangeLabel(sp.startDate, sp.endDate)}</span></div>
-                    <div class="flex justify-between gap-2"><span class="font-bold text-gray-400">Personas</span><span class="text-right">${parseInt(sp.guests, 10) || 0} px</span></div>
-                    <div class="flex justify-between gap-2"><span class="font-bold text-gray-400">Horario</span><span class="text-right max-w-[180px]">${sp.horarioText || '--'}</span></div>
-                    <div class="flex justify-between gap-2"><span class="font-bold text-gray-400">Premontaje</span><span class="text-right">${premDays > 0 ? `${premBillable} facturable(s) de ${premDays}` : 'Sin premontaje'}</span></div>
-                    <div class="flex justify-between gap-2"><span class="font-bold text-gray-400">Horas extra</span><span class="text-right">${hours > 0 ? `${hoursBillable} facturable(s) de ${hours}` : 'Sin horas extra'}</span></div>
+                    <div class="flex justify-between gap-2"><span class="font-bold text-gray-400">Fechas</span><span class="text-right">${sp.blocksIndefinitely ? `${window.safeFormatDate(sp.startDate)} al Indefinido` : rangeLabel(sp.startDate, sp.endDate)}</span></div>
+                    <div class="flex justify-between gap-2"><span class="font-bold text-gray-400">Personas</span><span class="text-right">${isPublicidad ? 'No aplica' : `${parseInt(sp.guests, 10) || 0} px`}</span></div>
+                    <div class="flex justify-between gap-2"><span class="font-bold text-gray-400">Horario</span><span class="text-right max-w-[180px]">${isPublicidad ? 'No aplica' : (sp.horarioText || '--')}</span></div>
+                    <div class="flex justify-between gap-2"><span class="font-bold text-gray-400">Premontaje</span><span class="text-right">${isPublicidad ? 'No aplica' : (premDays > 0 ? `${premBillable} facturable(s) de ${premDays}` : 'Sin premontaje')}</span></div>
+                    <div class="flex justify-between gap-2"><span class="font-bold text-gray-400">Horas extra</span><span class="text-right">${isPublicidad ? 'No aplica' : (hours > 0 ? `${hoursBillable} facturable(s) de ${hours}` : 'Sin horas extra')}</span></div>
                     <div class="flex justify-between gap-2 border-t border-dashed border-gray-200 pt-1 mt-1 font-bold text-gray-700"><span>Revisión</span><span class="${(sp.capacityOk === false || sp.blockedOk === false) ? 'text-red-600' : 'text-emerald-700'}">${issueLabel}</span></div>
                 </div>
             </button>`;
         }
         const badges = [
+            isPublicidad ? '<span class="px-1.5 py-0.5 rounded bg-red-50 text-red-700 border border-red-200">Publicidad</span>' : '<span class="px-1.5 py-0.5 rounded bg-slate-50 text-slate-700 border border-slate-200">Espacio</span>',
+            sp.convenioEnabled ? '<span class="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200">Convenio</span>' : '',
             isActive ? '<span class="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 border border-emerald-300">Espacio en edición</span>' : '',
             sp.capacityOk === false ? '<span class="px-1.5 py-0.5 rounded bg-red-50 text-red-700 border border-red-200">Aforo excedido</span>' : '',
             sp.blockedOk === false ? '<span class="px-1.5 py-0.5 rounded bg-red-50 text-red-700 border border-red-200">Fecha bloqueada</span>' : ''
@@ -7692,22 +9128,22 @@ window.updateSummaryUI = function() {
                 <div class="text-[9px] font-bold text-right text-gray-500">${badges || ''}</div>
             </div>
             <div class="mt-2 space-y-1 text-[10px] text-gray-600">
-                <div class="flex justify-between"><span class="font-bold text-gray-400">Fechas</span><span>${rangeLabel(sp.startDate, sp.endDate)}</span></div>
-                <div class="flex justify-between"><span class="font-bold text-gray-400">Personas</span><span>${parseInt(sp.guests, 10) || 0} px</span></div>
-                <div class="flex justify-between"><span class="font-bold text-gray-400">Horario</span><span class="text-right">${sp.horarioText || '--'}</span></div>
-                <div class="flex justify-between"><span class="font-bold text-gray-400">Premontaje</span><span>${premBillable} facturable(s) de ${premDays}</span></div>
-                <div class="flex justify-between"><span class="font-bold text-gray-400">Horas extra</span><span>${hoursBillable} facturable(s) de ${hours}</span></div>
+                <div class="flex justify-between"><span class="font-bold text-gray-400">Fechas</span><span>${sp.blocksIndefinitely ? `${window.safeFormatDate(sp.startDate)} al Indefinido` : rangeLabel(sp.startDate, sp.endDate)}</span></div>
+                <div class="flex justify-between"><span class="font-bold text-gray-400">Personas</span><span>${isPublicidad ? 'No aplica' : `${parseInt(sp.guests, 10) || 0} px`}</span></div>
+                <div class="flex justify-between"><span class="font-bold text-gray-400">Horario</span><span class="text-right">${isPublicidad ? 'No aplica' : (sp.horarioText || '--')}</span></div>
+                <div class="flex justify-between"><span class="font-bold text-gray-400">Premontaje</span><span>${isPublicidad ? 'No aplica' : `${premBillable} facturable(s) de ${premDays}`}</span></div>
+                <div class="flex justify-between"><span class="font-bold text-gray-400">Horas extra</span><span>${isPublicidad ? 'No aplica' : `${hoursBillable} facturable(s) de ${hours}`}</span></div>
             </div>
         </button>`;
     }).join('');
     setHtml('sum-spaces-list', spacesHtml || '<div class="text-[10px] text-gray-400 italic">Sin espacios seleccionados.</div>');
 
-    setText('sum-schedule', spaces.length === 1 ? (spaces[0].horarioText || '--') : `${spaces.length} espacios`);
-    setText('sum-montaje', `${Math.max(0, totalPrem - totalPremCourtesy)} facturable(s) de ${totalPrem}`);
-    setText('sum-hextras', `${Math.max(0, totalHours - totalHoursCourtesy)} facturable(s) de ${totalHours}`);
+    setText('sum-schedule', spaces.length === 1 ? (spaces[0].isPublicidad ? 'No aplica' : (spaces[0].horarioText || '--')) : `${spaces.length} espacios`);
+    setText('sum-montaje', nonPublicidadSpaces.length ? `${Math.max(0, totalPrem - totalPremCourtesy)} facturable(s) de ${totalPrem}` : 'No aplica');
+    setText('sum-hextras', nonPublicidadSpaces.length ? `${Math.max(0, totalHours - totalHoursCourtesy)} facturable(s) de ${totalHours}` : 'No aplica');
 };
 
-window.recalcTotal = function() {
+window.recalcTotal = function () {
     __orderSaveActiveFromForm();
     const taxByName = {};
     let baseAndLogistics = 0;
@@ -7717,29 +9153,38 @@ window.recalcTotal = function() {
     __orderQuoteSpaces.forEach(cfg => {
         const space = __orderGetSpaceById(cfg.spaceId);
         if (!space) return;
+        const isPublicidad = __orderIsPublicidadSpace(space);
+        cfg.concepts = __orderSafeArray(cfg.concepts).map(__orderNormalizeExtraConcept);
+        const isConvenio = isPublicidad && !!cfg.convenioEnabled;
+        const convenioItems = isConvenio ? __orderGetConvenioConcepts(cfg) : [];
+        const convenioValue = convenioItems.reduce((sum, concept) => sum + (parseFloat(concept.amount ?? concept.value ?? 0) || 0), 0);
+        const convenioCovered = isConvenio ? __orderConvenioCovered(parseFloat(space?.precio_base || 0) || 0, convenioValue) : false;
         const guests = parseInt(cfg.guests, 10) || 1;
         const maxCapacity = __orderGetSpaceMaxCapacity(space);
-        const capacityOk = !(maxCapacity < 999999 && guests > maxCapacity);
-        const blockedOk = !__orderCfgHasBlockedDates(cfg);
+        const capacityOk = isPublicidad ? true : !(maxCapacity < 999999 && guests > maxCapacity);
+        const blockedOk = isPublicidad ? true : !__orderCfgHasBlockedDates(cfg);
         const base = __orderResolveBaseTotal(cfg, space, guests);
-        const horarioCost = parseFloat(cfg.horarioPrice || 0) || 0;
-        const prem = __orderCalcPremontaje(space, cfg);
+        const horarioCost = isPublicidad ? 0 : (parseFloat(cfg.horarioPrice || 0) || 0);
+        const prem = isPublicidad ? { total: 0, breakdown: [] } : __orderCalcPremontaje(space, cfg);
         if (!__orderGetHoraExtraCfg().allowCustom) {
             cfg.horasExtraUnit = __orderResolveHoraExtraUnit(space);
         } else if (!Number.isFinite(parseFloat(cfg.horasExtraUnit))) {
             cfg.horasExtraUnit = __orderResolveHoraExtraUnit(space);
         }
-        cfg.premontajeCourtesyDays = Math.min(parseInt(cfg.premontajeDays, 10) || 0, parseInt(cfg.premontajeCourtesyDays, 10) || 0);
-        const rawHours = parseInt(cfg.horasExtra, 10) || 0;
-        const courtesyHours = Math.min(rawHours, Math.max(0, parseInt(cfg.horasExtraCourtesy, 10) || 0));
+        cfg.premontajeCourtesyDays = isPublicidad ? 0 : Math.min(parseInt(cfg.premontajeDays, 10) || 0, parseInt(cfg.premontajeCourtesyDays, 10) || 0);
+        const rawHours = isPublicidad ? 0 : (parseInt(cfg.horasExtra, 10) || 0);
+        const courtesyHours = isPublicidad ? 0 : Math.min(rawHours, Math.max(0, parseInt(cfg.horasExtraCourtesy, 10) || 0));
         cfg.horasExtraCourtesy = courtesyHours;
-        const billableHours = Math.max(0, rawHours - courtesyHours);
-        const horasCost = billableHours * (parseFloat(cfg.horasExtraUnit || 0) || 0);
+        const billableHours = isPublicidad ? 0 : Math.max(0, rawHours - courtesyHours);
+        const horasCost = isPublicidad ? 0 : (billableHours * (parseFloat(cfg.horasExtraUnit || 0) || 0));
         let subtotal = (capacityOk && blockedOk) ? (base + horarioCost + prem.total + horasCost) : 0;
-        if (space.ajuste_tipo === 'aumento') subtotal += subtotal * ((parseFloat(space.ajuste_porcentaje) || 0) / 100);
-        if (space.ajuste_tipo === 'descuento') subtotal -= subtotal * ((parseFloat(space.ajuste_porcentaje) || 0) / 100);
+        if (isConvenio) subtotal = Math.max(0, base - convenioValue);
+        if (!isPublicidad) {
+            if (space.ajuste_tipo === 'aumento') subtotal += subtotal * ((parseFloat(space.ajuste_porcentaje) || 0) / 100);
+            if (space.ajuste_tipo === 'descuento') subtotal -= subtotal * ((parseFloat(space.ajuste_porcentaje) || 0) / 100);
+        }
 
-        const taxIds = __orderResolveCfgTaxIds(cfg, space);
+        const taxIds = isConvenio ? [] : __orderResolveCfgTaxIds(cfg, space);
         const taxBreakdown = [];
         let taxSubtotal = 0;
         taxIds.forEach(tid => {
@@ -7758,9 +9203,11 @@ window.recalcTotal = function() {
             spaceId: cfg.spaceId,
             spaceName: space.nombre,
             spaceKey: space.clave,
+            spaceType: cfg.spaceType || space.tipo || '',
+            isPublicidad,
             startDate: cfg.startDate,
             endDate: cfg.endDate,
-            guests,
+            guests: isPublicidad ? 1 : guests,
             maxCapacity,
             capacityOk,
             blockedOk,
@@ -7780,11 +9227,25 @@ window.recalcTotal = function() {
             horasExtraBillable: billableHours,
             horasExtraUnit: cfg.horasExtraUnit,
             horasExtraTotal: horasCost,
+            convenioEnabled: isConvenio,
+            convenioCovered,
+            blocksIndefinitely: convenioCovered,
+            concepts: isConvenio ? convenioItems : [],
+            convenioValue,
+            baseValue: base,
             subtotalSpace: subtotal,
             taxIds,
             taxTotal: taxSubtotal,
             totalSpace: subtotal + taxSubtotal,
-            taxBreakdown
+            taxBreakdown,
+            customPermanence: !!cfg.customPermanence,
+            customPriceEnabled: !!cfg.customPriceEnabled && !isConvenio,
+            customPriceMode: cfg.customPriceMode || 'total',
+            customBasePrice: cfg.customBasePrice,
+            material: cfg.material || space.material || '',
+            medidaAncho: cfg.medidaAncho ?? __orderNormalizeMeasureValue(space.medida_ancho ?? space.ancho),
+            medidaAlto: cfg.medidaAlto ?? __orderNormalizeMeasureValue(space.medida_alto ?? space.alto),
+            medidaUnit: cfg.medidaUnit || __orderNormalizeMeasureUnit(space.medida_unidad || space.unidad_medida || 'M')
         };
         spacesData.push(cfg.__pricing);
     });
@@ -7803,11 +9264,19 @@ window.recalcTotal = function() {
         const spaceRef = sp.spaceKey ? `${sp.spaceName} [${sp.spaceKey}]` : (sp.spaceName || 'Espacio');
         const head = `<div class="flex items-start justify-between gap-2"><p class="text-[10px] font-black uppercase text-gray-700">${spaceRef}</p>${summaryStateLabel(isActive)}</div>`;
         const lines = [];
-        lines.push(`<div class="flex justify-between text-[10px] text-gray-500"><span>Renta base</span><span>${(parseFloat(sp.base || 0)).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span></div>`);
-        if ((parseFloat(sp.horarioCost || 0) || 0) > 0) lines.push(`<div class="flex justify-between text-[10px] text-gray-500"><span>Horario</span><span>${(parseFloat(sp.horarioCost || 0)).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span></div>`);
-        if ((parseFloat(sp.premontajeTotal || 0) || 0) > 0) lines.push(`<div class="flex justify-between text-[10px] text-gray-500"><span>Premontaje (${Math.max(0, (parseInt(sp.premontajeDays, 10) || 0) - (parseInt(sp.premontajeCourtesyDays, 10) || 0))} fact.)</span><span>${(parseFloat(sp.premontajeTotal || 0)).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span></div>`);
-        if ((parseFloat(sp.horasExtraTotal || 0) || 0) > 0) lines.push(`<div class="flex justify-between text-[10px] text-gray-500"><span>Horas extra (${parseInt(sp.horasExtraBillable, 10) || 0} fact.)</span><span>${(parseFloat(sp.horasExtraTotal || 0)).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span></div>`);
-        lines.push(`<div class="flex justify-between text-[10px] font-bold text-gray-700 border-t border-dashed border-gray-200 pt-1 mt-1"><span>Subtotal espacio</span><span>${(parseFloat(sp.subtotalSpace || 0)).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span></div>`);
+        if (sp.convenioEnabled) {
+            lines.push(`<div class="flex justify-between text-[10px] text-gray-500"><span>Valor base</span><span>${(parseFloat(sp.base || 0)).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span></div>`);
+            (sp.concepts || []).forEach((concept) => {
+                lines.push(`<div class="flex justify-between text-[10px] text-amber-700"><span>${concept.description || 'Trato de convenio'}</span><span>-${(parseFloat(concept.amount || concept.value || 0) || 0).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span></div>`);
+            });
+            lines.push(`<div class="flex justify-between text-[10px] font-bold text-gray-700 border-t border-dashed border-gray-200 pt-1 mt-1"><span>Balance convenio</span><span>${(parseFloat(sp.totalSpace || 0)).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span></div>`);
+        } else {
+            lines.push(`<div class="flex justify-between text-[10px] text-gray-500"><span>Renta base</span><span>${(parseFloat(sp.base || 0)).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span></div>`);
+            if ((parseFloat(sp.horarioCost || 0) || 0) > 0) lines.push(`<div class="flex justify-between text-[10px] text-gray-500"><span>Horario</span><span>${(parseFloat(sp.horarioCost || 0)).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span></div>`);
+            if ((parseFloat(sp.premontajeTotal || 0) || 0) > 0) lines.push(`<div class="flex justify-between text-[10px] text-gray-500"><span>Premontaje (${Math.max(0, (parseInt(sp.premontajeDays, 10) || 0) - (parseInt(sp.premontajeCourtesyDays, 10) || 0))} fact.)</span><span>${(parseFloat(sp.premontajeTotal || 0)).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span></div>`);
+            if ((parseFloat(sp.horasExtraTotal || 0) || 0) > 0) lines.push(`<div class="flex justify-between text-[10px] text-gray-500"><span>Horas extra (${parseInt(sp.horasExtraBillable, 10) || 0} fact.)</span><span>${(parseFloat(sp.horasExtraTotal || 0)).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span></div>`);
+            lines.push(`<div class="flex justify-between text-[10px] font-bold text-gray-700 border-t border-dashed border-gray-200 pt-1 mt-1"><span>Subtotal espacio</span><span>${(parseFloat(sp.subtotalSpace || 0)).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span></div>`);
+        }
         conceptsHtml += `<button type="button" onclick="window.selectOrderQuoteSpace('${sp.spaceId}')" class="w-full text-left rounded-lg border ${summaryStateClass(isActive)} p-3 space-y-1.5 transition hover:border-brand-red">${head}${lines.join('')}</button>`;
     });
     const extraConceptRows = [];
@@ -7821,10 +9290,14 @@ window.recalcTotal = function() {
     }
     document.getElementById('oed-summary-concepts').innerHTML = conceptsHtml;
 
+    const convenioMode = spacesData.some((sp) => !!sp.convenioEnabled);
     let subtotal = baseAndLogistics + conceptsSum;
-    const adjType = document.getElementById('oed-adj-type').value;
-    const adjVal = parseFloat(document.getElementById('oed-adj-val').value) || 0;
-    const isPercent = document.getElementById('oed-adj-unit').value === 'percent';
+    const rawAdjType = document.getElementById('oed-adj-type').value;
+    const rawAdjVal = parseFloat(document.getElementById('oed-adj-val').value) || 0;
+    const rawIsPercent = document.getElementById('oed-adj-unit').value === 'percent';
+    const adjType = convenioMode ? 'ninguno' : rawAdjType;
+    const adjVal = convenioMode ? 0 : rawAdjVal;
+    const isPercent = convenioMode ? false : rawIsPercent;
     let adjustment = 0;
     if (adjType !== 'ninguno') {
         adjustment = isPercent ? subtotal * (adjVal / 100) : adjVal;
@@ -7836,7 +9309,9 @@ window.recalcTotal = function() {
         const isActive = String(sp.spaceId || '') === String(__orderActiveSpaceId || '');
         const spaceRef = sp.spaceKey ? `${sp.spaceName} [${sp.spaceKey}]` : (sp.spaceName || 'Espacio');
         const rows = [];
-        if (Array.isArray(sp.taxBreakdown) && sp.taxBreakdown.length) {
+        if (sp.convenioEnabled) {
+            rows.push('<div class="text-[10px] text-gray-400 italic">Los convenios no generan impuestos, factura, recibo ni contrato.</div>');
+        } else if (Array.isArray(sp.taxBreakdown) && sp.taxBreakdown.length) {
             sp.taxBreakdown.forEach((tax) => {
                 rows.push(`<div class="flex justify-between text-[10px] text-gray-500"><span>${tax.name}</span><span>+${(parseFloat(tax.value || 0)).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span></div>`);
             });
@@ -7844,23 +9319,39 @@ window.recalcTotal = function() {
             rows.push('<div class="text-[10px] text-gray-400 italic">Sin impuestos configurados.</div>');
         }
         rows.push(`<div class="flex justify-between text-[10px] font-bold text-gray-700 border-t border-dashed border-gray-200 pt-1 mt-1"><span>Total impuestos</span><span>${(parseFloat(sp.taxTotal || 0)).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span></div>`);
-        rows.push(`<div class="flex justify-between text-[10px] font-black text-gray-800"><span>Total espacio</span><span>${(parseFloat(sp.totalSpace || 0)).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span></div>`);
+        rows.push(`<div class="flex justify-between text-[10px] font-black text-gray-800"><span>${sp.convenioEnabled ? 'Balance convenio' : 'Total espacio'}</span><span>${(parseFloat(sp.totalSpace || 0)).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</span></div>`);
         return `<button type="button" onclick="window.selectOrderQuoteSpace('${sp.spaceId}')" class="w-full text-left rounded-lg border ${summaryStateClass(isActive)} p-3 space-y-1.5 transition hover:border-brand-red"><div class="flex items-start justify-between gap-2"><p class="text-[10px] font-black uppercase text-gray-700">${spaceRef}</p>${summaryStateLabel(isActive)}</div>${rows.join('')}</button>`;
     }).join('');
     document.getElementById('oed-tax-summary-display').innerHTML = taxHtml;
 
     const finalTotal = subtotal + taxesTotal;
-    __orderTotals = { subtotalBase: baseAndLogistics, concepts: conceptsSum, adjustment, tax: taxesTotal, final: finalTotal, spaces: spacesData };
+    const convenioBaseTotal = spacesData.reduce((sum, sp) => sum + (sp.convenioEnabled ? (parseFloat(sp.baseValue ?? sp.base ?? 0) || 0) : 0), 0);
+    const convenioDeliveredTotal = spacesData.reduce((sum, sp) => sum + (sp.convenioEnabled ? (parseFloat(sp.convenioValue || 0) || 0) : 0), 0);
+    __orderTotals = {
+        subtotalBase: baseAndLogistics,
+        concepts: conceptsSum,
+        adjustment,
+        tax: taxesTotal,
+        final: finalTotal,
+        spaces: spacesData,
+        convenioMode,
+        convenioBaseTotal,
+        convenioDeliveredTotal
+    };
 
     document.getElementById('lbl-subtotal-base').innerText = baseAndLogistics.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
-    document.getElementById('lbl-adjustment').innerText = (adjType === 'descuento' ? '-' : '+') + adjustment.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
+    document.getElementById('lbl-adjustment').innerText = convenioMode
+        ? `-${convenioDeliveredTotal.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}`
+        : (adjType === 'descuento' ? '-' : '+') + adjustment.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
     document.getElementById('oed-price').value = finalTotal.toFixed(2);
     const sumSubtotal = document.getElementById('sum-total-subtotal');
     const sumAdjustment = document.getElementById('sum-total-adjustment');
     const sumTax = document.getElementById('sum-total-tax');
     const sumNet = document.getElementById('sum-total-net');
-    if (sumSubtotal) sumSubtotal.innerText = subtotal.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
-    if (sumAdjustment) sumAdjustment.innerText = ((adjType === 'descuento' ? '-' : '+') + adjustment.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }));
+    if (sumSubtotal) sumSubtotal.innerText = (convenioMode ? convenioBaseTotal : subtotal).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
+    if (sumAdjustment) sumAdjustment.innerText = convenioMode
+        ? `-${convenioDeliveredTotal.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}`
+        : ((adjType === 'descuento' ? '-' : '+') + adjustment.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }));
     if (sumTax) sumTax.innerText = taxesTotal.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
     if (sumNet) sumNet.innerText = finalTotal.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
     __orderRenderSpacePicker();
@@ -7868,57 +9359,72 @@ window.recalcTotal = function() {
     const summaryFinancialList = document.getElementById('sum-financial-list');
     if (summaryFinancialList) {
         const money = (value) => (parseFloat(value || 0) || 0).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
-        const overviewRows = [
-            { label: 'Renta Base + Logística', value: money(baseAndLogistics) },
-            { label: 'Subtotal Ajustado', value: money(subtotal) },
-            { label: 'Total Ajuste', value: `${adjType === 'descuento' ? '-' : '+'}${money(adjustment)}` },
-            { label: 'Impuestos', value: money(taxesTotal) },
-            { label: 'Total Neto', value: money(finalTotal), highlight: true }
-        ];
+        const overviewRows = convenioMode
+            ? [
+                { label: 'Valor base del convenio', value: money(convenioBaseTotal) },
+                { label: 'Tratos registrados', value: `-${money(convenioDeliveredTotal)}` },
+                { label: 'Impuestos', value: money(taxesTotal) },
+                { label: 'Balance del convenio', value: money(finalTotal), highlight: true }
+            ]
+            : [
+                { label: 'Renta Base + Logística', value: money(baseAndLogistics) },
+                { label: 'Subtotal Ajustado', value: money(subtotal) },
+                { label: 'Total Ajuste', value: `${adjType === 'descuento' ? '-' : '+'}${money(adjustment)}` },
+                { label: 'Impuestos', value: money(taxesTotal) },
+                { label: 'Total Neto', value: money(finalTotal), highlight: true }
+            ];
         const overviewHtml = `<div class="rounded-xl border border-gray-200 bg-white overflow-hidden"><div class="divide-y divide-gray-100 text-xs">${overviewRows.map((row) => `<div class="flex items-center justify-between gap-3 px-4 py-3 ${row.highlight ? 'bg-slate-50' : ''}"><span class="${row.highlight ? 'font-black uppercase text-gray-700' : 'font-bold text-gray-400'}">${row.label}</span><span class="${row.highlight ? 'font-black text-gray-900' : 'font-bold text-gray-800'} text-right">${row.value}</span></div>`).join('')}</div></div>`;
         const spacesFinancialHtml = spacesData.length
             ? spacesData.map((sp) => {
                 const isActive = String(sp.spaceId || '') === String(__orderActiveSpaceId || '');
                 const spaceRef = sp.spaceKey ? `${sp.spaceName} [${sp.spaceKey}]` : (sp.spaceName || 'Espacio');
-                const breakdownRows = [
-                    { label: 'Base calculada', value: sp.base },
-                    sp.horarioCost > 0 ? { label: `Horario (${sp.horarioText || 'seleccionado'})`, value: sp.horarioCost } : null,
-                    sp.premontajeTotal > 0 ? { label: 'Premontaje', value: sp.premontajeTotal } : null,
-                    sp.horasExtraTotal > 0 ? { label: 'Horas extra', value: sp.horasExtraTotal } : null
-                ].filter(Boolean);
+                const breakdownRows = sp.convenioEnabled
+                    ? [
+                        { label: 'Valor base', value: sp.base },
+                        ...(sp.concepts || []).map((concept) => ({ label: concept.description || 'Trato de convenio', value: -(parseFloat(concept.amount || concept.value || 0) || 0) }))
+                    ]
+                    : [
+                        { label: 'Base calculada', value: sp.base },
+                        sp.horarioCost > 0 ? { label: `Horario (${sp.horarioText || 'seleccionado'})`, value: sp.horarioCost } : null,
+                        sp.premontajeTotal > 0 ? { label: 'Premontaje', value: sp.premontajeTotal } : null,
+                        sp.horasExtraTotal > 0 ? { label: 'Horas extra', value: sp.horasExtraTotal } : null
+                    ].filter(Boolean);
                 const conceptRows = breakdownRows.length
-                    ? breakdownRows.map((item) => `<div class="flex justify-between text-[10px] text-gray-500"><span>${item.label}</span><span>${money(item.value)}</span></div>`).join('')
+                    ? breakdownRows.map((item) => `<div class="flex justify-between text-[10px] text-gray-500"><span>${item.label}</span><span>${item.value < 0 ? '-' : ''}${money(Math.abs(item.value))}</span></div>`).join('')
                     : '<div class="text-[10px] text-gray-400 italic">Sin cargos adicionales en este espacio.</div>';
-                const taxRows = Array.isArray(sp.taxBreakdown) && sp.taxBreakdown.length
-                    ? sp.taxBreakdown.map((taxItem) => `<div class="flex justify-between text-[10px] text-gray-500"><span>${taxItem.name}</span><span>+${money(taxItem.value)}</span></div>`).join('')
-                    : '<div class="text-[10px] text-gray-400 italic">Sin impuestos configurados.</div>';
+                const taxRows = sp.convenioEnabled
+                    ? '<div class="text-[10px] text-gray-400 italic">No aplica en convenio.</div>'
+                    : Array.isArray(sp.taxBreakdown) && sp.taxBreakdown.length
+                        ? sp.taxBreakdown.map((taxItem) => `<div class="flex justify-between text-[10px] text-gray-500"><span>${taxItem.name}</span><span>+${money(taxItem.value)}</span></div>`).join('')
+                        : '<div class="text-[10px] text-gray-400 italic">Sin impuestos configurados.</div>';
                 return `<button type="button" onclick="window.selectOrderQuoteSpace('${sp.spaceId}')" class="w-full text-left rounded-lg border ${summaryStateClass(isActive)} bg-white p-3 space-y-2 transition hover:border-brand-red">
                     <div class="flex items-start justify-between gap-2">
                         <p class="text-[10px] font-black uppercase text-gray-700">${spaceRef}</p>
                         ${summaryStateLabel(isActive)}
                     </div>
                     <div class="space-y-1">${conceptRows}</div>
-                    <div class="flex justify-between text-[10px] font-bold text-gray-700 border-t border-dashed border-gray-200 pt-1"><span>Subtotal espacio</span><span>${money(sp.subtotalSpace)}</span></div>
+                    <div class="flex justify-between text-[10px] font-bold text-gray-700 border-t border-dashed border-gray-200 pt-1"><span>${sp.convenioEnabled ? 'Balance convenio' : 'Subtotal espacio'}</span><span>${money(sp.convenioEnabled ? sp.totalSpace : sp.subtotalSpace)}</span></div>
                     <div class="space-y-1 border-t border-dashed border-gray-200 pt-2">${taxRows}</div>
-                    <div class="flex justify-between text-[10px] font-black text-gray-800 border-t border-dashed border-gray-200 pt-1"><span>Total espacio</span><span>${money(sp.totalSpace)}</span></div>
+                    <div class="flex justify-between text-[10px] font-black text-gray-800 border-t border-dashed border-gray-200 pt-1"><span>${sp.convenioEnabled ? 'Estado actual' : 'Total espacio'}</span><span>${money(sp.totalSpace)}</span></div>
                 </button>`;
             }).join('')
             : '<div class="rounded-xl border border-dashed border-gray-200 bg-white px-4 py-5 text-[11px] text-gray-400 italic">Sin espacios seleccionados.</div>';
         summaryFinancialList.innerHTML = `${overviewHtml}<div class="space-y-2">${spacesFinancialHtml}</div>`;
     }
+    __orderSyncConvenioUi();
     window.updatePriceColor();
     window.updateSummaryUI();
     __orderRenderActiveSpaceSummary(spacesData.find((sp) => String(sp.spaceId || '') === String(__orderActiveSpaceId || '')));
 };
 
-window.updatePriceColor = function() {
+window.updatePriceColor = function () {
     const priceInput = document.getElementById('oed-price');
     if (!priceInput) return;
     priceInput.classList.remove('text-green-600', 'text-red-600', 'text-gray-700');
     priceInput.classList.add('text-gray-700');
 };
 
-window.getFormDataFromModal = function() {
+window.getFormDataFromModal = function () {
     __orderSaveActiveFromForm();
     window.recalcTotal();
     const quoteNameRaw = (document.getElementById('oed-quote-name')?.value || '').trim();
@@ -7933,7 +9439,9 @@ window.getFormDataFromModal = function() {
 
     const b2bConcepts = [];
     const spacesDetail = spaces.map(sp => {
-        if (sp.horarioText) {
+        const isPublicidad = !!sp.isPublicidad;
+        const convenioItems = __orderBuildConvenioPayloadItems({ concepts: sp.concepts });
+        if (!isPublicidad && sp.horarioText) {
             b2bConcepts.push({
                 description: `[${sp.spaceName}] - Horario (${sp.horarioText})`,
                 amount: sp.horarioCost,
@@ -7943,7 +9451,7 @@ window.getFormDataFromModal = function() {
                 meta: { space_id: sp.spaceId, selected: sp.horarioValue, custom_name: sp.horarioText, custom_start: sp.horarioCustomStart || '', custom_end: sp.horarioCustomEnd || '' }
             });
         }
-        if (sp.premontajeDays > 0) {
+        if (!isPublicidad && sp.premontajeDays > 0) {
             const premDays = parseInt(sp.premontajeDays, 10) || 0;
             const courtesyDays = parseInt(sp.premontajeCourtesyDays, 10) || 0;
             const courtesyPart = courtesyDays > 0 ? `, cortesia: ${courtesyDays}` : '';
@@ -7956,7 +9464,7 @@ window.getFormDataFromModal = function() {
                 meta: { space_id: sp.spaceId, days: sp.premontajeDays, courtesy_days: sp.premontajeCourtesyDays || 0, dates: sp.premontajeDates, percentage: __orderGetPremPct(), per_day_base: sp.premontajeBreakdown }
             });
         }
-        if (sp.horasExtra > 0) {
+        if (!isPublicidad && sp.horasExtra > 0) {
             const rawHours = parseInt(sp.horasExtra, 10) || 0;
             const courtesyHours = parseInt(sp.horasExtraCourtesy, 10) || 0;
             const courtesyHoursPart = courtesyHours > 0 ? `, cortesia: ${courtesyHours}` : '';
@@ -7969,37 +9477,91 @@ window.getFormDataFromModal = function() {
                 meta: { space_id: sp.spaceId, hours: sp.horasExtraBillable, raw_hours: sp.horasExtra, courtesy_hours: sp.horasExtraCourtesy || 0, unit_price: sp.horasExtraUnit }
             });
         }
+        convenioItems.forEach((item) => {
+            b2bConcepts.push(__orderNormalizeExtraConcept({
+                description: `[${sp.spaceName}] - ${item.nombre || 'Convenio'} (${item.cantidad_entrega || 1} ${(item.cantidad_entrega || 1) === 1 ? 'entrega' : 'entregas'})`,
+                amount: item.monto,
+                value: item.monto,
+                unit: 'fixed',
+                type: 'aumento',
+                meta: {
+                    convenio_item: true,
+                    convenio_option_id: item.id,
+                    convenio_nombre: item.nombre,
+                    cantidad_entrega: item.cantidad_entrega,
+                    space_id: sp.spaceId
+                }
+            }));
+        });
         return {
             espacio_id: sp.spaceId,
             espacio_nombre: sp.spaceName,
             espacio_clave: sp.spaceKey,
+            espacio_tipo: sp.spaceType || '',
+            tipo: sp.spaceType || '',
             fecha_inicio: sp.startDate,
             fecha_fin: sp.endDate,
-            personas: sp.guests,
-            horario: { value: sp.horarioValue, label: sp.horarioText, amount: sp.horarioCost, start: sp.horarioCustomStart || '', end: sp.horarioCustomEnd || '' },
+            personas: isPublicidad ? 1 : sp.guests,
+            horario: isPublicidad
+                ? { value: '', label: '', amount: 0, start: '', end: '' }
+                : { value: sp.horarioValue, label: sp.horarioText, amount: sp.horarioCost, start: sp.horarioCustomStart || '', end: sp.horarioCustomEnd || '' },
             fechas_evento: __orderDatesBetween(sp.startDate, sp.endDate),
-            premontaje_dias: sp.premontajeDays,
-            premontaje_cortesia_dias: sp.premontajeCourtesyDays || 0,
-            premontaje_fechas: sp.premontajeDates,
-            premontaje_total: sp.premontajeTotal,
-            premontaje_detalle: sp.premontajeBreakdown,
-            horas_extra: sp.horasExtra,
-            horas_extra_cortesia: sp.horasExtraCourtesy || 0,
-            horas_extra_facturables: sp.horasExtraBillable || 0,
-            horas_extra_unitario: sp.horasExtraUnit,
-            horas_extra_total: sp.horasExtraTotal,
-            subtotal_espacio: sp.subtotalSpace,
-            impuestos_ids: sp.taxIds,
-            impuestos_total: sp.taxTotal,
+            premontaje_dias: isPublicidad ? 0 : sp.premontajeDays,
+            premontaje_cortesia_dias: isPublicidad ? 0 : (sp.premontajeCourtesyDays || 0),
+            premontaje_fechas: isPublicidad ? [] : sp.premontajeDates,
+            premontaje_total: isPublicidad ? 0 : sp.premontajeTotal,
+            premontaje_detalle: isPublicidad ? [] : sp.premontajeBreakdown,
+            horas_extra: isPublicidad ? 0 : sp.horasExtra,
+            horas_extra_cortesia: isPublicidad ? 0 : (sp.horasExtraCourtesy || 0),
+            horas_extra_facturables: isPublicidad ? 0 : (sp.horasExtraBillable || 0),
+            horas_extra_unitario: isPublicidad ? 0 : sp.horasExtraUnit,
+            horas_extra_total: isPublicidad ? 0 : sp.horasExtraTotal,
+            subtotal_espacio: sp.convenioEnabled ? (sp.baseValue ?? sp.subtotalSpace) : sp.subtotalSpace,
+            convenio_monto_entregado: sp.convenioEnabled ? (sp.convenioValue || 0) : 0,
+            convenio_balance: sp.convenioEnabled ? (sp.totalSpace || sp.subtotalSpace) : sp.subtotalSpace,
+            impuestos_ids: sp.convenioEnabled ? [] : sp.taxIds,
+            impuestos_total: sp.convenioEnabled ? 0 : sp.taxTotal,
+            material: sp.material || '',
+            medida_ancho: sp.medidaAncho ?? null,
+            medida_alto: sp.medidaAlto ?? null,
+            medida_unidad: sp.medidaUnit || '',
+            ancho: sp.medidaAncho ?? null,
+            alto: sp.medidaAlto ?? null,
+            unidad_medida: sp.medidaUnit || '',
+            permanencia_personalizada: isPublicidad ? !!sp.customPermanence : false,
+            precio_personalizado: (isPublicidad && !sp.convenioEnabled && sp.customPriceEnabled && sp.customBasePrice !== '' && sp.customBasePrice !== null && sp.customBasePrice !== undefined)
+                ? (parseFloat(sp.customBasePrice) || 0)
+                : null,
+            precio_personalizado_activo: isPublicidad ? (!!sp.customPriceEnabled && !sp.convenioEnabled) : false,
+            precio_personalizado_modo: isPublicidad ? (sp.customPriceMode || 'total') : null,
+            convenio_activo: !!sp.convenioEnabled,
+            convenio_indefinido: !!sp.blocksIndefinitely,
+            convenio_items: convenioItems,
             total_espacio: sp.totalSpace
         };
     });
 
     const finalConcepts = [...b2bConcepts, ...(currentConcepts || [])];
-    const taxUnion = Array.from(new Set(spaces.flatMap(s => s.taxIds || []).map(v => String(v))));
-    const adjType = document.getElementById('oed-adj-type').value;
-    const adjVal = parseFloat(document.getElementById('oed-adj-val').value) || 0;
-    const isPercent = document.getElementById('oed-adj-unit').value === 'percent';
+    const hasConvenioOrder = spaces.some((sp) => !!sp.convenioEnabled);
+    const taxUnion = Array.from(new Set(spaces.filter((sp) => !sp.convenioEnabled).flatMap(s => s.taxIds || []).map(v => String(v))));
+    const adjType = hasConvenioOrder ? 'ninguno' : document.getElementById('oed-adj-type').value;
+    const adjVal = hasConvenioOrder ? 0 : (parseFloat(document.getElementById('oed-adj-val').value) || 0);
+    const isPercent = hasConvenioOrder ? false : (document.getElementById('oed-adj-unit').value === 'percent');
+    const convenioSpaces = spaces
+        .filter((sp) => !!sp.convenioEnabled)
+        .map((sp) => ({
+            espacio_id: sp.spaceId,
+            espacio_nombre: sp.spaceName,
+            espacio_clave: sp.spaceKey,
+            cantidad_tratos: __orderBuildConvenioPayloadItems({ concepts: sp.concepts }).length,
+            items: __orderBuildConvenioPayloadItems({ concepts: sp.concepts })
+        }));
+    const convenioItems = convenioSpaces.flatMap((space) => (space.items || []).map((item) => ({
+        ...item,
+        espacio_id: space.espacio_id,
+        espacio_nombre: space.espacio_nombre,
+        espacio_clave: space.espacio_clave
+    })));
 
     return {
         nombre_cotizacion: quoteName,
@@ -8018,14 +9580,39 @@ window.getFormDataFromModal = function() {
         valor_ajuste: adjVal,
         ajuste_es_porcentaje: isPercent,
         conceptos_adicionales: finalConcepts,
-        desglose_precios: { subtotal_antes_impuestos: Math.max(0, (__orderTotals.final || 0) - (__orderTotals.tax || 0)), impuestos_detalle: taxUnion, tax_total: __orderTotals.tax, espacios: spacesDetail },
+        desglose_precios: {
+            subtotal_antes_impuestos: Math.max(0, (__orderTotals.final || 0) - (__orderTotals.tax || 0)),
+            impuestos_detalle: taxUnion,
+            tax_total: hasConvenioOrder ? 0 : __orderTotals.tax,
+            convenio_base_total: hasConvenioOrder ? (__orderTotals.convenioBaseTotal || 0) : 0,
+            convenio_entregable_total: hasConvenioOrder ? (__orderTotals.convenioDeliveredTotal || 0) : 0,
+            convenio_balance_total: hasConvenioOrder ? (__orderTotals.final || 0) : 0,
+            espacios: spacesDetail
+        },
         personas: maxGuests || 1,
         espacios_detalle: spacesDetail,
-        detalles_evento: { multi_espacio: spacesDetail.length > 1, total_espacios: spacesDetail.length, nombre_cotizacion: quoteName }
+        detalles_evento: {
+            multi_espacio: spacesDetail.length > 1,
+            total_espacios: spacesDetail.length,
+            nombre_cotizacion: quoteName,
+            convenio: (hasConvenioOrder || convenioItems.length) ? {
+                activo: true,
+                bloqueo_indefinido: true,
+                requiere_evidencia: true,
+                evidencia_minima: 3,
+                evidencia_maxima: 5,
+                requiere_factura: false,
+                requiere_recibo: false,
+                requiere_contrato: false,
+                espacios: convenioSpaces,
+                items: convenioItems,
+                evidencias: __orderParseRecordJson(currentPreviewOrder?.detalles_evento)?.convenio?.evidencias || []
+            } : null
+        }
     };
 };
 
-window.openOrderEditModal = async function(id) {
+window.openOrderEditModal = async function (id) {
     const loading = document.getElementById('editor-loading');
     if (loading) loading.classList.remove('hidden');
     const order = allOrders.find(o => o.id === id);
@@ -8034,6 +9621,7 @@ window.openOrderEditModal = async function(id) {
         return;
     }
     await __orderLoadPremontajePctConfig();
+    await __orderLoadConvenioCatalog();
     await loadClientProfilesForOrderModal();
     currentPreviewOrder = order;
     document.getElementById('oed-id').value = order.id;
@@ -8068,6 +9656,7 @@ window.openOrderEditModal = async function(id) {
     currentConcepts = dbConcepts.filter(c => {
         const type = String(c?.type || '').toLowerCase();
         if (['b2b_horario', 'b2b_montaje', 'b2b_horas'].includes(type)) return false;
+        if (__orderIsConvenioConceptItem(c)) return false;
         const desc = String(c?.description || '').toLowerCase();
         return !(desc.startsWith('horario:') || desc.startsWith('montaje') || desc.startsWith('horas extras'));
     });
@@ -8078,6 +9667,11 @@ window.openOrderEditModal = async function(id) {
             startDate: item.fecha_inicio || order.fecha_inicio,
             endDate: item.fecha_fin || order.fecha_fin,
             guests: item.personas || order.personas || 1,
+            spaceType: item.espacio_tipo || item.tipo || '',
+            material: item.material || '',
+            medidaAncho: item.medida_ancho ?? item.ancho ?? null,
+            medidaAlto: item.medida_alto ?? item.alto ?? null,
+            medidaUnit: item.medida_unidad || item.unidad_medida || 'M',
             horarioValue: item.horario?.value || '',
             horarioText: item.horario?.label || '',
             horarioPrice: item.horario?.amount || 0,
@@ -8089,10 +9683,21 @@ window.openOrderEditModal = async function(id) {
             horasExtra: item.horas_extra || 0,
             horasExtraCourtesy: item.horas_extra_cortesia || 0,
             horasExtraUnit: item.horas_extra_unitario || 0,
-            taxIds: item.impuestos_ids || []
+            customPermanence: item.permanencia_personalizada === true,
+            customPriceEnabled: item.precio_personalizado_activo === true,
+            customPriceMode: item.precio_personalizado_modo || 'total',
+            customBasePrice: item.precio_personalizado,
+            taxIds: item.impuestos_ids || [],
+            convenioEnabled: item.convenio_activo === true || item.convenio_indefinido === true,
+            concepts: __orderBuildConvenioConceptsFromPayload(item.convenio_items)
         }));
     } else {
-        __orderQuoteSpaces = [__orderCreateSpaceCfg(order.espacio_id, { startDate: order.fecha_inicio, endDate: order.fecha_fin, guests: order.personas || 1 })];
+        __orderQuoteSpaces = [__orderCreateSpaceCfg(order.espacio_id, {
+            startDate: order.fecha_inicio,
+            endDate: order.fecha_fin,
+            guests: order.personas || 1,
+            convenioEnabled: __orderIsConvenioOrder(order)
+        })];
     }
 
     __orderSafeArray(dbConcepts).forEach(c => {
@@ -8131,7 +9736,20 @@ window.openOrderEditModal = async function(id) {
             cfg.horasExtraCourtesy = parseInt(meta.courtesy_hours, 10) || cfg.horasExtraCourtesy || 0;
             cfg.horasExtraUnit = parseFloat(meta.unit_price || cfg.horasExtraUnit || 0) || 0;
             cfg.horasExtraEnabled = cfg.horasExtra > 0;
+        } else if (__orderIsConvenioConceptItem(c)) {
+            cfg.convenioEnabled = true;
+            cfg.concepts = __orderSafeArray(cfg.concepts).map(__orderNormalizeExtraConcept);
+            const nextConcept = __orderNormalizeExtraConcept(c);
+            const signature = `${nextConcept.meta?.convenio_option_id || ''}|${nextConcept.meta?.cantidad_entrega || 1}|${nextConcept.amount}`;
+            const exists = cfg.concepts.some((item) => `${item?.meta?.convenio_option_id || ''}|${item?.meta?.cantidad_entrega || 1}|${parseFloat(item?.amount ?? item?.value ?? 0) || 0}` === signature);
+            if (!exists) cfg.concepts.push(nextConcept);
         }
+    });
+    __orderQuoteSpaces.forEach((cfg) => {
+        const space = __orderGetSpaceById(cfg.spaceId);
+        if (__orderSpaceAllowsConvenio(space)) return;
+        cfg.convenioEnabled = false;
+        cfg.concepts = __orderSafeArray(cfg.concepts).map(__orderNormalizeExtraConcept).filter((concept) => !__orderIsConvenioConceptItem(concept));
     });
 
     __orderActiveSpaceId = String(__orderQuoteSpaces[0]?.spaceId || '');
@@ -8148,7 +9766,7 @@ window.openOrderEditModal = async function(id) {
 
     const isLocked = ['aprobada', 'finalizada'].includes(order.status);
     document.querySelectorAll('#order-edit-modal input, #order-edit-modal select').forEach(i => { if (i.id !== 'btn-save-progress') i.disabled = isLocked; });
-    ['oed-quote-name','oed-status'].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = isLocked; });
+    ['oed-quote-name', 'oed-status'].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = isLocked; });
     document.getElementById('oed-btn-montaje').disabled = isLocked;
     const saveBtn = document.getElementById('btn-save-progress');
     if (saveBtn) {
@@ -8170,11 +9788,12 @@ window.openOrderEditModal = async function(id) {
     __orderBindDetailAutoSave();
 };
 
-window.attemptSaveOrder = function() {
+window.attemptSaveOrder = function () {
     const locked = ['aprobada', 'finalizada'].includes(String(currentPreviewOrder?.status || '').toLowerCase());
     if (locked) return window.showToast("La cotización aprobada está bloqueada para edición.", "error");
     __orderSaveActiveFromForm();
     window.recalcTotal();
+    const convenioOrder = __orderQuoteSpaces.some((cfg) => !!cfg?.convenioEnabled);
     const newStatus = document.getElementById('oed-status').value;
     const currentLevel = STATUS_LEVEL[currentPreviewOrder.status] || 0;
     const newLevel = STATUS_LEVEL[newStatus] || 0;
@@ -8185,6 +9804,7 @@ window.attemptSaveOrder = function() {
         return window.showToast(`No se permiten fechas pasadas en ${sp?.nombre || invalidPast.spaceId}.`, "error");
     }
     const invalidCapacity = __orderQuoteSpaces.find(cfg => {
+        if (__orderIsPublicidadSpace(cfg)) return false;
         const space = __orderGetSpaceById(cfg.spaceId);
         const maxCap = __orderGetSpaceMaxCapacity(space);
         const guests = parseInt(cfg.guests, 10) || 0;
@@ -8194,12 +9814,22 @@ window.attemptSaveOrder = function() {
         const sp = __orderGetSpaceById(invalidCapacity.spaceId);
         return window.showToast(`Aforo excedido en ${sp?.nombre || invalidCapacity.spaceId}.`, "error");
     }
-    const invalidBlocked = __orderQuoteSpaces.find(cfg => __orderCfgHasBlockedDates(cfg));
+    const invalidBlocked = __orderQuoteSpaces.find(cfg => !__orderIsPublicidadSpace(cfg) && __orderCfgHasBlockedDates(cfg));
     if (invalidBlocked) {
         const sp = __orderGetSpaceById(invalidBlocked.spaceId);
         return window.showToast(`La selección incluye días bloqueados para ${sp?.nombre || invalidBlocked.spaceId}.`, "error");
     }
+    const missingConvenio = __orderQuoteSpaces.find(cfg => !!cfg?.convenioEnabled && !__orderGetConvenioConcepts(cfg).length);
+    if (missingConvenio) {
+        const sp = __orderGetSpaceById(missingConvenio.spaceId);
+        return window.showToast(`Agrega al menos un trato de convenio para ${sp?.nombre || missingConvenio.spaceId}.`, "error");
+    }
+    const uncoveredConvenio = (__orderTotals.spaces || []).find(sp => !!sp.convenioEnabled && !sp.convenioCovered);
+    if (uncoveredConvenio) {
+        return window.showToast(`El convenio de ${uncoveredConvenio.spaceName} debe cubrir al menos el valor total del espacio.`, "error");
+    }
     const invalidPrem = __orderQuoteSpaces.find(cfg => {
+        if (__orderIsPublicidadSpace(cfg)) return false;
         const days = parseInt(cfg.premontajeDays, 10) || 0;
         return days > 0 && __orderSafeArray(cfg.premontajeDates).length !== days;
     });
@@ -8209,20 +9839,24 @@ window.attemptSaveOrder = function() {
     }
     const conflictCfg = __orderQuoteSpaces.find(cfg => {
         const reserved = __orderGetReservedDatesForSpace(cfg.spaceId);
+        if (__orderCfgBlocksIndefinitely(cfg)) return Array.from(reserved).some((date) => date >= String(cfg.startDate || ''));
+        if (__orderIsPublicidadSpace(cfg)) return false;
         const needed = [...__orderDatesBetween(cfg.startDate, cfg.endDate), ...__orderSafeArray(cfg.premontajeDates).map(__orderNormalizeDate).filter(Boolean)];
         return needed.find(d => reserved.has(d));
     });
     if (conflictCfg) {
         const sp = __orderGetSpaceById(conflictCfg.spaceId);
         const reserved = __orderGetReservedDatesForSpace(conflictCfg.spaceId);
-        const conflictDate = [...__orderDatesBetween(conflictCfg.startDate, conflictCfg.endDate), ...__orderSafeArray(conflictCfg.premontajeDates).map(__orderNormalizeDate).filter(Boolean)].find(d => reserved.has(d));
+        const conflictDate = __orderCfgBlocksIndefinitely(conflictCfg)
+            ? Array.from(reserved).filter((date) => date >= String(conflictCfg.startDate || '')).sort()[0]
+            : [...__orderDatesBetween(conflictCfg.startDate, conflictCfg.endDate), ...__orderSafeArray(conflictCfg.premontajeDates).map(__orderNormalizeDate).filter(Boolean)].find(d => reserved.has(d));
         return window.showToast(`${sp?.nombre || conflictCfg.spaceId} está ocupado ${conflictDate ? '(' + window.safeFormatDate(conflictDate) + ')' : ''}.`, "error");
     }
     if (newStatus === 'aprobada') {
         const missing = [];
         if (!document.getElementById('oed-client').value) missing.push("Nombre Cliente");
         if (!document.getElementById('oed-email').value) missing.push("Email");
-        if (!document.getElementById('fiscal-rfc-re').value) missing.push("RFC");
+        if (!convenioOrder && !document.getElementById('fiscal-rfc-re').value) missing.push("RFC");
         if (!__orderQuoteSpaces.every(cfg => cfg.startDate && cfg.endDate)) missing.push("Fechas");
         if (missing.length > 0) return window.openConfirm(`<p class="text-red-600 font-bold mb-2">Faltan datos para aprobar:</p><ul class="list-disc ml-4 text-xs text-left">${missing.map(m => `<li>${m}</li>`).join('')}</ul>`, () => window.closeModal('generic-confirm-modal'), true);
         window.processSaveOrder();
@@ -8233,7 +9867,7 @@ window.attemptSaveOrder = function() {
 
 document.addEventListener('DOMContentLoaded', async () => {
     if (window.__HUB_LAYOUT_READY && typeof window.__HUB_LAYOUT_READY.then === 'function') {
-        try { await window.__HUB_LAYOUT_READY; } catch (_) {}
+        try { await window.__HUB_LAYOUT_READY; } catch (_) { }
     }
     if (window.__HUB_PAGE_ACCESS_DENIED) return;
     await __orderLoadPremontajePctConfig();
