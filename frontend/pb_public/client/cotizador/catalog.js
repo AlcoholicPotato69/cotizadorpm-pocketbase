@@ -72,6 +72,7 @@ const PB_URL = window.HUB_CONFIG?.pocketbaseUrl || window.ENV?.POCKETBASE_URL ||
 const PB_KEY = window.HUB_CONFIG?.pocketbaseAnonKey || window.ENV?.POCKETBASE_ANON_KEY || '';
 
 const FIN_SCHEMA = window.HUB_CONFIG?.finanzasSchema || window.ENV?.SCHEMA_PLAZA_MAYOR || 'finanzas';
+const PM_TENANT_SLUG = 'plaza_mayor';
 const PM_CATALOG_MODE = window.__PM_CATALOG_MODE || ((window.location.pathname || '').toLowerCase().includes('cotizacion.html') ? 'quote' : 'catalog_admin');
 const IS_PM_QUOTE_PAGE = PM_CATALOG_MODE === 'quote';
 const IS_PM_CATALOG_ADMIN_PAGE = !IS_PM_QUOTE_PAGE;
@@ -393,18 +394,131 @@ function pmNativeCotizacionesService() {
     return window.PB_SERVICES && window.PB_SERVICES.cotizaciones ? window.PB_SERVICES.cotizaciones : null;
 }
 
+function pmCloneQuotePayloadValue(value) {
+    if (Array.isArray(value)) return value.map(pmCloneQuotePayloadValue);
+    if (value && typeof value === 'object') {
+        const out = {};
+        Object.keys(value).forEach((key) => {
+            out[key] = pmCloneQuotePayloadValue(value[key]);
+        });
+        return out;
+    }
+    return value;
+}
+
+function pmToFiniteNumber(value, fallback = NaN) {
+    const parsed = typeof value === 'number' ? value : parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function pmComputeDetailSubtotalForCreate(detail = {}) {
+    const taxTotal = pmToFiniteNumber(detail?.impuestos_total ?? detail?.taxTotal, 0);
+    const totalValue = pmToFiniteNumber(detail?.total_espacio ?? detail?.total, NaN);
+    if (Number.isFinite(totalValue)) return Math.max(0, totalValue - taxTotal);
+    const baseValue = pmToFiniteNumber(detail?.subtotal_espacio ?? detail?.subtotalBeforeTax ?? detail?.baseValue, 0);
+    const convenioValue = pmToFiniteNumber(detail?.convenio_monto_entregado ?? detail?.convenioValue, 0);
+    const convenioActivo = detail?.convenio_activo === true || detail?.convenioEnabled === true;
+    return convenioActivo ? Math.max(0, baseValue - convenioValue) : Math.max(0, baseValue);
+}
+
+function pmNormalizeQuoteDetailForCreate(detail = {}) {
+    const normalized = detail && typeof detail === 'object' ? pmCloneQuotePayloadValue(detail) : {};
+    const subtotalBase = pmToFiniteNumber(normalized.subtotal_espacio ?? normalized.subtotalBeforeTax ?? normalized.baseValue, 0);
+    const taxTotal = pmToFiniteNumber(normalized.impuestos_total ?? normalized.taxTotal, 0);
+    const convenioValue = pmToFiniteNumber(normalized.convenio_monto_entregado ?? normalized.convenioValue, 0);
+    const convenioActivo = normalized.convenio_activo === true || normalized.convenioEnabled === true;
+    const computedSubtotal = pmComputeDetailSubtotalForCreate({
+        ...normalized,
+        subtotal_espacio: subtotalBase,
+        impuestos_total: taxTotal,
+        convenio_monto_entregado: convenioValue,
+        convenio_activo: convenioActivo
+    });
+    const totalFallback = computedSubtotal + taxTotal;
+    const totalValue = pmToFiniteNumber(normalized.total_espacio ?? normalized.total, totalFallback);
+    const convenioBalanceFallback = convenioActivo ? Math.max(0, subtotalBase - convenioValue) : computedSubtotal;
+    normalized.subtotal_espacio = subtotalBase;
+    normalized.impuestos_total = taxTotal;
+    normalized.convenio_monto_entregado = convenioValue;
+    normalized.total_espacio = totalValue;
+    normalized.convenio_balance = pmToFiniteNumber(normalized.convenio_balance, convenioBalanceFallback);
+    return normalized;
+}
+
+function pmSanitizeQuoteFinancials(payload = {}) {
+    const normalized = payload && typeof payload === 'object' ? payload : {};
+    const existingBreakdown = normalized.desglose_precios && typeof normalized.desglose_precios === 'object' ? normalized.desglose_precios : {};
+    const detailRowsSource = safeArray(normalized.espacios_detalle);
+    const breakdownRowsSource = safeArray(existingBreakdown.espacios);
+    const rows = (detailRowsSource.length ? detailRowsSource : breakdownRowsSource).map(pmNormalizeQuoteDetailForCreate);
+    const subtotalFromRows = rows.reduce((sum, row) => sum + pmComputeDetailSubtotalForCreate(row), 0);
+    const taxesFromRows = rows.reduce((sum, row) => sum + pmToFiniteNumber(row?.impuestos_total, 0), 0);
+    const subtotal = pmToFiniteNumber(existingBreakdown.subtotal_antes_impuestos, subtotalFromRows);
+    const taxes = pmToFiniteNumber(existingBreakdown.tax_total, taxesFromRows);
+    let finalPrice = pmToFiniteNumber(normalized.precio_final, NaN);
+    if (!Number.isFinite(finalPrice)) finalPrice = subtotal + taxes;
+    if (!Number.isFinite(finalPrice)) finalPrice = rows.reduce((sum, row) => sum + pmToFiniteNumber(row?.total_espacio, 0), 0);
+    normalized.espacios_detalle = rows;
+    normalized.precio_final = Math.max(0, pmToFiniteNumber(finalPrice, 0));
+    normalized.desglose_precios = {
+        ...existingBreakdown,
+        subtotal_antes_impuestos: Math.max(0, pmToFiniteNumber(subtotal, 0)),
+        tax_total: Math.max(0, pmToFiniteNumber(taxes, 0)),
+        convenio_base_total: Math.max(0, pmToFiniteNumber(existingBreakdown.convenio_base_total, 0)),
+        convenio_entregable_total: Math.max(0, pmToFiniteNumber(existingBreakdown.convenio_entregable_total, 0)),
+        convenio_balance_total: Math.max(0, pmToFiniteNumber(existingBreakdown.convenio_balance_total, normalized.precio_final)),
+        espacios: rows
+    };
+    return normalized;
+}
+
+function pmPrepareQuoteCreatePayload(payload) {
+    let normalized = pmCloneQuotePayloadValue(payload || {});
+    normalized.tenant = PM_TENANT_SLUG;
+    [
+        'cliente_id',
+        'creado_por',
+        'creado_por_nombre',
+        'modificado_por',
+        'modificado_por_nombre',
+        'cliente_rfc',
+        'cliente_contacto',
+        'cliente_email'
+    ].forEach((field) => {
+        if (normalized[field] === null || normalized[field] === undefined) normalized[field] = '';
+    });
+    return pmSanitizeQuoteFinancials(normalized);
+}
+
+function pmExtractCreateQuoteErrorMessage(error) {
+    const fallback = String(error?.message || 'No se pudo crear la cotización.').trim();
+    const details = error?.details?.data && typeof error.details.data === 'object' ? error.details.data : null;
+    if (!details) return fallback;
+    const fieldErrors = Object.entries(details)
+        .map(([field, meta]) => {
+            const message = String(meta?.message || '').trim();
+            return message ? `${field}: ${message}` : '';
+        })
+        .filter(Boolean)
+        .slice(0, 3);
+    if (!fieldErrors.length) return fallback;
+    const detailText = fieldErrors.join(' | ');
+    return fallback.toLowerCase().includes(detailText.toLowerCase()) ? fallback : `${fallback} (${detailText})`;
+}
+
 async function pmCreateQuoteRecord(payload) {
+    const createPayload = pmPrepareQuoteCreatePayload(payload);
     const svc = pmNativeCotizacionesService();
     if (svc) {
         try {
-            const created = await svc.create(payload, { schema: FIN_SCHEMA });
+            const created = await svc.create(createPayload, { schema: FIN_SCHEMA });
             const createdId = String(created?.id || created?._pb_id || '').trim();
             return { error: null, data: created || null, id: createdId };
         } catch (error) {
             return { error, data: null, id: '' };
         }
     }
-    const result = await window.tenantPocketBase.from('cotizaciones').insert(payload);
+    const result = await window.tenantPocketBase.from('cotizaciones').insert(createPayload);
     const data = result && result.data ? result.data : null;
     const createdId = String(data?.id || data?._pb_id || '').trim();
     return { error: result && result.error ? result.error : null, data, id: createdId };
@@ -1936,8 +2050,12 @@ window.updateQuoteCalculation = function () {
                 conceptsTax += taxableSubtotal * rate;
             });
         }
-        subtotal += taxableSubtotal;
-        taxes += conceptsTax;
+        const safeTaxableSubtotal = Math.max(0, pmToFiniteNumber(taxableSubtotal, 0));
+        const safeConceptsTax = Math.max(0, pmToFiniteNumber(conceptsTax, 0));
+        const safeBaseValue = Math.max(0, pmToFiniteNumber(baseValue, 0));
+        const safeConceptsTotal = Math.max(0, pmToFiniteNumber(conceptsTotal, 0));
+        subtotal += safeTaxableSubtotal;
+        taxes += safeConceptsTax;
         spacesPricing.push({
             spaceId: space.id,
             spaceName: space.nombre,
@@ -1950,16 +2068,18 @@ window.updateQuoteCalculation = function () {
             customBasePrice: customBase,
             convenioEnabled: !!cfg.convenioEnabled,
             convenioCovered,
-            baseValue,
-            convenioValue: conceptsTotal,
-            subtotalBeforeTax: taxableSubtotal,
-            taxTotal: conceptsTax,
-            total: taxableSubtotal + conceptsTax,
+            baseValue: safeBaseValue,
+            convenioValue: safeConceptsTotal,
+            subtotalBeforeTax: safeTaxableSubtotal,
+            taxTotal: safeConceptsTax,
+            total: safeTaxableSubtotal + safeConceptsTax,
             taxIds: cfg.convenioEnabled ? [] : pricing.taxIds,
             concepts: concepts
         });
     });
-    currentPricing = { subtotal, taxes, final: subtotal + taxes, spaces: spacesPricing };
+    const safeSubtotal = Math.max(0, pmToFiniteNumber(subtotal, 0));
+    const safeTaxes = Math.max(0, pmToFiniteNumber(taxes, 0));
+    currentPricing = { subtotal: safeSubtotal, taxes: safeTaxes, final: safeSubtotal + safeTaxes, spaces: spacesPricing };
     const qPrice = document.getElementById('q-price');
     if (qPrice) qPrice.innerText = formatMoney(currentPricing.final);
 };
@@ -2419,7 +2539,7 @@ window.generatePDF = async function () {
         if (String(error.message || '').toLowerCase().includes('espacios_detalle') || String(error.message || '').toLowerCase().includes('nombre_cotizacion')) {
             return window.showToast("Falta aplicar migración de BD para multiespacio en Plaza Mayor.", "error");
         }
-        return window.showToast(`Error al guardar: ${error.message}`, "error");
+        return window.showToast(`Error al guardar: ${pmExtractCreateQuoteErrorMessage(error)}`, "error");
     }
     window.showToast("Cotización Creada");
     const targetUrl = createdQuoteId ? `order_detail.html?quote=${encodeURIComponent(createdQuoteId)}` : 'orders.html';

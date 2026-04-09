@@ -27,6 +27,7 @@ const PB_KEY = window.HUB_CONFIG?.pocketbaseAnonKey || window.ENV?.POCKETBASE_AN
 const __cpPath = window.location.pathname || '';
 const __cpIsCP = /\/cotizadorcp(\/|$)/.test(__cpPath) || (window.location.href || '').includes('cotizadorcp');
 const FIN_SCHEMA = __cpIsCP ? 'finanzas_casadepiedra' : (window.HUB_CONFIG?.finanzasSchema || window.ENV?.SCHEMA_CASA_PIEDRA || 'finanzas');
+const CP_TENANT_SLUG = 'casa_de_piedra';
 // Fallback por pathname: si falta __CP_PAGE_MODE, la vista de cotizacion no debe degradar a modo catalogo.
 const CP_PAGE_MODE = window.__CP_PAGE_MODE || ((String(window.location.pathname || '').toLowerCase().includes('cotizacion.html')) ? 'cotizacion' : 'catalog_admin');
 const IS_QUOTE_PAGE = CP_PAGE_MODE === 'cotizacion';
@@ -214,18 +215,128 @@ function __cpNavigateSafely(targetUrl, options = {}) {
 function __cpNativeCotizacionesService() {
     return window.PB_SERVICES && window.PB_SERVICES.cotizaciones ? window.PB_SERVICES.cotizaciones : null;
 }
+function __cpCloneQuotePayloadValue(value) {
+    if (Array.isArray(value)) return value.map(__cpCloneQuotePayloadValue);
+    if (value && typeof value === 'object') {
+        const out = {};
+        Object.keys(value).forEach((key) => {
+            out[key] = __cpCloneQuotePayloadValue(value[key]);
+        });
+        return out;
+    }
+    return value;
+}
+function __cpToFiniteNumber(value, fallback = NaN) {
+    const parsed = typeof value === 'number' ? value : parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+}
+function __cpComputeDetailSubtotalForCreate(detail = {}) {
+    const taxTotal = __cpToFiniteNumber(detail?.impuestos_total ?? detail?.taxTotal, 0);
+    const totalValue = __cpToFiniteNumber(detail?.total_espacio ?? detail?.total, NaN);
+    if (Number.isFinite(totalValue)) return Math.max(0, totalValue - taxTotal);
+    const baseValue = __cpToFiniteNumber(detail?.subtotal_espacio ?? detail?.subtotalBeforeTax ?? detail?.baseValue, 0);
+    const convenioValue = __cpToFiniteNumber(detail?.convenio_monto_entregado ?? detail?.convenioValue, 0);
+    const convenioActivo = detail?.convenio_activo === true || detail?.convenioEnabled === true;
+    return convenioActivo ? Math.max(0, baseValue - convenioValue) : Math.max(0, baseValue);
+}
+function __cpNormalizeQuoteDetailForCreate(detail = {}) {
+    const normalized = detail && typeof detail === 'object' ? __cpCloneQuotePayloadValue(detail) : {};
+    const subtotalBase = __cpToFiniteNumber(normalized.subtotal_espacio ?? normalized.subtotalBeforeTax ?? normalized.baseValue, 0);
+    const taxTotal = __cpToFiniteNumber(normalized.impuestos_total ?? normalized.taxTotal, 0);
+    const convenioValue = __cpToFiniteNumber(normalized.convenio_monto_entregado ?? normalized.convenioValue, 0);
+    const convenioActivo = normalized.convenio_activo === true || normalized.convenioEnabled === true;
+    const computedSubtotal = __cpComputeDetailSubtotalForCreate({
+        ...normalized,
+        subtotal_espacio: subtotalBase,
+        impuestos_total: taxTotal,
+        convenio_monto_entregado: convenioValue,
+        convenio_activo: convenioActivo
+    });
+    const totalFallback = computedSubtotal + taxTotal;
+    const totalValue = __cpToFiniteNumber(normalized.total_espacio ?? normalized.total, totalFallback);
+    const convenioBalanceFallback = convenioActivo ? Math.max(0, subtotalBase - convenioValue) : computedSubtotal;
+    normalized.subtotal_espacio = subtotalBase;
+    normalized.impuestos_total = taxTotal;
+    normalized.convenio_monto_entregado = convenioValue;
+    normalized.total_espacio = totalValue;
+    normalized.convenio_balance = __cpToFiniteNumber(normalized.convenio_balance, convenioBalanceFallback);
+    return normalized;
+}
+function __cpSanitizeQuoteFinancials(payload = {}) {
+    const normalized = payload && typeof payload === 'object' ? payload : {};
+    const existingBreakdown = normalized.desglose_precios && typeof normalized.desglose_precios === 'object' ? normalized.desglose_precios : {};
+    const detailRowsSource = __cpSafeArray(normalized.espacios_detalle);
+    const breakdownRowsSource = __cpSafeArray(existingBreakdown.espacios);
+    const rows = (detailRowsSource.length ? detailRowsSource : breakdownRowsSource).map(__cpNormalizeQuoteDetailForCreate);
+    const subtotalFromRows = rows.reduce((sum, row) => sum + __cpComputeDetailSubtotalForCreate(row), 0);
+    const taxesFromRows = rows.reduce((sum, row) => sum + __cpToFiniteNumber(row?.impuestos_total, 0), 0);
+    const subtotal = __cpToFiniteNumber(existingBreakdown.subtotal_antes_impuestos, subtotalFromRows);
+    const taxes = __cpToFiniteNumber(existingBreakdown.tax_total, taxesFromRows);
+    let finalPrice = __cpToFiniteNumber(normalized.precio_final, NaN);
+    if (!Number.isFinite(finalPrice)) finalPrice = __cpToFiniteNumber(existingBreakdown.precio_final_usado, NaN);
+    if (!Number.isFinite(finalPrice)) finalPrice = subtotal + taxes;
+    if (!Number.isFinite(finalPrice)) finalPrice = rows.reduce((sum, row) => sum + __cpToFiniteNumber(row?.total_espacio, 0), 0);
+    normalized.espacios_detalle = rows;
+    normalized.precio_final = Math.max(0, __cpToFiniteNumber(finalPrice, 0));
+    normalized.personas = Math.max(0, parseInt(normalized.personas, 10) || 0);
+    normalized.desglose_precios = {
+        ...existingBreakdown,
+        subtotal_antes_impuestos: Math.max(0, __cpToFiniteNumber(subtotal, 0)),
+        tax_total: Math.max(0, __cpToFiniteNumber(taxes, 0)),
+        precio_final_usado: Math.max(0, __cpToFiniteNumber(existingBreakdown.precio_final_usado, normalized.precio_final)),
+        auto_calculado: Math.max(0, __cpToFiniteNumber(existingBreakdown.auto_calculado, normalized.precio_final)),
+        convenio_base_total: Math.max(0, __cpToFiniteNumber(existingBreakdown.convenio_base_total, 0)),
+        convenio_entregable_total: Math.max(0, __cpToFiniteNumber(existingBreakdown.convenio_entregable_total, 0)),
+        convenio_balance_total: Math.max(0, __cpToFiniteNumber(existingBreakdown.convenio_balance_total, normalized.precio_final)),
+        espacios: rows
+    };
+    return normalized;
+}
+function __cpPrepareQuoteCreatePayload(payload) {
+    let normalized = __cpCloneQuotePayloadValue(payload || {});
+    normalized.tenant = CP_TENANT_SLUG;
+    [
+        'cliente_id',
+        'creado_por',
+        'creado_por_nombre',
+        'modificado_por',
+        'modificado_por_nombre',
+        'cliente_rfc',
+        'cliente_contacto',
+        'cliente_email'
+    ].forEach((field) => {
+        if (normalized[field] === null || normalized[field] === undefined) normalized[field] = '';
+    });
+    return __cpSanitizeQuoteFinancials(normalized);
+}
+function __cpExtractCreateQuoteErrorMessage(error) {
+    const fallback = String(error?.message || 'No se pudo crear la cotización.').trim();
+    const details = error?.details?.data && typeof error.details.data === 'object' ? error.details.data : null;
+    if (!details) return fallback;
+    const fieldErrors = Object.entries(details)
+        .map(([field, meta]) => {
+            const message = String(meta?.message || '').trim();
+            return message ? `${field}: ${message}` : '';
+        })
+        .filter(Boolean)
+        .slice(0, 3);
+    if (!fieldErrors.length) return fallback;
+    const detailText = fieldErrors.join(' | ');
+    return fallback.toLowerCase().includes(detailText.toLowerCase()) ? fallback : `${fallback} (${detailText})`;
+}
 async function __cpCreateQuoteRecord(payload) {
+    const createPayload = __cpPrepareQuoteCreatePayload(payload);
     const svc = __cpNativeCotizacionesService();
     if (svc) {
         try {
-            const created = await svc.create(payload, { schema: FIN_SCHEMA });
+            const created = await svc.create(createPayload, { schema: FIN_SCHEMA });
             const createdId = String(created?.id || created?._pb_id || '').trim();
             return { error: null, data: created || null, id: createdId };
         } catch (error) {
             return { error, data: null, id: '' };
         }
     }
-    const result = await window.tenantPocketBase.from('cotizaciones').insert(payload);
+    const result = await window.tenantPocketBase.from('cotizaciones').insert(createPayload);
     const data = result && result.data ? result.data : null;
     const createdId = String(data?.id || data?._pb_id || '').trim();
     return { error: result && result.error ? result.error : null, data, id: createdId };
@@ -1219,7 +1330,7 @@ window.openQuoteModal = function (id) {
 
 window.addAdminConcept = function () { const sel = document.getElementById('admin-concept-select'); const id = sel.value; if (!id) return; const concept = catalogConcepts.find(c => c.id == id); if (concept) { adminSelectedConcepts.push({ description: concept.nombre, amount: concept.precio_sugerido, value: concept.precio_sugerido, unit: 'fixed', type: 'aumento' }); window.updateAdminConceptsSummary(); window.updateQuoteCalculation(); } sel.value = ''; }
 window.removeAdminConcept = function (index) { adminSelectedConcepts.splice(index, 1); window.updateAdminConceptsSummary(); window.updateQuoteCalculation(); }
-window.updateAdminConceptsSummary = function () { const container = document.getElementById('admin-concepts-summary'); container.innerHTML = ''; adminSelectedConcepts.forEach((c, idx) => { container.innerHTML += `<div class="flex justify-between items-center bg-gray-50 border border-gray-100 p-2 rounded text-xs"><span class="font-bold text-gray-700">${c.description}</span><div class="flex items-center gap-3"><span class="font-black text-brand-dark">$${parseFloat(c.amount).toLocaleString()}</span><button onclick="window.removeAdminConcept(${idx})" class="text-gray-400 hover:text-red-500"><i class="fas fa-times"></i></button></div></div>`; }); }
+window.updateAdminConceptsSummary = function () { const container = document.getElementById('admin-concepts-summary'); container.innerHTML = ''; adminSelectedConcepts.forEach((c, idx) => { const amount = __cpToFiniteNumber(c.amount ?? c.value, 0); container.innerHTML += `<div class="flex justify-between items-center bg-gray-50 border border-gray-100 p-2 rounded text-xs"><span class="font-bold text-gray-700">${c.description}</span><div class="flex items-center gap-3"><span class="font-black text-brand-dark">$${amount.toLocaleString()}</span><button onclick="window.removeAdminConcept(${idx})" class="text-gray-400 hover:text-red-500"><i class="fas fa-times"></i></button></div></div>`; }); }
 
 window.togglePrecioPersonalizado = function () {
     precioPersonalizadoEnabled = !!document.getElementById('chk-precio-personalizado')?.checked;
@@ -1282,7 +1393,7 @@ window.updateQuoteCalculation = function () {
         subtotal += subSpace; taxesTotal += spaceTaxTotal;
         spacesPricing.push({ spaceId: space.id, spaceName: space.nombre, spaceKey: space.clave, startDate: cfg.startDate, endDate: cfg.endDate, guests, maxCapacity, capacityOk, blockedOk, horarioValue: cfg.horarioValue, horarioText: cfg.horarioText || cfg.horarioValue || '', horarioCost, premontajeDays: parseInt(cfg.premontajeDays, 10) || 0, premontajeCourtesyDays: parseInt(cfg.premontajeCourtesyDays, 10) || 0, premontajeDates: __cpSafeArray(cfg.premontajeDates), premontajeCost: prem.total, premontajeBreakdown: prem.breakdown, horasExtra: extraHours, horasExtraCourtesy: courtesyHours, horasExtraBillable: billableHours, horasExtraUnit: horaUnit, horasExtraCost: horasCost, subtotalBeforeTax: subSpace, taxIds, taxTotal: spaceTaxTotal });
     });
-    let adminConceptTotal = 0; adminSelectedConcepts.forEach(c => { adminConceptTotal += parseFloat(c.amount || 0); });
+    let adminConceptTotal = 0; adminSelectedConcepts.forEach(c => { adminConceptTotal += (__cpToFiniteNumber(c.amount ?? c.value, 0) || 0); });
     subtotal += adminConceptTotal;
     if (adminConceptTotal > 0 && spacesPricing.length > 0) {
         const firstTaxes = spacesPricing[0].taxIds || [];
@@ -1477,7 +1588,7 @@ window.generatePDF = async function () {
         if (String(error.message || '').toLowerCase().includes('espacios_detalle')) {
             return window.showToast('Falta aplicar migración de BD para multi-espacio.', 'error');
         }
-        return window.showToast(`Error al guardar: ${error.message}`, "error");
+        return window.showToast(`Error al guardar: ${__cpExtractCreateQuoteErrorMessage(error)}`, "error");
     }
     __cpReservationsCache = null; __cpReservationsAt = 0;
     window.showToast("✅ Cotización creada con " + (currentPricing.customEnabled ? 'PRECIO PERSONALIZADO' : 'cálculo automático'));
@@ -2824,8 +2935,9 @@ window.updateQuoteCalculation = function () {
         cfg.concepts = __cpSafeArray(cfg.concepts).map(normalizeCpQuoteConcept);
         const isConvenio = isPublicidad && !!cfg.convenioEnabled;
         const convenioItems = isConvenio ? getCpQuoteConvenioItems(cfg) : [];
-        const convenioValue = convenioItems.reduce((sum, concept) => sum + (parseFloat(concept.amount ?? concept.value ?? 0) || 0), 0);
-        const convenioCovered = isConvenio ? __cpConvenioCovered(parseFloat(space?.precio_base || 0) || 0, convenioValue) : false;
+        const convenioValue = convenioItems.reduce((sum, concept) => sum + (__cpToFiniteNumber(concept.amount ?? concept.value, 0) || 0), 0);
+        const safeConvenioValue = Math.max(0, __cpToFiniteNumber(convenioValue, 0));
+        const convenioCovered = isConvenio ? __cpConvenioCovered(parseFloat(space?.precio_base || 0) || 0, safeConvenioValue) : false;
         const guests = parseInt(cfg.guests, 10) || 1;
         const maxCapacity = isPublicidad ? 999999 : getSpaceMaxCapacity(space);
         const capacityOk = isPublicidad ? true : !(maxCapacity < 999999 && guests > maxCapacity);
@@ -2862,7 +2974,10 @@ window.updateQuoteCalculation = function () {
         if (!isPublicidad) {
             taxIds.forEach(tid => { const t = findCpQuoteTaxRecord(tid, space); if (t) { const rate = parseFloat(t.porcentaje || 0) > 1 ? (parseFloat(t.porcentaje) / 100) : parseFloat(t.porcentaje || 0); spaceTaxTotal += subSpace * rate; } });
         }
-        subtotal += subSpace; taxesTotal += spaceTaxTotal;
+        const safeBase = Math.max(0, __cpToFiniteNumber(base, 0));
+        const safeSubSpace = Math.max(0, __cpToFiniteNumber(subSpace, 0));
+        const safeSpaceTaxTotal = Math.max(0, __cpToFiniteNumber(spaceTaxTotal, 0));
+        subtotal += safeSubSpace; taxesTotal += safeSpaceTaxTotal;
         spacesPricing.push({
             spaceId: space.id,
             spaceName: space.nombre,
@@ -2892,19 +3007,19 @@ window.updateQuoteCalculation = function () {
             convenioCovered,
             blocksIndefinitely: convenioCovered,
             concepts: isConvenio ? convenioItems : [],
-            baseValue: base,
-            convenioValue,
-            subtotalBeforeTax: subSpace,
+            baseValue: safeBase,
+            convenioValue: safeConvenioValue,
+            subtotalBeforeTax: safeSubSpace,
             taxIds,
-            taxTotal: spaceTaxTotal,
-            total: subSpace + spaceTaxTotal,
+            taxTotal: safeSpaceTaxTotal,
+            total: safeSubSpace + safeSpaceTaxTotal,
             customPermanence: !!cfg.customPermanence,
             customPriceEnabled: !!cfg.customPriceEnabled && !isConvenio,
             customPriceMode: cfg.customPriceMode || 'total',
             customBasePrice: cfg.customBasePrice
         });
     });
-    let adminConceptTotal = 0; adminSelectedConcepts.forEach(c => { adminConceptTotal += parseFloat(c.amount || 0); });
+    let adminConceptTotal = 0; adminSelectedConcepts.forEach(c => { adminConceptTotal += (__cpToFiniteNumber(c.amount ?? c.value, 0) || 0); });
     subtotal += adminConceptTotal;
     if (adminConceptTotal > 0 && spacesPricing.length > 0) {
         const firstTaxes = (spacesPricing.find((space) => !space?.convenioEnabled)?.taxIds || []);
@@ -2915,10 +3030,12 @@ window.updateQuoteCalculation = function () {
             taxesTotal += adminConceptTotal * rate;
         });
     }
+    const safeSubtotal = Math.max(0, __cpToFiniteNumber(subtotal, 0));
+    const safeTaxes = Math.max(0, __cpToFiniteNumber(taxesTotal, 0));
     currentPricing = {
-        subtotal,
-        taxes: taxesTotal,
-        final: subtotal + taxesTotal,
+        subtotal: safeSubtotal,
+        taxes: safeTaxes,
+        final: safeSubtotal + safeTaxes,
         spaces: spacesPricing,
         adminConceptTotal,
         convenioBaseTotal: spacesPricing.reduce((sum, space) => sum + (space?.convenioEnabled ? (parseFloat(space.baseValue || 0) || 0) : 0), 0),
@@ -3187,18 +3304,10 @@ window.generatePDF = async function () {
         if (String(error.message || '').toLowerCase().includes('espacios_detalle')) {
             return window.showToast('Falta aplicar migración de BD para multi-espacio.', 'error');
         }
-        return window.showToast(`Error al guardar: ${error.message}`, "error");
+        return window.showToast(`Error al guardar: ${__cpExtractCreateQuoteErrorMessage(error)}`, "error");
     }
     __cpReservationsCache = null; __cpReservationsAt = 0;
     window.showToast("Cotización Creada");
     const targetUrl = createdQuoteId ? `order_detail.html?quote=${encodeURIComponent(createdQuoteId)}` : 'orders.html';
     setTimeout(() => { __cpNavigateSafely(targetUrl); }, 900);
-}
-
-
-
-
-
-
-
 }

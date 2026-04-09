@@ -350,6 +350,111 @@
       };
     }
 
+    function parseMoney(value) {
+      if (typeof value === "number") return isNaN(value) ? NaN : value;
+      if (typeof value === "string") {
+        var raw = value.replace(/,/g, "").trim();
+        if (!raw) return NaN;
+        var parsed = parseFloat(raw);
+        return isNaN(parsed) ? NaN : parsed;
+      }
+      if (value === null || value === undefined) return NaN;
+      var numeric = parseFloat(String(value || "").replace(/,/g, "").trim());
+      return isNaN(numeric) ? NaN : numeric;
+    }
+
+    function safeMoney(value, fallback) {
+      var parsed = parseMoney(value);
+      if (!isNaN(parsed) && isFinite(parsed)) return parsed;
+      return typeof fallback === "number" ? fallback : 0;
+    }
+
+    function computeFinancialSubtotal(detail) {
+      var row = safeObject(detail);
+      var taxTotal = safeMoney(row.impuestos_total || row.taxTotal, 0);
+      var total = parseMoney(row.total_espacio || row.total);
+      if (!isNaN(total) && isFinite(total)) return Math.max(0, total - taxTotal);
+      var baseValue = safeMoney(row.subtotal_espacio || row.subtotalBeforeTax || row.baseValue, 0);
+      var convenioValue = safeMoney(row.convenio_monto_entregado || row.convenioValue, 0);
+      var convenioActivo = row.convenio_activo === true || row.convenioEnabled === true;
+      return convenioActivo ? Math.max(0, baseValue - convenioValue) : Math.max(0, baseValue);
+    }
+
+    function normalizeFinancialDetail(detail) {
+      var row = safeObject(detail);
+      var subtotalBase = safeMoney(row.subtotal_espacio || row.subtotalBeforeTax || row.baseValue, 0);
+      var taxTotal = safeMoney(row.impuestos_total || row.taxTotal, 0);
+      var convenioValue = safeMoney(row.convenio_monto_entregado || row.convenioValue, 0);
+      var convenioActivo = row.convenio_activo === true || row.convenioEnabled === true;
+      var subtotalComputed = computeFinancialSubtotal({
+        subtotal_espacio: subtotalBase,
+        impuestos_total: taxTotal,
+        convenio_monto_entregado: convenioValue,
+        convenio_activo: convenioActivo,
+        total_espacio: row.total_espacio || row.total
+      });
+      var total = safeMoney(row.total_espacio || row.total, subtotalComputed + taxTotal);
+      var convenioBalance = safeMoney(
+        row.convenio_balance,
+        convenioActivo ? Math.max(0, subtotalBase - convenioValue) : subtotalComputed
+      );
+      row.subtotal_espacio = subtotalBase;
+      row.impuestos_total = taxTotal;
+      row.convenio_monto_entregado = convenioValue;
+      row.total_espacio = total;
+      row.convenio_balance = convenioBalance;
+      return row;
+    }
+
+    function ensureQuoteFinancials(record) {
+      if (!record) return;
+      var breakdown = safeObject(record.get("desglose_precios"));
+      var detailRows = safeArray(record.get("espacios_detalle"));
+      var breakdownRows = safeArray(breakdown.espacios);
+      var sourceRows = detailRows.length ? detailRows : breakdownRows;
+      var normalizedRows = [];
+      for (var i = 0; i < sourceRows.length; i += 1) {
+        normalizedRows.push(normalizeFinancialDetail(sourceRows[i]));
+      }
+
+      var subtotalFromRows = 0;
+      var taxesFromRows = 0;
+      var totalFromRows = 0;
+      for (var j = 0; j < normalizedRows.length; j += 1) {
+        subtotalFromRows += computeFinancialSubtotal(normalizedRows[j]);
+        taxesFromRows += safeMoney(normalizedRows[j].impuestos_total, 0);
+        totalFromRows += safeMoney(normalizedRows[j].total_espacio, 0);
+      }
+
+      var subtotal = safeMoney(breakdown.subtotal_antes_impuestos, subtotalFromRows);
+      var taxes = safeMoney(breakdown.tax_total, taxesFromRows);
+      var finalPrice = parseMoney(record.get("precio_final"));
+      if (isNaN(finalPrice) || !isFinite(finalPrice)) finalPrice = parseMoney(breakdown.precio_final_usado);
+      if (isNaN(finalPrice) || !isFinite(finalPrice)) finalPrice = subtotal + taxes;
+      if ((isNaN(finalPrice) || !isFinite(finalPrice)) && normalizedRows.length) finalPrice = totalFromRows;
+      finalPrice = Math.max(0, safeMoney(finalPrice, 0));
+
+      breakdown.subtotal_antes_impuestos = Math.max(0, safeMoney(subtotal, 0));
+      breakdown.tax_total = Math.max(0, safeMoney(taxes, 0));
+      if (breakdown.precio_final_usado !== undefined || breakdown.auto_calculado !== undefined) {
+        breakdown.precio_final_usado = Math.max(0, safeMoney(breakdown.precio_final_usado, finalPrice));
+        breakdown.auto_calculado = Math.max(0, safeMoney(breakdown.auto_calculado, finalPrice));
+      }
+      if (breakdown.convenio_balance_total !== undefined || normalizedRows.length) {
+        breakdown.convenio_balance_total = Math.max(0, safeMoney(breakdown.convenio_balance_total, finalPrice));
+      }
+      if (breakdown.convenio_base_total !== undefined) {
+        breakdown.convenio_base_total = Math.max(0, safeMoney(breakdown.convenio_base_total, 0));
+      }
+      if (breakdown.convenio_entregable_total !== undefined) {
+        breakdown.convenio_entregable_total = Math.max(0, safeMoney(breakdown.convenio_entregable_total, 0));
+      }
+      if (normalizedRows.length) breakdown.espacios = normalizedRows;
+
+      record.set("precio_final", finalPrice);
+      record.set("desglose_precios", breakdown);
+    }
+
     function clearSensitivePublicFields(record) {
       record.set("datos_fiscales", {});
       record.set("historial_pagos", []);
@@ -514,6 +619,8 @@
         e.record.set("nombre_cotizacion", nombreCotizacion);
       }
     }
+
+    ensureQuoteFinancials(e.record);
 
     e.next();
   }, "cotizaciones");
