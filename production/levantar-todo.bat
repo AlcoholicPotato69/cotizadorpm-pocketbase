@@ -45,6 +45,8 @@ if errorlevel 1 goto :fail
 
 set "CUSTOM_IP=127.0.0.1"
 set "CUSTOM_PORT=8090"
+set "CUSTOM_FRONTEND_HOST=127.0.0.1"
+set "CUSTOM_FRONTEND_PORT=80"
 
 echo.
 echo ============================================================
@@ -57,6 +59,20 @@ set /p "CUSTOM_IP=Escribe la IP o hostname del backend [127.0.0.1]: "
 set /p "CUSTOM_PORT=Escribe el puerto del backend [8090]: "
 if "%CUSTOM_IP%"=="" set "CUSTOM_IP=127.0.0.1"
 if "%CUSTOM_PORT%"=="" set "CUSTOM_PORT=8090"
+
+echo.
+echo ============================================================
+echo   CONFIGURACION DE FRONTEND HTML
+echo ============================================================
+echo.
+echo Los HTML NO se serviran desde PocketBase. Se preparara un site estatico para Nginx u otro servidor web.
+echo Este origen se autorizara en CORS para que el frontend pueda hablar con el backend cuando no use mismo origen.
+set /p "CUSTOM_FRONTEND_HOST=Escribe la IP o hostname del frontend HTML [127.0.0.1]: "
+set /p "CUSTOM_FRONTEND_PORT=Escribe el puerto HTTP del frontend [80]: "
+if "%CUSTOM_FRONTEND_HOST%"=="" set "CUSTOM_FRONTEND_HOST=127.0.0.1"
+if "%CUSTOM_FRONTEND_PORT%"=="" set "CUSTOM_FRONTEND_PORT=80"
+set "CUSTOM_FRONTEND_ORIGIN=http://%CUSTOM_FRONTEND_HOST%"
+if not "%CUSTOM_FRONTEND_PORT%"=="80" set "CUSTOM_FRONTEND_ORIGIN=http://%CUSTOM_FRONTEND_HOST%:%CUSTOM_FRONTEND_PORT%"
 
 call :exec_backend_step "Paso: Limpiando procesos huerfanos..." cleanup-orphans
 if errorlevel 1 goto :fail
@@ -73,7 +89,13 @@ if errorlevel 1 goto :fail
 call :exec_backend_step "Paso: Configurando frontend same-origin para Nginx..." set-frontend-url "/"
 if errorlevel 1 goto :fail
 
-call :exec_backend_step "Paso: Preparando carpeta estatica y nginx.conf..." prepare-nginx
+call :exec_backend_step "Paso: Autorizando origen del frontend HTML..." set-frontend-origin "%CUSTOM_FRONTEND_ORIGIN%"
+if errorlevel 1 goto :fail
+
+call :exec_backend_step "Paso: Desactivando publicDir de PocketBase..." set-public-dir off
+if errorlevel 1 goto :fail
+
+call :exec_backend_step "Paso: Preparando carpeta estatica y nginx.conf..." prepare-nginx "production\deploy\nginx-site" "%CUSTOM_FRONTEND_HOST%"
 if errorlevel 1 goto :fail
 
 call :exec_backend_step "Paso: Instalando/actualizando servicio Windows..." install
@@ -114,7 +136,8 @@ echo ============================================================
 echo   PREPARACION DE PRODUCCION COMPLETADA
 echo ============================================================
 echo   BACKEND_REAL: http://%CUSTOM_IP%:%CUSTOM_PORT%
-echo   FRONTEND_RUNTIME: /
+echo   FRONTEND_ORIGIN: %CUSTOM_FRONTEND_ORIGIN%
+echo   FRONTEND_RUNTIME: / ^(Nginx proxy /api y /_ al backend^)
 echo   Servicio: CotizadorPocketBase
 echo   Estado esperado: RUNNING
 echo   Site Nginx: production\deploy\nginx-site
@@ -186,6 +209,8 @@ echo Configura:
 echo   - BIND_ADDR=IP:PUERTO
 echo   - BACKEND_URL real del servicio
 echo   - FRONTEND_BACKEND_URL=/ ^(mismo origen via Nginx^)
+echo   - CORS_ALLOWED_ORIGINS con la IP/host del frontend HTML
+echo   - PUBLIC_DIR desactivado para que PocketBase no sirva HTML
 echo   - carpeta estatica production\deploy\nginx-site
 echo   - plantilla production\deploy\nginx\cotizador-production.conf
 echo   - servicio CotizadorPocketBase en RUNNING

@@ -1,6 +1,6 @@
 # Operacion Local y Soporte
 
-Ultima actualizacion: 2026-03-28
+Ultima actualizacion: 2026-04-13
 
 Este documento describe cómo levantar, validar y recuperar el sistema en desarrollo local o soporte interno.
 
@@ -71,6 +71,12 @@ Frontend:
 Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8080/client/index.html
 ```
 
+Auditoria smoke recomendada:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File development\audit-smoke.ps1
+```
+
 ## 5. Arranque manual del backend
 
 ```powershell
@@ -85,6 +91,7 @@ Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8080/client/index.html
 - `backend/pb_data/`
 - `backend/pb_hooks/`
 - `backend/pb_migrations/`
+- `development/audit-smoke.ps1`
 
 ## 7. Evidencia y logs
 

@@ -27,6 +27,8 @@ if /I "%ACTION%"=="help" goto :help
 if /I "%ACTION%"=="show" goto :show
 if /I "%ACTION%"=="set-url" goto :set_url
 if /I "%ACTION%"=="set-frontend-url" goto :set_frontend_url
+if /I "%ACTION%"=="set-frontend-origin" goto :set_frontend_origin
+if /I "%ACTION%"=="set-public-dir" goto :set_public_dir
 if /I "%ACTION%"=="set-ip" goto :set_ip
 if /I "%ACTION%"=="set-bind" goto :set_bind
 if /I "%ACTION%"=="sync-frontend" goto :sync_frontend
@@ -59,6 +61,8 @@ echo   backend-service.bat uninstall
 echo   backend-service.bat show
 echo   backend-service.bat set-url ^<URL_BACKEND_REAL^>
 echo   backend-service.bat set-frontend-url ^<URL_O_PATH_FRONTEND^>
+echo   backend-service.bat set-frontend-origin ^<ORIGEN_FRONTEND^>
+echo   backend-service.bat set-public-dir ^<RUTA^|off^>
 echo   backend-service.bat set-ip ^<IP_O_HOST^> [PUERTO]
 echo   backend-service.bat set-bind ^<BIND_IP:PUERTO^>
 echo   backend-service.bat sync-frontend
@@ -70,6 +74,8 @@ echo.
 echo Ejemplos:
 echo   backend-service.bat set-ip 127.0.0.1 8090
 echo   backend-service.bat set-frontend-url /
+echo   backend-service.bat set-frontend-origin http://127.0.0.1
+echo   backend-service.bat set-public-dir off
 echo   backend-service.bat prepare-nginx production\deploy\nginx-site _
 echo   backend-service.bat cleanup-orphans
 echo   backend-service.bat enable-https localhost 9443
@@ -79,9 +85,11 @@ echo.
 echo Notas:
 echo   - set-url cambia la URL real del backend.
 echo   - set-frontend-url define la base que usara el frontend ^(ej: / para mismo origen Nginx^).
+echo   - set-frontend-origin autoriza por CORS el origen donde se sirven los HTML.
+echo   - set-public-dir off deja PocketBase sin HTML publico; recomendado para frontend separado.
 echo   - sync-frontend actualiza frontend\client\config\hub-runtime.json y frontend\client\public\assets\libs\js\env.js.
 echo   - prepare-nginx deja una carpeta estatica lista para Nginx y genera un .conf base.
-echo   - PUBLIC_DIR controla la carpeta estatica que PocketBase sirve a los usuarios.
+echo   - PUBLIC_DIR solo debe usarse si TI decide que PocketBase sirva estaticos; por defecto queda apagado.
 echo   - enable-https genera certificado autofirmado, lo vincula en Windows y activa proxy HTTPS local.
 echo   - install configura el servicio con production\deploy\CotizadorServiceHost.exe.
 echo.
@@ -96,6 +104,7 @@ echo   BIND_ADDR=%BIND_ADDR%
 echo   BACKEND_URL=%BACKEND_URL%
 echo   FRONTEND_BACKEND_URL=%FRONTEND_BACKEND_URL%
 echo   FRONTEND_LOCAL_MODE=%FRONTEND_LOCAL_MODE%
+echo   CORS_ALLOWED_ORIGINS=%CORS_ALLOWED_ORIGINS%
 echo   PUBLIC_DIR=%PUBLIC_DIR%
 echo   NGINX_SITE_DIR=%NGINX_SITE_DIR%
 echo   NGINX_SERVER_NAME=%NGINX_SERVER_NAME%
@@ -148,6 +157,42 @@ set "FRONTEND_BACKEND_URL=%NEXT_FRONTEND_URL%"
 call :write_conf
 call :sync_frontend_runtime || exit /b 1
 echo [OK] FRONTEND_BACKEND_URL actualizado a %FRONTEND_BACKEND_URL%
+exit /b 0
+
+:set_frontend_origin
+set "NEXT_FRONTEND_ORIGIN=%~2"
+if not defined NEXT_FRONTEND_ORIGIN set /p NEXT_FRONTEND_ORIGIN=Escribe el origen del frontend ^(ej: http://192.168.1.50 o http://192.168.1.50:8080^): 
+if not defined NEXT_FRONTEND_ORIGIN (
+  echo [ERROR] Origen del frontend vacio.
+  exit /b 1
+)
+echo %NEXT_FRONTEND_ORIGIN% | findstr "," >nul
+if errorlevel 1 (
+  echo %NEXT_FRONTEND_ORIGIN% | findstr /r /i "^[a-z][a-z0-9+.-]*://" >nul
+  if errorlevel 1 set "NEXT_FRONTEND_ORIGIN=http://%NEXT_FRONTEND_ORIGIN%"
+  if "%NEXT_FRONTEND_ORIGIN:~-1%"=="/" set "NEXT_FRONTEND_ORIGIN=%NEXT_FRONTEND_ORIGIN:~0,-1%"
+)
+set "CORS_ALLOWED_ORIGINS=%NEXT_FRONTEND_ORIGIN%"
+call :write_conf
+echo [OK] CORS_ALLOWED_ORIGINS actualizado a %CORS_ALLOWED_ORIGINS%
+echo [INFO] Reinicia el servicio si PocketBase ya estaba en ejecucion.
+exit /b 0
+
+:set_public_dir
+set "NEXT_PUBLIC_DIR=%~2"
+if not defined NEXT_PUBLIC_DIR set /p NEXT_PUBLIC_DIR=Escribe PUBLIC_DIR o off para desactivar HTML en PocketBase: 
+if /I "%NEXT_PUBLIC_DIR%"=="off" set "NEXT_PUBLIC_DIR="
+if /I "%NEXT_PUBLIC_DIR%"=="none" set "NEXT_PUBLIC_DIR="
+if /I "%NEXT_PUBLIC_DIR%"=="disabled" set "NEXT_PUBLIC_DIR="
+if /I "%NEXT_PUBLIC_DIR%"=="false" set "NEXT_PUBLIC_DIR="
+set "PUBLIC_DIR=%NEXT_PUBLIC_DIR%"
+call :write_conf
+if defined PUBLIC_DIR (
+  echo [OK] PUBLIC_DIR actualizado a %PUBLIC_DIR%
+) else (
+  echo [OK] PUBLIC_DIR desactivado. Los HTML deben servirse por Nginx u otro servidor estatico.
+)
+echo [INFO] Reinicia el servicio para aplicar el cambio.
 exit /b 0
 
 :set_ip
@@ -206,6 +251,7 @@ set "NGINX_SITE_DIR=%NEXT_SITE_DIR%"
 set "NGINX_SERVER_NAME=%NEXT_SERVER_NAME%"
 set "FRONTEND_BACKEND_URL=/"
 set "FRONTEND_LOCAL_MODE=0"
+set "PUBLIC_DIR="
 
 call :write_conf
 call :sync_frontend_runtime || exit /b 1
@@ -378,7 +424,8 @@ exit /b 0
 >> "%CONF_FILE%" echo BACKEND_URL=http://127.0.0.1:8090
 >> "%CONF_FILE%" echo FRONTEND_BACKEND_URL=http://127.0.0.1:8090
 >> "%CONF_FILE%" echo FRONTEND_LOCAL_MODE=0
->> "%CONF_FILE%" echo PUBLIC_DIR=frontend\pb_public
+>> "%CONF_FILE%" echo CORS_ALLOWED_ORIGINS=
+>> "%CONF_FILE%" echo PUBLIC_DIR=
 >> "%CONF_FILE%" echo NGINX_SITE_DIR=production\deploy\nginx-site
 >> "%CONF_FILE%" echo NGINX_SERVER_NAME=_
 >> "%CONF_FILE%" echo NGINX_CONF_FILE=production\deploy\nginx\cotizador-production.conf
@@ -396,6 +443,7 @@ exit /b 0
 >> "%CONF_FILE%" echo BACKEND_URL=%BACKEND_URL%
 >> "%CONF_FILE%" echo FRONTEND_BACKEND_URL=%FRONTEND_BACKEND_URL%
 >> "%CONF_FILE%" echo FRONTEND_LOCAL_MODE=%FRONTEND_LOCAL_MODE%
+>> "%CONF_FILE%" echo CORS_ALLOWED_ORIGINS=%CORS_ALLOWED_ORIGINS%
 >> "%CONF_FILE%" echo PUBLIC_DIR=%PUBLIC_DIR%
 >> "%CONF_FILE%" echo NGINX_SITE_DIR=%NGINX_SITE_DIR%
 >> "%CONF_FILE%" echo NGINX_SERVER_NAME=%NGINX_SERVER_NAME%
@@ -414,6 +462,7 @@ set "BIND_ADDR="
 set "BACKEND_URL="
 set "FRONTEND_BACKEND_URL="
 set "FRONTEND_LOCAL_MODE="
+set "CORS_ALLOWED_ORIGINS="
 set "PUBLIC_DIR="
 set "NGINX_SITE_DIR="
 set "NGINX_SERVER_NAME="
@@ -430,6 +479,7 @@ for /f "usebackq tokens=1,* delims==" %%A in ("%CONF_FILE%") do (
   if /I "%%~A"=="BACKEND_URL" set "BACKEND_URL=%%~B"
   if /I "%%~A"=="FRONTEND_BACKEND_URL" set "FRONTEND_BACKEND_URL=%%~B"
   if /I "%%~A"=="FRONTEND_LOCAL_MODE" set "FRONTEND_LOCAL_MODE=%%~B"
+  if /I "%%~A"=="CORS_ALLOWED_ORIGINS" set "CORS_ALLOWED_ORIGINS=%%~B"
   if /I "%%~A"=="PUBLIC_DIR" set "PUBLIC_DIR=%%~B"
   if /I "%%~A"=="NGINX_SITE_DIR" set "NGINX_SITE_DIR=%%~B"
   if /I "%%~A"=="NGINX_SERVER_NAME" set "NGINX_SERVER_NAME=%%~B"
@@ -446,7 +496,6 @@ if not defined BIND_ADDR set "BIND_ADDR=127.0.0.1:8090"
 if not defined BACKEND_URL set "BACKEND_URL=http://127.0.0.1:8090"
 if not defined FRONTEND_BACKEND_URL set "FRONTEND_BACKEND_URL=%BACKEND_URL%"
 if not defined FRONTEND_LOCAL_MODE set "FRONTEND_LOCAL_MODE=0"
-if not defined PUBLIC_DIR set "PUBLIC_DIR=frontend\pb_public"
 if not defined NGINX_SITE_DIR set "NGINX_SITE_DIR=production\deploy\nginx-site"
 if not defined NGINX_SERVER_NAME set "NGINX_SERVER_NAME=_"
 if not defined NGINX_CONF_FILE set "NGINX_CONF_FILE=production\deploy\nginx\cotizador-production.conf"

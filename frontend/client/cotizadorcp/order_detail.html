@@ -525,10 +525,10 @@
                                     <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100"><span class="font-bold text-gray-400">Premontaje</span><span id="sum-montaje" class="font-bold text-right text-gray-800 max-w-[220px] break-words">--</span></div>
                                     <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100"><span class="font-bold text-gray-400">Horas Extras</span><span id="sum-hextras" class="font-bold text-right text-gray-800 max-w-[220px] break-words">--</span></div>
                                     <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100"><span class="font-bold text-gray-400">Estado Operativo</span><span id="sum-status" class="font-bold text-right text-emerald-600 max-w-[220px] break-words">--</span></div>
-                                    <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100"><span class="font-bold text-gray-400">Subtotal</span><span id="sum-total-subtotal" class="font-bold text-right text-gray-800">$0.00</span></div>
-                                    <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100"><span class="font-bold text-gray-400">Ajuste</span><span id="sum-total-adjustment" class="font-bold text-right text-gray-800">$0.00</span></div>
-                                    <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100"><span class="font-bold text-gray-400">Impuestos</span><span id="sum-total-tax" class="font-bold text-right text-gray-800">$0.00</span></div>
-                                    <div class="flex items-center justify-between gap-3 px-5 py-3 bg-slate-50 mt-auto"><span class="font-black text-gray-700 uppercase">Total Neto</span><span id="sum-total-net" class="font-black text-right text-gray-900">$0.00</span></div>
+                                    <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100"><span id="sum-label-subtotal" class="font-bold text-gray-400">Subtotal</span><span id="sum-total-subtotal" class="font-bold text-right text-gray-800">$0.00</span></div>
+                                    <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100"><span id="sum-label-adjustment" class="font-bold text-gray-400">Ajuste</span><span id="sum-total-adjustment" class="font-bold text-right text-gray-800">$0.00</span></div>
+                                    <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100"><span id="sum-label-tax" class="font-bold text-gray-400">Impuestos</span><span id="sum-total-tax" class="font-bold text-right text-gray-800">$0.00</span></div>
+                                    <div class="flex items-center justify-between gap-3 px-5 py-3 bg-slate-50 mt-auto"><span id="sum-label-net" class="font-black text-gray-700 uppercase">Total Neto</span><span id="sum-total-net" class="font-black text-right text-gray-900">$0.00</span></div>
                                 </div>
                             </div>
 
@@ -938,11 +938,21 @@
                         <span class="text-xs font-bold uppercase tracking-wider">Bloque Firma</span>
                     </button>
                 </div>
+                <div class="mt-5 rounded-xl border border-gray-200 bg-slate-50 p-4">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <p class="text-[10px] font-black uppercase tracking-wider text-gray-700">Etiquetas Disponibles</p>
+                            <p class="mt-1 text-[11px] text-gray-500">Puedes usarlas en títulos, textos y líneas de firma sin salir de este modal.</p>
+                        </div>
+                        <button type="button" onclick="window.openCpPdfTemplateTagsModal && window.openCpPdfTemplateTagsModal()" class="shrink-0 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-[10px] font-black uppercase tracking-wide text-brand-dark hover:border-brand-red hover:text-brand-red transition">Ver todas</button>
+                    </div>
+                    <div data-pdf-template-helper="cp" class="mt-3"></div>
+                </div>
             </div>
         </div>
     </div>
     <div id="toast-container" class="fixed top-20 right-4 z-[310] flex flex-col items-end pointer-events-none"></div>
     <script src="../js/pdf-margin-guides.js"></script>
-<script src="orders.js?v=20260409-cp-orders-pdf-v3"></script>
+<script src="orders.js?v=20260413-cp-orders-parity-v4"></script>
 </body>
 </html>

@@ -703,9 +703,13 @@
             resolveManagedLayoutAuthContext({
                 routeCtx,
                 requireAccess: false,
-                allowStableFallback: true,
-                redirectOnFail: false
-            }).catch(function () {});
+                allowStableFallback: false,
+                allowCachedUser: false,
+                forceRefresh: true,
+                redirectOnFail: !routeCtx?.isLoginPage
+            }).catch(function () {
+                if (!routeCtx?.isLoginPage) redirectLayoutToLogin(routeCtx, 'missing_session');
+            });
         };
         window.addEventListener('focus', guardedEnsure);
         window.addEventListener('pageshow', guardedEnsure);

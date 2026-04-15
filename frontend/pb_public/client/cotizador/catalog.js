@@ -645,9 +645,11 @@ function isCatalogAdvertisingSpace(space) {
 function isCatalogLocalLikeSpace(space) {
     return catalogSpaceHasTag(space, 'local') || catalogSpaceHasTag(space, 'isla') || catalogSpaceHasTag(space, 'espacio');
 }
+function normalizePmManagerTypeSelection(value) {
+    return normalizeCatalogSearchText(value) === 'publicidad' ? 'publicidad' : 'espacio';
+}
 function isCatalogLocalOrIslandType(value) {
-    const safe = normalizeCatalogSearchText(value);
-    return safe === 'local' || safe === 'isla' || safe === 'espacio';
+    return normalizePmManagerTypeSelection(value) === 'espacio';
 }
 function isCatalogAdvertisingType(value) {
     return normalizeCatalogSearchText(value) === 'publicidad';
@@ -1149,10 +1151,16 @@ function pmQuoteConvenioCovered(baseValue, deliveredValue, balanceValue) {
     if (base <= 0) return false;
     return delivered + 0.009 >= base;
 }
+function pmQuoteHasFiniteConvenioEndDate(value) {
+    const raw = toDateISO(value || '');
+    return !!raw && raw !== PM_CONVENIO_INDEFINITE_END;
+}
 function pmQuoteDetailBlocksIndefinitely(detail = {}) {
     const row = detail && typeof detail === 'object' ? detail : {};
     const flagged = row?.convenio_activo === true || row?.convenio_indefinido === true || row?.bloqueo_indefinido === true;
     if (!flagged) return false;
+    // Auditoria TI: si el convenio trae fecha_fin real, se respeta esa vigencia y no se extiende a 2099.
+    if (pmQuoteHasFiniteConvenioEndDate(row?.fecha_fin || row?.endDate)) return false;
     return pmQuoteConvenioCovered(
         row?.subtotal_espacio ?? row?.baseValue,
         row?.convenio_monto_entregado ?? row?.convenioValue,
@@ -1162,6 +1170,7 @@ function pmQuoteDetailBlocksIndefinitely(detail = {}) {
 function pmQuoteOrderBlocksIndefinitely(order = {}, detailsOverride = null) {
     const details = Array.isArray(detailsOverride) ? detailsOverride : safeArray(order?.espacios_detalle);
     if (details.length) return details.some((detail) => pmQuoteDetailBlocksIndefinitely(detail));
+    if (pmQuoteHasFiniteConvenioEndDate(order?.fecha_fin || order?.endDate)) return false;
     const orderDetails = safeObject(order?.detalles_evento);
     const convenio = safeObject(orderDetails?.convenio);
     if (!(convenio?.activo === true && convenio?.bloqueo_indefinido === true)) return false;
@@ -2040,6 +2049,7 @@ window.updateQuoteCalculation = function () {
         const conceptsTotal = concepts.reduce((sum, concept) => sum + (parseFloat(concept.amount || concept.value || 0) || 0), 0);
         const baseValue = pricing.subtotal;
         const convenioCovered = cfg.convenioEnabled ? pmQuoteConvenioCovered(baseValue, conceptsTotal) : false;
+        const blocksIndefinitely = convenioCovered && !pmQuoteHasFiniteConvenioEndDate(cfg?.endDate);
         const taxableSubtotal = cfg.convenioEnabled ? Math.max(0, baseValue - conceptsTotal) : (baseValue + conceptsTotal);
         let conceptsTax = 0;
         if (!cfg.convenioEnabled) {
@@ -2068,6 +2078,7 @@ window.updateQuoteCalculation = function () {
             customBasePrice: customBase,
             convenioEnabled: !!cfg.convenioEnabled,
             convenioCovered,
+            blocksIndefinitely,
             baseValue: safeBaseValue,
             convenioValue: safeConceptsTotal,
             subtotalBeforeTax: safeTaxableSubtotal,
@@ -2109,7 +2120,7 @@ window.openManagerModal = function (id) {
         if (!s) return window.showToast("No se encontro el espacio para editar.", "error");
         document.getElementById('mgr-title').innerText = "Editar: " + s.nombre;
         document.getElementById('mgr-key').value = s.clave; document.getElementById('mgr-key').disabled = true;
-        document.getElementById('mgr-name').value = s.nombre; document.getElementById('mgr-type').value = s.tipo;
+        document.getElementById('mgr-name').value = s.nombre; document.getElementById('mgr-type').value = normalizePmManagerTypeSelection(s.tipo);
         document.getElementById('mgr-desc').value = s.descripcion || '';
 
         let eTags = [];
@@ -2143,11 +2154,11 @@ window.openManagerModal = function (id) {
             }
         }
         document.getElementById('btn-delete-mgr').classList.remove('hidden');
-        syncManagerTypeFields(s.tipo);
+        syncManagerTypeFields(normalizePmManagerTypeSelection(s.tipo));
     } else {
         document.getElementById('mgr-title').innerText = "Nuevo Espacio";
         document.getElementById('mgr-key').value = ''; document.getElementById('mgr-key').disabled = false;
-        document.getElementById('mgr-type').value = 'local';
+        document.getElementById('mgr-type').value = 'espacio';
         document.getElementById('mgr-name').value = ''; document.getElementById('mgr-base').value = '';
         document.getElementById('mgr-tags').value = '';
         document.getElementById('mgr-material').value = ''; document.getElementById('mgr-location').value = ''; document.getElementById('mgr-ancho').value = ''; document.getElementById('mgr-alto').value = ''; document.getElementById('mgr-unidad').value = 'M';
@@ -2159,7 +2170,7 @@ window.openManagerModal = function (id) {
             const fi = document.getElementById(`mgr-file-${i}`); if (fi) fi.value = '';
         }
         document.getElementById('btn-delete-mgr').classList.add('hidden');
-        syncManagerTypeFields('local');
+        syncManagerTypeFields('espacio');
     }
     window.openModal('manager-modal');
 }
@@ -2185,7 +2196,7 @@ window.saveSpace = async function () {
 
     // PROCESAR TEXTO A ARREGLO JSONB
     const rawTags = document.getElementById('mgr-tags').value || '';
-    const selectedType = document.getElementById('mgr-type').value || '';
+    const selectedType = normalizePmManagerTypeSelection(document.getElementById('mgr-type').value || '');
     const allowsMaterial = isCatalogAdvertisingType(selectedType);
     const allowsMeasures = isCatalogTypeWithMeasures(selectedType);
     const material = allowsMaterial ? (document.getElementById('mgr-material').value || '') : '';
@@ -2442,6 +2453,7 @@ window.generatePDF = async function () {
         espacio_nombre: space.espacio_nombre,
         espacio_clave: space.espacio_clave
     })));
+    const convenioBlocksIndefinitely = spaces.some((sp) => !!sp.blocksIndefinitely);
     const espaciosDetalle = spaces.map(sp => {
         const fullSpace = getSpaceById(sp.spaceId) || {};
         const medidaAncho = fullSpace.medida_ancho ?? fullSpace.ancho ?? null;
@@ -2469,7 +2481,7 @@ window.generatePDF = async function () {
             impuestos_total: sp.taxTotal || 0,
             total_espacio: sp.total || 0,
             convenio_activo: !!sp.convenioEnabled,
-            convenio_indefinido: false,
+            convenio_indefinido: !!sp.blocksIndefinitely,
             convenio_items: convenioItems,
             // Nuevos campos para PDF
             material: fullSpace.material || null,
@@ -2513,7 +2525,7 @@ window.generatePDF = async function () {
             permanencia_personalizada: spaces.some(sp => !!sp.customPermanence),
             convenio: convenioItems.length ? {
                 activo: true,
-                bloqueo_indefinido: true,
+                bloqueo_indefinido: convenioBlocksIndefinitely,
                 requiere_evidencia: true,
                 evidencia_minima: 3,
                 evidencia_maxima: 5,

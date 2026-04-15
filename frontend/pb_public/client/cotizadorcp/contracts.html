@@ -507,7 +507,8 @@
                     <i class="fa-solid fa-xmark text-xl"></i>
                 </button>
             </div>
-            <div class="grid grid-cols-2 md:grid-cols-3 gap-4 p-6">
+            <div class="p-6">
+                <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
                 <button type="button" onclick="document.getElementById('pdf-style-add-bar').click(); window.closeModal('pdf-resource-modal')" class="flex flex-col items-center justify-center p-4 bg-gray-50 rounded-xl border border-gray-200 hover:border-brand-red hover:bg-red-50 hover:text-brand-red transition text-gray-700">
                     <i class="fa-solid fa-minus text-2xl"></i>
                     <span class="mt-2 text-xs font-black uppercase">Barra</span>
@@ -532,13 +533,24 @@
                     <i class="fa-regular fa-image text-2xl"></i>
                     <span class="mt-2 text-xs font-black uppercase">Logo</span>
                 </button>
+                </div>
+                <div class="mt-5 rounded-xl border border-gray-200 bg-slate-50 p-4">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <p class="text-[10px] font-black uppercase tracking-wider text-gray-700">Etiquetas Disponibles</p>
+                            <p class="mt-1 text-[11px] text-gray-500">Puedes usarlas en títulos, textos y líneas de firma sin salir de este modal.</p>
+                        </div>
+                        <button type="button" onclick="window.openPdfTemplateTagsModal && window.openPdfTemplateTagsModal()" class="shrink-0 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-[10px] font-black uppercase tracking-wide text-brand-dark hover:border-brand-red hover:text-brand-red transition">Ver todas</button>
+                    </div>
+                    <div data-pdf-template-helper="cp-contracts" class="mt-3"></div>
+                </div>
             </div>
         </div>
     </div>
 
     <div id="receipt-pdf-render" class="absolute top-0 left-0 -z-50 pointer-events-none opacity-0" style="width: 816px; min-height: 1056px; background: white;"></div>
     <script src="../js/pdf-margin-guides.js"></script>
-    <script src="contracts.js?v=20260316-contract-static1"></script>
+    <script src="contracts.js?v=20260413-cp-contract-tags-v2"></script>
 </body>
 </html> 
 

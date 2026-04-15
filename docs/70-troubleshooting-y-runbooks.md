@@ -1,6 +1,6 @@
 # Troubleshooting y Runbooks
 
-Ultima actualizacion: 2026-03-28
+Ultima actualizacion: 2026-04-13
 
 ## 1. El frontend no conecta al backend
 
@@ -70,3 +70,17 @@ Puntos de código:
 - health confirmado
 - screenshot o log guardado
 - último cambio identificado
+
+## 7. Validacion estructural recomendada
+
+Si el problema parece sistémico o después de tocar migraciones/hooks, ejecutar:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File development\audit-smoke.ps1
+```
+
+Interpretacion rapida:
+
+- si falla en `Sintaxis JavaScript`, hay error estructural de modulo u hook
+- si falla en `PocketBase cold start`, hay problema de migracion o compatibilidad de inicializacion
+- si reporta advertencias de base viva, documentarlas como deuda historica o corregirlas con respaldo previo

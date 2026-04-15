@@ -1,18 +1,20 @@
 # PDFs y Documentos
 
-Ultima actualizacion: 2026-03-28
+Ultima actualizacion: 2026-04-14
 
 ## 1. Generadores principales
 
 Plaza Mayor:
 
 - `frontend/client/cotizador/orders.js`
+  - `window.getOrderHTML`
 - `frontend/client/cotizador/contracts.js`
 - `frontend/client/cotizador/receipts.js`
 
 Casa de Piedra:
 
 - `frontend/client/cotizadorcp/orders.js`
+  - `window.getOrderHTML`
 - `frontend/client/cotizadorcp/contracts.js`
 - `frontend/client/cotizadorcp/receipts.js`
 
@@ -54,3 +56,50 @@ Flujo esperado:
 - documento guardado vuelve a abrir
 - Plaza Mayor resuelve Material/Ubicacion correctamente
 - Casa de Piedra conserva reglas de evento y premontaje
+- las cartas convenio no imprimen precios, montos ni balances
+- la informacion economica del convenio solo vive en la cotizacion interna y sus snapshots
+- el boton `Etiquetas {{}}` abre el catalogo de variables disponibles para firmas y recursos de texto
+- los recursos editables de PDF se pueden redimensionar desde el marco
+- al redimensionar desde esquinas se conserva proporcion visual
+
+## 7. Regla especial para cartas convenio
+
+Aplica en:
+
+- `frontend/client/cotizador/orders.js`
+- `frontend/client/cotizadorcp/orders.js`
+
+Regla:
+
+- si el documento es una carta convenio, el PDF entregable solo muestra espacios, vigencia, contraprestaciones y responsabilidades
+- no deben imprimirse `precio_base`, `subtotal`, `monto`, `balance` ni resumen economico
+- los valores monetarios siguen existiendo en `desglose_precios`, `conceptos_adicionales` y `espacios_detalle` para control interno
+- la distribucion visual entre publicidad acordada y contraprestacion/vigencia se ajusta en proporcion al contenido de cada cotizacion
+
+## 8. Etiquetas disponibles en plantillas PDF
+
+El editor PDF soporta etiquetas en campos de firma, subtitulos y recursos de texto:
+
+- `{{CLIENT_NAME}}`
+- `{{CLIENT_EMAIL}}`
+- `{{CLIENT_PHONE}}`
+- `{{CLIENT_RFC}}`
+- `{{QUOTE_NAME}}`
+- `{{FOLIO}}`
+- `{{DOC_TITLE}}`
+- `{{START_DATE}}`
+- `{{END_DATE}}`
+- `{{VALIDITY}}`
+- `{{TODAY}}`
+- `{{CURRENT_USER_NAME}}`
+- `{{CURRENT_USER_EMAIL}}`
+- `{{VENUE_NAME}}`
+
+Funciones relacionadas:
+
+- Plaza Mayor: `__pmBuildPdfTemplateContext`, `window.openPdfTemplateTagsModal`
+- Casa de Piedra: `__cpBuildPdfTemplateContext`, `window.openCpPdfTemplateTagsModal`
+
+Referencia adicional:
+
+- `docs/85-catalogo-de-funciones-y-puntos-de-extension.md`

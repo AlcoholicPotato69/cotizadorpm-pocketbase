@@ -41,14 +41,19 @@ Accesos locales:
 
 ## Producción
 
-La ruta recomendada es servir API, dashboard y frontend desde el mismo PocketBase.
+La ruta recomendada de producción es separar responsabilidades:
+
+- PocketBase sirve backend, API y dashboard administrativo.
+- Los HTML se sirven por fuera de PocketBase, normalmente desde Nginx con la carpeta `production\deploy\nginx-site\`.
+- `frontend\pb_public\` queda como espejo/compatibilidad histórica, pero no es el destino recomendado de despliegue.
 
 Puntos clave:
 
 - configuración del backend: `production/deploy/backend-service.local.conf`
 - runtime del frontend: `frontend/client/config/hub-runtime.json`
+- runtime legacy/publico: `frontend/client/public/assets/libs/js/env.js`
 - servicio Windows: `production/backend-service.bat`
-- publicación estática: `frontend/pb_public/`
+- publicación estática separada: `production/deploy/nginx-site/`
 
 ### 1. Levantar backend en producción
 
@@ -60,6 +65,7 @@ Revisa o ajusta IP/puerto si hace falta:
 production\backend-service.bat show
 production\backend-service.bat set-bind 127.0.0.1:8090
 production\backend-service.bat set-url http://127.0.0.1:8090
+production\backend-service.bat set-public-dir off
 ```
 
 Instala e inicia el servicio:
@@ -85,60 +91,68 @@ Ese superusuario te deja entrar al dashboard para crear o revisar los registros 
 
 ### 2. Levantar frontend en producción
 
-No hace falta un servicio aparte si mantienes `PUBLIC_DIR=frontend\pb_public`. El runner de producción prepara esa carpeta y PocketBase publica el frontend automáticamente.
+El frontend se prepara como HTML estático separado. El flujo recomendado es:
 
-Accesos esperados después de levantar el backend:
+```bat
+production\levantar-todo.bat
+```
 
-- frontend: `http://HOST:PUERTO/index.html`
-- login/runtime: `http://HOST:PUERTO/client/index.html`
+El script pide:
 
-Si necesitas regenerar la carpeta pública manualmente:
+- IP/host y puerto del backend PocketBase
+- IP/host y puerto donde se servirá el frontend HTML
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File production\deploy\prepare-public-dir.ps1
+Después actualiza automáticamente:
+
+- `BIND_ADDR`
+- `BACKEND_URL`
+- `FRONTEND_BACKEND_URL`
+- `CORS_ALLOWED_ORIGINS`
+- `PUBLIC_DIR=off`
+- `frontend/client/config/hub-runtime.json`
+- `frontend/client/public/assets/libs/js/env.js`
+- `production/deploy/nginx-site/`
+- `production/deploy/nginx/cotizador-production.conf`
+
+Accesos esperados con Nginx:
+
+- frontend: `http://FRONTEND_HOST/client/index.html`
+- backend/API por proxy: `http://FRONTEND_HOST/api/health`
+- dashboard por proxy: `http://FRONTEND_HOST/_/`
+
+Si TI decide servir el HTML desde otro servidor estático sin proxy same-origin, entonces el frontend debe apuntar directamente al backend:
+
+```bat
+production\backend-service.bat set-url http://BACKEND_HOST:8090
+production\backend-service.bat set-frontend-url http://BACKEND_HOST:8090
+production\backend-service.bat set-frontend-origin http://FRONTEND_HOST
+production\backend-service.bat sync-frontend
 ```
 
 ### 3. Configuración de IP (Acceso en Red Local o Producción)
 
-Para que otros equipos de la red puedan acceder al sistema, debes asignar la IP del servidor (ej. `192.168.1.100`) en lugar de `127.0.0.1`.
-
-**1. Configurar la IP en el Backend:**
-Usa los scripts de producción para que PocketBase escuche en la IP correcta o en todas las interfaces (`0.0.0.0`):
+Para que otros equipos de la red accedan al sistema, usa IPs reales en lugar de `127.0.0.1`.
 
 ```bat
 production\backend-service.bat set-bind 0.0.0.0:8090
 production\backend-service.bat set-url http://TU_IP_LOCAL:8090
+production\backend-service.bat set-frontend-origin http://IP_FRONTEND
 production\backend-service.bat restart
 ```
-*(Reemplaza `TU_IP_LOCAL` por la IP real del servidor, por ejemplo `192.168.1.100`)*
 
-**2. Actualizar la IP en el Frontend:**
-Debes indicar al frontend dónde encontrar al backend. Tienes que modificar estos **dos archivos principales**:
+El frontend reconoce la IP del backend por estos archivos, generados por `sync-frontend-runtime.ps1`:
 
-1. **`frontend/client/config/hub-runtime.json`**
-   Cambia `BACKEND_URL` por la IP del servidor.
-   ```json
-   {
-       "BACKEND_URL": "http://TU_IP_LOCAL:8090",
-       "FINANZAS_SCHEMA": "finanzas",
-       ...
-   }
-   ```
+- `frontend/client/config/hub-runtime.json`
+- `frontend/client/public/assets/libs/js/env.js`
 
-2. **`frontend/client/public/assets/libs/js/env.js`**
-   Cambia `POCKETBASE_URL` por la IP del servidor.
-   *(Este archivo controla la conexión de las páginas públicas de los catálogos).*
-   ```javascript
-   window.ENV = {
-       POCKETBASE_URL: 'http://TU_IP_LOCAL:8090',
-       ...
-   };
-   ```
+No se recomienda editarlos a mano salvo emergencia. Usa:
 
-**(Importante)**: Si el frontend falla al cargar la nueva configuración porque la caché del navegador quedó con la IP vieja de `hub-runtime.json`, deberás borrar la caché o usar modo incógnito.
+```bat
+production\backend-service.bat set-frontend-url /
+production\backend-service.bat prepare-nginx production\deploy\nginx-site IP_FRONTEND
+```
 
-Después de realizar estos cambios, los usuarios en la red podrán acceder al sistema ingresando en su navegador a:
-`http://TU_IP_LOCAL:8090/index.html`
+Con proxy Nginx same-origin, `FRONTEND_BACKEND_URL=/` es correcto. Si no hay proxy same-origin, usa `set-frontend-url http://BACKEND_HOST:8090` y autoriza CORS con `set-frontend-origin`.
 
 Nota de recuperación:
 
@@ -155,5 +169,7 @@ Nota de recuperación:
 - `backend/pb_data/`
 - `development/dev-start.bat`
 - `development/frontend-dev-start.bat`
+- `development/audit-smoke.ps1`
 - `production/backend-service.bat`
-- `docs/README.md`
+- `docs/README docs.md`
+- `docs/35-requisitos-tecnicos-del-servidor.md`

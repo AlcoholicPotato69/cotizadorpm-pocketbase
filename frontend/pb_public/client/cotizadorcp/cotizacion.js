@@ -370,6 +370,9 @@ function normalizeCpSpaceTag(value) {
     const normalized = typeof raw.normalize === 'function' ? raw.normalize('NFD') : raw;
     return normalized.replace(/[\u0300-\u036f]/g, '').toLowerCase();
 }
+function normalizeCpManagerTypeSelection(value) {
+    return normalizeCpSpaceTag(value) === 'publicidad' ? 'publicidad' : 'espacio';
+}
 function getCpSpaceTags(space) {
     const tags = new Set();
     const push = (value) => {
@@ -395,6 +398,9 @@ function isCpAdvertisingSpace(space) {
 }
 function isCpLocalLikeSpace(space) {
     return cpSpaceHasTag(space, 'local') || cpSpaceHasTag(space, 'isla') || cpSpaceHasTag(space, 'espacio');
+}
+function isCpVenueSpaceCard(space) {
+    return !isCpAdvertisingSpace(space) && cpSpaceHasTag(space, 'espacio');
 }
 function normalizeCpSpaceConvenioFlag(value, fallback = true) {
     if (value === null || value === undefined || value === '') return !!fallback;
@@ -459,7 +465,7 @@ function getCpCardInfoRows(space, options = {}) {
     const includeType = options.includeType === true;
     const isPublicidad = isCpAdvertisingSpace(space);
     if (includeType) rows.push({ label: 'Tipo', value: space?.tipo || '--' });
-    if (isPublicidad || cpSpaceHasTag(space, 'local') || cpSpaceHasTag(space, 'isla')) rows.push({ label: 'Medidas', value: getCpSpaceMeasuresLabel(space) });
+    if (isPublicidad || isCpLocalLikeSpace(space)) rows.push({ label: 'Medidas', value: getCpSpaceMeasuresLabel(space) });
     if (isPublicidad) rows.push({ label: 'Material', value: getCpSpaceMaterialLabel(space) });
     if (!isCpAdvertisingSpace(space) && !isCpLocalLikeSpace(space)) rows.push({ label: 'Impuestos', value: getSpaceTaxLabel(space) });
     return rows.filter((row) => String(row?.value || '').trim());
@@ -484,20 +490,30 @@ function renderCpPreviewBadges(space) {
 }
 window.syncCpManagerTypeFields = function () {
     const typeEl = document.getElementById('mgr-type');
+    const selectedType = normalizeCpManagerTypeSelection(typeEl?.value || '');
     const attrsGrid = document.getElementById('mgr-attributes-grid');
     const materialField = document.getElementById('mgr-material-field');
     const measuresField = document.getElementById('mgr-measures-field');
     const convenioField = document.getElementById('mgr-convenio-field');
-    const isPublicidad = normalizeCpSpaceTag(typeEl?.value || '') === 'publicidad';
+    if (typeEl && typeEl.value !== selectedType) typeEl.value = selectedType;
+    const isPublicidad = selectedType === 'publicidad';
     if (attrsGrid) attrsGrid.classList.toggle('hidden', !isPublicidad);
     if (materialField) materialField.classList.toggle('hidden', !isPublicidad);
     if (measuresField) measuresField.classList.toggle('hidden', !isPublicidad);
     if (convenioField) convenioField.classList.toggle('hidden', !isPublicidad);
 };
+function escapeCpMaterialOption(value) {
+    return String(value || '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+}
 function renderCpMaterialSuggestions() {
-    const datalist = document.getElementById('mgr-material-options');
-    if (!datalist) return;
-    datalist.innerHTML = cpMaterialCatalog.map((item) => `<option value="${item}"></option>`).join('');
+    const select = document.getElementById('mgr-material');
+    if (!select) return;
+    const current = String(select.value || '').trim();
+    const items = Array.from(new Set(cpMaterialCatalog.map((item) => String(item || '').trim()).filter(Boolean)));
+    if (current && !items.includes(current)) items.unshift(current);
+    // Auditoria TI: publicidad CP usa select real, no datalist, para evitar opciones libres del navegador.
+    select.innerHTML = '<option value="">Selecciona un material...</option>' + items.map((item) => `<option value="${escapeCpMaterialOption(item)}">${escapeCpMaterialOption(item)}</option>`).join('');
+    select.value = current;
 }
 async function loadCpMaterialCatalog() {
     cpMaterialCatalog = [];
@@ -930,7 +946,7 @@ function renderSpaces(list) {
         if (taxDetails.length > 0) taxDetails.forEach((tax) => { const rate = parseFloat(tax?.porcentaje || 0) > 1 ? (parseFloat(tax.porcentaje || 0) / 100) : parseFloat(tax?.porcentaje || 0); totalTax += adjustedBase * rate; });
         const finalPrice = adjustedBase + totalTax;
         const taxOnlyAmount = finalPrice - adjustedBase;
-        const quoteInfoRows = isPublicidadCard ? getCpCardInfoRows(s, { includeType: true }) : getCpCardInfoRows(s);
+        const quoteInfoRows = getCpCardInfoRows(s, { includeType: true });
         const inQuote = IS_QUOTE_PAGE && Array.isArray(__cpQuoteSpaces) && __cpQuoteSpaces.some(x => String(x.spaceId) === String(s.id));
         const isActiveQuote = IS_QUOTE_PAGE && String(__cpActiveSpaceId || '') === String(s.id);
         if (IS_QUOTE_PAGE) {
@@ -949,8 +965,8 @@ function renderSpaces(list) {
                     <p class="text-[10px] font-mono text-gray-400 mt-1">${s.clave || '--'}</p>
                 </div>
                 <div class="space-y-1.5 mb-4 text-[11px]">
-                    ${!isPublicidadCard && !isCpLocalLikeSpace(s) ? `<div class="flex justify-between gap-2"><span class="text-gray-400 font-bold uppercase">Invitados</span><span class="text-gray-700 font-bold text-right">${__cpGuestRangeText(s)}</span></div>` : ''}
-                    ${!isPublicidadCard && !isCpLocalLikeSpace(s) ? `<div class="flex justify-between gap-2"><span class="text-gray-400 font-bold uppercase">Horarios</span><span class="text-gray-700 font-bold text-right">${__cpHorariosText(s)}</span></div>` : ''}
+                    ${isCpVenueSpaceCard(s) ? `<div class="flex justify-between gap-2"><span class="text-gray-400 font-bold uppercase">Invitados</span><span class="text-gray-700 font-bold text-right">${__cpGuestRangeText(s)}</span></div>` : ''}
+                    ${isCpVenueSpaceCard(s) ? `<div class="flex justify-between gap-2"><span class="text-gray-400 font-bold uppercase">Horarios</span><span class="text-gray-700 font-bold text-right">${__cpHorariosText(s)}</span></div>` : ''}
                     ${quoteInfoRows.map((row) => {
                 if (row.label === 'Medidas') {
                     return `<div class="flex justify-between items-start gap-2"><span class="text-gray-400 font-bold uppercase">Medidas</span>${renderCpMeasureParts(s, {
@@ -1097,8 +1113,11 @@ window.openManagerModal = function (id) {
 
     if (id) {
         const s = allSpaces.find(x => x.id === id);
-        document.getElementById('mgr-title').innerText = "Editar: " + s.nombre; document.getElementById('mgr-key').value = s.clave; document.getElementById('mgr-key').disabled = true; document.getElementById('mgr-name').value = s.nombre; document.getElementById('mgr-type').value = s.tipo; document.getElementById('mgr-desc').value = s.descripcion || '';
-        document.getElementById('mgr-material').value = String(s.material || '').trim();
+        document.getElementById('mgr-title').innerText = "Editar: " + s.nombre; document.getElementById('mgr-key').value = s.clave; document.getElementById('mgr-key').disabled = true; document.getElementById('mgr-name').value = s.nombre; document.getElementById('mgr-type').value = normalizeCpManagerTypeSelection(s.tipo); document.getElementById('mgr-desc').value = s.descripcion || '';
+        const savedMaterial = String(s.material || '').trim();
+        if (savedMaterial && !cpMaterialCatalog.includes(savedMaterial)) cpMaterialCatalog = [savedMaterial, ...cpMaterialCatalog];
+        renderCpMaterialSuggestions();
+        document.getElementById('mgr-material').value = savedMaterial;
         document.getElementById('mgr-ancho').value = normalizeCpMeasureValue(s.medida_ancho ?? s.ancho) ?? '';
         document.getElementById('mgr-alto').value = normalizeCpMeasureValue(s.medida_alto ?? s.alto) ?? '';
         document.getElementById('mgr-unidad').value = normalizeCpMeasureUnit(s.medida_unidad || s.unidad_medida || 'M');
@@ -1129,7 +1148,7 @@ window.openManagerModal = function (id) {
             }
         }
     } else {
-        document.getElementById('mgr-title').innerText = "Nuevo Espacio"; document.getElementById('mgr-key').value = ''; document.getElementById('mgr-key').disabled = false; document.getElementById('mgr-name').value = ''; document.getElementById('mgr-type').value = 'local'; document.getElementById('mgr-tags').value = ''; document.getElementById('mgr-desc').value = ''; document.getElementById('mgr-material').value = ''; document.getElementById('mgr-ancho').value = ''; document.getElementById('mgr-alto').value = ''; document.getElementById('mgr-unidad').value = 'M'; const convenioToggle = document.getElementById('mgr-allow-convenio'); if (convenioToggle) convenioToggle.checked = true; window.syncCpManagerTypeFields(); window.addRangeRow(); window.addHorarioRow();
+        document.getElementById('mgr-title').innerText = "Nuevo Espacio"; document.getElementById('mgr-key').value = ''; document.getElementById('mgr-key').disabled = false; document.getElementById('mgr-name').value = ''; document.getElementById('mgr-type').value = 'espacio'; document.getElementById('mgr-tags').value = ''; document.getElementById('mgr-desc').value = ''; document.getElementById('mgr-material').value = ''; renderCpMaterialSuggestions(); document.getElementById('mgr-ancho').value = ''; document.getElementById('mgr-alto').value = ''; document.getElementById('mgr-unidad').value = 'M'; const convenioToggle = document.getElementById('mgr-allow-convenio'); if (convenioToggle) convenioToggle.checked = true; window.syncCpManagerTypeFields(); window.addRangeRow(); window.addHorarioRow();
         document.getElementById('mgr-active').checked = true; document.getElementById('btn-delete-mgr').classList.add('hidden');
         for (let i = 1; i <= 5; i++) { const mgrPrev = document.getElementById(`mgr-preview-${i}`); if (mgrPrev) { mgrPrev.src = ''; mgrPrev.classList.add('hidden'); mgrPrev.removeAttribute('data-modified'); } const fi = document.getElementById(`mgr-file-${i}`); if (fi) fi.value = ''; }
     }
@@ -1144,7 +1163,7 @@ window.saveSpace = async function () {
         const id = document.getElementById('mgr-id').value;
         const clave = document.getElementById('mgr-key').value.toUpperCase().trim();
         const nombre = document.getElementById('mgr-name').value.trim();
-        const tipo = document.getElementById('mgr-type').value;
+        const tipo = normalizeCpManagerTypeSelection(document.getElementById('mgr-type').value);
         const isPublicidad = normalizeCpSpaceTag(tipo) === 'publicidad';
         const ajusteTipo = normalizeCpQuoteAdjustmentType(document.getElementById('mgr-adj-type').value);
         const ajustePorcentaje = ajusteTipo === 'ninguno'
@@ -1639,10 +1658,16 @@ function __cpConvenioCovered(baseValue, deliveredValue, balanceValue = undefined
     if (base <= 0) return false;
     return delivered + 0.009 >= base;
 }
+function __cpHasFiniteConvenioEndDate(value) {
+    const raw = __cpNormalizeDate(value || '');
+    return !!raw && raw !== CP_CONVENIO_INDEFINITE_END;
+}
 function __cpDetailBlocksIndefinitely(detail = {}) {
     const row = detail && typeof detail === 'object' ? detail : {};
     const flagged = row?.convenio_activo === true || row?.convenio_indefinido === true || row?.bloqueo_indefinido === true;
     if (!flagged) return false;
+    // Auditoria TI: el convenio solo es indefinido cuando no existe fecha fin real.
+    if (__cpHasFiniteConvenioEndDate(row?.fecha_fin || row?.endDate)) return false;
     return __cpConvenioCovered(
         row?.subtotal_espacio ?? row?.baseValue,
         row?.convenio_monto_entregado ?? row?.convenioValue,
@@ -1654,6 +1679,7 @@ function __cpCfgConvenioValue(cfg) {
 }
 function __cpCfgBlocksIndefinitely(cfg) {
     if (!cfg?.convenioEnabled || !__cpIsPublicidadCfg(cfg)) return false;
+    if (__cpHasFiniteConvenioEndDate(cfg?.endDate)) return false;
     const space = __cpGetSpaceById(cfg.spaceId);
     const base = parseFloat(space?.precio_base || 0) || 0;
     return __cpConvenioCovered(base, __cpCfgConvenioValue(cfg));
@@ -1805,6 +1831,8 @@ function __cpNormalizePublicidadDates(cfg) {
     }
     if (cfg.startDate && cfg.endDate && cfg.endDate < cfg.startDate) cfg.endDate = cfg.startDate;
 }
+// Publicidad in Casa de Piedra prices the selected span directly, while espacios
+// uses the event flow and separate concept/tax calculators.
 function __cpBuildPublicidadPrice(space, cfg) {
     if (!space) return { subtotal: 0, taxes: 0, total: 0, taxIds: [] };
     const hasCustom = !!cfg?.customPriceEnabled && cfg?.customBasePrice !== '' && cfg?.customBasePrice !== null && cfg?.customBasePrice !== undefined;
@@ -1831,6 +1859,7 @@ function __cpQuoteBlocksIndefinitely(order = {}) {
     const convenio = __cpSafeObject(details?.convenio);
     const spaces = __cpSafeArray(order?.espacios_detalle);
     if (spaces.length) return spaces.some((item) => __cpDetailBlocksIndefinitely(item));
+    if (__cpHasFiniteConvenioEndDate(order?.fecha_fin || order?.endDate)) return false;
     if (convenio?.activo !== true || convenio?.bloqueo_indefinido === false) return false;
     const breakdown = __cpSafeObject(order?.desglose_precios);
     return __cpConvenioCovered(
@@ -1959,6 +1988,8 @@ function __cpCanAddSpaceToQuote(spaceId, options = {}) {
         return false;
     }
     const categoryMode = __cpGetQuoteCategoryMode();
+    // Casa de Piedra keeps a hybrid catalog, but each quote must stay within one
+    // operational mode because PUBLICIDAD and ESPACIO serialize different rules.
     if (categoryMode === 'mixed') {
         if (!options.silent) window.showToast('Quita espacios de una categoría antes de agregar otro. No se puede mezclar ESPACIO con PUBLICIDAD.', 'error');
         return false;
@@ -2324,6 +2355,8 @@ window.applyQuoteDatePickerSelection = function () {
     __cpSetDateOnForm(state.start, state.end || state.start);
     window.closeModal('quote-date-modal');
 }
+// Availability for Casa de Piedra is derived from approved/finalized quotes plus
+// explicit montaje/premontaje dates and convenio blocks that remain indefinite.
 function __cpBuildReservationsMap(rows) {
     const map = new Map();
     const addDate = (spaceId, dateStr) => {
@@ -2938,6 +2971,7 @@ window.updateQuoteCalculation = function () {
         const convenioValue = convenioItems.reduce((sum, concept) => sum + (__cpToFiniteNumber(concept.amount ?? concept.value, 0) || 0), 0);
         const safeConvenioValue = Math.max(0, __cpToFiniteNumber(convenioValue, 0));
         const convenioCovered = isConvenio ? __cpConvenioCovered(parseFloat(space?.precio_base || 0) || 0, safeConvenioValue) : false;
+        const blocksIndefinitely = convenioCovered && !__cpHasFiniteConvenioEndDate(cfg?.endDate);
         const guests = parseInt(cfg.guests, 10) || 1;
         const maxCapacity = isPublicidad ? 999999 : getSpaceMaxCapacity(space);
         const capacityOk = isPublicidad ? true : !(maxCapacity < 999999 && guests > maxCapacity);
@@ -3005,7 +3039,7 @@ window.updateQuoteCalculation = function () {
             horasExtraCost: horasCost,
             convenioEnabled: isConvenio,
             convenioCovered,
-            blocksIndefinitely: convenioCovered,
+            blocksIndefinitely,
             concepts: isConvenio ? convenioItems : [],
             baseValue: safeBase,
             convenioValue: safeConvenioValue,
@@ -3207,7 +3241,7 @@ window.generatePDF = async function () {
             impuestos_total: sp.convenioEnabled ? 0 : sp.taxTotal,
             total_espacio: sp.total || (sp.subtotalBeforeTax + sp.taxTotal),
             convenio_activo: !!sp.convenioEnabled,
-            convenio_indefinido: false,
+            convenio_indefinido: !!sp.blocksIndefinitely,
             convenio_items: convenioItems,
             permanencia_personalizada: sp.isPublicidad ? !!sp.customPermanence : false,
             precio_personalizado: (sp.isPublicidad && !sp.convenioEnabled && sp.customPriceEnabled && sp.customBasePrice !== '' && sp.customBasePrice !== null && sp.customBasePrice !== undefined)
@@ -3248,6 +3282,7 @@ window.generatePDF = async function () {
         espacio_nombre: space.espacio_nombre,
         espacio_clave: space.espacio_clave
     })));
+    const convenioBlocksIndefinitely = spaces.some((sp) => !!sp.blocksIndefinitely);
     const auditMulti = await __cpResolveQuoteActorAudit();
     const payload = {
         cliente_id: (document.getElementById('cli-id') ? (document.getElementById('cli-id').value || null) : null),
@@ -3277,7 +3312,7 @@ window.generatePDF = async function () {
             nombre_cotizacion: quoteName,
             convenio: convenioItems.length ? {
                 activo: true,
-                bloqueo_indefinido: true,
+                bloqueo_indefinido: convenioBlocksIndefinitely,
                 requiere_evidencia: true,
                 evidencia_minima: 3,
                 evidencia_maxima: 5,

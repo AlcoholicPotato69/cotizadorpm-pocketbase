@@ -1051,6 +1051,70 @@ function __pmContractsBuildReceiptResourceContext({ isLiquidated, dateStr, timeS
     };
 }
 
+const __PM_CONTRACTS_PDF_TEMPLATE_TOKENS = Object.freeze([
+    { token: 'DOC_TITLE', label: 'Titulo del documento' },
+    { token: 'DOC_FOLIO', label: 'Folio de la orden' },
+    { token: 'DOC_ID_SHORT', label: 'ID corto del registro' },
+    { token: 'DOC_DATE', label: 'Fecha del documento' },
+    { token: 'DOC_TIME', label: 'Hora del documento' },
+    { token: 'DOC_DATE_LABEL', label: 'Etiqueta de fecha' },
+    { token: 'DOC_TIME_LABEL', label: 'Etiqueta de hora' },
+    { token: 'CLIENT_NAME', label: 'Nombre del cliente' },
+    { token: 'SIGN_LEFT_NAME', label: 'Firma izquierda: nombre' },
+    { token: 'SIGN_LEFT_ROLE', label: 'Firma izquierda: cargo' },
+    { token: 'SIGN_RIGHT_NAME', label: 'Firma derecha: nombre' },
+    { token: 'SIGN_RIGHT_ROLE', label: 'Firma derecha: cargo' },
+    { token: 'SIGN_CLIENT_NAME', label: 'Firma cliente: nombre' },
+    { token: 'SIGN_CLIENT_ROLE', label: 'Firma cliente: cargo' }
+]);
+
+function __pmContractsTemplateTagsModalHtml() {
+    const rows = __PM_CONTRACTS_PDF_TEMPLATE_TOKENS.map((item) => `
+        <div class="flex items-center justify-between gap-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2">
+            <code class="text-[11px] font-black text-brand-red">{{${item.token}}}</code>
+            <span class="text-[11px] font-semibold text-gray-600 text-right">${item.label}</span>
+        </div>`).join('');
+    return `<div class="bg-white rounded-2xl shadow-2xl border border-gray-200 w-full max-w-2xl p-6">
+        <div class="flex items-start justify-between gap-4 mb-4">
+            <div><h3 class="text-lg font-black text-gray-900 uppercase tracking-tight">Etiquetas para PDF</h3><p class="text-xs text-gray-500 mt-1">Puedes pegarlas en firmas, titulos, subtitulos y recursos de texto del editor PDF.</p></div>
+            <button type="button" onclick="window.closeModal('pdf-template-tags-modal')" class="text-gray-400 hover:text-gray-700"><i class="fa-solid fa-xmark text-xl"></i></button>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[60vh] overflow-y-auto pr-1">${rows}</div>
+    </div>`;
+}
+
+window.openPdfTemplateTagsModal = function () {
+    let modal = document.getElementById('pdf-template-tags-modal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'pdf-template-tags-modal';
+        modal.className = 'fixed inset-0 z-[520] hidden items-center justify-center bg-black/60 backdrop-blur-sm p-4';
+        modal.addEventListener('click', (e) => { if (e.target === modal) window.closeModal('pdf-template-tags-modal'); });
+        document.body.appendChild(modal);
+    }
+    modal.innerHTML = __pmContractsTemplateTagsModalHtml();
+    window.openModal('pdf-template-tags-modal');
+};
+
+function __pmContractsTemplateTagsInlineHtml() {
+    return `<div class="flex flex-wrap gap-2">${__PM_CONTRACTS_PDF_TEMPLATE_TOKENS.map((item) => `
+        <span class="inline-flex items-center rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[10px] font-black text-brand-red shadow-sm">
+            {{${item.token}}}
+        </span>`).join('')}</div>`;
+}
+
+function __pmContractsSyncPdfTemplateTagHelpers() {
+    document.querySelectorAll('[data-pdf-template-helper="pm-contracts"]').forEach((host) => {
+        host.innerHTML = __pmContractsTemplateTagsInlineHtml();
+    });
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', __pmContractsSyncPdfTemplateTagHelpers, { once: true });
+} else {
+    __pmContractsSyncPdfTemplateTagHelpers();
+}
+
 function __pmContractsBuildDefaultReceiptResources() {
     return __pmContractsNormalizePdfResources([
         {
@@ -3349,10 +3413,38 @@ function __pmContractsBindPdfResourceDrag() {
         const scaleY = rect.height > 0 && rawHeight > 0 ? (rect.height / rawHeight) : 1;
         return { x: scaleX > 0 ? scaleX : 1, y: scaleY > 0 ? scaleY : 1 };
     };
-    const isResizeGesture = (rect, event) => (
-        event.shiftKey ||
-        (((rect.right - event.clientX) < 18) && ((rect.bottom - event.clientY) < 18))
-    );
+    const getResizeHit = (node, event) => {
+        const rect = node?.getBoundingClientRect?.();
+        if (!rect) return { resize: false, proportional: false, cursor: 'move' };
+        const threshold = Math.min(18, Math.max(10, Math.min(rect.width, rect.height) / 3));
+        let left = (event.clientX - rect.left) <= threshold;
+        let right = (rect.right - event.clientX) <= threshold;
+        let top = (event.clientY - rect.top) <= threshold;
+        let bottom = (rect.bottom - event.clientY) <= threshold;
+        if (event.shiftKey && !(left || right || top || bottom)) {
+            right = true;
+            bottom = true;
+        }
+        if (left && right) {
+            if (event.clientX - rect.left <= rect.right - event.clientX) right = false;
+            else left = false;
+        }
+        if (top && bottom) {
+            if (event.clientY - rect.top <= rect.bottom - event.clientY) bottom = false;
+            else top = false;
+        }
+        if (!(left || right || top || bottom)) return { resize: false, proportional: false, cursor: 'move' };
+        let cursor = 'move';
+        if ((left || right) && (top || bottom)) {
+            const diagonalA = (left && top) || (right && bottom);
+            cursor = diagonalA ? 'nwse-resize' : 'nesw-resize';
+        } else if (left || right) {
+            cursor = 'ew-resize';
+        } else if (top || bottom) {
+            cursor = 'ns-resize';
+        }
+        return { resize: true, left, right, top, bottom, proportional: (left || right) && (top || bottom), cursor };
+    };
     const minHeightForType = (type) => (type === 'sign' || type === 'sign-line'
         ? 1
         : (type === 'logo'
@@ -3360,6 +3452,50 @@ function __pmContractsBindPdfResourceDrag() {
             : (type === 'sign-block'
                 ? 42
                 : (type === 'bar' ? 4 : 10))));
+    const resizeGeometry = (origin, dx, dy, resize, type) => {
+        const minWidth = 16;
+        const minHeight = minHeightForType(type || origin?.type);
+        const safeOrigin = {
+            x: parseFloat(origin?.x) || 0,
+            y: parseFloat(origin?.y) || 0,
+            w: Math.max(minWidth, parseFloat(origin?.w) || minWidth),
+            h: Math.max(minHeight, parseFloat(origin?.h) || minHeight)
+        };
+        if (resize?.proportional && (resize.left || resize.right) && (resize.top || resize.bottom)) {
+            const scaleX = safeOrigin.w > 0 ? ((resize.left ? safeOrigin.w - dx : safeOrigin.w + dx) / safeOrigin.w) : 1;
+            const scaleY = safeOrigin.h > 0 ? ((resize.top ? safeOrigin.h - dy : safeOrigin.h + dy) / safeOrigin.h) : 1;
+            let scale = Math.abs(scaleX - 1) >= Math.abs(scaleY - 1) ? scaleX : scaleY;
+            if (!Number.isFinite(scale)) scale = 1;
+            const minScale = Math.max(minWidth / safeOrigin.w, minHeight / safeOrigin.h);
+            scale = Math.max(minScale, scale);
+            const nextW = Math.max(minWidth, Math.round(safeOrigin.w * scale));
+            const nextH = Math.max(minHeight, Math.round(safeOrigin.h * scale));
+            return {
+                ...origin,
+                x: resize.left ? Math.round(safeOrigin.x + (safeOrigin.w - nextW)) : safeOrigin.x,
+                y: resize.top ? Math.round(safeOrigin.y + (safeOrigin.h - nextH)) : safeOrigin.y,
+                w: nextW,
+                h: nextH
+            };
+        }
+        let nextX = safeOrigin.x;
+        let nextY = safeOrigin.y;
+        let nextW = safeOrigin.w;
+        let nextH = safeOrigin.h;
+        if (resize?.left) {
+            nextW = Math.max(minWidth, Math.round(safeOrigin.w - dx));
+            nextX = Math.round(safeOrigin.x + (safeOrigin.w - nextW));
+        } else if (resize?.right) {
+            nextW = Math.max(minWidth, Math.round(safeOrigin.w + dx));
+        }
+        if (resize?.top) {
+            nextH = Math.max(minHeight, Math.round(safeOrigin.h - dy));
+            nextY = Math.round(safeOrigin.y + (safeOrigin.h - nextH));
+        } else if (resize?.bottom) {
+            nextH = Math.max(minHeight, Math.round(safeOrigin.h + dy));
+        }
+        return { ...origin, x: nextX, y: nextY, w: nextW, h: nextH };
+    };
     const releasePointer = (state) => {
         const captureNode = state?.captureNode;
         if (!captureNode || typeof captureNode.releasePointerCapture !== 'function') return;
@@ -3408,9 +3544,9 @@ function __pmContractsBindPdfResourceDrag() {
             const resources = __pmContractsGetPdfResourcesFromState();
             const idx = resources.findIndex((resource) => resource.id === id && resource.page === page);
             if (idx < 0) return;
-            const rect = node.getBoundingClientRect();
             const scale = getPointerScale(node);
-            const mode = isResizeGesture(rect, event) ? 'resize' : 'move';
+            const resize = getResizeHit(node, event);
+            const mode = resize.resize ? 'resize' : 'move';
             __pmContractsPdfResourceSelectedId = id;
             __pmContractsRenderPdfResourcesEditorList();
             __pmContractsHighlightSelectedResource();
@@ -3429,6 +3565,7 @@ function __pmContractsBindPdfResourceDrag() {
                 captureNode: node,
                 scaleX: scale.x,
                 scaleY: scale.y,
+                resize,
                 origin: { ...resources[idx] },
                 current: { ...resources[idx] }
             };
@@ -3436,7 +3573,7 @@ function __pmContractsBindPdfResourceDrag() {
                 try { node.setPointerCapture(event.pointerId); } catch (_) {}
             }
             document.body.style.userSelect = 'none';
-            document.body.style.cursor = mode === 'resize' ? 'nwse-resize' : 'move';
+            document.body.style.cursor = resize.cursor || (mode === 'resize' ? 'nwse-resize' : 'move');
             event.preventDefault();
             return;
         }
@@ -3445,9 +3582,9 @@ function __pmContractsBindPdfResourceDrag() {
         if (!baseNode) return;
         const baseKey = String(baseNode.getAttribute('data-base-resource') || '').trim();
         if (!__pmContractsGetPdfBaseBlockMeta(baseKey)) return;
-        const rect = baseNode.getBoundingClientRect();
         const scale = getPointerScale(baseNode);
-        const mode = isResizeGesture(rect, event) ? 'scale' : 'move';
+        const resize = getResizeHit(baseNode, event);
+        const mode = resize.resize ? 'scale' : 'move';
         const cfg = __pmContractsGetPdfStyleConfig();
         const layouts = __pmContractsNormalizePdfBaseLayouts(cfg.baseLayouts);
         const instanceKey = String(baseNode.dataset.baseInstance || baseKey).trim();
@@ -3465,6 +3602,7 @@ function __pmContractsBindPdfResourceDrag() {
             captureNode: baseNode,
             scaleX: scale.x,
             scaleY: scale.y,
+            resize,
             origin: { ...(layouts[instanceKey] || layouts[baseKey] || __pmContractsNormalizePdfBaseLayout()) },
             current: { ...(layouts[instanceKey] || layouts[baseKey] || __pmContractsNormalizePdfBaseLayout()) }
         };
@@ -3472,7 +3610,7 @@ function __pmContractsBindPdfResourceDrag() {
             try { baseNode.setPointerCapture(event.pointerId); } catch (_) {}
         }
         document.body.style.userSelect = 'none';
-        document.body.style.cursor = mode === 'scale' ? 'nwse-resize' : 'move';
+        document.body.style.cursor = resize.cursor || (mode === 'scale' ? 'nwse-resize' : 'move');
         event.preventDefault();
     });
 
@@ -3485,7 +3623,9 @@ function __pmContractsBindPdfResourceDrag() {
 
         if (state.kind === 'base') {
             if (state.mode === 'scale') {
-                const delta = (dx + dy) / 2;
+                const signedDx = state.resize?.left ? -dx : dx;
+                const signedDy = state.resize?.top ? -dy : dy;
+                const delta = (signedDx + signedDy) / 2;
                 const next = __pmContractsNormalizePdfBaseLayout({ ...state.origin, scalePct: state.origin.scalePct + delta });
                 state.current = next;
                 if (state.captureNode) state.captureNode.style.transform = __pmContractsBuildPdfBaseTransform(next);
@@ -3501,8 +3641,11 @@ function __pmContractsBindPdfResourceDrag() {
 
         const next = { ...state.origin };
         if (state.mode === 'resize') {
-            next.w = Math.max(16, next.w + dx);
-            next.h = Math.max(minHeightForType(next.type), next.h + dy);
+            const resized = resizeGeometry(state.origin, dx, dy, state.resize, next.type);
+            next.x = resized.x;
+            next.y = resized.y;
+            next.w = resized.w;
+            next.h = resized.h;
         } else {
             next.x += dx;
             next.y += dy;
@@ -4393,7 +4536,7 @@ function getReceiptHTML(isVisual = false) {
         signLabels
     });
     const pdfStyleInlineVars = __pmContractsPdfStyleVarsInline(pdfStyle);
-    const pdfStyleTag = `<style>.pmc-pdf-root{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;font-family:var(--pm-font-family)!important;}.pmc-pdf-root .pmc-pdf-shift{transform:translate(var(--pm-offset-x),var(--pm-offset-y));}.pmc-pdf-root .pmc-pdf-main{padding:var(--pm-margin-top) var(--pm-margin-right) var(--pm-margin-bottom) var(--pm-margin-left)!important;}.pmc-pdf-root .pmc-pdf-header{border-bottom-width:var(--pm-header-line)!important;justify-content:var(--pm-header-justify)!important;}.pmc-pdf-root .pmc-pdf-sign-line{width:100%;height:var(--pm-sign-line)!important;background:#111827!important;border-radius:999px;}.pmc-pdf-root .pmc-pdf-title{font-size:var(--pm-title-size)!important;line-height:1.05!important;text-align:var(--pm-header-align)!important;}.pmc-pdf-root .pmc-pdf-meta,.pmc-pdf-root .pmc-pdf-meta *{font-size:var(--pm-meta-size)!important;text-align:var(--pm-meta-align)!important;}.pmc-pdf-root .pmc-pdf-table-head th{font-size:var(--pm-table-head-size)!important;}.pmc-pdf-root .pmc-pdf-table-body td,.pmc-pdf-root .pmc-pdf-table-body p,.pmc-pdf-root .pmc-pdf-table-body span{font-size:var(--pm-table-body-size)!important;line-height:var(--pm-line-height)!important;}.pmc-pdf-root .pmc-pdf-table-body td:first-child,.pmc-pdf-root .pmc-pdf-table-body td:first-child *{text-align:var(--pm-table-align)!important;}.pmc-pdf-root .pmc-pdf-summary,.pmc-pdf-root .pmc-pdf-summary *{text-align:var(--pm-summary-align)!important;}.pmc-pdf-root .pmc-pdf-quick,.pmc-pdf-root .pmc-pdf-quick *{font-size:var(--pm-quick-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-quick-align)!important;}.pmc-pdf-root .pmc-pdf-general-conditions,.pmc-pdf-root .pmc-pdf-general-conditions *{font-size:var(--pm-conditions-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-conditions-align)!important;}.pmc-pdf-root .pmc-pdf-sign,.pmc-pdf-root .pmc-pdf-sign *{font-size:var(--pm-sign-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-sign-align)!important;}.pmc-pdf-root .pmc-pdf-footer-text{font-size:var(--pm-footer-size)!important;text-align:var(--pm-footer-align)!important;}.pmc-pdf-root [data-base-resource]{position:relative;transform-origin:top left;}.pmc-pdf-root .pmc-pdf-resource,.pmc-pdf-root .pmc-pdf-editable{cursor:default;}.pmc-pdf-root .pmc-pdf-editable{box-sizing:border-box;outline:none;outline-offset:2px;}.pmc-pdf-root .pmc-pdf-editable::after{content:'';position:absolute;right:-7px;bottom:-7px;width:12px;height:12px;border-radius:999px;background:#ef4444;box-shadow:0 0 0 2px #ffffff;opacity:0;}.pmc-pdf-root .pmc-pdf-edit-selected{outline:none;outline-offset:2px;}.pmc-pdf-root.pmc-pdf-admin-enabled .pmc-pdf-resource,.pmc-pdf-root.pmc-pdf-admin-enabled .pmc-pdf-editable{cursor:move;}.pmc-pdf-root.pmc-pdf-admin-enabled .pmc-pdf-editable{outline:1px dashed rgba(239,68,68,.45);}.pmc-pdf-root.pmc-pdf-admin-enabled .pmc-pdf-editable::after{opacity:.9;}.pmc-pdf-root.pmc-pdf-admin-enabled .pmc-pdf-edit-selected{outline:2px solid #ef4444;}.pmc-pdf-root.pmc-pdf-admin-enabled .pmc-pdf-edit-selected::after{opacity:1;transform:scale(1.08);} .pmc-pdf-delete-btn { position:absolute; top:-8px; right:-8px; width:22px; height:22px; border-radius:50%; background:#ef4444; color:#fff; display:none; align-items:center; justify-content:center; cursor:pointer; font-size:11px; z-index:80; box-shadow:0 0 0 2px #fff; pointer-events:auto; } .pmc-pdf-root.pmc-pdf-admin-enabled .pmc-pdf-edit-selected .pmc-pdf-delete-btn { display:flex; } .pmc-pdf-delete-btn:hover { background:#dc2626; transform:scale(1.08); transition:all .2s; }</style>`;
+    const pdfStyleTag = `<style>.pmc-pdf-root{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;font-family:var(--pm-font-family)!important;}.pmc-pdf-root .pmc-pdf-shift{transform:translate(var(--pm-offset-x),var(--pm-offset-y));}.pmc-pdf-root .pmc-pdf-main{padding:var(--pm-margin-top) var(--pm-margin-right) var(--pm-margin-bottom) var(--pm-margin-left)!important;}.pmc-pdf-root .pmc-pdf-header{border-bottom-width:var(--pm-header-line)!important;justify-content:var(--pm-header-justify)!important;}.pmc-pdf-root .pmc-pdf-sign-line{width:100%;height:var(--pm-sign-line)!important;background:#111827!important;border-radius:999px;}.pmc-pdf-root .pmc-pdf-title{font-size:var(--pm-title-size)!important;line-height:1.05!important;text-align:var(--pm-header-align)!important;}.pmc-pdf-root .pmc-pdf-meta,.pmc-pdf-root .pmc-pdf-meta *{font-size:var(--pm-meta-size)!important;text-align:var(--pm-meta-align)!important;}.pmc-pdf-root .pmc-pdf-table-head th{font-size:var(--pm-table-head-size)!important;}.pmc-pdf-root .pmc-pdf-table-body td,.pmc-pdf-root .pmc-pdf-table-body p,.pmc-pdf-root .pmc-pdf-table-body span{font-size:var(--pm-table-body-size)!important;line-height:var(--pm-line-height)!important;}.pmc-pdf-root .pmc-pdf-table-body td:first-child,.pmc-pdf-root .pmc-pdf-table-body td:first-child *{text-align:var(--pm-table-align)!important;}.pmc-pdf-root .pmc-pdf-summary,.pmc-pdf-root .pmc-pdf-summary *{text-align:var(--pm-summary-align)!important;}.pmc-pdf-root .pmc-pdf-quick,.pmc-pdf-root .pmc-pdf-quick *{font-size:var(--pm-quick-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-quick-align)!important;}.pmc-pdf-root .pmc-pdf-general-conditions,.pmc-pdf-root .pmc-pdf-general-conditions *{font-size:var(--pm-conditions-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-conditions-align)!important;}.pmc-pdf-root .pmc-pdf-sign,.pmc-pdf-root .pmc-pdf-sign *{font-size:var(--pm-sign-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-sign-align)!important;}.pmc-pdf-root .pmc-pdf-footer-text{font-size:var(--pm-footer-size)!important;text-align:var(--pm-footer-align)!important;}.pmc-pdf-root [data-base-resource]{position:relative;transform-origin:top left;}.pmc-pdf-root .pmc-pdf-resource,.pmc-pdf-root .pmc-pdf-editable{cursor:default;}.pmc-pdf-root .pmc-pdf-editable{box-sizing:border-box;outline:none;outline-offset:2px;}.pmc-pdf-root .pmc-pdf-editable::before{content:'';position:absolute;inset:-1px;border:1px dashed rgba(239,68,68,.28);border-radius:inherit;background:radial-gradient(circle at top left,#ef4444 0 3px,transparent 3.2px),radial-gradient(circle at top right,#ef4444 0 3px,transparent 3.2px),radial-gradient(circle at bottom left,#ef4444 0 3px,transparent 3.2px),radial-gradient(circle at bottom right,#ef4444 0 3px,transparent 3.2px);background-size:12px 12px;background-repeat:no-repeat;opacity:0;pointer-events:none;}.pmc-pdf-root .pmc-pdf-editable::after{content:'';position:absolute;right:-7px;bottom:-7px;width:12px;height:12px;border-radius:999px;background:#ef4444;box-shadow:0 0 0 2px #ffffff;opacity:0;pointer-events:none;}.pmc-pdf-root .pmc-pdf-edit-selected{outline:none;outline-offset:2px;}.pmc-pdf-root.pmc-pdf-admin-enabled .pmc-pdf-resource,.pmc-pdf-root.pmc-pdf-admin-enabled .pmc-pdf-editable{cursor:move;}.pmc-pdf-root.pmc-pdf-admin-enabled .pmc-pdf-editable{outline:1px dashed rgba(239,68,68,.45);}.pmc-pdf-root.pmc-pdf-admin-enabled .pmc-pdf-editable::before,.pmc-pdf-root.pmc-pdf-admin-enabled .pmc-pdf-editable::after{opacity:.94;}.pmc-pdf-root.pmc-pdf-admin-enabled .pmc-pdf-edit-selected{outline:2px solid #ef4444;}.pmc-pdf-root.pmc-pdf-admin-enabled .pmc-pdf-edit-selected::before,.pmc-pdf-root.pmc-pdf-admin-enabled .pmc-pdf-edit-selected::after{opacity:1;transform:scale(1.04);} .pmc-pdf-delete-btn { position:absolute; top:-8px; right:-8px; width:22px; height:22px; border-radius:50%; background:#ef4444; color:#fff; display:none; align-items:center; justify-content:center; cursor:pointer; font-size:11px; z-index:80; box-shadow:0 0 0 2px #fff; pointer-events:auto; } .pmc-pdf-root.pmc-pdf-admin-enabled .pmc-pdf-edit-selected .pmc-pdf-delete-btn { display:flex; } .pmc-pdf-delete-btn:hover { background:#dc2626; transform:scale(1.08); transition:all .2s; }</style>`;
 
     const wrapStyledReceipt = (rawHtml, extraPages = 0) => {
         const pageOneRaw = __pmContractsInjectResourcesIntoPage(rawHtml, __pmContractsRenderPdfResources(pdfStyle, 1, resourceContext));

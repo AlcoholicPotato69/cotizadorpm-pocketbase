@@ -232,6 +232,17 @@ function Resolve-PublicDirPath {
     return $resolved
 }
 
+function Test-PublicDirDisabled {
+    param([string]$ConfiguredPath)
+
+    if ([string]::IsNullOrWhiteSpace($ConfiguredPath)) {
+        return $true
+    }
+
+    $safe = $ConfiguredPath.Trim().ToLowerInvariant()
+    return @('off', 'none', 'disabled', 'false', '0', '-') -contains $safe
+}
+
 function Resolve-PowerShellExecutable {
     $fromPsHomePowerShell = Join-Path $PSHOME 'powershell.exe'
     if (Test-Path $fromPsHomePowerShell) {
@@ -280,7 +291,7 @@ if (-not (Test-Path $pbExe)) {
 $cfg = Load-ConfMap -Path $confFile
 $bindAddr = Get-ConfValue -Map $cfg -Key 'BIND_ADDR' -Default '0.0.0.0:8090'
 $backendUrl = Get-ConfValue -Map $cfg -Key 'BACKEND_URL' -Default (Convert-BindToTargetUrl -BindAddr $bindAddr)
-$publicDirRaw = Get-ConfValue -Map $cfg -Key 'PUBLIC_DIR' -Default 'frontend\pb_public'
+$publicDirRaw = if ($cfg.ContainsKey('PUBLIC_DIR')) { $cfg['PUBLIC_DIR'] } else { '' }
 $corsAllowedOriginsRaw = Get-ConfValue -Map $cfg -Key 'CORS_ALLOWED_ORIGINS' -Default ''
 $corsAllowedOrigins = Build-CorsOrigins -BindAddr $bindAddr -BackendUrl $backendUrl -ConfiguredOrigins $corsAllowedOriginsRaw
 $httpsEnabledRaw = (Get-ConfValue -Map $cfg -Key 'HTTPS_ENABLED' -Default '0').Trim().ToLowerInvariant()
@@ -291,22 +302,26 @@ if (-not [int]::TryParse($httpsPortValue, [ref]$httpsPort)) {
     $httpsPort = 9443
 }
 
-try {
-    $publicDirLeaf = ''
-    if (-not [string]::IsNullOrWhiteSpace($publicDirRaw)) {
-        $publicDirLeaf = Split-Path -Leaf $publicDirRaw.Trim()
-    }
-    if ([string]::Equals($publicDirLeaf, 'pb_public', [System.StringComparison]::OrdinalIgnoreCase)) {
-        $preparePublicDirScript = Join-Path $RootDir 'production\deploy\prepare-public-dir.ps1'
-        if (-not (Test-Path -LiteralPath $preparePublicDirScript)) {
-            throw "No existe script de preparacion publica: $preparePublicDirScript"
+$publicDirDisabled = Test-PublicDirDisabled -ConfiguredPath $publicDirRaw
+$publicDir = $null
+if (-not $publicDirDisabled) {
+    try {
+        $publicDirLeaf = ''
+        if (-not [string]::IsNullOrWhiteSpace($publicDirRaw)) {
+            $publicDirLeaf = Split-Path -Leaf $publicDirRaw.Trim()
         }
-        & $preparePublicDirScript -RootDir $RootDir -PublicDir $publicDirRaw | Out-Null
+        if ([string]::Equals($publicDirLeaf, 'pb_public', [System.StringComparison]::OrdinalIgnoreCase)) {
+            $preparePublicDirScript = Join-Path $RootDir 'production\deploy\prepare-public-dir.ps1'
+            if (-not (Test-Path -LiteralPath $preparePublicDirScript)) {
+                throw "No existe script de preparacion publica: $preparePublicDirScript"
+            }
+            & $preparePublicDirScript -RootDir $RootDir -PublicDir $publicDirRaw | Out-Null
+        }
+        $publicDir = Resolve-PublicDirPath -RootDir $RootDir -ConfiguredPath $publicDirRaw
+    } catch {
+        Write-RunnerLog ("ERROR: " + $_.Exception.Message)
+        exit 2
     }
-    $publicDir = Resolve-PublicDirPath -RootDir $RootDir -ConfiguredPath $publicDirRaw
-} catch {
-    Write-RunnerLog ("ERROR: " + $_.Exception.Message)
-    exit 2
 }
 
 $pbArgsPrimary = @(
@@ -314,7 +329,6 @@ $pbArgsPrimary = @(
     "--http=$bindAddr",
     '--origins',
     ($corsAllowedOrigins -join ','),
-    "--publicDir=$publicDir",
     "--dir=$pbDataDir",
     "--hooksDir=$pbHooksDir",
     "--migrationsDir=$pbMigrationsDir"
@@ -323,17 +337,21 @@ $pbArgsFallback = @(
     'serve',
     '--origins',
     ($corsAllowedOrigins -join ','),
-    "--publicDir=$publicDir",
     "--dir=$pbDataDir",
     "--hooksDir=$pbHooksDir",
     "--migrationsDir=$pbMigrationsDir"
 )
+if (-not $publicDirDisabled) {
+    $pbArgsPrimary += "--publicDir=$publicDir"
+    $pbArgsFallback += "--publicDir=$publicDir"
+}
 
 $pbProc = $null
 $proxyProc = $null
 
 try {
-    Write-RunnerLog "Iniciando PocketBase (bind $bindAddr, root $RootDir, backendDir=$backendDir, frontendDir=$frontendDir, publicDir=$publicDir, origins=$($corsAllowedOrigins -join '; '))"
+    $publicDirLog = if ($publicDirDisabled) { '<desactivado: HTML servido por frontend separado>' } else { $publicDir }
+    Write-RunnerLog "Iniciando PocketBase (bind $bindAddr, root $RootDir, backendDir=$backendDir, frontendDir=$frontendDir, publicDir=$publicDirLog, origins=$($corsAllowedOrigins -join '; '))"
     $pbProc = Start-Process -FilePath $pbExe -WorkingDirectory $backendDir -ArgumentList $pbArgsPrimary -RedirectStandardOutput $pbStdOut -RedirectStandardError $pbStdErr -PassThru
     Start-Sleep -Seconds 2
 

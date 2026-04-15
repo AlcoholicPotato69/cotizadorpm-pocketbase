@@ -999,18 +999,23 @@ function __pmParseConvenioMeta(source = {}) {
         ? __pmParseRecordJson(source.detalles_evento)
         : __pmParseRecordJson(source);
     const raw = details?.convenio && typeof details.convenio === 'object' ? details.convenio : {};
+    const items = __pmSanitizeConvenioItems(raw?.items || raw?.tratos || []);
+    const espacios = Array.isArray(raw?.espacios) ? raw.espacios : [];
+    const evidencias = __pmSanitizeConvenioEvidenceItems(raw?.evidencias || raw?.evidence || []);
+    const activeSignals = items.length > 0 || espacios.length > 0 || evidencias.length > 0;
     return {
-        activo: raw?.activo === true,
-        bloqueo_indefinido: raw?.bloqueo_indefinido !== false,
-        requiere_evidencia: raw?.requiere_evidencia !== false,
+        activo: __pmNormalizeSpaceConvenioFlag(raw?.activo, activeSignals) || activeSignals,
+        activo_explicit: __pmNormalizeSpaceConvenioFlag(raw?.activo, false),
+        bloqueo_indefinido: __pmNormalizeSpaceConvenioFlag(raw?.bloqueo_indefinido, true),
+        requiere_evidencia: __pmNormalizeSpaceConvenioFlag(raw?.requiere_evidencia, true),
         evidencia_minima: Math.max(1, parseInt(raw?.evidencia_minima || 3, 10) || 3),
         evidencia_maxima: Math.max(1, parseInt(raw?.evidencia_maxima || 5, 10) || 5),
-        requiere_factura: raw?.requiere_factura === true,
-        requiere_recibo: raw?.requiere_recibo === true,
-        requiere_contrato: raw?.requiere_contrato === true,
-        items: __pmSanitizeConvenioItems(raw?.items || raw?.tratos || []),
-        espacios: Array.isArray(raw?.espacios) ? raw.espacios : [],
-        evidencias: __pmSanitizeConvenioEvidenceItems(raw?.evidencias || raw?.evidence || [])
+        requiere_factura: __pmNormalizeSpaceConvenioFlag(raw?.requiere_factura, false),
+        requiere_recibo: __pmNormalizeSpaceConvenioFlag(raw?.requiere_recibo, false),
+        requiere_contrato: __pmNormalizeSpaceConvenioFlag(raw?.requiere_contrato, false),
+        items,
+        espacios,
+        evidencias
     };
 }
 
@@ -1020,10 +1025,19 @@ function __pmGetConvenioEvidence(order = {}) {
 
 function __pmIsConvenioOrder(order = {}) {
     const meta = __pmParseConvenioMeta(order);
-    if (meta.activo) return true;
+    if (meta.activo || meta.items.length || meta.espacios.length || meta.evidencias.length) return true;
+    const concepts = __pmNormalizeConceptsArray(order?.conceptos_adicionales);
+    if (concepts.some((concept) => __pmIsConvenioConceptItem(concept))) return true;
     const details = __pmParseRecordJson(order?.espacios_detalle);
     if (!Array.isArray(details)) return false;
-    return details.some((detail) => detail?.convenio_activo === true || detail?.convenio_indefinido === true);
+    return details.some((detail) => {
+        const items = __pmSanitizeConvenioItems(detail?.convenio_items || []);
+        const delivered = parseFloat(detail?.convenio_monto_entregado || 0) || 0;
+        return __pmNormalizeSpaceConvenioFlag(detail?.convenio_activo, false)
+            || __pmNormalizeSpaceConvenioFlag(detail?.convenio_indefinido, false)
+            || items.length > 0
+            || delivered > 0.009;
+    });
 }
 
 function __pmConvenioCovered(baseValue, deliveredValue, balanceValue = undefined) {
@@ -1034,10 +1048,18 @@ function __pmConvenioCovered(baseValue, deliveredValue, balanceValue = undefined
     if (base <= 0) return false;
     return delivered + 0.009 >= base;
 }
+function __pmHasFiniteConvenioEndDate(value) {
+    const raw = String(value || '').trim().slice(0, 10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(raw) && raw !== PM_CONVENIO_INDEFINITE_END;
+}
 function __pmSpaceDetailBlocksIndefinitely(detail = {}) {
     const row = detail && typeof detail === 'object' ? detail : {};
-    const flagged = row?.convenio_activo === true || row?.convenio_indefinido === true || row?.bloqueo_indefinido === true;
+    const flagged = __pmNormalizeSpaceConvenioFlag(row?.convenio_activo, false)
+        || __pmNormalizeSpaceConvenioFlag(row?.convenio_indefinido, false)
+        || __pmNormalizeSpaceConvenioFlag(row?.bloqueo_indefinido, false);
     if (!flagged) return false;
+    // Auditoria TI: una fecha fin real tiene prioridad sobre la marca heredada de bloqueo indefinido.
+    if (__pmHasFiniteConvenioEndDate(row?.fecha_fin || row?.endDate)) return false;
     return __pmConvenioCovered(
         row?.subtotal_espacio ?? row?.baseValue,
         row?.convenio_monto_entregado ?? row?.convenioValue,
@@ -1048,6 +1070,7 @@ function __pmOrderBlocksIndefinitely(order = {}) {
     const meta = __pmParseConvenioMeta(order);
     const details = __pmParseRecordJson(order?.espacios_detalle);
     if (Array.isArray(details) && details.length) return details.some((detail) => __pmSpaceDetailBlocksIndefinitely(detail));
+    if (__pmHasFiniteConvenioEndDate(order?.fecha_fin || order?.endDate)) return false;
     if (!(meta.activo && meta.bloqueo_indefinido)) return false;
     const breakdown = __pmParseRecordJson(order?.desglose_precios);
     return __pmConvenioCovered(
@@ -1067,8 +1090,11 @@ function __pmNormalizeSpaceConvenioFlag(value, fallback = true) {
     return !!fallback;
 }
 
+// Convenios de Plaza Mayor solo pueden asignarse a espacios publicitarios con
+// la bandera explicita `permite_convenio`; esto mantiene alineado el selector,
+// la edicion y la persistencia de la carta convenio.
 function __pmSpaceAllowsConvenio(space = {}) {
-    return __pmNormalizeSpaceConvenioFlag(space?.permite_convenio, true);
+    return __pmSpaceHasTag(space, 'publicidad') && __pmNormalizeSpaceConvenioFlag(space?.permite_convenio, false);
 }
 
 function __pmGetQuoteDocumentMeta(orderLike = {}) {
@@ -3245,6 +3271,96 @@ function __pmResolvePdfTemplateString(value, context = {}) {
     });
     return output;
 }
+const __PM_PDF_TEMPLATE_TOKENS = Object.freeze([
+    { token: 'CLIENT_NAME', label: 'Nombre del cliente' },
+    { token: 'CLIENT_EMAIL', label: 'Correo del cliente' },
+    { token: 'CLIENT_PHONE', label: 'Telefono del cliente' },
+    { token: 'CLIENT_RFC', label: 'RFC del cliente' },
+    { token: 'QUOTE_NAME', label: 'Nombre de cotizacion/campana' },
+    { token: 'FOLIO', label: 'Folio del documento' },
+    { token: 'DOC_TITLE', label: 'Titulo del documento' },
+    { token: 'START_DATE', label: 'Fecha de inicio' },
+    { token: 'END_DATE', label: 'Fecha de termino' },
+    { token: 'VALIDITY', label: 'Vigencia completa' },
+    { token: 'TODAY', label: 'Fecha de emision' },
+    { token: 'CURRENT_USER_NAME', label: 'Usuario actual' },
+    { token: 'CURRENT_USER_EMAIL', label: 'Correo del usuario actual' },
+    { token: 'VENUE_NAME', label: 'Sede' }
+]);
+function __pmResolveCurrentActorEmail() {
+    const authState = __pmReadAuthState('pb_native_auth_v1');
+    return [
+        currentUserProfile?.email,
+        currentUserProfile?.record?.email,
+        currentUserProfile?.user?.email,
+        authState?.user?.email,
+        authState?.record?.email
+    ].map((v) => String(v || '').trim()).find(Boolean) || '';
+}
+function __pmBuildPdfTemplateContext(order = {}, extra = {}) {
+    const o = order && typeof order === 'object' ? order : {};
+    const fmt = (value) => value ? (window.safeFormatDate ? window.safeFormatDate(value) : String(value)) : '';
+    const startDate = fmt(o.fecha_inicio || o.startDate);
+    const endDate = __pmOrderBlocksIndefinitely(o) ? 'Indefinido' : fmt(o.fecha_fin || o.endDate);
+    return {
+        CLIENT_NAME: o.cliente_nombre || o.clientName || '',
+        CLIENT_EMAIL: o.cliente_email || o.email || '',
+        CLIENT_PHONE: o.cliente_contacto || o.telefono || o.phone || '',
+        CLIENT_RFC: o.cliente_rfc || o.rfc || '',
+        QUOTE_NAME: o.nombre_cotizacion || o.nombre || '',
+        FOLIO: extra.folio || __pmResolveQuoteFolio(o) || o.id || '',
+        DOC_TITLE: extra.docTitle || '',
+        START_DATE: startDate,
+        END_DATE: endDate,
+        VALIDITY: [startDate, endDate].filter(Boolean).join(' - '),
+        TODAY: extra.dateStr || new Date().toLocaleDateString('es-MX'),
+        CURRENT_USER_NAME: __pmResolveCurrentActorName(),
+        CURRENT_USER_EMAIL: __pmResolveCurrentActorEmail(),
+        VENUE_NAME: extra.venueName || 'Plaza Mayor'
+    };
+}
+function __pmTemplateTagsModalHtml() {
+    const rows = __PM_PDF_TEMPLATE_TOKENS.map((item) => `
+        <div class="flex items-center justify-between gap-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2">
+            <code class="text-[11px] font-black text-brand-red">{{${__pmSafeHtml(item.token)}}}</code>
+            <span class="text-[11px] font-semibold text-gray-600 text-right">${__pmSafeHtml(item.label)}</span>
+        </div>`).join('');
+    return `<div class="bg-white rounded-2xl shadow-2xl border border-gray-200 w-full max-w-2xl p-6">
+        <div class="flex items-start justify-between gap-4 mb-4">
+            <div><h3 class="text-lg font-black text-gray-900 uppercase tracking-tight">Etiquetas para PDF</h3><p class="text-xs text-gray-500 mt-1">Puedes pegarlas en firmas, titulos, subtitulos y recursos de texto del editor PDF.</p></div>
+            <button type="button" onclick="window.closeModal('pdf-template-tags-modal')" class="text-gray-400 hover:text-gray-700"><i class="fa-solid fa-xmark text-xl"></i></button>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[60vh] overflow-y-auto pr-1">${rows}</div>
+    </div>`;
+}
+window.openPdfTemplateTagsModal = function () {
+    let modal = document.getElementById('pdf-template-tags-modal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'pdf-template-tags-modal';
+        modal.className = 'fixed inset-0 z-[520] hidden items-center justify-center bg-black/60 backdrop-blur-sm p-4';
+        modal.addEventListener('click', (e) => { if (e.target === modal) window.closeModal('pdf-template-tags-modal'); });
+        document.body.appendChild(modal);
+    }
+    modal.innerHTML = __pmTemplateTagsModalHtml();
+    window.openModal('pdf-template-tags-modal');
+};
+function __pmTemplateTagsInlineHtml() {
+    return `<div class="flex flex-wrap gap-2">${__PM_PDF_TEMPLATE_TOKENS.map((item) => `
+        <span class="inline-flex items-center rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[10px] font-black text-brand-red shadow-sm">
+            {{${__pmSafeHtml(item.token)}}}
+        </span>`).join('')}</div>`;
+}
+function __pmSyncPdfTemplateTagHelpers() {
+    document.querySelectorAll('[data-pdf-template-helper="pm"]').forEach((host) => {
+        host.innerHTML = __pmTemplateTagsInlineHtml();
+    });
+}
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', __pmSyncPdfTemplateTagHelpers, { once: true });
+} else {
+    __pmSyncPdfTemplateTagHelpers();
+}
 
 function __pmGetOrderBaseContentFields(baseKey) {
     const key = String(baseKey || '').trim();
@@ -3390,7 +3506,7 @@ function __pmNormalizePdfResources(raw) {
     });
 }
 
-function __pmRenderPdfResources(style, pageIndex) {
+function __pmRenderPdfResources(style, pageIndex, templateContext = {}) {
     const cfg = __pmNormalizePdfStyle(style || {});
     const resources = __pmNormalizePdfResources(cfg.resources);
     if (!resources.length) return '';
@@ -3416,8 +3532,8 @@ function __pmRenderPdfResources(style, pageIndex) {
                 const fontStack = resource.fontFamilyKey && __PM_PDF_STYLE_FONT_MAP[resource.fontFamilyKey]
                     ? __PM_PDF_STYLE_FONT_MAP[resource.fontFamilyKey]
                     : globalFont;
-                const titleStr = __pmSafeHtml(resource.signTitle || '');
-                const roleStr = __pmSafeHtml(resource.signRole || '');
+                const titleStr = __pmSafeHtml(__pmResolvePdfTemplateString(resource.signTitle || '', templateContext));
+                const roleStr = __pmSafeHtml(__pmResolvePdfTemplateString(resource.signRole || '', templateContext));
                 const titleSize = Math.max(10, Number(resource.fontSize || 14));
                 const roleSize = Math.max(9, titleSize - 2);
                 const lineColor = (resource.bgColor && resource.bgColor !== 'transparent') ? resource.bgColor : '#111827';
@@ -3431,7 +3547,8 @@ function __pmRenderPdfResources(style, pageIndex) {
                 ? __PM_PDF_STYLE_FONT_MAP[resource.fontFamilyKey]
                 : globalFont;
             const placeholder = isAdmin && !resource.text ? (resource.type === 'title' ? 'TÍTULO VACÍO' : 'Texto vacío') : '';
-            return `<div class="pm-pdf-resource pm-pdf-editable" data-res-id="${__pmSafeHtml(resource.id)}" data-res-page="${pageIndex}" data-res-type="${__pmSafeHtml(resource.type)}" data-res-font-size="${resource.fontSize}" style="${common}"><div style="width:100%;height:100%;padding:4px;overflow:hidden;font-family:${fontStack};font-size:${resource.fontSize}px;line-height:1.2;font-weight:${resource.bold ? 800 : 500};font-style:${resource.italic ? 'italic' : 'normal'};text-decoration:${resource.underline ? 'underline' : 'none'};text-align:${resource.align};white-space:pre-wrap;color:${resource.color};pointer-events:none;user-select:none;">${__pmSafeHtml(resource.text) || `<span style="opacity:0.3;">${placeholder}</span>`}</div>${deleteBtnHtml}</div>`;
+            const textStr = __pmResolvePdfTemplateString(resource.text || '', templateContext);
+            return `<div class="pm-pdf-resource pm-pdf-editable" data-res-id="${__pmSafeHtml(resource.id)}" data-res-page="${pageIndex}" data-res-type="${__pmSafeHtml(resource.type)}" data-res-font-size="${resource.fontSize}" style="${common}"><div style="width:100%;height:100%;padding:4px;overflow:hidden;font-family:${fontStack};font-size:${resource.fontSize}px;line-height:1.2;font-weight:${resource.bold ? 800 : 500};font-style:${resource.italic ? 'italic' : 'normal'};text-decoration:${resource.underline ? 'underline' : 'none'};text-align:${resource.align};white-space:pre-wrap;color:${resource.color};pointer-events:none;user-select:none;">${__pmSafeHtml(textStr) || `<span style="opacity:0.3;">${placeholder}</span>`}</div>${deleteBtnHtml}</div>`;
         })
         .join('');
 }
@@ -5018,7 +5135,14 @@ function __pmHighlightSelectedBaseTextBlock() {
     if (!__pmIsAdminProfile()) return;
     const selected = String(__pmPdfResourceEditorSelectedId || '');
     if (selected.startsWith('base:')) {
-        const key = selected.slice(5);
+        const baseId = selected.slice(5).trim();
+        const key = baseId.split('__')[0].trim();
+        if (!key) return;
+        const withInstance = document.querySelector(`#pdf-content [data-base-resource="${key}"][data-base-instance="${baseId}"]`);
+        if (withInstance) {
+            withInstance.classList.add('pm-pdf-base-selected');
+            return;
+        }
         document.querySelectorAll(`#pdf-content [data-base-resource="${key}"]`).forEach((node) => node.classList.add('pm-pdf-base-selected'));
         return;
     }
@@ -5248,22 +5372,158 @@ function __pmBindPdfResourceEditor() {
     __pmRenderPdfResourcesEditorList();
 }
 
+function __pmApplyPdfResourceGeometryToNode(node, resource) {
+    if (!(node instanceof HTMLElement) || !resource) return;
+    node.style.left = `${Math.round(parseFloat(resource.x) || 0)}px`;
+    node.style.top = `${Math.round(parseFloat(resource.y) || 0)}px`;
+    node.style.width = `${Math.max(16, Math.round(parseFloat(resource.w) || 0))}px`;
+    node.style.height = `${Math.max(1, Math.round(parseFloat(resource.h) || 0))}px`;
+}
+
+function __pmGetPdfResourceMinHeight(type) {
+    const safeType = String(type || '').trim().toLowerCase();
+    if (safeType === 'sign') return 1;
+    if (safeType === 'logo') return 24;
+    if (safeType === 'sign-block') return 42;
+    if (safeType === 'bar') return 4;
+    return 10;
+}
+
+function __pmGetPdfPointerScale(node) {
+    const ref = node?.parentElement || node;
+    if (!ref || !(ref instanceof HTMLElement)) return { x: 1, y: 1 };
+    const rect = ref.getBoundingClientRect();
+    const rawWidth = ref.offsetWidth || parseFloat(ref.style.width || '0') || rect.width || 1;
+    const rawHeight = ref.offsetHeight || parseFloat(ref.style.height || '0') || rect.height || 1;
+    const scaleX = rect.width > 0 && rawWidth > 0 ? (rect.width / rawWidth) : 1;
+    const scaleY = rect.height > 0 && rawHeight > 0 ? (rect.height / rawHeight) : 1;
+    return { x: scaleX > 0 ? scaleX : 1, y: scaleY > 0 ? scaleY : 1 };
+}
+
+function __pmResolvePdfResizeHit(node, event) {
+    const rect = node instanceof HTMLElement ? node.getBoundingClientRect() : null;
+    if (!rect) return { resize: false, proportional: false, cursor: 'move' };
+    const threshold = Math.min(18, Math.max(10, Math.min(rect.width, rect.height) / 3));
+    let left = (event.clientX - rect.left) <= threshold;
+    let right = (rect.right - event.clientX) <= threshold;
+    let top = (event.clientY - rect.top) <= threshold;
+    let bottom = (rect.bottom - event.clientY) <= threshold;
+    if (event.shiftKey && !(left || right || top || bottom)) {
+        right = true;
+        bottom = true;
+    }
+    if (left && right) {
+        if (event.clientX - rect.left <= rect.right - event.clientX) right = false;
+        else left = false;
+    }
+    if (top && bottom) {
+        if (event.clientY - rect.top <= rect.bottom - event.clientY) bottom = false;
+        else top = false;
+    }
+    if (!(left || right || top || bottom)) return { resize: false, proportional: false, cursor: 'move' };
+    let cursor = 'move';
+    if ((left || right) && (top || bottom)) {
+        const diagonalA = (left && top) || (right && bottom);
+        cursor = diagonalA ? 'nwse-resize' : 'nesw-resize';
+    } else if (left || right) {
+        cursor = 'ew-resize';
+    } else if (top || bottom) {
+        cursor = 'ns-resize';
+    }
+    return {
+        resize: true,
+        left,
+        right,
+        top,
+        bottom,
+        proportional: (left || right) && (top || bottom),
+        cursor
+    };
+}
+
+function __pmResizePdfResourceGeometry(origin, dx, dy, resize, type) {
+    const base = origin && typeof origin === 'object' ? origin : {};
+    const minWidth = 16;
+    const minHeight = __pmGetPdfResourceMinHeight(type || base.type);
+    const safeOrigin = {
+        x: parseFloat(base.x) || 0,
+        y: parseFloat(base.y) || 0,
+        w: Math.max(minWidth, parseFloat(base.w) || minWidth),
+        h: Math.max(minHeight, parseFloat(base.h) || minHeight)
+    };
+    if (resize?.proportional && (resize.left || resize.right) && (resize.top || resize.bottom)) {
+        const scaleX = safeOrigin.w > 0 ? ((resize.left ? safeOrigin.w - dx : safeOrigin.w + dx) / safeOrigin.w) : 1;
+        const scaleY = safeOrigin.h > 0 ? ((resize.top ? safeOrigin.h - dy : safeOrigin.h + dy) / safeOrigin.h) : 1;
+        let scale = Math.abs(scaleX - 1) >= Math.abs(scaleY - 1) ? scaleX : scaleY;
+        if (!Number.isFinite(scale)) scale = 1;
+        const minScale = Math.max(minWidth / safeOrigin.w, minHeight / safeOrigin.h);
+        scale = Math.max(minScale, scale);
+        const nextW = Math.max(minWidth, Math.round(safeOrigin.w * scale));
+        const nextH = Math.max(minHeight, Math.round(safeOrigin.h * scale));
+        return {
+            ...base,
+            x: resize.left ? Math.round(safeOrigin.x + (safeOrigin.w - nextW)) : safeOrigin.x,
+            y: resize.top ? Math.round(safeOrigin.y + (safeOrigin.h - nextH)) : safeOrigin.y,
+            w: nextW,
+            h: nextH
+        };
+    }
+    let nextX = safeOrigin.x;
+    let nextY = safeOrigin.y;
+    let nextW = safeOrigin.w;
+    let nextH = safeOrigin.h;
+    if (resize?.left) {
+        nextW = Math.max(minWidth, Math.round(safeOrigin.w - dx));
+        nextX = Math.round(safeOrigin.x + (safeOrigin.w - nextW));
+    } else if (resize?.right) {
+        nextW = Math.max(minWidth, Math.round(safeOrigin.w + dx));
+    }
+    if (resize?.top) {
+        nextH = Math.max(minHeight, Math.round(safeOrigin.h - dy));
+        nextY = Math.round(safeOrigin.y + (safeOrigin.h - nextH));
+    } else if (resize?.bottom) {
+        nextH = Math.max(minHeight, Math.round(safeOrigin.h + dy));
+    }
+    return {
+        ...base,
+        x: nextX,
+        y: nextY,
+        w: nextW,
+        h: nextH
+    };
+}
+
+function __pmBuildConvenioGridStyle(publicityCount, tradeCount) {
+    const publicityWeight = Math.min(3.2, Math.max(1.4, 1.25 + (Math.max(1, publicityCount) * 0.26)));
+    const tradeWeight = Math.min(2.2, Math.max(0.95, 0.95 + (Math.max(1, tradeCount) * 0.18)));
+    return `display:grid;grid-template-columns:minmax(0,${publicityWeight.toFixed(2)}fr) minmax(220px,${tradeWeight.toFixed(2)}fr);gap:1rem;align-items:start;`;
+}
+
 function __pmBindPdfResourceDrag() {
     if (document.body.dataset.pmPdfResourceDragBound === '1') return;
     document.body.dataset.pmPdfResourceDragBound = '1';
+    const releasePointer = (state) => {
+        const captureNode = state?.captureNode;
+        if (!captureNode || typeof captureNode.releasePointerCapture !== 'function') return;
+        try { captureNode.releasePointerCapture(state.pointerId); } catch (_) {}
+    };
     document.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0) return;
         if (!__pmIsAdminProfile() || __pmPdfEditLocked) return;
         const target = event.target instanceof Element ? event.target : null;
         if (!target || target.closest('#pm-pdf-inspector')) return;
         const resourceNode = target.closest('#pdf-content .pm-pdf-resource[data-res-id]');
         if (resourceNode) {
+            if (target.closest('.pm-pdf-delete-btn')) return;
             const resourceId = String(resourceNode.getAttribute('data-res-id') || '');
             const page = parseInt(resourceNode.getAttribute('data-res-page') || '1', 10);
             const resources = __pmGetPdfResourcesFromState();
             const idx = resources.findIndex((resource) => resource.id === resourceId);
             if (idx < 0) return;
             if (!__pmCanMovePdfResource(resources[idx])) return;
-            const mode = 'move';
+            const resize = __pmResolvePdfResizeHit(resourceNode, event);
+            const scale = __pmGetPdfPointerScale(resourceNode);
+            const mode = resize.resize ? 'resize' : 'move';
             __pmPdfResourceEditorSelectedId = resourceId;
             __pmPdfResourcePointerState = {
                 kind: 'resource',
@@ -5272,9 +5532,20 @@ function __pmBindPdfResourceDrag() {
                 mode,
                 startX: event.clientX,
                 startY: event.clientY,
-                origin: { ...resources[idx] }
+                pointerId: event.pointerId,
+                captureNode: resourceNode,
+                scaleX: scale.x,
+                scaleY: scale.y,
+                resize,
+                origin: { ...resources[idx] },
+                current: { ...resources[idx] }
             };
+            if (typeof resourceNode.setPointerCapture === 'function') {
+                try { resourceNode.setPointerCapture(event.pointerId); } catch (_) {}
+            }
             __pmRenderPdfResourcesEditorList();
+            document.body.style.userSelect = 'none';
+            document.body.style.cursor = resize.cursor || (mode === 'resize' ? 'nwse-resize' : 'move');
             event.preventDefault();
             return;
         }
@@ -5283,6 +5554,8 @@ function __pmBindPdfResourceDrag() {
         const baseKey = String(baseNode.getAttribute('data-base-resource') || '').trim();
         if (!baseKey || !__pmGetPdfBaseBlockMeta(baseKey)) return;
         if (!__pmCanMovePdfBaseBlock(baseKey)) return;
+        const resize = __pmResolvePdfResizeHit(baseNode, event);
+        const scale = __pmGetPdfPointerScale(baseNode);
         const instanceKey = String(baseNode.dataset.baseInstance || baseKey).trim();
         const cfg = __pmGetPdfStyleConfig();
         const layouts = __pmNormalizePdfBaseLayouts(cfg.baseLayouts);
@@ -5292,37 +5565,58 @@ function __pmBindPdfResourceDrag() {
             kind: 'base',
             key: baseKey,
             instanceKey,
-            mode: 'move',
+            mode: resize.resize ? 'scale' : 'move',
             startX: event.clientX,
             startY: event.clientY,
+            pointerId: event.pointerId,
+            captureNode: baseNode,
+            scaleX: scale.x,
+            scaleY: scale.y,
+            resize,
             origin: { ...origin },
             current: { ...origin }
         };
+        if (typeof baseNode.setPointerCapture === 'function') {
+            try { baseNode.setPointerCapture(event.pointerId); } catch (_) {}
+        }
         __pmRenderPdfResourcesEditorList();
         __pmHighlightSelectedBaseTextBlock();
+        document.body.style.userSelect = 'none';
+        document.body.style.cursor = resize.resize ? (resize.cursor || 'nwse-resize') : 'move';
         event.preventDefault();
     });
     document.addEventListener('pointermove', (event) => {
         if (!__pmPdfResourcePointerState) return;
         const state = __pmPdfResourcePointerState;
-        const dx = Math.round(event.clientX - state.startX);
-        const dy = Math.round(event.clientY - state.startY);
+        if (state.pointerId !== undefined && event.pointerId !== state.pointerId) return;
+        const dx = (event.clientX - state.startX) / (state.scaleX || 1);
+        const dy = (event.clientY - state.startY) / (state.scaleY || 1);
         if (state.kind === 'resource') {
             const node = document.querySelector(`#pdf-content .pm-pdf-resource[data-res-id="${state.id}"][data-res-page="${state.page}"]`);
             if (!node) return;
             if (state.mode === 'resize') {
-                node.style.width = `${Math.max(16, state.origin.w + dx)}px`;
-                node.style.height = `${Math.max(1, state.origin.h + dy)}px`;
+                const next = __pmResizePdfResourceGeometry(state.origin, dx, dy, state.resize, state.origin?.type);
+                state.current = next;
+                __pmApplyPdfResourceGeometryToNode(node, next);
+                __pmAutoFitPdfTextNode(node);
             } else {
-                node.style.left = `${state.origin.x + dx}px`;
-                node.style.top = `${state.origin.y + dy}px`;
+                const next = {
+                    ...state.origin,
+                    x: Math.round((parseFloat(state.origin?.x) || 0) + dx),
+                    y: Math.round((parseFloat(state.origin?.y) || 0) + dy)
+                };
+                state.current = next;
+                __pmApplyPdfResourceGeometryToNode(node, next);
             }
+            event.preventDefault();
             return;
         }
         const node = document.querySelector(`#pdf-content [data-base-resource="${state.key}"][data-base-instance="${state.instanceKey}"]`);
         if (!node) return;
         if (state.mode === 'scale') {
-            const delta = Math.round((event.clientX - state.startX) * 0.35);
+            const signedDx = state.resize?.left ? -dx : dx;
+            const signedDy = state.resize?.top ? -dy : dy;
+            const delta = Math.round(((signedDx + signedDy) / 2) * 0.35);
             const next = __pmNormalizePdfBaseLayout({ ...state.origin, scalePct: state.origin.scalePct + delta });
             state.current = next;
             node.style.transform = __pmBuildPdfBaseTransform(next);
@@ -5333,30 +5627,33 @@ function __pmBindPdfResourceDrag() {
         }
         event.preventDefault();
     });
-    document.addEventListener('pointerup', () => {
+    const endDrag = () => {
         if (!__pmPdfResourcePointerState) return;
         const state = __pmPdfResourcePointerState;
         if (state.kind === 'resource') {
             const resources = __pmGetPdfResourcesFromState();
             const idx = resources.findIndex((resource) => resource.id === state.id);
             if (idx >= 0) {
-                const node = document.querySelector(`#pdf-content .pm-pdf-resource[data-res-id="${state.id}"][data-res-page="${state.page}"]`);
-                if (node) {
-                    if (state.mode === 'resize') {
-                        resources[idx].w = __pmClampStyleNumber(parseInt(node.style.width, 10), 16, 4000, resources[idx].w);
-                        resources[idx].h = __pmClampStyleNumber(parseInt(node.style.height, 10), 1, 5000, resources[idx].h);
-                    } else {
-                        resources[idx].x = __pmClampStyleNumber(parseInt(node.style.left, 10), -4000, 4000, resources[idx].x);
-                        resources[idx].y = __pmClampStyleNumber(parseInt(node.style.top, 10), -5000, 5000, resources[idx].y);
-                    }
-                    __pmCommitPdfResources(resources, { refreshPreview: false });
-                }
+                const current = state.current || state.origin;
+                resources[idx] = {
+                    ...resources[idx],
+                    x: __pmClampStyleNumber(current.x, -4000, 4000, resources[idx].x),
+                    y: __pmClampStyleNumber(current.y, -5000, 5000, resources[idx].y),
+                    w: __pmClampStyleNumber(current.w, 16, 4000, resources[idx].w),
+                    h: __pmClampStyleNumber(current.h, 1, 5000, resources[idx].h)
+                };
+                __pmCommitPdfResources(resources, { refreshPreview: false });
             }
         } else if (state.kind === 'base') {
             __pmCommitPdfBaseLayout(state.instanceKey, state.current || state.origin);
         }
+        document.body.style.userSelect = '';
+        document.body.style.cursor = '';
+        releasePointer(state);
         __pmPdfResourcePointerState = null;
-    });
+    };
+    document.addEventListener('pointerup', endDrag);
+    document.addEventListener('pointercancel', endDrag);
 }
 
 function __pmApplyPdfStyleEditorUiState() {
@@ -5404,7 +5701,7 @@ window.getOrderHTML = function(o, type) {
     const pdfStyle = __pmGetPdfStyleConfig();
     const pdfContent = __pmNormalizePdfContent(pdfStyle.content);
     const pdfStyleInlineVars = __pmPdfStyleVarsInline(pdfStyle);
-    const pdfStyleTag = `<style>.pm-pdf-root{font-family:var(--pm-font-family)!important;}.pm-pdf-root .pm-pdf-shift{transform:translate(var(--pm-offset-x),var(--pm-offset-y));position:relative;}.pm-pdf-root .pm-pdf-header{border-bottom-width:var(--pm-header-line)!important;justify-content:var(--pm-header-justify)!important;}.pm-pdf-root .pm-pdf-header>div:last-child{text-align:var(--pm-header-align)!important;}.pm-pdf-root .pm-pdf-title{font-size:var(--pm-title-size)!important;line-height:1.05!important;text-align:var(--pm-header-align)!important;}.pm-pdf-root .pm-pdf-folio{font-size:var(--pm-meta-size)!important;text-align:var(--pm-meta-align)!important;}.pm-pdf-root .pm-pdf-date{font-size:var(--pm-date-size)!important;text-align:var(--pm-meta-align)!important;}.pm-pdf-root .pm-pdf-table-head th{font-size:var(--pm-table-head-size)!important;}.pm-pdf-root .pm-pdf-table-body td,.pm-pdf-root .pm-pdf-table-body p,.pm-pdf-root .pm-pdf-table-body span{font-size:var(--pm-table-body-size)!important;line-height:var(--pm-line-height)!important;}.pm-pdf-root .pm-pdf-table-body td:first-child,.pm-pdf-root .pm-pdf-table-body td:first-child *{text-align:var(--pm-table-align)!important;}.pm-pdf-root .pm-pdf-summary,.pm-pdf-root .pm-pdf-summary *{text-align:var(--pm-summary-align)!important;}.pm-pdf-root .pm-pdf-quick,.pm-pdf-root .pm-pdf-quick *{font-size:var(--pm-quick-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-quick-align)!important;}.pm-pdf-root .pm-pdf-general-conditions,.pm-pdf-root .pm-pdf-general-conditions *{font-size:var(--pm-conditions-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-conditions-align)!important;}.pm-pdf-root .pm-pdf-sign,.pm-pdf-root .pm-pdf-sign *{font-size:var(--pm-sign-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-sign-align)!important;}.pm-pdf-root .pm-pdf-footer-text{font-size:var(--pm-footer-size)!important;text-align:var(--pm-footer-align)!important;}.pm-pdf-root .pm-pdf-amount,.pm-pdf-root .pm-pdf-table-body td:last-child,.pm-pdf-root .pm-pdf-summary td:last-child{white-space:nowrap!important;word-break:normal!important;overflow-wrap:normal!important;font-variant-numeric:tabular-nums;}.pm-pdf-root .pm-pdf-summary-table-wrap{width:20rem;max-width:100%;margin-left:auto;}.pm-pdf-root [data-base-resource]{position:relative;transform-origin:top left;}.pm-pdf-root .pm-pdf-resource,.pm-pdf-root .pm-pdf-editable{cursor:default;box-sizing:border-box;outline:none;outline-offset:2px;}.pm-pdf-root .pm-pdf-editable::after{content:'';position:absolute;right:-7px;bottom:-7px;width:12px;height:12px;border-radius:999px;background:#ef4444;box-shadow:0 0 0 2px #fff;opacity:0;}.pm-pdf-root .pm-pdf-base-selected,.pm-pdf-root .pm-pdf-edit-selected{outline:none;outline-offset:2px;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-resource,.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-editable{cursor:move;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-editable{outline:1px dashed rgba(239,68,68,.45);}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-editable::after{opacity:.9;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-base-selected,.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-edit-selected{outline:2px solid #ef4444;}.pm-pdf-delete-btn{position:absolute;top:-8px;right:-8px;width:22px;height:22px;border-radius:50%;background:#ef4444;color:#fff;display:none;align-items:center;justify-content:center;cursor:pointer;font-size:11px;z-index:80;box-shadow:0 0 0 2px #fff;pointer-events:auto;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-edit-selected .pm-pdf-delete-btn{display:flex;}.pm-pdf-delete-btn:hover{background:#dc2626;transform:scale(1.08);transition:all .2s;}</style>`;
+    const pdfStyleTag = `<style>.pm-pdf-root{font-family:var(--pm-font-family)!important;}.pm-pdf-root .pm-pdf-shift{transform:translate(var(--pm-offset-x),var(--pm-offset-y));position:relative;}.pm-pdf-root .pm-pdf-header{border-bottom-width:var(--pm-header-line)!important;justify-content:var(--pm-header-justify)!important;}.pm-pdf-root .pm-pdf-header>div:last-child{text-align:var(--pm-header-align)!important;}.pm-pdf-root .pm-pdf-title{font-size:var(--pm-title-size)!important;line-height:1.05!important;text-align:var(--pm-header-align)!important;}.pm-pdf-root .pm-pdf-folio{font-size:var(--pm-meta-size)!important;text-align:var(--pm-meta-align)!important;}.pm-pdf-root .pm-pdf-date{font-size:var(--pm-date-size)!important;text-align:var(--pm-meta-align)!important;}.pm-pdf-root .pm-pdf-table-head th{font-size:var(--pm-table-head-size)!important;}.pm-pdf-root .pm-pdf-table-body td,.pm-pdf-root .pm-pdf-table-body p,.pm-pdf-root .pm-pdf-table-body span{font-size:var(--pm-table-body-size)!important;line-height:var(--pm-line-height)!important;}.pm-pdf-root .pm-pdf-table-body td:first-child,.pm-pdf-root .pm-pdf-table-body td:first-child *{text-align:var(--pm-table-align)!important;}.pm-pdf-root .pm-pdf-summary,.pm-pdf-root .pm-pdf-summary *{text-align:var(--pm-summary-align)!important;}.pm-pdf-root .pm-pdf-quick,.pm-pdf-root .pm-pdf-quick *{font-size:var(--pm-quick-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-quick-align)!important;}.pm-pdf-root .pm-pdf-general-conditions,.pm-pdf-root .pm-pdf-general-conditions *{font-size:var(--pm-conditions-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-conditions-align)!important;}.pm-pdf-root .pm-pdf-sign,.pm-pdf-root .pm-pdf-sign *{font-size:var(--pm-sign-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-sign-align)!important;}.pm-pdf-root .pm-pdf-footer-text{font-size:var(--pm-footer-size)!important;text-align:var(--pm-footer-align)!important;}.pm-pdf-root .pm-pdf-amount,.pm-pdf-root .pm-pdf-table-body td:last-child,.pm-pdf-root .pm-pdf-summary td:last-child{white-space:nowrap!important;word-break:normal!important;overflow-wrap:normal!important;font-variant-numeric:tabular-nums;}.pm-pdf-root .pm-pdf-summary-table-wrap{width:20rem;max-width:100%;margin-left:auto;}.pm-pdf-root [data-base-resource]{position:relative;transform-origin:top left;}.pm-pdf-root .pm-pdf-resource,.pm-pdf-root .pm-pdf-editable{cursor:default;box-sizing:border-box;outline:none;outline-offset:2px;}.pm-pdf-root .pm-pdf-editable::before{content:'';position:absolute;inset:-1px;border:1px dashed rgba(239,68,68,.28);border-radius:inherit;background:radial-gradient(circle at top left,#ef4444 0 3px,transparent 3.2px),radial-gradient(circle at top right,#ef4444 0 3px,transparent 3.2px),radial-gradient(circle at bottom left,#ef4444 0 3px,transparent 3.2px),radial-gradient(circle at bottom right,#ef4444 0 3px,transparent 3.2px);background-size:12px 12px;background-repeat:no-repeat;opacity:0;pointer-events:none;}.pm-pdf-root .pm-pdf-editable::after{content:'';position:absolute;right:-7px;bottom:-7px;width:12px;height:12px;border-radius:999px;background:#ef4444;box-shadow:0 0 0 2px #fff;opacity:0;pointer-events:none;}.pm-pdf-root .pm-pdf-base-selected,.pm-pdf-root .pm-pdf-edit-selected{outline:none;outline-offset:2px;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-resource,.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-editable{cursor:move;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-editable{outline:1px dashed rgba(239,68,68,.45);}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-editable::before,.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-editable::after{opacity:.94;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-base-selected,.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-edit-selected{outline:2px solid #ef4444;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-edit-selected::before,.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-edit-selected::after{opacity:1;}.pm-pdf-delete-btn{position:absolute;top:-8px;right:-8px;width:22px;height:22px;border-radius:50%;background:#ef4444;color:#fff;display:none;align-items:center;justify-content:center;cursor:pointer;font-size:11px;z-index:80;box-shadow:0 0 0 2px #fff;pointer-events:auto;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-edit-selected .pm-pdf-delete-btn{display:flex;}.pm-pdf-delete-btn:hover{background:#dc2626;transform:scale(1.08);transition:all .2s;}</style>`;
     const pdfTableFitTag = `<style>.pm-pdf-root .pm-pdf-table-head th{font-size:var(--pm-fit-head-size,var(--pm-table-head-size))!important;padding-top:var(--pm-fit-cell-py,.5rem)!important;padding-bottom:var(--pm-fit-cell-py,.5rem)!important;padding-left:var(--pm-fit-cell-px,.75rem)!important;padding-right:var(--pm-fit-cell-px,.75rem)!important;}.pm-pdf-root .pm-pdf-table-body td,.pm-pdf-root .pm-pdf-table-body p,.pm-pdf-root .pm-pdf-table-body span{font-size:var(--pm-fit-body-size,var(--pm-table-body-size))!important;line-height:var(--pm-fit-line-height,var(--pm-line-height))!important;}.pm-pdf-root .pm-pdf-table-body td{padding-top:var(--pm-fit-cell-py,.5rem)!important;padding-bottom:var(--pm-fit-cell-py,.5rem)!important;padding-left:var(--pm-fit-cell-px,.75rem)!important;padding-right:var(--pm-fit-cell-px,.75rem)!important;}</style>`;
 
     const now = new Date(); const dateStr = now.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' }); const genDateTime = now.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'medium' }); let docTitle = isOrder ? "ORDEN DE COMPRA" : "COTIZACIÓN"; 
@@ -5550,7 +5847,8 @@ window.getOrderHTML = function(o, type) {
             const dateRangeLabel = (isConvenio && __pmSpaceDetailBlocksIndefinitely(sp))
                 ? `${window.safeFormatDate(sp.fecha_inicio)}<br>Indefinido`
                 : `${window.safeFormatDate(sp.fecha_inicio)}<br>${window.safeFormatDate(sp.fecha_fin)}`;
-            rowsHtml += `<tr><td class="py-2 px-3 align-top break-words">${__pmRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(mDetail)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(measuresStr)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${dateRangeLabel}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${__pmFormatMoneyHtml(spSubtotal)}</td></tr>`;
+            const amountCellHtml = isConvenio ? '' : `<td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${__pmFormatMoneyHtml(spSubtotal)}</td>`;
+            rowsHtml += `<tr><td class="py-2 px-3 align-top break-words">${__pmRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(mDetail)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(measuresStr)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${dateRangeLabel}</td>${amountCellHtml}</tr>`;
         });
     } else {
         const identity = __pmResolveSpaceIdentity();
@@ -5562,7 +5860,8 @@ window.getOrderHTML = function(o, type) {
         const measuresStr = (mAncho !== null && mAncho !== undefined && mAlto !== null && mAlto !== undefined) ? `${mAncho}x${mAlto} ${mUnidad}` : '--';
         runningSubtotal = rentalTotal;
         convenioBaseTotal = rentalTotal;
-        rowsHtml = `<tr><td class="py-2 px-3 align-top break-words">${__pmRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(mDetail)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(measuresStr)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmOrderBlocksIndefinitely(o) ? `${window.safeFormatDate(o.fecha_inicio)}<br>Indefinido` : `${window.safeFormatDate(o.fecha_inicio)}<br>${window.safeFormatDate(o.fecha_fin)}`}</td><td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${__pmFormatMoneyHtml(rentalTotal)}</td></tr>`;
+        const amountCellHtml = isConvenio ? '' : `<td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${__pmFormatMoneyHtml(rentalTotal)}</td>`;
+        rowsHtml = `<tr><td class="py-2 px-3 align-top break-words">${__pmRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(mDetail)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(measuresStr)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmOrderBlocksIndefinitely(o) ? `${window.safeFormatDate(o.fecha_inicio)}<br>Indefinido` : `${window.safeFormatDate(o.fecha_inicio)}<br>${window.safeFormatDate(o.fecha_fin)}`}</td>${amountCellHtml}</tr>`;
     }
     
     const cArray = __pmNormalizeConceptsArray(o.conceptos_adicionales);
@@ -5580,10 +5879,11 @@ window.getOrderHTML = function(o, type) {
         const conceptPeople = __pmResolveConceptPeople(c);
         const peopleSuffix = conceptPeople > 0 ? ` (${conceptPeople} persona${conceptPeople === 1 ? '' : 's'})` : '';
         const label = `${spName ? `${spName} - ` : ''}${c.description || c.nombre || (convenioConcept ? 'Trato de Convenio' : 'Adicional')}${peopleSuffix}`;
-        rowsHtml += `<tr><td class="py-2 px-3 text-[13px] font-medium text-gray-600 break-words leading-snug">${label}</td><td class="py-2 px-3"></td><td class="py-2 px-3"></td><td class="py-2 px-3"></td><td class="py-2 px-3 text-right text-[13px] font-medium text-gray-600">${__pmFormatMoneyHtml(amount, { prefix: sign })}</td></tr>`; 
+        const amountCellHtml = isConvenio ? '' : `<td class="py-2 px-3 text-right text-[13px] font-medium text-gray-600">${__pmFormatMoneyHtml(amount, { prefix: sign })}</td>`;
+        rowsHtml += `<tr><td class="py-2 px-3 text-[13px] font-medium text-gray-600 break-words leading-snug">${label}</td><td class="py-2 px-3"></td><td class="py-2 px-3"></td><td class="py-2 px-3"></td>${amountCellHtml}</tr>`; 
     }); 
     
-    if(o.tipo_ajuste && o.tipo_ajuste !== 'ninguno') { let val = parseFloat(o.valor_ajuste); let displayAmount = val; if (o.ajuste_es_porcentaje) { displayAmount = runningSubtotal * (val / 100); } const sign = o.tipo_ajuste === 'descuento' ? '-' : '+'; if(o.tipo_ajuste==='descuento') runningSubtotal -= displayAmount; else runningSubtotal += displayAmount; rowsHtml += `<tr class="bg-gray-50"><td class="py-2 px-3 italic text-[12px] text-gray-500">Ajuste Global</td><td></td><td></td><td></td><td class="py-2 px-3 text-right font-bold text-[12px] text-gray-600">${__pmFormatMoneyHtml(displayAmount, { prefix: sign })}</td></tr>`; } 
+    if(o.tipo_ajuste && o.tipo_ajuste !== 'ninguno') { let val = parseFloat(o.valor_ajuste); let displayAmount = val; if (o.ajuste_es_porcentaje) { displayAmount = runningSubtotal * (val / 100); } const sign = o.tipo_ajuste === 'descuento' ? '-' : '+'; if(o.tipo_ajuste==='descuento') runningSubtotal -= displayAmount; else runningSubtotal += displayAmount; const amountCellHtml = isConvenio ? '' : `<td class="py-2 px-3 text-right font-bold text-[12px] text-gray-600">${__pmFormatMoneyHtml(displayAmount, { prefix: sign })}</td>`; rowsHtml += `<tr class="bg-gray-50"><td class="py-2 px-3 italic text-[12px] text-gray-500">Ajuste Global</td><td></td><td></td><td></td>${amountCellHtml}</tr>`; } 
     const __pmTableRows = (String(rowsHtml).match(/<tr\b/gi) || []).length;
     const __pmTableChars = String(rowsHtml).replace(/<[^>]+>/g, '').length;
     let __pmDensityLevel = 0;
@@ -5604,26 +5904,66 @@ window.getOrderHTML = function(o, type) {
         ? pricing.taxTotal
         : Math.max(0, __pmRoundMoney(pricing.total - runningSubtotal));
     const taxRows = __pmBuildTaxRows(runningSubtotal, taxIds, storedTaxTotal);
-    const convenioBalance = __pmRoundMoney(runningSubtotal);
+    // Blindaje adicional: si por cualquier ruta un convenio usa el layout
+    // generico, la tabla y el resumen tambien deben quedar sin montos visibles.
     const totalsBlock = isConvenio
-        ? `<div class="pm-pdf-summary flex justify-end mb-2 pr-4" data-base-resource="summary"><div class="pm-pdf-summary-table-wrap"><table class="w-full border-collapse"><tr><td class="py-1 px-3 text-[10px] font-bold text-gray-500 text-right" colspan="4">Valor base del espacio</td><td class="py-1 px-3 text-right text-xs font-bold text-gray-800">${__pmFormatMoneyHtml(convenioBaseTotal)}</td></tr><tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="4">Tratos del convenio</td><td class="py-1 px-3 text-right text-xs text-amber-600 font-bold">${__pmFormatMoneyHtml(convenioDeliveredTotal, { prefix: '-' })}</td></tr><tr><td class="pt-2 border-t-2 border-gray-800 align-middle text-right" colspan="4"><span class="text-[10px] font-bold uppercase text-gray-500 mr-2">Balance del convenio</span></td><td class="pt-2 border-t-2 border-gray-800 align-middle text-right"><span class="text-xl font-black text-gray-900">${__pmFormatMoneyHtml(convenioBalance)}</span></td></tr></table></div></div>`
+        ? ''
         : `<div class="pm-pdf-summary flex justify-end mb-2 pr-4" data-base-resource="summary"><div class="pm-pdf-summary-table-wrap"><table class="w-full border-collapse">${taxRows}<tr><td class="pt-2 border-t-2 border-gray-800 align-middle text-right" colspan="4"><span class="text-[10px] font-bold uppercase text-gray-500 mr-2">Total Neto</span></td><td class="pt-2 border-t-2 border-gray-800 align-middle text-right"><span class="text-xl font-black text-gray-900">${__pmFormatMoneyHtml(pricing.total)}</span></td></tr></table></div></div>`; 
+    const tableColGroupHtml = isConvenio
+        ? `<colgroup><col style="width:42%;"><col style="width:18%;"><col style="width:16%;"><col style="width:24%;"></colgroup>`
+        : `<colgroup><col style="width:38%;"><col style="width:14%;"><col style="width:12%;"><col style="width:14%;"><col style="width:22%;"></colgroup>`;
+    const tableHeadHtml = isConvenio
+        ? `<thead class="pm-pdf-table-head bg-gray-100 text-sm font-black text-gray-500 uppercase"><tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">${__pmSafeHtml(detailColumnLabel)}</th><th class="py-2 px-3 text-center">Medidas</th><th class="py-2 px-3 text-center rounded-r">Fecha</th></tr></thead>`
+        : `<thead class="pm-pdf-table-head bg-gray-100 text-sm font-black text-gray-500 uppercase"><tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">${__pmSafeHtml(detailColumnLabel)}</th><th class="py-2 px-3 text-center">Medidas</th><th class="py-2 px-3 text-center">Fecha</th><th class="py-2 px-3 text-right rounded-r">Importe</th></tr></thead>`;
+    const convenioTableHideTag = isConvenio
+        ? `<style>.pm-pdf-root .pm-pdf-hide-convenio-amounts tbody tr>td:last-child{display:none!important;}</style>`
+        : '';
     
-    const quoteApproverTitle = __pmResolvePdfTemplateString(pdfContent.quoteApproverTitle || 'QUIEN APRUEBA', { CLIENT_NAME: clientName });
-    const quoteApproverSubtitle = __pmResolvePdfTemplateString(pdfContent.quoteApproverSubtitle || 'Plaza Mayor', { CLIENT_NAME: clientName });
-    const quoteClientTitle = __pmResolvePdfTemplateString(pdfContent.quoteClientTitle || '{{CLIENT_NAME}}', { CLIENT_NAME: clientName }).slice(0, 40);
-    const quoteClientSubtitle = __pmResolvePdfTemplateString(pdfContent.quoteClientSubtitle || 'Cliente / Representante', { CLIENT_NAME: clientName });
-    const orderApproverTitle = __pmResolvePdfTemplateString(pdfContent.orderApproverTitle || 'QUIEN APRUEBA', { CLIENT_NAME: clientName });
-    const orderApproverSubtitle = __pmResolvePdfTemplateString(pdfContent.orderApproverSubtitle || 'Plaza Mayor', { CLIENT_NAME: clientName });
+    const pdfTemplateContext = __pmBuildPdfTemplateContext(o, { folio, docTitle, dateStr, venueName: 'Plaza Mayor' });
+    const quoteApproverTitle = __pmResolvePdfTemplateString(pdfContent.quoteApproverTitle || 'QUIEN APRUEBA', pdfTemplateContext);
+    const quoteApproverSubtitle = __pmResolvePdfTemplateString(pdfContent.quoteApproverSubtitle || 'Plaza Mayor', pdfTemplateContext);
+    const quoteClientTitle = __pmResolvePdfTemplateString(pdfContent.quoteClientTitle || '{{CLIENT_NAME}}', pdfTemplateContext).slice(0, 40);
+    const quoteClientSubtitle = __pmResolvePdfTemplateString(pdfContent.quoteClientSubtitle || 'Cliente / Representante', pdfTemplateContext);
+    const orderApproverTitle = __pmResolvePdfTemplateString(pdfContent.orderApproverTitle || 'QUIEN APRUEBA', pdfTemplateContext);
+    const orderApproverSubtitle = __pmResolvePdfTemplateString(pdfContent.orderApproverSubtitle || 'Plaza Mayor', pdfTemplateContext);
 
-    let signBlock = '';
-    if (isOrder) {
-        signBlock = `<div class="flex justify-center w-full"><div class="text-center w-64"><div class="border-b border-black mb-1"></div><p class="font-bold text-xs text-brand-dark">${__pmSafeHtml(orderApproverTitle)}</p><p class="text-[10px] text-gray-500 uppercase">${__pmSafeHtml(orderApproverSubtitle)}</p></div></div>`;
-    } else {
-        signBlock = `<div class="text-center w-56"><div class="border-b border-black mb-1"></div><p class="font-bold text-xs text-brand-dark">${__pmSafeHtml(quoteApproverTitle)}</p><p class="text-[10px] text-gray-500 uppercase">${__pmSafeHtml(quoteApproverSubtitle)}</p></div><div class="text-center w-56"><div class="border-b border-black mb-1"></div><p class="font-bold text-xs text-brand-dark uppercase">${__pmSafeHtml(quoteClientTitle)}</p><p class="text-[10px] text-gray-500 uppercase">${__pmSafeHtml(quoteClientSubtitle)}</p></div>`;
-    }
+    // Cada firma se renderiza como bloque base independiente para poder moverla
+    // y escalarla por separado desde el editor PDF.
+    const renderSignArea = (entries, wrapperClass) => {
+        const items = (Array.isArray(entries) ? entries : []).filter(Boolean).map((entry) => `
+            <div class="pm-pdf-sign ${entry.nodeClass || 'text-center w-56'}" data-base-resource="sign">
+                <div class="border-b border-black ${entry.lineClass || 'mb-1'}"></div>
+                <p class="font-bold text-xs text-brand-dark ${entry.titleClass || ''}">${__pmSafeHtml(entry.title || '')}</p>
+                ${Array.isArray(entry.extraLines) ? entry.extraLines.map((line) => `<p class="text-[10px] ${line.className || 'text-gray-500 uppercase'}">${__pmSafeHtml(line.text || '')}</p>`).join('') : ''}
+                ${entry.subtitle ? `<p class="text-[10px] text-gray-500 uppercase ${entry.subtitleClass || ''}">${__pmSafeHtml(entry.subtitle || '')}</p>` : ''}
+            </div>`).join('');
+        return items ? `<div class="${wrapperClass}">${items}</div>` : '';
+    };
+    const signBlock = isOrder
+        ? renderSignArea([
+            {
+                nodeClass: 'text-center w-64',
+                title: orderApproverTitle,
+                subtitle: orderApproverSubtitle
+            }
+        ], 'flex justify-center items-start px-2 w-full')
+        : renderSignArea([
+            {
+                nodeClass: 'text-center w-56',
+                title: quoteApproverTitle,
+                subtitle: quoteApproverSubtitle
+            },
+            {
+                nodeClass: 'text-center w-56',
+                titleClass: 'uppercase',
+                title: quoteClientTitle,
+                subtitle: quoteClientSubtitle
+            }
+        ], 'flex justify-between items-start px-2 gap-6');
     
     const pageBaseHeight = Number(__pmContentBaseHeightPx().toFixed(2));
+    // La carta convenio es un documento legal/operativo; los montos solo viven
+    // en el expediente interno y no deben imprimirse en el PDF entregable.
     if (isConvenio && !isOrder) {
         const venueName = 'Plaza Mayor';
         const convenioMeta = __pmParseConvenioMeta(o);
@@ -5657,19 +5997,15 @@ window.getOrderHTML = function(o, type) {
                 measures,
                 range: isIndefinite
                     ? `${window.safeFormatDate(start)} al indefinido`
-                    : `${window.safeFormatDate(start)} al ${window.safeFormatDate(end || start)}`,
-                amount: Math.max(0, parseFloat(item?.subtotal_espacio || item?.total_espacio || catalogSpace?.precio_base || 0) || 0)
+                    : `${window.safeFormatDate(start)} al ${window.safeFormatDate(end || start)}`
             };
         });
         const publicityItemsHtml = publicityEntries.length
             ? publicityEntries.map((entry) => `
                 <li class="rounded-xl border border-gray-200 bg-white px-3 py-2">
-                    <div class="flex items-start justify-between gap-3">
-                        <div>
-                            <p class="font-black text-gray-800 text-[11px]">${__pmSafeHtml(entry.name)}</p>
-                            ${entry.key ? `<p class="text-[9px] font-mono text-gray-400 mt-0.5">${__pmSafeHtml(entry.key)}</p>` : ''}
-                        </div>
-                        <span class="text-[10px] font-bold text-brand-red">${__pmFormatMoneyHtml(entry.amount)}</span>
+                    <div>
+                        <p class="font-black text-gray-800 text-[11px]">${__pmSafeHtml(entry.name)}</p>
+                        ${entry.key ? `<p class="text-[9px] font-mono text-gray-400 mt-0.5">${__pmSafeHtml(entry.key)}</p>` : ''}
                     </div>
                     <p class="mt-1 text-[10px] text-gray-500">Soporte: ${__pmSafeHtml(entry.detail)}${entry.measures ? ` · Medidas: ${__pmSafeHtml(entry.measures)}` : ''}</p>
                     <p class="mt-0.5 text-[10px] text-gray-400">Vigencia: ${__pmSafeHtml(entry.range)}</p>
@@ -5680,9 +6016,8 @@ window.getOrderHTML = function(o, type) {
                 const qty = Math.max(1, parseInt(item?.cantidad_entrega || 1, 10) || 1);
                 const label = `${qty} ${qty === 1 ? 'entrega' : 'entregas'} de ${item?.nombre || 'Convenio'}`;
                 return `
-                    <li class="flex items-start justify-between gap-3 rounded-xl border border-gray-200 bg-white px-3 py-2">
+                    <li class="rounded-xl border border-gray-200 bg-white px-3 py-2">
                         <span class="text-[11px] font-semibold text-gray-700">${__pmSafeHtml(label)}</span>
-                        <span class="text-[10px] font-bold text-brand-red">${__pmFormatMoneyHtml(item?.monto || 0)}</span>
                     </li>`;
             }).join('')
             : '<li class="rounded-xl border border-dashed border-gray-200 bg-white px-3 py-4 text-[10px] font-bold text-gray-400">Sin tratos capturados.</li>';
@@ -5695,38 +6030,47 @@ window.getOrderHTML = function(o, type) {
             : `Este convenio tendrá efecto desde ${window.safeFormatDate(convenioStart)} hasta el día ${window.safeFormatDate(convenioEnd)}, fecha en que la publicidad será retirada.`;
         const clientRoleLabel = String(quoteClientSubtitle || 'Cliente / Representante').trim() || 'Cliente / Representante';
         const approverRoleLabel = String(quoteApproverSubtitle || venueName).trim() || venueName;
-        const convenioSignBlock = `
-            <div class="text-center w-56">
-                <div class="border-b border-black mb-2"></div>
-                <p class="font-bold text-xs text-brand-dark uppercase">${__pmSafeHtml(venueName)}</p>
-                <p class="text-[10px] text-gray-600 mt-1">${__pmSafeHtml(quoteApproverTitle || 'Quien aprueba')}</p>
-                <p class="text-[10px] text-gray-500 uppercase">${__pmSafeHtml(approverRoleLabel)}</p>
-            </div>
-            <div class="text-center w-56">
-                <div class="border-b border-black mb-2"></div>
-                <p class="font-bold text-xs text-brand-dark uppercase">${__pmSafeHtml(quoteClientTitle || clientName)}</p>
-                <p class="text-[10px] text-gray-500 uppercase mt-1">${__pmSafeHtml(clientRoleLabel)}</p>
-            </div>`;
-        const convenioRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageBaseHeight}px;height:${pageBaseHeight}px;overflow:visible;position:relative;"><div class="pm-pdf-page-frame" style="${__pmBuildPdfContentFrameStyle(pageBaseHeight, 'display:flex;flex-direction:column;justify-content:space-between;')}"><div>${renderHeader(docTitle)}<div class="pm-pdf-summary text-[11px] text-gray-600 text-right mb-4" data-base-resource="summary">León, Guanajuato; ${__pmSafeHtml(convenioMonthYear)}.</div><div class="pm-pdf-general-conditions text-[11px] text-gray-700 space-y-4 leading-relaxed" data-base-resource="conditions"><div class="text-center space-y-1"><p class="text-xl font-black text-gray-900 tracking-wide">CONVENIO DE INTERCAMBIO</p><p class="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-500">${__pmSafeHtml((quoteClientTitle || clientName).toUpperCase())} y ${__pmSafeHtml(venueName.toUpperCase())}</p></div><p><strong>${__pmSafeHtml(venueName.toUpperCase())}</strong> acuerda proporcionar espacio publicitario en sus instalaciones para la campaña <strong>${__pmSafeHtml(convenioSubject)}</strong>. La difusión se realizará en los soportes descritos a continuación y se documentará mediante evidencia fotográfica.</p><div class="grid grid-cols-[minmax(0,1.45fr)_220px] gap-4"><div class="rounded-2xl border border-gray-200 bg-slate-50/80 p-4"><p class="text-[10px] font-black uppercase tracking-wide text-gray-500 mb-2">Publicidad acordada</p><ul class="space-y-2">${publicityItemsHtml}</ul></div><div class="rounded-2xl border border-gray-200 bg-white p-4"><p class="text-[10px] font-black uppercase tracking-wide text-gray-500 mb-3">Resumen económico</p><div class="space-y-2 text-[11px]"><div class="flex items-center justify-between gap-3"><span class="text-gray-500">Valor base</span><span class="font-bold text-gray-800">${__pmFormatMoneyHtml(convenioBaseTotal)}</span></div><div class="flex items-center justify-between gap-3"><span class="text-gray-500">Contraprestación</span><span class="font-bold text-amber-700">${__pmFormatMoneyHtml(convenioDeliveredTotal, { prefix: '-' })}</span></div><div class="pt-2 mt-2 border-t border-gray-200 flex items-center justify-between gap-3"><span class="font-black uppercase text-gray-500 text-[10px]">Balance</span><span class="font-black text-brand-dark">${__pmFormatMoneyHtml(convenioBalance)}</span></div></div></div></div><div class="grid grid-cols-[minmax(0,1.45fr)_220px] gap-4"><div class="rounded-2xl border border-gray-200 bg-slate-50/80 p-4"><p class="text-[10px] font-black uppercase tracking-wide text-gray-500 mb-2">Contraprestación acordada</p><ul class="space-y-2">${tradeItemsHtml}</ul></div><div class="rounded-2xl border border-gray-200 bg-white p-4"><p class="text-[10px] font-black uppercase tracking-wide text-gray-500 mb-2">Vigencia del acuerdo</p><p class="text-[11px] text-gray-700">${__pmSafeHtml(convenioValidityText)}</p></div></div><div class="grid grid-cols-2 gap-4"><div class="rounded-2xl border border-gray-200 bg-white p-4"><p class="text-[10px] font-black uppercase tracking-wide text-gray-500 mb-2">Responsabilidades del cliente</p><ul class="list-disc pl-4 space-y-1 text-[10px] text-gray-700"><li>Entregar los artes digitales o materiales físicos necesarios para la exposición acordada.</li><li>Proporcionar las contraprestaciones pactadas en tiempo y forma conforme a este convenio.</li><li>Compartir la información operativa necesaria para que la instalación publicitaria se ejecute correctamente.</li></ul></div><div class="rounded-2xl border border-gray-200 bg-white p-4"><p class="text-[10px] font-black uppercase tracking-wide text-gray-500 mb-2">Responsabilidades de ${__pmSafeHtml(venueName)}</p><ul class="list-disc pl-4 space-y-1 text-[10px] text-gray-700"><li>Colocar los materiales publicitarios en los espacios acordados durante la vigencia del convenio.</li><li>Garantizar la presencia de la publicidad conforme a la disponibilidad operativa del espacio contratado.</li><li>Registrar evidencia fotográfica del cumplimiento para el cierre documental del convenio.</li></ul></div></div><p class="text-[11px] text-justify">Ambas partes acuerdan cumplir con los términos y condiciones de este convenio, firmando a continuación la aceptación de los compromisos expresados en el presente documento.</p></div></div><div class="pb-2"><div class="pm-pdf-sign flex justify-between items-start px-2 mt-4" data-base-resource="sign">${convenioSignBlock}</div>${footerHubHTML}</div></div>${__pmRenderPdfResources(pdfStyle, 1)}</div>`;
+        const convenioSignBlock = renderSignArea([
+            {
+                nodeClass: 'text-center w-56',
+                lineClass: 'mb-2',
+                titleClass: 'uppercase',
+                title: venueName,
+                extraLines: [
+                    { text: quoteApproverTitle || 'Quien aprueba', className: 'text-[10px] text-gray-600 mt-1' },
+                    { text: approverRoleLabel, className: 'text-[10px] text-gray-500 uppercase' }
+                ]
+            },
+            {
+                nodeClass: 'text-center w-56',
+                lineClass: 'mb-2',
+                titleClass: 'uppercase',
+                title: quoteClientTitle || clientName,
+                subtitleClass: 'mt-1',
+                subtitle: clientRoleLabel
+            }
+        ], 'flex justify-between items-start px-2 mt-4 gap-6');
+        const convenioGridStyle = __pmBuildConvenioGridStyle(publicityEntries.length, convenioItems.length);
+        const convenioRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageBaseHeight}px;height:${pageBaseHeight}px;overflow:visible;position:relative;"><div class="pm-pdf-page-frame" style="${__pmBuildPdfContentFrameStyle(pageBaseHeight, 'display:flex;flex-direction:column;justify-content:space-between;')}"><div>${renderHeader(docTitle)}<div class="pm-pdf-summary text-[11px] text-gray-600 text-right mb-4" data-base-resource="summary">León, Guanajuato; ${__pmSafeHtml(convenioMonthYear)}.</div><div class="pm-pdf-general-conditions text-[11px] text-gray-700 space-y-4 leading-relaxed" data-base-resource="conditions"><div class="text-center space-y-1"><p class="text-xl font-black text-gray-900 tracking-wide">CONVENIO DE INTERCAMBIO</p><p class="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-500">${__pmSafeHtml((quoteClientTitle || clientName).toUpperCase())} y ${__pmSafeHtml(venueName.toUpperCase())}</p></div><p><strong>${__pmSafeHtml(venueName.toUpperCase())}</strong> acuerda proporcionar espacio publicitario en sus instalaciones para la campaña <strong>${__pmSafeHtml(convenioSubject)}</strong>. La difusión se realizará en los soportes descritos a continuación y se documentará mediante evidencia fotográfica.</p><div style="${convenioGridStyle}"><div class="rounded-2xl border border-gray-200 bg-slate-50/80 p-4"><p class="text-[10px] font-black uppercase tracking-wide text-gray-500 mb-2">Publicidad acordada</p><ul class="space-y-2">${publicityItemsHtml}</ul></div><div class="space-y-4"><div class="rounded-2xl border border-gray-200 bg-white p-4"><p class="text-[10px] font-black uppercase tracking-wide text-gray-500 mb-2">Vigencia del acuerdo</p><p class="text-[11px] text-gray-700">${__pmSafeHtml(convenioValidityText)}</p></div><div class="rounded-2xl border border-gray-200 bg-white p-4"><p class="text-[10px] font-black uppercase tracking-wide text-gray-500 mb-2">Contraprestación acordada</p><ul class="space-y-2">${tradeItemsHtml}</ul></div></div></div><div class="grid grid-cols-2 gap-4"><div class="rounded-2xl border border-gray-200 bg-white p-4"><p class="text-[10px] font-black uppercase tracking-wide text-gray-500 mb-2">Responsabilidades del cliente</p><ul class="list-disc pl-4 space-y-1 text-[10px] text-gray-700"><li>Entregar los artes digitales o materiales físicos necesarios para la exposición acordada.</li><li>Proporcionar las contraprestaciones pactadas en tiempo y forma conforme a este convenio.</li><li>Compartir la información operativa necesaria para que la instalación publicitaria se ejecute correctamente.</li></ul></div><div class="rounded-2xl border border-gray-200 bg-white p-4"><p class="text-[10px] font-black uppercase tracking-wide text-gray-500 mb-2">Responsabilidades de ${__pmSafeHtml(venueName)}</p><ul class="list-disc pl-4 space-y-1 text-[10px] text-gray-700"><li>Colocar los materiales publicitarios en los espacios acordados durante la vigencia del convenio.</li><li>Garantizar la presencia de la publicidad conforme a la disponibilidad operativa del espacio contratado.</li><li>Registrar evidencia fotográfica del cumplimiento para el cierre documental del convenio.</li></ul></div></div><p class="text-[11px] text-justify">Ambas partes acuerdan cumplir con los términos y condiciones de este convenio, firmando a continuación la aceptación de los compromisos expresados en el presente documento.</p></div></div><div class="pb-2">${convenioSignBlock}${footerHubHTML}</div></div>${__pmRenderPdfResources(pdfStyle, 1, pdfTemplateContext)}</div>`;
         const convenioPages = [
             __pmWrapLetterheadPage(__pmOrdersBoostPdfTypography(convenioRaw), { baseWidth: __PM_PDF_CONTENT_BASE_WIDTH_PX, baseHeight: pageBaseHeight })
         ];
         const convenioExtraPages = __pmClampStyleNumber(pdfStyle.extraPages, -1, 6, 0);
         if (convenioExtraPages > 0) {
             for (let i = 0; i < convenioExtraPages; i += 1) {
-                const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageBaseHeight}px;height:${pageBaseHeight}px;overflow:visible;position:relative;"><div class="pm-pdf-page-frame" style="${__pmBuildPdfContentFrameStyle(pageBaseHeight)}">${renderHeader(`ANEXO ${i + 1}`)}<div class="pm-pdf-general-conditions text-[13px] text-gray-700 leading-relaxed mt-6 border border-dashed border-gray-300 rounded-lg p-4" data-base-resource="conditions"><p class="font-black uppercase text-gray-500 text-[11px] mb-2">${__pmSafeHtml(pdfContent.annexHintTitle || 'Página adicional editable')}</p><p>${__pmSafeHtml(pdfContent.annexHintBody || '')}</p></div>${footerHubHTML}</div>${__pmRenderPdfResources(pdfStyle, 2 + i)}</div>`;
+                const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageBaseHeight}px;height:${pageBaseHeight}px;overflow:visible;position:relative;"><div class="pm-pdf-page-frame" style="${__pmBuildPdfContentFrameStyle(pageBaseHeight)}">${renderHeader(`ANEXO ${i + 1}`)}<div class="pm-pdf-general-conditions text-[13px] text-gray-700 leading-relaxed mt-6 border border-dashed border-gray-300 rounded-lg p-4" data-base-resource="conditions"><p class="font-black uppercase text-gray-500 text-[11px] mb-2">${__pmSafeHtml(pdfContent.annexHintTitle || 'Página adicional editable')}</p><p>${__pmSafeHtml(pdfContent.annexHintBody || '')}</p></div>${footerHubHTML}</div>${__pmRenderPdfResources(pdfStyle, 2 + i, pdfTemplateContext)}</div>`;
                 convenioPages.push(__pmWrapLetterheadPage(extraRaw, { baseWidth: __PM_PDF_CONTENT_BASE_WIDTH_PX, baseHeight: pageBaseHeight }));
             }
         }
         const convenioRawHtml = `<div class="pm-pdf-root" style="width:816px;margin:0;padding:0;box-sizing:border-box;background:#ffffff;word-break:break-word;overflow-wrap:anywhere;${pdfStyleInlineVars}${__pmTableFitInline}">${pdfStyleTag}${pdfTableFitTag}${convenioPages.join('')}</div>`;
         return __pmOrdersTransparentPdfHtml(convenioRawHtml);
     }
-const page1Raw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageBaseHeight}px;height:${pageBaseHeight}px;overflow:visible;position:relative;"><div class="pm-pdf-page-frame" style="${__pmBuildPdfContentFrameStyle(pageBaseHeight, 'display:flex;flex-direction:column;justify-content:space-between;')}"><div>${renderHeader(docTitle)}${clientComponent}${isOrder ? `<div class="mb-2 bg-gray-100 p-2 rounded text-base"><span>Folio de Servicio: <strong class="font-black text-lg">${folio}</strong></span></div>` : ''}<table class="w-full text-left mb-2 mt-3 table-fixed border-separate border-spacing-0"><colgroup><col style="width:38%;"><col style="width:14%;"><col style="width:12%;"><col style="width:14%;"><col style="width:22%;"></colgroup><thead class="pm-pdf-table-head bg-gray-100 text-sm font-black text-gray-500 uppercase"><tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">${__pmSafeHtml(detailColumnLabel)}</th><th class="py-2 px-3 text-center">Medidas</th><th class="py-2 px-3 text-center">Fecha</th><th class="py-2 px-3 text-right rounded-r">Importe</th></tr></thead><tbody class="pm-pdf-table-body divide-y divide-gray-50 text-[12px]" data-base-resource="table-body">${rowsHtml}</tbody></table> ${totalsBlock}</div><div class="pb-2">${!isOrder ? `<div class="pm-pdf-quick grid grid-cols-2 gap-4 ${__pmQuickMarginClass} pt-4 border-t border-gray-100" data-base-resource="quick"><div><h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">${__pmSafeHtml(pdfContent.quickLeftTitle || 'Condiciones:')}</h4><ul class="list-none text-xs text-gray-600 space-y-0.5 leading-tight">${quickLeftItemsHtml}</ul></div><div><h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">${__pmSafeHtml(pdfContent.quickRightTitle || 'Vigencia:')}</h4><p class="text-xs text-gray-600">${__pmSafeHtml(pdfContent.quickRightBody || '')}</p></div></div>` : ''}<div class="pm-pdf-sign flex justify-between items-start px-2" data-base-resource="sign">${signBlock}</div>${footerHubHTML}</div></div>${__pmRenderPdfResources(pdfStyle, 1)}</div>`;
+const page1Raw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageBaseHeight}px;height:${pageBaseHeight}px;overflow:visible;position:relative;"><div class="pm-pdf-page-frame" style="${__pmBuildPdfContentFrameStyle(pageBaseHeight, 'display:flex;flex-direction:column;justify-content:space-between;')}"><div>${renderHeader(docTitle)}${clientComponent}${isOrder ? `<div class="mb-2 bg-gray-100 p-2 rounded text-base"><span>Folio de Servicio: <strong class="font-black text-lg">${folio}</strong></span></div>` : ''}<table class="w-full text-left mb-2 mt-3 table-fixed border-separate border-spacing-0 ${isConvenio ? 'pm-pdf-hide-convenio-amounts' : ''}">${tableColGroupHtml}${tableHeadHtml}<tbody class="pm-pdf-table-body divide-y divide-gray-50 text-[12px]" data-base-resource="table-body">${rowsHtml}</tbody></table> ${totalsBlock}</div><div class="pb-2">${!isOrder ? `<div class="pm-pdf-quick grid grid-cols-2 gap-4 ${__pmQuickMarginClass} pt-4 border-t border-gray-100" data-base-resource="quick"><div><h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">${__pmSafeHtml(pdfContent.quickLeftTitle || 'Condiciones:')}</h4><ul class="list-none text-xs text-gray-600 space-y-0.5 leading-tight">${quickLeftItemsHtml}</ul></div><div><h4 class="font-bold text-xs uppercase text-brand-dark mb-0.5">${__pmSafeHtml(pdfContent.quickRightTitle || 'Vigencia:')}</h4><p class="text-xs text-gray-600">${__pmSafeHtml(pdfContent.quickRightBody || '')}</p></div></div>` : ''}${signBlock}${footerHubHTML}</div></div>${__pmRenderPdfResources(pdfStyle, 1, pdfTemplateContext)}</div>`;
     const pages = [
         __pmWrapLetterheadPage(__pmOrdersBoostPdfTypography(page1Raw), { baseWidth: __PM_PDF_CONTENT_BASE_WIDTH_PX, baseHeight: pageBaseHeight })
     ];
     if (!isOrder) { 
-const page2Raw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageBaseHeight}px;height:${pageBaseHeight}px;overflow:visible;position:relative;"><div class="pm-pdf-page-frame" style="${__pmBuildPdfContentFrameStyle(pageBaseHeight)}">${renderHeader(__pmSafeHtml(pdfContent.conditionsTitle || 'CONDICIONES GENERALES'))}<ol class="pm-pdf-general-conditions list-decimal list-outside ml-6 text-[14px] text-gray-800 space-y-2 text-justify leading-tight mt-5" data-base-resource="conditions">${conditionsItemsHtml}</ol></div>${__pmRenderPdfResources(pdfStyle, 2)}</div>`;
+const page2Raw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageBaseHeight}px;height:${pageBaseHeight}px;overflow:visible;position:relative;"><div class="pm-pdf-page-frame" style="${__pmBuildPdfContentFrameStyle(pageBaseHeight)}">${renderHeader(__pmSafeHtml(pdfContent.conditionsTitle || 'CONDICIONES GENERALES'))}<ol class="pm-pdf-general-conditions list-decimal list-outside ml-6 text-[14px] text-gray-800 space-y-2 text-justify leading-tight mt-5" data-base-resource="conditions">${conditionsItemsHtml}</ol></div>${__pmRenderPdfResources(pdfStyle, 2, pdfTemplateContext)}</div>`;
         pages.push(__pmWrapLetterheadPage(page2Raw, { baseWidth: __PM_PDF_CONTENT_BASE_WIDTH_PX, baseHeight: pageBaseHeight }));
     } 
     const extraPages = __pmClampStyleNumber(pdfStyle.extraPages, -1, 6, 0);
@@ -5735,11 +6079,11 @@ const page2Raw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
         pages.length = keepCount;
     } else if (extraPages > 0) {
         for (let i = 0; i < extraPages; i += 1) {
-const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageBaseHeight}px;height:${pageBaseHeight}px;overflow:visible;position:relative;"><div class="pm-pdf-page-frame" style="${__pmBuildPdfContentFrameStyle(pageBaseHeight)}">${renderHeader(`ANEXO ${i + 1}`)}<div class="pm-pdf-general-conditions text-[13px] text-gray-700 leading-relaxed mt-6 border border-dashed border-gray-300 rounded-lg p-4" data-base-resource="conditions"><p class="font-black uppercase text-gray-500 text-[11px] mb-2">${__pmSafeHtml(pdfContent.annexHintTitle || 'Página adicional editable')}</p><p>${__pmSafeHtml(pdfContent.annexHintBody || '')}</p></div>${footerHubHTML}</div>${__pmRenderPdfResources(pdfStyle, (isOrder ? 2 : 3) + i)}</div>`;
+const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageBaseHeight}px;height:${pageBaseHeight}px;overflow:visible;position:relative;"><div class="pm-pdf-page-frame" style="${__pmBuildPdfContentFrameStyle(pageBaseHeight)}">${renderHeader(`ANEXO ${i + 1}`)}<div class="pm-pdf-general-conditions text-[13px] text-gray-700 leading-relaxed mt-6 border border-dashed border-gray-300 rounded-lg p-4" data-base-resource="conditions"><p class="font-black uppercase text-gray-500 text-[11px] mb-2">${__pmSafeHtml(pdfContent.annexHintTitle || 'Página adicional editable')}</p><p>${__pmSafeHtml(pdfContent.annexHintBody || '')}</p></div>${footerHubHTML}</div>${__pmRenderPdfResources(pdfStyle, (isOrder ? 2 : 3) + i, pdfTemplateContext)}</div>`;
             pages.push(__pmWrapLetterheadPage(extraRaw, { baseWidth: __PM_PDF_CONTENT_BASE_WIDTH_PX, baseHeight: pageBaseHeight }));
         }
     }
-    const raw = `<div class="pm-pdf-root" style="width:816px;margin:0;padding:0;box-sizing:border-box;background:#ffffff;word-break:break-word;overflow-wrap:anywhere;${pdfStyleInlineVars}${__pmTableFitInline}">${pdfStyleTag}${pdfTableFitTag}${pages.join('')}</div>`;
+    const raw = `<div class="pm-pdf-root" style="width:816px;margin:0;padding:0;box-sizing:border-box;background:#ffffff;word-break:break-word;overflow-wrap:anywhere;${pdfStyleInlineVars}${__pmTableFitInline}">${convenioTableHideTag}${pdfStyleTag}${pdfTableFitTag}${pages.join('')}</div>`;
     return __pmOrdersTransparentPdfHtml(raw); 
 };
 
@@ -5851,6 +6195,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
   const pmCfgConvenioValue = (cfg = null) => convenioConcepts(cfg?.concepts).reduce((sum, concept) => sum + (parseFloat(concept.amount ?? concept.value ?? 0) || 0), 0);
   const pmCfgBlocksIndefinitely = (cfg = null, space = null) => {
     if (!cfg?.convenioEnabled) return false;
+    if (__pmHasFiniteConvenioEndDate(cfg?.endDate)) return false;
     const sp = space || getSpace(cfg?.spaceId);
     const base = resolvePmBaseTotal(cfg, sp);
     return __pmConvenioCovered(base, pmCfgConvenioValue(cfg));
@@ -5945,6 +6290,8 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
   const getCfg = (sid) => pmSpaces.find((x) => String(x.spaceId) === String(sid)) || null;
   const selectedCfg = () => pmSpaces.filter((x) => x.selected);
   const activeCfg = () => getCfg(pmActive);
+  // El picker de order_detail comparte un solo catálogo visual; cuando la
+  // orden ya es convenio debemos reducirlo solo a espacios elegibles.
   const canDisplayPmEditorSpace = (space) => {
     if (!space) return false;
     if (isEditorConvenioOrder() && !__pmSpaceAllowsConvenio(space)) return false;
@@ -5959,6 +6306,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     }
     return true;
   };
+  const listPmEditorSpaces = () => allSpaces.filter((space) => canDisplayPmEditorSpace(space));
   const ensureActive = () => {
     if (!selectedCfg().length && pmSpaces.length) pmSpaces[0].selected = true;
     if (!pmActive || !getCfg(pmActive)?.selected) pmActive = String(selectedCfg()[0]?.spaceId || pmSpaces[0]?.spaceId || "");
@@ -6611,7 +6959,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
           convenio: {
             ...convenioMeta,
             activo: true,
-            bloqueo_indefinido: true,
+            bloqueo_indefinido: __pmOrderBlocksIndefinitely(order),
             requiere_evidencia: true,
             evidencia_minima: 3,
             evidencia_maxima: 5,
@@ -7505,8 +7853,11 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     if (!track) return;
     ensureActive();
     const locked = __pmIsLockedOrder();
-    const selectedIds = selectedCfg().map((x) => String(x.spaceId));
-    const ids = [...selectedIds, ...allSpaces.map((s) => String(s.id)).filter((id) => !selectedIds.includes(id))].filter((id, index, arr) => arr.indexOf(id) === index);
+    // order_detail debe renderizar el mismo catalogo filtrado que usamos para
+    // validar altas; en convenio solo aparecen espacios publicitarios elegibles.
+    const ids = listPmEditorSpaces()
+      .map((space) => String(space.id))
+      .filter((id, index, arr) => arr.indexOf(id) === index);
     track.className = "grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2.5";
     track.style.display = "";
     track.style.gridAutoFlow = "";
@@ -7805,6 +8156,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       const convenioValue = convenioItems.reduce((a, c) => a + (parseFloat(c.amount || c.value || 0) || 0), 0);
       const conceptsTotal = isConvenio ? convenioValue : regularTotal;
       const convenioCovered = isConvenio ? __pmConvenioCovered(base, convenioValue) : false;
+      const blocksIndefinitely = convenioCovered && !__pmHasFiniteConvenioEndDate(cfg?.endDate);
       const subtotalSpace = isConvenio ? Math.max(0, base - convenioValue) : (base + regularTotal);
       const taxIds = isConvenio ? [] : resolveCfgTaxIds(cfg, sp);
       return {
@@ -7814,7 +8166,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
         baseMeta,
         isConvenio,
         convenioCovered,
-        blocksIndefinitely: convenioCovered,
+        blocksIndefinitely,
         concepts: isConvenio ? convenioItems : regularItems,
         regularItems,
         convenioItems,
@@ -8162,7 +8514,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
         precio_personalizado_activo: !!r.cfg.customPriceEnabled,
         precio_personalizado_modo: r.cfg.customPriceMode || "total",
         convenio_activo: !!r.cfg.convenioEnabled,
-        convenio_indefinido: false, // Don't force 'indefinido' date range printing explicitly
+        convenio_indefinido: !!r.blocksIndefinitely,
         convenio_items: convenioItems,
         subtotal_espacio: r.isConvenio ? (r.base || 0) : r.adjustedSubtotal,
         convenio_monto_entregado: r.isConvenio ? (r.convenioValue || 0) : 0,
@@ -8208,6 +8560,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       espacio_nombre: space.espacio_nombre,
       espacio_clave: space.espacio_clave
     })));
+    const convenioBlocksIndefinitely = pmTotals.spaces.some((r) => !!r.blocksIndefinitely);
     const detallesEventoActual = __pmParseRecordJson(currentPreviewOrder?.detalles_evento);
     return {
       nombre_cotizacion: (document.getElementById("oed-quote-name")?.value || "").trim() || currentPreviewOrder?.nombre_cotizacion || "",
@@ -8245,7 +8598,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
         convenio: (hasConvenioOrder || convenioItems.length) ? {
           ...existingConvenio,
           activo: true,
-          bloqueo_indefinido: true,
+          bloqueo_indefinido: convenioBlocksIndefinitely,
           requiere_evidencia: true,
           evidencia_minima: Math.max(3, parseInt(existingConvenio?.evidencia_minima || 3, 10) || 3),
           evidencia_maxima: Math.max(5, parseInt(existingConvenio?.evidencia_maxima || 5, 10) || 5),

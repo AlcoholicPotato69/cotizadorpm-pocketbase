@@ -160,11 +160,8 @@
                     <div><label class="text-[10px] font-bold uppercase text-gray-500">Tipo</label><select id="mgr-type"
                             onchange="window.syncCpManagerTypeFields && window.syncCpManagerTypeFields()"
                             class="w-full border border-gray-200 rounded-lg p-2.5 text-sm bg-white focus:border-brand-red outline-none cursor-pointer">
-                            <option value="local">Local</option>
-                            <option value="isla">Isla</option>
-                            <option value="publicidad">Publicidad</option>
-                            <option value="evento">Evento</option>
                             <option value="espacio">Espacio</option>
+                            <option value="publicidad">Publicidad</option>
                         </select></div>
                 </div>
                 <div><label class="text-[10px] font-bold uppercase text-gray-500">Nombre</label><input id="mgr-name"
@@ -184,9 +181,8 @@
                     class="hidden grid grid-cols-1 md:grid-cols-2 gap-4 bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
                     <div id="mgr-material-field" class="hidden">
                         <label class="text-[10px] font-bold uppercase text-gray-500">Material</label>
-                        <input id="mgr-material" list="mgr-material-options" placeholder="Ej. Lona, Vinil, Coroplast"
-                            class="w-full border border-gray-200 rounded-lg p-2.5 text-sm font-bold bg-white focus:border-brand-red outline-none">
-                        <datalist id="mgr-material-options"></datalist>
+                        <select id="mgr-material"
+                            class="w-full border border-gray-200 rounded-lg p-2.5 text-sm font-bold bg-white focus:border-brand-red outline-none"></select>
                     </div>
                     <div id="mgr-base-field" class="hidden">
                         <label class="text-[10px] font-bold uppercase text-gray-500">Precio Base Total</label>
@@ -572,7 +568,7 @@
 
     <div id="generic-confirm-modal"
         class="fixed inset-0 bg-black/80 z-[300] hidden flex items-center justify-center p-4"></div>
-    <script src="catalog.js?v=20260409-cp-modal-publicidad-v2"></script>
+    <script src="catalog.js?v=20260413-cp-manager-types-v3"></script>
 </body>
 
 </html>

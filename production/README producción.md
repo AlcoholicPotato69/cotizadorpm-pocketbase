@@ -57,17 +57,35 @@ backend\pocketbase.exe superuser upsert admin@tu-dominio.com TuPasswordSegura123
 
 ### 2. Frontend
 
-La estrategia recomendada es no separar frontend y backend: el mismo servicio de PocketBase publica `frontend\pb_public\`.
+La estrategia recomendada es separar frontend y backend:
 
-Una vez que el backend quede en `RUNNING`, el frontend debe responder en:
+- PocketBase queda como backend/API/dashboard.
+- Los HTML se sirven por fuera de PocketBase, normalmente desde `production\deploy\nginx-site\`.
+- `PUBLIC_DIR` debe quedar apagado (`set-public-dir off`) salvo decisión explícita de TI.
 
-- `http://HOST:PUERTO/index.html`
-- `http://HOST:PUERTO/client/index.html`
+Flujo completo:
 
-Si necesitas reconstruir la carpeta pública manualmente:
+```bat
+production\levantar-todo.bat
+```
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File production\deploy\prepare-public-dir.ps1
+Ese flujo pide IP/puerto del backend y del frontend, actualiza `CORS_ALLOWED_ORIGINS`, sincroniza `hub-runtime.json`/`env.js`, prepara `production\deploy\nginx-site\` y deja `PUBLIC_DIR` desactivado.
+
+Si necesitas preparar solo el frontend estático:
+
+```bat
+production\backend-service.bat set-frontend-url /
+production\backend-service.bat set-frontend-origin http://FRONTEND_HOST
+production\backend-service.bat set-public-dir off
+production\backend-service.bat prepare-nginx production\deploy\nginx-site FRONTEND_HOST
+```
+
+Si el frontend se sirve desde otro host sin proxy Nginx, cambia el runtime para apuntar al backend real:
+
+```bat
+production\backend-service.bat set-frontend-url http://BACKEND_HOST:8090
+production\backend-service.bat set-frontend-origin http://FRONTEND_HOST
+production\backend-service.bat sync-frontend
 ```
 
 ## Comandos típicos

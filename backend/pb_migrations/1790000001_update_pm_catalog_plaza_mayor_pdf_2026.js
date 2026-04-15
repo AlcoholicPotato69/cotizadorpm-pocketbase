@@ -298,7 +298,7 @@ migrate((app) => {
     record.set("tenant", "plaza_mayor");
     record.set("clave", target.clave);
     record.set("nombre", target.nombre);
-    record.set("tipo", "publicitario");
+    record.set("tipo", "publicidad");
     record.set("descripcion", target.descripcion);
     record.set("ubicacion", target.ubicacion || record.get("ubicacion") || "");
     record.set("precio_base", target.precio_base);

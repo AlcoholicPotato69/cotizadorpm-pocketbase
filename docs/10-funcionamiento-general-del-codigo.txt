@@ -1,57 +1,161 @@
 COTIZADOR PM/CP - FUNCIONAMIENTO GENERAL DEL CODIGO
-Ultima actualizacion: 2026-03-28
+Ultima actualizacion: 2026-04-13
 
-Este documento resume la arquitectura actual del proyecto despues de la reorganizacion
-del repositorio.
+Este documento resume la arquitectura vigente del sistema, el mapa real de
+archivos y la forma en que se conectan frontend, PocketBase, tenants, seguridad
+y documentos.
 
 ===============================================================================
 1. ESTRUCTURA DEL REPOSITORIO
 ===============================================================================
 
 - `frontend/`
-  contiene HTML, JS, CSS, assets y carpeta publica minima
+  HTML, JS, CSS, plantillas PDF, assets y carpeta publica para produccion
 - `backend/`
-  contiene PocketBase, hooks, migraciones, data y logs
+  `pocketbase.exe`, hooks JS, migraciones, bases SQLite, logs
 - `development/`
-  scripts para levantar backend y frontend localmente
+  scripts de arranque local y auditoria smoke
 - `production/`
-  servicio Windows, runner y utilidades de despliegue
+  scripts de servicio Windows y despliegue
 - `docs/`
   documentacion tecnica vigente
 
 ===============================================================================
-2. FRONTEND
+2. TENANTS Y RUNTIME
 ===============================================================================
 
-Raiz funcional:
+El sistema opera con dos tenants lógicos:
 
-- `frontend/client/`
+- Plaza Mayor
+  - tenant: `plaza_mayor`
+  - schema historico/runtime: `finanzas`
+  - frontend administrativo principal: `frontend/client/cotizador/`
 
-Entradas principales:
+- Casa de Piedra
+  - tenant: `casa_de_piedra`
+  - schema historico/runtime: `finanzas_casadepiedra`
+  - frontend administrativo principal: `frontend/client/cotizadorcp/`
 
-- `frontend/client/index.html`
-- `frontend/client/cotizador/`
-- `frontend/client/cotizadorcp/`
-- `frontend/client/public/`
-- `frontend/client/system/users1.html`
-
-Core compartido:
+La resolucion de tenant ocurre principalmente en:
 
 - `frontend/client/js/hub-config.js`
+- `frontend/client/services/pb-core.js`
+- pathname del modulo (`/cotizador/` vs `/cotizadorcp/`)
+
+===============================================================================
+3. BOOTSTRAP DEL FRONTEND
+===============================================================================
+
+Piezas base del runtime:
+
+- `frontend/client/config/hub-runtime.json`
+  configura URL del backend, schemas y branding
+- `frontend/client/js/hub-config.js`
+  normaliza runtime, branding y tenant actual
 - `frontend/client/js/layout.js`
-- `frontend/client/services/*.js`
+  protege sesion, layout comun, permisos y bootstrap global
+- `frontend/client/services/pb-core.js`
+  cliente PocketBase nativo, inyeccion automatica de `tenant` y filtros
+- `frontend/client/services/auth.js`
+  login, sesion, refresh, logout y sincronizacion entre tabs
+- `frontend/client/services/security.js`
+  sanitizacion y validaciones reutilizables
 
-Assets compartidos:
+===============================================================================
+4. ENTRADAS PRINCIPALES DEL SISTEMA
+===============================================================================
 
-- `frontend/assets/`
+Frontend administrativo:
 
-Publicacion estatica para produccion:
+- `frontend/client/index.html`
+- `frontend/client/cotizador/catalog.html`
+- `frontend/client/cotizador/orders.html`
+- `frontend/client/cotizadorcp/catalog.html`
+- `frontend/client/cotizadorcp/cotizacion.html`
+- `frontend/client/cotizadorcp/orders.html`
+- `frontend/client/system/config.html`
+
+Frontend publico:
+
+- `frontend/client/public/public_plazamayor.html`
+- `frontend/client/public/public_casadepiedra.html`
+
+Publicacion estatica para PocketBase:
 
 - `frontend/pb_public/`
 
 ===============================================================================
-3. BACKEND
+5. MODULOS FUNCIONALES POR TENANT
 ===============================================================================
+
+Plaza Mayor:
+
+- `frontend/client/cotizador/catalog.js`
+  catalogo administrativo, alta/edicion de espacios y creacion de cotizaciones
+- `frontend/client/cotizador/orders.js`
+  edicion de cotizaciones existentes, preview PDF, contratos, recibos, invoices
+- `frontend/client/cotizador/contracts.js`
+- `frontend/client/cotizador/receipts.js`
+- `frontend/client/cotizador/invoices.js`
+- `frontend/client/cotizador/clientes.js`
+- `frontend/client/cotizador/reports.js`
+- `frontend/client/cotizador/agenda.html`
+
+Casa de Piedra:
+
+- `frontend/client/cotizadorcp/catalog.js`
+  catalogo administrativo de espacios CP
+- `frontend/client/cotizadorcp/cotizacion.js`
+  creacion administrativa de cotizaciones CP
+- `frontend/client/cotizadorcp/orders.js`
+  edicion, evidencia, documentos y convenios CP
+- `frontend/client/cotizadorcp/contracts.js`
+- `frontend/client/cotizadorcp/receipts.js`
+
+Sistema / configuracion:
+
+- `frontend/client/system/config.html`
+  usuarios, impuestos, conceptos, materiales, ubicaciones, PDFs y settings CP
+
+===============================================================================
+6. DIFERENCIA OPERATIVA PM VS CP
+===============================================================================
+
+Plaza Mayor trabaja principalmente con espacios publicitarios.
+
+Casa de Piedra es hibrido:
+
+- categoria `publicidad`
+  reutiliza la logica comercial de Plaza Mayor
+  maneja permanencia, precio personalizado, impuestos y convenio
+- categoria `espacio`
+  usa logica de eventos/salones
+  maneja personas, horario, premontaje, horas extra y disponibilidad por fecha
+
+Regla critica de CP:
+
+- una misma cotizacion NO puede mezclar `PUBLICIDAD` con `ESPACIO`
+- la validacion se aplica en `frontend/client/cotizadorcp/cotizacion.js`
+
+===============================================================================
+7. FLUJO GENERAL DE DATOS
+===============================================================================
+
+1. el usuario abre un modulo HTML
+2. `hub-config.js` resuelve backend, tenant y branding
+3. `layout.js` protege sesion y permisos
+4. `pb-core.js` crea cliente PocketBase con `tenant` activo
+5. los modulos JS consultan colecciones (`espacios`, `cotizaciones`, etc.)
+6. PocketBase aplica reglas de coleccion + hooks JS
+7. los modulos generan `desglose_precios`, `espacios_detalle`,
+   `detalles_evento` y documentos
+8. PDFs y archivos quedan ligados a `cotizaciones` y/o `documentos`
+
+===============================================================================
+8. BACKEND POCKETBASE
+===============================================================================
+
+Elementos centrales:
 
 - `backend/pocketbase.exe`
 - `backend/pb_hooks/`
@@ -59,148 +163,172 @@ Publicacion estatica para produccion:
 - `backend/pb_data/`
 - `backend/logs/`
 
-PocketBase es el backend principal y centraliza auth, datos, storage y hooks.
+Hooks relevantes:
+
+- `backend/pb_hooks/00_lib.pb.js`
+  utilidades de fechas, JSON y normalizacion de cotizaciones
+- `backend/pb_hooks/10_cotizaciones.pb.js`
+  sanitizacion y validacion de cotizaciones publicas
+- `backend/pb_hooks/20_auth_session.pb.js`
+  login/sesion por cookie + cabecera y politica CORS
+- `backend/pb_hooks/31_public_availability.pb.js`
+  disponibilidad publica por tenant/espacio
+
+Migraciones relevantes:
+
+- `1700000001_init_cotizador.js`
+  colecciones base
+- `1773300100_fix_rules_native_tenants.js`
+  reglas multi-tenant nativas
+- `1780000007_lock_public_quotes_reads.js`
+  cierra lectura publica de cotizaciones
+- `1790000004_fix_app_users_create_rule.js`
+  obliga alta de usuarios solo por admin
+- `1790000005_espacios_permite_convenio.js`
+  habilita convenio por espacio
 
 ===============================================================================
-4. OPERACION
+9. COLECCIONES PRINCIPALES
 ===============================================================================
 
-Desarrollo:
-
-- `development/dev-start.bat`
-- `development/frontend-dev-start.bat`
-
-Produccion / Windows:
-
-- `production/backend-service.bat`
-- `production/levantar-todo.bat`
-- `production/deploy/run-pocketbase-service.ps1`
-
-===============================================================================
-5. TENANTS
-===============================================================================
-
-- Plaza Mayor
-  - tenant: `plaza_mayor`
-  - schema: `finanzas`
-  - frontend: `frontend/client/cotizador/`
-
-- Casa de Piedra
-  - tenant: `casa_de_piedra`
-  - schema: `finanzas_casadepiedra`
-  - frontend: `frontend/client/cotizadorcp/`
+- `app_users`
+  usuarios internos y permisos
+- `clientes`
+  perfiles comerciales y fiscales
+- `conceptos_catalogo`
+  conceptos adicionales reutilizables
+- `configuracion`
+  key/value flexible por tenant
+- `impuestos`
+  catalogo de impuestos
+- `espacios`
+  catalogo operativo/publicitario
+- `cotizaciones`
+  encabezado, detalle, pricing, estados y auditoria
+- `documentos`
+  archivos protegidos asociados al proceso
 
 ===============================================================================
-6. CONFIGURACION RUNTIME
-===============================================================================
-
-Archivo principal:
-
-- `frontend/client/config/hub-runtime.json`
-
-Resolucion de backend y branding:
-
-- `frontend/client/js/hub-config.js`
-
-Sesion, permisos, layout y bootstrap global:
-
-- `frontend/client/js/layout.js`
-
-===============================================================================
-7. MODULOS PRINCIPALES
+10. PAGINAS PUBLICAS
 ===============================================================================
 
 Plaza Mayor:
 
-- `catalog.*`
-- `orders.*`
-- `order_detail.html`
-- `contracts.*`
-- `receipts.*`
-- `invoices.*`
-- `clientes.*`
-- `reports.*`
-- `agenda.html`
-- `calendar.js`
+- `frontend/client/public/public_plazamayor.html`
+- flujo publico de publicidad/espacios comerciales
+- crea cotizaciones `pendiente`
 
 Casa de Piedra:
 
-- mismos modulos base
-- logica propia en `cotizacion.js`, `orders.js`, `contracts.js`, `receipts.js`
-- manejo de eventos, salones, horarios y premontajes
-
-Publico:
-
-- `frontend/client/public/public_plazamayor.html`
 - `frontend/client/public/public_casadepiedra.html`
-
-Sistema:
-
-- `frontend/client/system/users1.html`
-
-===============================================================================
-8. DATOS Y COLECCIONES
-===============================================================================
-
-Colecciones principales:
-
-- `clientes`
-- `conceptos_catalogo`
-- `configuracion`
-- `impuestos`
-- `espacios`
-- `cotizaciones`
-- `documentos`
-- `app_users`
-
-Tenant injection y filtros:
-
-- `frontend/client/services/pb-core.js`
-
-Proteccion publica de cotizaciones:
-
-- `backend/pb_hooks/10_cotizaciones.pb.js`
+- expone SOLO la logica de eventos/espacios
+- usa personas, horario, premontaje, horas extra y fechas disponibles
+- NO expone la categoria `publicidad` al visitante publico
 
 ===============================================================================
-9. PDFS Y DOCUMENTOS
+11. DISPONIBILIDAD Y FECHAS
 ===============================================================================
 
-Puntos principales:
+Plaza Mayor:
+
+- bloqueo por cotizaciones aprobadas/finalizadas
+- permanencia mensual salvo configuracion personalizada
+
+Casa de Piedra:
+
+- disponibilidad construida desde `espacios_detalle`
+- considera:
+  - fechas del evento
+  - `premontaje_fechas`
+  - conceptos `b2b_montaje`
+  - convenios con bloqueo indefinido
+
+Funciones clave CP:
+
+- `__cpBuildReservationsMap`
+- `__cpEvalAvailability`
+- `__cpQuoteBlocksIndefinitely`
+
+===============================================================================
+12. PDFS Y DOCUMENTOS
+===============================================================================
+
+Generacion principal:
 
 - `frontend/client/cotizador/orders.js`
 - `frontend/client/cotizador/contracts.js`
 - `frontend/client/cotizador/receipts.js`
+- `frontend/client/cotizador/invoices.js`
 - `frontend/client/cotizadorcp/orders.js`
 - `frontend/client/cotizadorcp/contracts.js`
 - `frontend/client/cotizadorcp/receipts.js`
+
+Soporte comun:
+
 - `frontend/client/js/pdf-margin-guides.js`
+- `frontend/assets/`
 
 ===============================================================================
-10. DONDE TOCAR SEGUN EL CAMBIO
+13. OPERACION Y VALIDACION
 ===============================================================================
 
-- backend URL o branding:
-  `frontend/client/config/hub-runtime.json`
-  `frontend/client/js/hub-config.js`
+Arranque local:
 
-- layout, sesion o permisos:
-  `frontend/client/js/layout.js`
+- `development/dev-start.bat`
+- `development/frontend-dev-start.bat`
 
-- cliente base PocketBase:
-  `frontend/client/services/pb-core.js`
+Auditoria reproducible:
 
-- reglas publicas de cotizaciones:
-  `backend/pb_hooks/10_cotizaciones.pb.js`
+- `development/audit-smoke.ps1`
 
-- despliegue Windows:
-  `production/backend-service.bat`
-  `production/deploy/backend-service.local.conf`
+Validaciones cubiertas por el smoke:
+
+- existencia de archivos criticos
+- sintaxis de JS/hook files clave
+- arranque limpio de PocketBase con migraciones
+- barrido read-only de la base viva para detectar deuda historica
 
 ===============================================================================
-11. PUNTOS DE CUIDADO
+14. PUNTOS DE MANTENIMIENTO
 ===============================================================================
 
-- `backend/pb_data/` es estado vivo
-- no mover `frontend/assets/` sin revisar rutas relativas del HTML
-- no cambiar PDFs sin validar preview, descarga y documento guardado
+Cambios de backend URL o branding:
+
+- `frontend/client/config/hub-runtime.json`
+- `frontend/client/js/hub-config.js`
+
+Cambios de sesion, auth o permisos:
+
+- `frontend/client/js/layout.js`
+- `frontend/client/services/auth.js`
+- `backend/pb_hooks/20_auth_session.pb.js`
+- `backend/pb_migrations/*rules*.js`
+
+Cambios de cotizaciones publicas:
+
+- `frontend/client/public/*.html`
+- `backend/pb_hooks/10_cotizaciones.pb.js`
+- `backend/pb_hooks/31_public_availability.pb.js`
+
+Cambios de catalogo PM:
+
+- `frontend/client/cotizador/catalog.js`
+- `frontend/client/cotizador/orders.js`
+
+Cambios de catalogo/quote CP:
+
+- `frontend/client/cotizadorcp/catalog.js`
+- `frontend/client/cotizadorcp/cotizacion.js`
+- `frontend/client/cotizadorcp/orders.js`
+
+===============================================================================
+15. PUNTOS DE CUIDADO
+===============================================================================
+
+- `backend/pb_data/` es estado vivo, no debe editarse manualmente
+- las migraciones deben ser compatibles con clon limpio
 - cualquier cambio multi-tenant debe respetar `tenant`
+- en Casa de Piedra no se debe mezclar `publicidad` con `espacio`
+- cambios en convenio deben reflejarse tanto en `espacios_detalle` como en
+  `detalles_evento.convenio`
+- cualquier ajuste de PDF requiere validar preview, guardado y descarga

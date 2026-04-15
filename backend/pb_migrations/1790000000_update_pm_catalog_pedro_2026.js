@@ -1,5 +1,7 @@
 /// <reference path="../pb_data/types.d.ts" />
 migrate((app) => {
+    const collection = app.findCollectionByNameOrId("espacios");
+    if (!collection) return;
     const spaces = [
         { clave: "Z1-1", nombre: "Puente entre Banamex y Sanborn's", descripcion: "Ubicado entre Banamex y Sanborns, de cara al portico 1.", precio_base: 40000, material: "Lona", medida_ancho: 0, medida_alto: 0 },
         { clave: "Z1-2", nombre: "Muro a un lado de Coloso y Zara", descripcion: "Ubicado en Zona 1 en el acceso a Zona 3, a un costado de Coloso y Zara.", precio_base: 26250, material: "Lona sobre bastidor", medida_ancho: 2.20, medida_alto: 2.82 },
@@ -23,7 +25,7 @@ migrate((app) => {
 
     for (const s of spaces) {
         try {
-            const records = app.findRecordsByFilter("espacios", `clave = '${s.clave}'`);
+            const records = app.findRecordsByFilter("espacios", `tenant = 'plaza_mayor' && clave = '${s.clave}'`);
             if (records && records.length > 0) {
                 // Update existing
                 for (const rec of records) {
@@ -31,17 +33,20 @@ migrate((app) => {
                     rec.set("descripcion", s.descripcion);
                     rec.set("precio_base", s.precio_base);
                     rec.set("material", s.material);
+                    rec.set("tipo", "publicidad");
+                    rec.set("activo", true);
+                    rec.set("activa", true);
                     if (s.medida_ancho > 0) rec.set("medida_ancho", s.medida_ancho);
                     if (s.medida_alto > 0) rec.set("medida_alto", s.medida_alto);
                     app.save(rec);
                 }
             } else {
                 // Create new
-                const newRec = new Record("espacios", {
+                const newRec = new Record(collection, {
                     tenant: "plaza_mayor",
                     clave: s.clave,
                     nombre: s.nombre,
-                    tipo: "publicitario",
+                    tipo: "publicidad",
                     descripcion: s.descripcion,
                     precio_base: s.precio_base,
                     material: s.material,

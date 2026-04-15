@@ -1093,6 +1093,70 @@ function __contractsBuildReceiptResourceContext({ isLiquidated, dateStr, timeStr
     };
 }
 
+const __CP_CONTRACTS_PDF_TEMPLATE_TOKENS = Object.freeze([
+    { token: 'DOC_TITLE', label: 'Titulo del documento' },
+    { token: 'DOC_FOLIO', label: 'Folio de la orden' },
+    { token: 'DOC_ID_SHORT', label: 'ID corto del registro' },
+    { token: 'DOC_DATE', label: 'Fecha del documento' },
+    { token: 'DOC_TIME', label: 'Hora del documento' },
+    { token: 'DOC_DATE_LABEL', label: 'Etiqueta de fecha' },
+    { token: 'DOC_TIME_LABEL', label: 'Etiqueta de hora' },
+    { token: 'CLIENT_NAME', label: 'Nombre del cliente' },
+    { token: 'SIGN_LEFT_NAME', label: 'Firma izquierda: nombre' },
+    { token: 'SIGN_LEFT_ROLE', label: 'Firma izquierda: cargo' },
+    { token: 'SIGN_RIGHT_NAME', label: 'Firma derecha: nombre' },
+    { token: 'SIGN_RIGHT_ROLE', label: 'Firma derecha: cargo' },
+    { token: 'SIGN_CLIENT_NAME', label: 'Firma cliente: nombre' },
+    { token: 'SIGN_CLIENT_ROLE', label: 'Firma cliente: cargo' }
+]);
+
+function __contractsTemplateTagsModalHtml() {
+    const rows = __CP_CONTRACTS_PDF_TEMPLATE_TOKENS.map((item) => `
+        <div class="flex items-center justify-between gap-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2">
+            <code class="text-[11px] font-black text-brand-red">{{${item.token}}}</code>
+            <span class="text-[11px] font-semibold text-gray-600 text-right">${item.label}</span>
+        </div>`).join('');
+    return `<div class="bg-white rounded-2xl shadow-2xl border border-gray-200 w-full max-w-2xl p-6">
+        <div class="flex items-start justify-between gap-4 mb-4">
+            <div><h3 class="text-lg font-black text-gray-900 uppercase tracking-tight">Etiquetas para PDF</h3><p class="text-xs text-gray-500 mt-1">Puedes pegarlas en firmas, titulos, subtitulos y recursos de texto del editor PDF.</p></div>
+            <button type="button" onclick="window.closeModal('pdf-template-tags-modal')" class="text-gray-400 hover:text-gray-700"><i class="fa-solid fa-xmark text-xl"></i></button>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[60vh] overflow-y-auto pr-1">${rows}</div>
+    </div>`;
+}
+
+window.openPdfTemplateTagsModal = function () {
+    let modal = document.getElementById('pdf-template-tags-modal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'pdf-template-tags-modal';
+        modal.className = 'fixed inset-0 z-[520] hidden items-center justify-center bg-black/60 backdrop-blur-sm p-4';
+        modal.addEventListener('click', (e) => { if (e.target === modal) window.closeModal('pdf-template-tags-modal'); });
+        document.body.appendChild(modal);
+    }
+    modal.innerHTML = __contractsTemplateTagsModalHtml();
+    window.openModal('pdf-template-tags-modal');
+};
+
+function __contractsTemplateTagsInlineHtml() {
+    return `<div class="flex flex-wrap gap-2">${__CP_CONTRACTS_PDF_TEMPLATE_TOKENS.map((item) => `
+        <span class="inline-flex items-center rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[10px] font-black text-brand-red shadow-sm">
+            {{${item.token}}}
+        </span>`).join('')}</div>`;
+}
+
+function __contractsSyncPdfTemplateTagHelpers() {
+    document.querySelectorAll('[data-pdf-template-helper="cp-contracts"]').forEach((host) => {
+        host.innerHTML = __contractsTemplateTagsInlineHtml();
+    });
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', __contractsSyncPdfTemplateTagHelpers, { once: true });
+} else {
+    __contractsSyncPdfTemplateTagHelpers();
+}
+
 function __contractsBuildDefaultReceiptResources() {
     return __contractsNormalizePdfResources([
         {
@@ -3840,6 +3904,89 @@ function __contractsBindPdfResourceDrag() {
         const scaleY = rect.height > 0 && rawHeight > 0 ? (rect.height / rawHeight) : 1;
         return { x: scaleX > 0 ? scaleX : 1, y: scaleY > 0 ? scaleY : 1 };
     };
+    const getResizeHit = (node, event) => {
+        const rect = node?.getBoundingClientRect?.();
+        if (!rect) return { resize: false, proportional: false, cursor: 'move' };
+        const threshold = Math.min(18, Math.max(10, Math.min(rect.width, rect.height) / 3));
+        let left = (event.clientX - rect.left) <= threshold;
+        let right = (rect.right - event.clientX) <= threshold;
+        let top = (event.clientY - rect.top) <= threshold;
+        let bottom = (rect.bottom - event.clientY) <= threshold;
+        if (event.shiftKey && !(left || right || top || bottom)) {
+            right = true;
+            bottom = true;
+        }
+        if (left && right) {
+            if (event.clientX - rect.left <= rect.right - event.clientX) right = false;
+            else left = false;
+        }
+        if (top && bottom) {
+            if (event.clientY - rect.top <= rect.bottom - event.clientY) bottom = false;
+            else top = false;
+        }
+        if (!(left || right || top || bottom)) return { resize: false, proportional: false, cursor: 'move' };
+        let cursor = 'move';
+        if ((left || right) && (top || bottom)) {
+            const diagonalA = (left && top) || (right && bottom);
+            cursor = diagonalA ? 'nwse-resize' : 'nesw-resize';
+        } else if (left || right) {
+            cursor = 'ew-resize';
+        } else if (top || bottom) {
+            cursor = 'ns-resize';
+        }
+        return { resize: true, left, right, top, bottom, proportional: (left || right) && (top || bottom), cursor };
+    };
+    const minHeightForType = (type) => (type === 'sign' || type === 'sign-line'
+        ? 1
+        : (type === 'logo'
+            ? 24
+            : (type === 'sign-block'
+                ? 42
+                : (type === 'bar' ? 4 : 10))));
+    const resizeGeometry = (origin, dx, dy, resize, type) => {
+        const minWidth = 16;
+        const minHeight = minHeightForType(type || origin?.type);
+        const safeOrigin = {
+            x: parseFloat(origin?.x) || 0,
+            y: parseFloat(origin?.y) || 0,
+            w: Math.max(minWidth, parseFloat(origin?.w) || minWidth),
+            h: Math.max(minHeight, parseFloat(origin?.h) || minHeight)
+        };
+        if (resize?.proportional && (resize.left || resize.right) && (resize.top || resize.bottom)) {
+            const scaleX = safeOrigin.w > 0 ? ((resize.left ? safeOrigin.w - dx : safeOrigin.w + dx) / safeOrigin.w) : 1;
+            const scaleY = safeOrigin.h > 0 ? ((resize.top ? safeOrigin.h - dy : safeOrigin.h + dy) / safeOrigin.h) : 1;
+            let scale = Math.abs(scaleX - 1) >= Math.abs(scaleY - 1) ? scaleX : scaleY;
+            if (!Number.isFinite(scale)) scale = 1;
+            const minScale = Math.max(minWidth / safeOrigin.w, minHeight / safeOrigin.h);
+            scale = Math.max(minScale, scale);
+            const nextW = Math.max(minWidth, Math.round(safeOrigin.w * scale));
+            const nextH = Math.max(minHeight, Math.round(safeOrigin.h * scale));
+            return {
+                ...origin,
+                x: resize.left ? Math.round(safeOrigin.x + (safeOrigin.w - nextW)) : safeOrigin.x,
+                y: resize.top ? Math.round(safeOrigin.y + (safeOrigin.h - nextH)) : safeOrigin.y,
+                w: nextW,
+                h: nextH
+            };
+        }
+        let nextX = safeOrigin.x;
+        let nextY = safeOrigin.y;
+        let nextW = safeOrigin.w;
+        let nextH = safeOrigin.h;
+        if (resize?.left) {
+            nextW = Math.max(minWidth, Math.round(safeOrigin.w - dx));
+            nextX = Math.round(safeOrigin.x + (safeOrigin.w - nextW));
+        } else if (resize?.right) {
+            nextW = Math.max(minWidth, Math.round(safeOrigin.w + dx));
+        }
+        if (resize?.top) {
+            nextH = Math.max(minHeight, Math.round(safeOrigin.h - dy));
+            nextY = Math.round(safeOrigin.y + (safeOrigin.h - nextH));
+        } else if (resize?.bottom) {
+            nextH = Math.max(minHeight, Math.round(safeOrigin.h + dy));
+        }
+        return { ...origin, x: nextX, y: nextY, w: nextW, h: nextH };
+    };
     const releasePointer = (state) => {
         const captureNode = state?.captureNode;
         if (!captureNode || typeof captureNode.releasePointerCapture !== 'function') return;
@@ -3892,7 +4039,8 @@ function __contractsBindPdfResourceDrag() {
             if (!__contractsCanMoveReceiptResource(resources[idx])) return;
             const safeType = String(resources[idx]?.type || '').toLowerCase();
             const scale = getPointerScale(node);
-            const mode = 'move';
+            const resize = getResizeHit(node, event);
+            const mode = resize.resize ? 'resize' : 'move';
             __contractsPdfResourceSelectedId = id;
             __contractsRenderPdfResourcesEditorList();
             __contractsHighlightSelectedResource();
@@ -3913,6 +4061,7 @@ function __contractsBindPdfResourceDrag() {
                 captureNode: node,
                 scaleX: scale.x,
                 scaleY: scale.y,
+                resize,
                 origin: { ...resources[idx] },
                 current: { ...resources[idx] }
             };
@@ -3920,7 +4069,7 @@ function __contractsBindPdfResourceDrag() {
                 try { node.setPointerCapture(event.pointerId); } catch (_) {}
             }
             document.body.style.userSelect = 'none';
-            document.body.style.cursor = 'move';
+            document.body.style.cursor = resize.cursor || (mode === 'resize' ? 'nwse-resize' : 'move');
             event.preventDefault();
             return;
         }
@@ -3931,6 +4080,7 @@ function __contractsBindPdfResourceDrag() {
         if (!__contractsGetPdfBaseBlockMeta(baseKey)) return;
         if (!__contractsCanMoveReceiptBaseBlock(baseKey)) return;
         const scale = getPointerScale(baseNode);
+        const resize = getResizeHit(baseNode, event);
         const cfg = __contractsGetPdfStyleConfig();
         const layouts = __contractsNormalizePdfBaseLayouts(cfg.baseLayouts);
         const instanceKey = String(baseNode.dataset.baseInstance || baseKey).trim();
@@ -3943,13 +4093,14 @@ function __contractsBindPdfResourceDrag() {
             kind: 'base',
             key: baseKey,
             instanceKey,
-            mode: 'move',
+            mode: resize.resize ? 'scale' : 'move',
             startX: event.clientX,
             startY: event.clientY,
             pointerId: event.pointerId,
             captureNode: baseNode,
             scaleX: scale.x,
             scaleY: scale.y,
+            resize,
             origin: { ...(layouts[instanceKey] || layouts[baseKey] || __contractsNormalizePdfBaseLayout()) },
             current: { ...(layouts[instanceKey] || layouts[baseKey] || __contractsNormalizePdfBaseLayout()) }
         };
@@ -3957,7 +4108,7 @@ function __contractsBindPdfResourceDrag() {
             try { baseNode.setPointerCapture(event.pointerId); } catch (_) {}
         }
         document.body.style.userSelect = 'none';
-        document.body.style.cursor = 'move';
+        document.body.style.cursor = resize.cursor || (__contractsPdfResourcePointerState.mode === 'scale' ? 'nwse-resize' : 'move');
         event.preventDefault();
     });
     document.addEventListener('pointermove', (event) => {
@@ -3967,23 +4118,46 @@ function __contractsBindPdfResourceDrag() {
         const dx = (event.clientX - state.startX) / (state.scaleX || 1);
         const dy = (event.clientY - state.startY) / (state.scaleY || 1);
         if (state.kind === 'base') {
-            const next = __contractsNormalizePdfBaseLayout({ ...state.origin, x: state.origin.x + dx, y: state.origin.y + dy });
-            state.current = next;
-            if (state.captureNode) {
-                const nativeTransform = String(state.captureNode.dataset.baseNativeTransform || '').trim();
-                const layoutTransform = __contractsBuildPdfBaseTransform(next);
-                state.captureNode.style.transform = nativeTransform ? `${layoutTransform} ${nativeTransform}` : layoutTransform;
+            if (state.mode === 'scale') {
+                const signedDx = state.resize?.left ? -dx : dx;
+                const signedDy = state.resize?.top ? -dy : dy;
+                const next = __contractsNormalizePdfBaseLayout({ ...state.origin, scalePct: state.origin.scalePct + ((signedDx + signedDy) / 2) });
+                state.current = next;
+                if (state.captureNode) {
+                    const nativeTransform = String(state.captureNode.dataset.baseNativeTransform || '').trim();
+                    const layoutTransform = __contractsBuildPdfBaseTransform(next);
+                    state.captureNode.style.transform = nativeTransform ? `${layoutTransform} ${nativeTransform}` : layoutTransform;
+                }
+            } else {
+                const next = __contractsNormalizePdfBaseLayout({ ...state.origin, x: state.origin.x + dx, y: state.origin.y + dy });
+                state.current = next;
+                if (state.captureNode) {
+                    const nativeTransform = String(state.captureNode.dataset.baseNativeTransform || '').trim();
+                    const layoutTransform = __contractsBuildPdfBaseTransform(next);
+                    state.captureNode.style.transform = nativeTransform ? `${layoutTransform} ${nativeTransform}` : layoutTransform;
+                }
             }
             __contractsPositionReceiptInspector();
             event.preventDefault();
             return;
         }
         const next = { ...state.origin };
-        next.x += dx;
-        next.y += dy;
+        if (state.mode === 'resize') {
+            const resized = resizeGeometry(state.origin, dx, dy, state.resize, next.type);
+            next.x = resized.x;
+            next.y = resized.y;
+            next.w = resized.w;
+            next.h = resized.h;
+        } else {
+            next.x += dx;
+            next.y += dy;
+        }
         state.current = next;
         const node = document.querySelector(`#receipt-preview-box .cpc-pdf-resource[data-res-id="${state.id}"][data-res-page="${state.page}"]`);
-        if (node) __contractsApplyResourceGeometryToNode(node, next);
+        if (node) {
+            __contractsApplyResourceGeometryToNode(node, next);
+            if (state.mode === 'resize') __contractsAutoFitPdfTextNode?.(node);
+        }
         __contractsHighlightSelectedResource();
         __contractsPositionReceiptInspector();
         event.preventDefault();
@@ -5029,7 +5203,7 @@ function getReceiptHTML(isVisual = false) {
         signLabels
     });
     const pdfStyleInlineVars = __contractsPdfStyleVarsInline(pdfStyle);
-    const pdfStyleTag = `<style>.cpc-pdf-root{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;font-family:var(--cp-font-family)!important;}.cpc-pdf-root .cpc-pdf-shift{transform:translate(var(--cp-offset-x),var(--cp-offset-y));}.cpc-pdf-root .cpc-pdf-header{border-bottom-width:var(--cp-header-line)!important;justify-content:var(--cp-header-justify)!important;}.cpc-pdf-root .cpc-pdf-sign-line{width:100%;height:var(--cp-sign-line)!important;background:#111827!important;border-radius:999px;}.cpc-pdf-root .cpc-pdf-title{font-size:var(--cp-title-size)!important;line-height:1.05!important;text-align:var(--cp-header-align)!important;}.cpc-pdf-root .cpc-pdf-meta,.cpc-pdf-root .cpc-pdf-meta *{font-size:var(--cp-meta-size)!important;text-align:var(--cp-meta-align)!important;}.cpc-pdf-root .cpc-pdf-table-head th{font-size:var(--cp-table-head-size)!important;}.cpc-pdf-root .cpc-pdf-table-body td,.cpc-pdf-root .cpc-pdf-table-body p,.cpc-pdf-root .cpc-pdf-table-body span{font-size:var(--cp-table-body-size)!important;line-height:var(--cp-line-height)!important;}.cpc-pdf-root .cpc-pdf-table-body td:first-child,.cpc-pdf-root .cpc-pdf-table-body td:first-child *{text-align:var(--cp-table-align)!important;}.cpc-pdf-root .cpc-pdf-summary,.cpc-pdf-root .cpc-pdf-summary *{text-align:var(--cp-summary-align)!important;}.cpc-pdf-root .cpc-pdf-quick,.cpc-pdf-root .cpc-pdf-quick *{font-size:var(--cp-quick-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-quick-align)!important;}.cpc-pdf-root .cpc-pdf-general-conditions,.cpc-pdf-root .cpc-pdf-general-conditions *{font-size:var(--cp-conditions-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-conditions-align)!important;}.cpc-pdf-root .cpc-pdf-sign,.cpc-pdf-root .cpc-pdf-sign *{font-size:var(--cp-sign-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-sign-align)!important;}.cpc-pdf-root .cpc-pdf-footer-text{font-size:var(--cp-footer-size)!important;text-align:var(--cp-footer-align)!important;}.cpc-pdf-root [data-base-resource]{position:relative;transform-origin:top left;}.cpc-pdf-root .cpc-pdf-resource,.cpc-pdf-root .cpc-pdf-editable{cursor:default;box-sizing:border-box;outline:none;outline-offset:1px;}.cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-resource,.cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-editable{outline:1px dashed rgba(193,98,30,.45);}.cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-resource{cursor:move;}.cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-editable{cursor:pointer;}.cpc-pdf-root .cpc-pdf-edit-selected{outline:2px solid #c1621e!important;} .cpc-pdf-delete-btn { position:absolute; top:-8px; right:-8px; width:22px; height:22px; border-radius:50%; background:#c1621e; color:#fff; display:none; align-items:center; justify-content:center; cursor:pointer; font-size:11px; z-index:80; box-shadow:0 0 0 2px #fff; pointer-events:auto; } .cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-resource.cpc-pdf-edit-selected .cpc-pdf-delete-btn { display:flex; } .cpc-pdf-delete-btn:hover { background:#a85519; transform:scale(1.08); transition:all .2s; }</style>`;
+    const pdfStyleTag = `<style>.cpc-pdf-root{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;font-family:var(--cp-font-family)!important;}.cpc-pdf-root .cpc-pdf-shift{transform:translate(var(--cp-offset-x),var(--cp-offset-y));}.cpc-pdf-root .cpc-pdf-header{border-bottom-width:var(--cp-header-line)!important;justify-content:var(--cp-header-justify)!important;}.cpc-pdf-root .cpc-pdf-sign-line{width:100%;height:var(--cp-sign-line)!important;background:#111827!important;border-radius:999px;}.cpc-pdf-root .cpc-pdf-title{font-size:var(--cp-title-size)!important;line-height:1.05!important;text-align:var(--cp-header-align)!important;}.cpc-pdf-root .cpc-pdf-meta,.cpc-pdf-root .cpc-pdf-meta *{font-size:var(--cp-meta-size)!important;text-align:var(--cp-meta-align)!important;}.cpc-pdf-root .cpc-pdf-table-head th{font-size:var(--cp-table-head-size)!important;}.cpc-pdf-root .cpc-pdf-table-body td,.cpc-pdf-root .cpc-pdf-table-body p,.cpc-pdf-root .cpc-pdf-table-body span{font-size:var(--cp-table-body-size)!important;line-height:var(--cp-line-height)!important;}.cpc-pdf-root .cpc-pdf-table-body td:first-child,.cpc-pdf-root .cpc-pdf-table-body td:first-child *{text-align:var(--cp-table-align)!important;}.cpc-pdf-root .cpc-pdf-summary,.cpc-pdf-root .cpc-pdf-summary *{text-align:var(--cp-summary-align)!important;}.cpc-pdf-root .cpc-pdf-quick,.cpc-pdf-root .cpc-pdf-quick *{font-size:var(--cp-quick-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-quick-align)!important;}.cpc-pdf-root .cpc-pdf-general-conditions,.cpc-pdf-root .cpc-pdf-general-conditions *{font-size:var(--cp-conditions-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-conditions-align)!important;}.cpc-pdf-root .cpc-pdf-sign,.cpc-pdf-root .cpc-pdf-sign *{font-size:var(--cp-sign-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-sign-align)!important;}.cpc-pdf-root .cpc-pdf-footer-text{font-size:var(--cp-footer-size)!important;text-align:var(--cp-footer-align)!important;}.cpc-pdf-root [data-base-resource]{position:relative;transform-origin:top left;}.cpc-pdf-root .cpc-pdf-resource,.cpc-pdf-root .cpc-pdf-editable{cursor:default;box-sizing:border-box;outline:none;outline-offset:1px;}.cpc-pdf-root .cpc-pdf-editable::before{content:'';position:absolute;inset:-1px;border:1px dashed rgba(193,98,30,.28);border-radius:inherit;background:radial-gradient(circle at top left,#c1621e 0 3px,transparent 3.2px),radial-gradient(circle at top right,#c1621e 0 3px,transparent 3.2px),radial-gradient(circle at bottom left,#c1621e 0 3px,transparent 3.2px),radial-gradient(circle at bottom right,#c1621e 0 3px,transparent 3.2px);background-size:12px 12px;background-repeat:no-repeat;opacity:0;pointer-events:none;}.cpc-pdf-root .cpc-pdf-editable::after{content:'';position:absolute;right:-7px;bottom:-7px;width:12px;height:12px;border-radius:999px;background:#c1621e;box-shadow:0 0 0 2px #fff;opacity:0;pointer-events:none;}.cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-resource,.cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-editable{outline:1px dashed rgba(193,98,30,.45);}.cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-resource{cursor:move;}.cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-editable{cursor:pointer;}.cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-editable::before,.cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-editable::after{opacity:.94;}.cpc-pdf-root .cpc-pdf-edit-selected{outline:2px solid #c1621e!important;}.cpc-pdf-root .cpc-pdf-edit-selected::before,.cpc-pdf-root .cpc-pdf-edit-selected::after{opacity:1;transform:scale(1.04);} .cpc-pdf-delete-btn { position:absolute; top:-8px; right:-8px; width:22px; height:22px; border-radius:50%; background:#c1621e; color:#fff; display:none; align-items:center; justify-content:center; cursor:pointer; font-size:11px; z-index:80; box-shadow:0 0 0 2px #fff; pointer-events:auto; } .cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-resource.cpc-pdf-edit-selected .cpc-pdf-delete-btn { display:flex; } .cpc-pdf-delete-btn:hover { background:#a85519; transform:scale(1.08); transition:all .2s; }</style>`;
     const wrapStyledReceipt = (rawHtml, extraPages = 0) => {
         const pageOneRaw = __contractsInjectResourcesIntoPage(rawHtml, __contractsRenderPdfResources(pdfStyle, 1, resourceContext));
         const pages = [

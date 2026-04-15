@@ -341,6 +341,9 @@ function normalizeCpSpaceTag(value) {
     const normalized = typeof raw.normalize === 'function' ? raw.normalize('NFD') : raw;
     return normalized.replace(/[\u0300-\u036f]/g, '').toLowerCase();
 }
+function normalizeCpManagerTypeSelection(value) {
+    return normalizeCpSpaceTag(value) === 'publicidad' ? 'publicidad' : 'espacio';
+}
 function getCpSpaceTags(space) {
     const tags = new Set();
     const push = (value) => {
@@ -410,12 +413,13 @@ function getCpSpaceMeasuresLabel(space) {
 function getCpCardInfoRows(space) {
     const rows = [];
     if (isCpAdvertisingSpace(space)) rows.push({ label: 'Material', value: getCpSpaceMaterialLabel(space) });
-    if (isCpAdvertisingSpace(space)) rows.push({ label: 'Medidas', value: getCpSpaceMeasuresLabel(space) });
+    if (isCpAdvertisingSpace(space) || isCpLocalLikeSpace(space)) rows.push({ label: 'Medidas', value: getCpSpaceMeasuresLabel(space) });
     if (!isCpAdvertisingSpace(space) && !isCpLocalLikeSpace(space)) rows.push({ label: 'Impuestos', value: getSpaceTaxLabel(space) });
     return rows.filter((row) => String(row?.value || '').trim());
 }
 window.syncCpManagerTypeFields = function () {
     const typeEl = document.getElementById('mgr-type');
+    const selectedType = normalizeCpManagerTypeSelection(typeEl?.value || '');
     const attrsGrid = document.getElementById('mgr-attributes-grid');
     const materialField = document.getElementById('mgr-material-field');
     const baseField = document.getElementById('mgr-base-field');
@@ -423,7 +427,8 @@ window.syncCpManagerTypeFields = function () {
     const convenioField = document.getElementById('mgr-convenio-field');
     const eventPricingSection = document.getElementById('mgr-event-pricing-section');
     const eventScheduleSection = document.getElementById('mgr-event-schedule-section');
-    const isPublicidad = normalizeCpSpaceTag(typeEl?.value || '') === 'publicidad';
+    if (typeEl && typeEl.value !== selectedType) typeEl.value = selectedType;
+    const isPublicidad = selectedType === 'publicidad';
     if (attrsGrid) attrsGrid.classList.toggle('hidden', !isPublicidad);
     if (materialField) materialField.classList.toggle('hidden', !isPublicidad);
     if (baseField) baseField.classList.toggle('hidden', !isPublicidad);
@@ -432,10 +437,18 @@ window.syncCpManagerTypeFields = function () {
     if (eventPricingSection) eventPricingSection.classList.toggle('hidden', isPublicidad);
     if (eventScheduleSection) eventScheduleSection.classList.toggle('hidden', isPublicidad);
 };
+function escapeCpMaterialOption(value) {
+    return String(value || '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+}
 function renderCpMaterialSuggestions() {
-    const datalist = document.getElementById('mgr-material-options');
-    if (!datalist) return;
-    datalist.innerHTML = cpMaterialCatalog.map((item) => `<option value="${item}"></option>`).join('');
+    const select = document.getElementById('mgr-material');
+    if (!select) return;
+    const current = String(select.value || '').trim();
+    const items = Array.from(new Set(cpMaterialCatalog.map((item) => String(item || '').trim()).filter(Boolean)));
+    if (current && !items.includes(current)) items.unshift(current);
+    // Auditoria TI: publicidad CP usa select real, no datalist, para evitar opciones libres del navegador.
+    select.innerHTML = '<option value="">Selecciona un material...</option>' + items.map((item) => `<option value="${escapeCpMaterialOption(item)}">${escapeCpMaterialOption(item)}</option>`).join('');
+    select.value = current;
 }
 async function loadCpMaterialCatalog() {
     cpMaterialCatalog = [];
@@ -751,9 +764,12 @@ window.openManagerModal = function (id) {
 
     if (id) {
         const s = allSpaces.find(x => x.id === id);
-        document.getElementById('mgr-title').innerText = "Editar: " + s.nombre; document.getElementById('mgr-key').value = s.clave; document.getElementById('mgr-key').disabled = true; document.getElementById('mgr-name').value = s.nombre; document.getElementById('mgr-type').value = s.tipo; document.getElementById('mgr-desc').value = s.descripcion || '';
+        document.getElementById('mgr-title').innerText = "Editar: " + s.nombre; document.getElementById('mgr-key').value = s.clave; document.getElementById('mgr-key').disabled = true; document.getElementById('mgr-name').value = s.nombre; document.getElementById('mgr-type').value = normalizeCpManagerTypeSelection(s.tipo); document.getElementById('mgr-desc').value = s.descripcion || '';
         document.getElementById('mgr-base').value = parseCpCatalogNumberInput(s.precio_base, 0) || '';
-        document.getElementById('mgr-material').value = String(s.material || '').trim();
+        const savedMaterial = String(s.material || '').trim();
+        if (savedMaterial && !cpMaterialCatalog.includes(savedMaterial)) cpMaterialCatalog = [savedMaterial, ...cpMaterialCatalog];
+        renderCpMaterialSuggestions();
+        document.getElementById('mgr-material').value = savedMaterial;
         document.getElementById('mgr-ancho').value = normalizeCpMeasureValue(s.medida_ancho ?? s.ancho) ?? '';
         document.getElementById('mgr-alto').value = normalizeCpMeasureValue(s.medida_alto ?? s.alto) ?? '';
         document.getElementById('mgr-unidad').value = normalizeCpMeasureUnit(s.medida_unidad || s.unidad_medida || 'M');
@@ -786,7 +802,7 @@ window.openManagerModal = function (id) {
             }
         }
     } else {
-        document.getElementById('mgr-title').innerText = "Nuevo Espacio"; document.getElementById('mgr-key').value = ''; document.getElementById('mgr-key').disabled = false; document.getElementById('mgr-name').value = ''; document.getElementById('mgr-type').value = 'local'; document.getElementById('mgr-tags').value = ''; document.getElementById('mgr-desc').value = ''; document.getElementById('mgr-base').value = ''; document.getElementById('mgr-material').value = ''; document.getElementById('mgr-ancho').value = ''; document.getElementById('mgr-alto').value = ''; document.getElementById('mgr-unidad').value = 'M'; const convenioToggle = document.getElementById('mgr-allow-convenio'); if (convenioToggle) convenioToggle.checked = true; window.syncCpManagerTypeFields(); window.addRangeRow(); window.addHorarioRow();
+        document.getElementById('mgr-title').innerText = "Nuevo Espacio"; document.getElementById('mgr-key').value = ''; document.getElementById('mgr-key').disabled = false; document.getElementById('mgr-name').value = ''; document.getElementById('mgr-type').value = 'espacio'; document.getElementById('mgr-tags').value = ''; document.getElementById('mgr-desc').value = ''; document.getElementById('mgr-base').value = ''; document.getElementById('mgr-material').value = ''; renderCpMaterialSuggestions(); document.getElementById('mgr-ancho').value = ''; document.getElementById('mgr-alto').value = ''; document.getElementById('mgr-unidad').value = 'M'; const convenioToggle = document.getElementById('mgr-allow-convenio'); if (convenioToggle) convenioToggle.checked = true; window.syncCpManagerTypeFields(); window.addRangeRow(); window.addHorarioRow();
         document.getElementById('mgr-active').checked = true; document.getElementById('btn-delete-mgr').classList.add('hidden');
         for (let i = 1; i <= 5; i++) { const mgrPrev = document.getElementById(`mgr-preview-${i}`); if (mgrPrev) { mgrPrev.src = ''; mgrPrev.classList.add('hidden'); mgrPrev.removeAttribute('data-modified'); } const fi = document.getElementById(`mgr-file-${i}`); if (fi) fi.value = ''; }
     }
@@ -801,7 +817,7 @@ window.saveSpace = async function () {
         const id = document.getElementById('mgr-id').value;
         const clave = document.getElementById('mgr-key').value.toUpperCase().trim();
         const nombre = document.getElementById('mgr-name').value.trim();
-        const tipo = document.getElementById('mgr-type').value;
+        const tipo = normalizeCpManagerTypeSelection(document.getElementById('mgr-type').value);
         const isPublicidad = normalizeCpSpaceTag(tipo) === 'publicidad';
         const ajusteTipo = normalizeCpCatalogAdjustmentType(document.getElementById('mgr-adj-type').value);
         const ajustePorcentaje = ajusteTipo === 'ninguno'
@@ -1548,5 +1564,3 @@ window.generatePDF = async function () {
     const targetUrl = createdQuoteId ? `order_detail.html?quote=${encodeURIComponent(createdQuoteId)}` : 'orders.html';
     setTimeout(() => { cpNavigateSafely(targetUrl); }, 900);
 }
-
-
