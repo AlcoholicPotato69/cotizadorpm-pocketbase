@@ -935,7 +935,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         .single();
 
     const __role = String(profile.role || '').toLowerCase().trim();
-    const __roleHasAccess = (__role === 'admin') || (__role === 'casa_de_piedra') || (__role === 'ambos');
+    const __roleHasAccess = (__role === 'admin') || (__role === 'casa_de_piedra');
     const perms = (__role === 'admin')
         ? { orders_view: true, reports_view: true }
         : (__roleHasAccess ? { orders_view: true, reports_view: true } : (profile.app_metadata?.finanzas?.permissions || {}));

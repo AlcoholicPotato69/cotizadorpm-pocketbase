@@ -45,6 +45,7 @@
     <!-- Local Animations -->
     <link rel="preload" as="style" href="../../assets/libs/css/animate.min.css">
     <link rel="stylesheet" href="../../assets/libs/css/animate.min.css">
+    <link rel="icon" type="image/png" href="../assets/img/logo.png">
 </head>
 <body class="bg-brand-gray text-gray-800 flex flex-col min-h-screen">
     
@@ -102,6 +103,39 @@
                     <div id="mgr-material-field"><label class="text-[10px] font-bold uppercase text-gray-500">Material (Defecto)</label><select id="mgr-material" class="w-full border border-gray-200 rounded-lg p-2.5 text-sm font-bold bg-white focus:border-brand-red outline-none"><option value="">— Ninguno —</option></select></div>
                     <div id="mgr-location-field"><label class="text-[10px] font-bold uppercase text-gray-500">Ubicación</label><select id="mgr-location" class="w-full border border-gray-200 rounded-lg p-2.5 text-sm font-bold bg-white focus:border-brand-red outline-none"><option value="">— Ninguna —</option></select></div>
                     <div id="mgr-measures-field" class="md:col-span-2"><label class="text-[10px] font-bold uppercase text-gray-500">Medidas (A x L)</label><div class="flex items-stretch gap-2"><input id="mgr-ancho" type="number" step="0.01" min="0" placeholder="Ancho" title="Ancho" class="flex-1 min-w-[5.5rem] border border-gray-200 rounded-lg p-2.5 text-sm text-center font-bold bg-white focus:border-brand-red outline-none"><span class="self-center font-bold text-gray-400 text-xs">x</span><input id="mgr-alto" type="number" step="0.01" min="0" placeholder="Largo" title="Largo" class="flex-1 min-w-[5.5rem] border border-gray-200 rounded-lg p-2.5 text-sm text-center font-bold bg-white focus:border-brand-red outline-none"><select id="mgr-unidad" class="w-20 shrink-0 border border-gray-200 rounded-lg p-2.5 text-sm font-bold bg-white focus:border-brand-red outline-none" title="Unidad"><option value="M">M</option><option value="CM">CM</option><option value="M2">M2</option></select></div></div>
+                    <div id="mgr-digital-toggle-field" class="hidden md:col-span-3 bg-sky-50/70 border border-sky-200 rounded-xl p-3">
+                        <div class="flex items-center justify-between gap-4">
+                            <div>
+                                <p class="text-[10px] font-bold uppercase text-sky-700">Medio Digital</p>
+                                <p class="text-[9px] text-sky-900/70 mt-1">Activa duración y pixeles solo para pantallas o formatos digitales.</p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" id="mgr-digital-media" class="sr-only peer" onchange="window.syncManagerTypeFields && window.syncManagerTypeFields()">
+                                <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:bg-sky-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full peer-checked:after:border-white"></div>
+                            </label>
+                        </div>
+                    </div>
+                    <div id="mgr-digital-media-field" class="hidden md:col-span-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                            <label class="text-[10px] font-bold uppercase text-gray-500">Tipo de Medio</label>
+                            <select id="mgr-digital-media-type" class="w-full border border-gray-200 rounded-lg p-2.5 text-sm font-bold bg-white focus:border-brand-red outline-none"><option value="imagen">Imagen</option><option value="video">Video</option></select>
+                        </div>
+                        <div>
+                            <label class="text-[10px] font-bold uppercase text-gray-500">Duración</label>
+                            <div class="flex items-stretch gap-2">
+                                <input id="mgr-digital-duration-value" type="number" step="0.01" min="0" placeholder="0" class="flex-1 border border-gray-200 rounded-lg p-2.5 text-sm text-center font-bold bg-white focus:border-brand-red outline-none">
+                                <select id="mgr-digital-duration-unit" class="w-28 shrink-0 border border-gray-200 rounded-lg p-2.5 text-sm font-bold bg-white focus:border-brand-red outline-none"><option value="segundos">Segundos</option><option value="minutos">Minutos</option></select>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="text-[10px] font-bold uppercase text-gray-500">Pixeles de Imagen</label>
+                            <div class="flex items-stretch gap-2">
+                                <input id="mgr-digital-pixel-width" type="number" step="1" min="0" placeholder="Ancho" class="flex-1 min-w-[5.5rem] border border-gray-200 rounded-lg p-2.5 text-sm text-center font-bold bg-white focus:border-brand-red outline-none">
+                                <span class="self-center font-bold text-gray-400 text-xs">x</span>
+                                <input id="mgr-digital-pixel-height" type="number" step="1" min="0" placeholder="Alto" class="flex-1 min-w-[5.5rem] border border-gray-200 rounded-lg p-2.5 text-sm text-center font-bold bg-white focus:border-brand-red outline-none">
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <div><label class="text-[10px] font-bold uppercase text-gray-500">Precio Base Total</label><input type="number" id="mgr-base" class="w-full border border-gray-200 rounded-lg p-2.5 text-sm font-bold bg-white focus:border-brand-red outline-none"></div>
@@ -124,6 +158,29 @@
                     <div><label class="text-[9px] font-bold uppercase text-gray-500">Foto 4</label><div class="mt-1 h-20 bg-gray-100 rounded-lg flex items-center justify-center border border-gray-200 overflow-hidden relative cursor-pointer" onclick="document.getElementById('mgr-file-4').click()"><img id="mgr-preview-4" class="w-full h-full object-cover hidden"><span class="text-gray-400 text-[8px] font-bold uppercase absolute pointer-events-none text-center px-1">Subir Foto</span></div><input type="file" id="mgr-file-4" accept="image/*" class="hidden" onchange="window.previewImage(this, 'mgr-preview-4')"><button type="button" onclick="window.clearManagerImage(4)" class="w-full text-[9px] text-red-500 font-bold uppercase mt-1 hover:text-red-700">Quitar</button></div>
                     <div><label class="text-[9px] font-bold uppercase text-gray-500">Foto 5</label><div class="mt-1 h-20 bg-gray-100 rounded-lg flex items-center justify-center border border-gray-200 overflow-hidden relative cursor-pointer" onclick="document.getElementById('mgr-file-5').click()"><img id="mgr-preview-5" class="w-full h-full object-cover hidden"><span class="text-gray-400 text-[8px] font-bold uppercase absolute pointer-events-none text-center px-1">Subir Foto</span></div><input type="file" id="mgr-file-5" accept="image/*" class="hidden" onchange="window.previewImage(this, 'mgr-preview-5')"><button type="button" onclick="window.clearManagerImage(5)" class="w-full text-[9px] text-red-500 font-bold uppercase mt-1 hover:text-red-700">Quitar</button></div>
                 </div></div>
+                <div class="col-span-full bg-white p-3 rounded-xl border border-gray-200 shadow-sm">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-[10px] font-bold uppercase mb-2 text-gray-500">Reglamento del Espacio</label>
+                            <select id="mgr-reglamento-template" class="w-full border border-gray-200 rounded-lg p-2.5 text-xs font-bold bg-gray-50 outline-none focus:border-brand-red">
+                                <option value="">Usar reglamento predeterminado</option>
+                            </select>
+                            <p class="text-[10px] text-gray-400 mt-2">Si no eliges uno, el contrato usarÃ¡ el reglamento predeterminado del tenant.</p>
+                        </div>
+                        <div>
+                            <label class="block text-[10px] font-bold uppercase mb-2 text-gray-500">Plano GeogrÃ¡fico</label>
+                            <input type="hidden" id="mgr-plano-clear" value="0">
+                            <div class="flex flex-wrap gap-2">
+                                <label class="inline-flex items-center justify-center px-3 py-2 rounded-lg border border-gray-200 text-[10px] font-bold uppercase text-gray-600 cursor-pointer hover:bg-gray-50 transition">
+                                    <input type="file" id="mgr-plano-file" accept=".pdf,image/*" class="hidden" onchange="window.handleManagerPlanoGeograficoChange?.(this)">
+                                    Seleccionar archivo
+                                </label>
+                                <button type="button" onclick="window.clearManagerPlanoGeografico?.()" class="px-3 py-2 rounded-lg border border-red-200 text-[10px] font-bold uppercase text-red-600 hover:bg-red-50 transition">Quitar</button>
+                            </div>
+                            <div id="mgr-plano-current" class="text-[10px] text-gray-500 mt-2 break-all">Sin archivo asignado.</div>
+                        </div>
+                    </div>
+                </div>
                 <div class="bg-white p-3 rounded-xl border border-gray-200 flex items-center justify-between shadow-sm"><div><p class="text-[10px] font-bold uppercase text-gray-600">Visible en Catálogo</p></div><label class="relative inline-flex items-center cursor-pointer"><input type="checkbox" id="mgr-active" class="sr-only peer" checked><div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:bg-green-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full peer-checked:after:border-white"></div></label></div>
             </div>
             <div class="p-4 border-t border-gray-100 bg-white flex gap-3 shrink-0"><button onclick="window.askDeleteSpace()" id="btn-delete-mgr" class="hidden flex-1 bg-red-50 hover:bg-red-100 text-red-600 py-3 rounded-xl font-bold uppercase text-xs transition">Eliminar</button><button onclick="window.saveSpace()" id="btn-save-mgr" class="flex-[2] bg-brand-red hover:bg-red-700 text-white py-3 rounded-xl font-bold uppercase text-xs shadow-lg transition transform active:scale-95">Guardar</button></div>
@@ -152,9 +209,9 @@
         </div>
     </div>
     
-    <div id="generic-confirm-modal" class="fixed inset-0 bg-black/80 z-[100] hidden flex items-center justify-center p-4"></div>
+    <div id="generic-confirm-modal" class="fixed inset-0 bg-black/80 z-[9000] hidden flex items-center justify-center p-4"></div>
     <script>window.__PM_CATALOG_MODE='catalog_admin';</script>
-    <script src="catalog.js?v=20260407-convenio-v2"></script>
+    <script src="catalog.js?v=20260420-digital-media-pdf"></script>
 </body>
 </html>
 

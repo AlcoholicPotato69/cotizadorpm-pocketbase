@@ -125,8 +125,10 @@
 
   function normalizeRole(value) {
     const safe = String(value || "").trim().toLowerCase();
-    if (!safe) return "user";
+    if (!safe) return "";
     if (safe === "administrador" || safe === "superadmin" || safe === "super_admin") return "admin";
+    if (safe === "both" || safe === "ambos" || safe === "user" || safe === "usuario") return "";
+    if (["admin", "plaza_mayor", "casa_de_piedra", "verificador"].indexOf(safe) === -1) return "";
     return safe;
   }
 
@@ -157,7 +159,7 @@
       id: id || raw.id || "",
       email: email || "",
       username: username || "",
-      role: role || "user",
+      role: role || "",
       allowed_tenants: allowed,
       tenant_default: raw.tenant_default || raw.default_tenant || null,
       default_tenant: raw.default_tenant || raw.tenant_default || null
@@ -210,7 +212,7 @@
       id: email || username || "cached-user",
       email: email || "",
       username: username || (email ? email.split("@")[0] : ""),
-      role: role || "user"
+      role: role || ""
     });
   }
 
@@ -384,6 +386,14 @@
         } catch (_) {}
       }
     }
+    try {
+      window.dispatchEvent(new CustomEvent("hub:session-cleared", {
+        detail: {
+          reason: String(opts.reason || "session_cleared").trim() || "session_cleared",
+          preserveActivity: opts.preserveActivity === true
+        }
+      }));
+    } catch (_) {}
   }
 
   function base64UrlDecode(value) {

@@ -11,13 +11,136 @@ window.finalMontajeDates = [];
 window.tempMontajeDates = [];
 window.currentMontajePrefix = 'q';
 
+function isCpCatalogQuoteReadyFlag(value) {
+    if (value === true) return true;
+    if (typeof value === 'number') return value === 1;
+    const normalized = String(value ?? '').trim().toLowerCase();
+    return ['1', 'true', 'si', 'sí', 'yes', 'aprobado', 'aprobada', 'validado', 'validada', 'listo', 'lista', 'activo', 'activa'].includes(normalized);
+}
+
+function isCpCatalogQuoteReadyStatus(value) {
+    const normalized = String(value ?? '').trim().toLowerCase();
+    return ['validado', 'validada', 'aprobado', 'aprobada', 'listo', 'lista', 'listo_para_cotizar', 'lista_para_cotizar', 'activo', 'activa'].includes(normalized);
+}
+
+function readCpCatalogQuoteValidation(client = {}) {
+    const raw = client?.expediente_validacion;
+    if (!raw) return {};
+    if (typeof raw === 'object') return raw;
+    if (typeof raw === 'string') {
+        try { return JSON.parse(raw) || {}; } catch (_) { return {}; }
+    }
+    return {};
+}
+
+function isCpCatalogQuoteProfileReady(client = {}) {
+    if (!client || typeof client !== 'object') return false;
+    const validation = readCpCatalogQuoteValidation(client);
+    return (
+        isCpCatalogQuoteReadyFlag(client?.perfil_validado) ||
+        isCpCatalogQuoteReadyFlag(validation?.readyForQuotes) ||
+        isCpCatalogQuoteReadyFlag(validation?.ready) ||
+        isCpCatalogQuoteReadyFlag(validation?.puedeCotizar) ||
+        isCpCatalogQuoteReadyFlag(validation?.quoteApproved) ||
+        isCpCatalogQuoteReadyFlag(validation?.quoteReady) ||
+        isCpCatalogQuoteReadyFlag(validation?.readyForContracts) ||
+        isCpCatalogQuoteReadyStatus(client?.perfil_estatus || validation?.status)
+    );
+}
+
+const CP_REGULATION_TEMPLATE_PATH = 'templates_reglamentos';
+const CP_MANAGER_STORAGE_BUCKET = 'documentos-cp';
+
+function paintCpManagerPlanoStatus(options = {}) {
+    const statusEl = document.getElementById('mgr-plano-current');
+    if (!statusEl) return;
+    if (Object.prototype.hasOwnProperty.call(options, 'fileName')) statusEl.dataset.currentFileName = String(options.fileName || '');
+    if (Object.prototype.hasOwnProperty.call(options, 'url')) statusEl.dataset.currentUrl = String(options.url || '');
+    const currentFileName = String(statusEl.dataset.currentFileName || '').trim();
+    const currentUrl = String(statusEl.dataset.currentUrl || '').trim();
+    const clearRequested = String(document.getElementById('mgr-plano-clear')?.value || '0') === '1';
+    const selectedFile = document.getElementById('mgr-plano-file')?.files?.[0] || null;
+    statusEl.innerHTML = '';
+    if (selectedFile) {
+        statusEl.textContent = `Nuevo archivo: ${selectedFile.name}`;
+        return;
+    }
+    if (clearRequested) {
+        statusEl.textContent = 'Se eliminará al guardar.';
+        return;
+    }
+    if (currentUrl) {
+        const prefix = document.createElement('span');
+        prefix.textContent = 'Actual: ';
+        const link = document.createElement('a');
+        link.href = currentUrl;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.className = 'font-bold text-brand-red underline';
+        link.textContent = currentFileName || 'Ver archivo';
+        statusEl.appendChild(prefix);
+        statusEl.appendChild(link);
+        return;
+    }
+    statusEl.textContent = currentFileName ? `Actual: ${currentFileName}` : 'Sin archivo asignado.';
+}
+
+async function loadCpManagerRegulationTemplates(selectedFile = '') {
+    const select = document.getElementById('mgr-reglamento-template');
+    if (!select || !window.globalPocketBase?.storage) return;
+    select.innerHTML = '<option value="">Usar reglamento predeterminado</option>';
+    try {
+        const { data, error } = await window.globalPocketBase.storage.from(CP_MANAGER_STORAGE_BUCKET).list(CP_REGULATION_TEMPLATE_PATH);
+        if (error) throw error;
+        (Array.isArray(data) ? data : [])
+            .map((file) => ({ name: String(file?.name || '').trim() }))
+            .filter((file) => !!file.name)
+            .sort((a, b) => a.name.localeCompare(b.name, 'es'))
+            .forEach((file) => {
+                const opt = document.createElement('option');
+                opt.value = file.name;
+                opt.textContent = file.name;
+                select.appendChild(opt);
+            });
+    } catch (_) { }
+    select.value = Array.from(select.options).some((opt) => opt.value === selectedFile) ? selectedFile : '';
+}
+
+async function resetCpManagerContractAssets(space = null) {
+    const fileInput = document.getElementById('mgr-plano-file');
+    const clearInput = document.getElementById('mgr-plano-clear');
+    if (fileInput) fileInput.value = '';
+    if (clearInput) clearInput.value = '0';
+    await loadCpManagerRegulationTemplates(String(space?.reglamento_template || '').trim());
+    paintCpManagerPlanoStatus({
+        fileName: String(space?.plano_geografico_file || space?.plano_geografico || '').trim(),
+        url: String(space?.plano_geografico_url || '').trim()
+    });
+}
+
+window.handleManagerPlanoGeograficoChange = function () {
+    const clearInput = document.getElementById('mgr-plano-clear');
+    if (clearInput) clearInput.value = '0';
+    paintCpManagerPlanoStatus();
+};
+
+window.clearManagerPlanoGeografico = function () {
+    const fileInput = document.getElementById('mgr-plano-file');
+    const clearInput = document.getElementById('mgr-plano-clear');
+    if (fileInput) fileInput.value = '';
+    if (clearInput) clearInput.value = '1';
+    paintCpManagerPlanoStatus();
+};
+
 async function loadClientProfilesForQuoteModal() {
     const sel = document.getElementById('cli-select'); const hid = document.getElementById('cli-id'); if (!sel || !window.tenantPocketBase) return;
     try {
-        const { data, error } = await window.tenantPocketBase.from('clientes').select('id,nombre_completo,telefono,correo,rfc').order('nombre_completo', { ascending: true });
-        if (error) throw error; clientProfiles = data || []; clientProfilesById = {}; clientProfiles.forEach(c => clientProfilesById[c.id] = c);
-        sel.innerHTML = '<option value="">— Capturar manualmente —</option>' + clientProfiles.map(c => `<option value="${c.id}">${(c.nombre_completo || '').toUpperCase()}</option>`).join('');
-        sel.onchange = () => { const id = sel.value; if (!id) { if (hid) hid.value = ''; return; } const c = clientProfilesById[id]; if (!c) return; if (hid) hid.value = id; const n = document.getElementById('cli-name'); const p = document.getElementById('cli-phone'); const e = document.getElementById('cli-email'); const r = document.getElementById('cli-rfc'); if (n) n.value = c.nombre_completo || ''; if (p) p.value = (c.telefono || ''); if (e) e.value = (c.correo || ''); if (r) r.value = (c.rfc || ''); };
+        const { data, error } = await window.tenantPocketBase.from('clientes').select('id,nombre_completo,telefono,correo,rfc,perfil_validado,perfil_estatus,expediente_validacion').order('nombre_completo', { ascending: true });
+        if (error) throw error; clientProfiles = (data || []).slice().sort((a, b) => { const aReady = isCpCatalogQuoteProfileReady(a) ? 1 : 0; const bReady = isCpCatalogQuoteProfileReady(b) ? 1 : 0; if (aReady !== bReady) return bReady - aReady; return String(a?.nombre_completo || '').localeCompare(String(b?.nombre_completo || ''), 'es'); }); clientProfilesById = {}; clientProfiles.forEach(c => clientProfilesById[c.id] = c);
+        sel.innerHTML = '<option value="">-- Capturar manualmente --</option>' + clientProfiles.map(c => `<option value="${c.id}">${(c.nombre_completo || '').toUpperCase()} - ${isCpCatalogQuoteProfileReady(c) ? 'LISTO' : 'PENDIENTE'}</option>`).join('');
+        sel.innerHTML = '<option value="">— Capturar manualmente —</option>' + clientProfiles.map(c => `<option value="${c.id}">${(c.nombre_completo || '').toUpperCase()} • ${c?.perfil_validado === true ? 'LISTO' : 'PENDIENTE'}</option>`).join('');
+        sel.innerHTML = '<option value="">-- Capturar manualmente --</option>' + clientProfiles.map(c => `<option value="${c.id}">${(c.nombre_completo || '').toUpperCase()} - ${isCpCatalogQuoteProfileReady(c) ? 'LISTO' : 'PENDIENTE'}</option>`).join('');
+        sel.onchange = () => { const id = sel.value; if (!id) { if (hid) hid.value = ''; return; } const c = clientProfilesById[id]; if (!c) return; if (!isCpCatalogQuoteProfileReady(c)) { if (hid) hid.value = ''; sel.value = ''; window.showToast?.('Este perfil aun no tiene permiso vigente para cotizar. Usa captura manual o pide al cliente completar su expediente.', 'info'); return; } if (hid) hid.value = id; const n = document.getElementById('cli-name'); const p = document.getElementById('cli-phone'); const e = document.getElementById('cli-email'); const r = document.getElementById('cli-rfc'); if (n) n.value = c.nombre_completo || ''; if (p) p.value = (c.telefono || ''); if (e) e.value = (c.correo || ''); if (r) r.value = (c.rfc || ''); };
         const clearAssoc = () => { if (sel.value) sel.value = ''; if (hid) hid.value = ''; };['cli-name', 'cli-phone', 'cli-email', 'cli-rfc'].forEach(id => { const el = document.getElementById(id); if (el) el.addEventListener('input', clearAssoc); });
     } catch (e) { console.warn("No se pudo cargar clientes", e); }
 }
@@ -125,6 +248,11 @@ function normalizeCpCatalogAdjustmentType(value) {
     if (raw === 'porcentaje') return 'aumento';
     if (raw === 'aumento' || raw === 'descuento' || raw === 'monto_fijo') return raw;
     return 'ninguno';
+}
+const CP_CATALOG_MAX_DISCOUNT_PERCENT = 10;
+function normalizeCpCatalogAdjustmentPercent(type, value) {
+    const pct = Math.max(0, parseCpCatalogNumberInput(value, 0));
+    return normalizeCpCatalogAdjustmentType(type) === 'descuento' ? Math.min(pct, CP_CATALOG_MAX_DISCOUNT_PERCENT) : pct;
 }
 function parseCpCatalogNumberInput(value, fallback = 0) {
     const normalized = String(value ?? '').trim().replace(',', '.');
@@ -410,12 +538,134 @@ function getCpSpaceMeasuresLabel(space) {
     const single = width !== null ? width : height;
     return `${trimCpMeasureValue(single)} ${unit}`;
 }
+const CP_SPACE_DAYS = [
+    { key: 'lunes', short: 'L' },
+    { key: 'martes', short: 'M' },
+    { key: 'miercoles', short: 'X' },
+    { key: 'jueves', short: 'J' },
+    { key: 'viernes', short: 'V' },
+    { key: 'sabado', short: 'S' },
+    { key: 'domingo', short: 'D' }
+];
+function getCpSpaceB2bConfig(space) {
+    try {
+        const raw = space?.config_b2b;
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : (raw || {});
+        return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (_) {
+        return {};
+    }
+}
+function normalizeCpScheduleItems(value) {
+    if (Array.isArray(value)) return value.filter(item => item && item.start && item.end);
+    if (value && typeof value === 'object') {
+        const mapNames = { matutino: 'Matutino', vespertino: 'Vespertino', nocturno: 'Nocturno', todo_dia: 'Todo el día' };
+        return Object.keys(value)
+            .map(key => ({ nombre: mapNames[key] || key, start: value[key]?.start, end: value[key]?.end }))
+            .filter(item => item.start && item.end);
+    }
+    return [];
+}
+function formatCpSpaceSchedule(space) {
+    const schedules = normalizeCpScheduleItems(getCpSpaceB2bConfig(space).horarios);
+    if (!schedules.length) return 'Sin horarios';
+    return schedules.map(item => `${item.nombre || 'Horario'} ${item.start}-${item.end}`).join(' | ');
+}
+function formatCpSpaceCapacity(space) {
+    const max = getSpaceMaxCapacity(space);
+    return max >= 999999 ? 'Sin límite' : `${max} personas`;
+}
+function renderCpSpaceDaysStatus(space) {
+    const blocked = new Set(parseIds(space?.dias_bloqueados).map(day => normalizeCpSpaceTag(day)));
+    const chip = (day, blockedDay = false) => `<span class="inline-flex items-center justify-center w-5 h-5 rounded border text-[10px] font-black ${blockedDay ? 'border-red-200 bg-red-50 text-red-600' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}">${day.short}</span>`;
+    const availableDays = CP_SPACE_DAYS.filter(day => !blocked.has(day.key));
+    const blockedDays = CP_SPACE_DAYS.filter(day => blocked.has(day.key));
+    return `<div class="flex flex-col items-end gap-1">
+        <div class="flex flex-wrap items-center justify-end gap-1"><span class="text-[9px] font-black uppercase text-gray-400">Disp.</span>${availableDays.map(day => chip(day)).join('')}</div>
+        <div class="flex flex-wrap items-center justify-end gap-1"><span class="text-[9px] font-black uppercase text-gray-400">Bloq.</span>${blockedDays.length ? blockedDays.map(day => chip(day, true)).join('') : '<span class="text-[10px] font-black text-gray-400">--</span>'}</div>
+    </div>`;
+}
+function normalizeCpDigitalMediaConfig(value = {}) {
+    const source = value && typeof value === 'object' ? value : {};
+    const enabled = !!(source.enabled ?? source.activo ?? source.es_digital);
+    const rawType = normalizeCpSpaceTag(source.media_type || source.tipo_medio || source.tipo || source.formato || 'imagen');
+    const durationValue = normalizeCpMeasureValue(source.duration_value ?? source.duracion_valor ?? source.duracion);
+    const unit = String(source.duration_unit || source.duracion_unidad || 'segundos').trim().toLowerCase();
+    const pixelWidth = normalizeCpMeasureValue(source.pixel_width ?? source.pixeles_ancho ?? source.ancho_px);
+    const pixelHeight = normalizeCpMeasureValue(source.pixel_height ?? source.pixeles_alto ?? source.alto_px);
+    return {
+        enabled,
+        media_type: rawType.includes('video') ? 'video' : 'imagen',
+        duration_value: durationValue,
+        duration_unit: unit === 'minutos' ? 'minutos' : 'segundos',
+        pixel_width: pixelWidth,
+        pixel_height: pixelHeight
+    };
+}
+function getCpSpaceDigitalMediaConfig(space) {
+    const b2b = getCpSpaceB2bConfig(space);
+    return normalizeCpDigitalMediaConfig(b2b.digital_media || b2b.digitalMedia || b2b.medio_digital || {});
+}
+function formatCpDigitalMediaType(value) {
+    return normalizeCpDigitalMediaConfig(value).media_type === 'video' ? 'Video' : 'Imagen';
+}
+function formatCpDigitalMediaPixels(value) {
+    const cfg = normalizeCpDigitalMediaConfig(value);
+    if (cfg.pixel_width === null || cfg.pixel_height === null) return 'Sin pixeles';
+    return `${trimCpMeasureValue(cfg.pixel_width)} x ${trimCpMeasureValue(cfg.pixel_height)} px`;
+}
+function formatCpDigitalMediaDuration(value) {
+    const cfg = normalizeCpDigitalMediaConfig(value);
+    if (cfg.duration_value === null) return 'Sin duración';
+    return `${trimCpMeasureValue(cfg.duration_value)} ${cfg.duration_unit}`;
+}
+function setCpDigitalMediaManagerValues(value) {
+    const cfg = normalizeCpDigitalMediaConfig(value);
+    const enabled = document.getElementById('mgr-digital-media');
+    const mediaType = document.getElementById('mgr-digital-media-type');
+    const durationValue = document.getElementById('mgr-digital-duration-value');
+    const durationUnit = document.getElementById('mgr-digital-duration-unit');
+    const pixelWidth = document.getElementById('mgr-digital-pixel-width');
+    const pixelHeight = document.getElementById('mgr-digital-pixel-height');
+    if (enabled) enabled.checked = cfg.enabled;
+    if (mediaType) mediaType.value = cfg.media_type;
+    if (durationValue) durationValue.value = cfg.duration_value ?? '';
+    if (durationUnit) durationUnit.value = cfg.duration_unit;
+    if (pixelWidth) pixelWidth.value = cfg.pixel_width ?? '';
+    if (pixelHeight) pixelHeight.value = cfg.pixel_height ?? '';
+    window.syncCpManagerTypeFields?.();
+}
+function readCpDigitalMediaManagerValues() {
+    const enabled = !!document.getElementById('mgr-digital-media')?.checked;
+    return normalizeCpDigitalMediaConfig({
+        enabled,
+        media_type: document.getElementById('mgr-digital-media-type')?.value,
+        duration_value: document.getElementById('mgr-digital-duration-value')?.value,
+        duration_unit: document.getElementById('mgr-digital-duration-unit')?.value,
+        pixel_width: document.getElementById('mgr-digital-pixel-width')?.value,
+        pixel_height: document.getElementById('mgr-digital-pixel-height')?.value
+    });
+}
 function getCpCardInfoRows(space) {
     const rows = [];
-    if (isCpAdvertisingSpace(space)) rows.push({ label: 'Material', value: getCpSpaceMaterialLabel(space) });
-    if (isCpAdvertisingSpace(space) || isCpLocalLikeSpace(space)) rows.push({ label: 'Medidas', value: getCpSpaceMeasuresLabel(space) });
-    if (!isCpAdvertisingSpace(space) && !isCpLocalLikeSpace(space)) rows.push({ label: 'Impuestos', value: getSpaceTaxLabel(space) });
-    return rows.filter((row) => String(row?.value || '').trim());
+    const advertising = isCpAdvertisingSpace(space);
+    const localLike = isCpLocalLikeSpace(space);
+    if (advertising) rows.push({ label: 'Material', value: getCpSpaceMaterialLabel(space) });
+    const digitalMedia = advertising ? getCpSpaceDigitalMediaConfig(space) : null;
+    if (advertising && digitalMedia?.enabled) {
+        rows.push({ label: 'Formato', value: formatCpDigitalMediaType(digitalMedia) });
+        rows.push({ label: 'Pixeles', value: formatCpDigitalMediaPixels(digitalMedia) });
+        rows.push({ label: 'Duración', value: formatCpDigitalMediaDuration(digitalMedia) });
+    } else if (advertising) {
+        rows.push({ label: 'Medidas', value: getCpSpaceMeasuresLabel(space) });
+    }
+    if (localLike && !advertising) {
+        rows.push({ label: 'Horarios', value: formatCpSpaceSchedule(space) });
+        rows.push({ label: 'Personas', value: formatCpSpaceCapacity(space) });
+        rows.push({ label: 'Días', html: renderCpSpaceDaysStatus(space) });
+    }
+    if (!advertising && !localLike) rows.push({ label: 'Impuestos', value: getSpaceTaxLabel(space) });
+    return rows.filter((row) => row?.html || String(row?.value || '').trim());
 }
 window.syncCpManagerTypeFields = function () {
     const typeEl = document.getElementById('mgr-type');
@@ -425,15 +675,21 @@ window.syncCpManagerTypeFields = function () {
     const baseField = document.getElementById('mgr-base-field');
     const measuresField = document.getElementById('mgr-measures-field');
     const convenioField = document.getElementById('mgr-convenio-field');
+    const digitalToggleField = document.getElementById('mgr-digital-toggle-field');
+    const digitalDetailsField = document.getElementById('mgr-digital-media-field');
+    const digitalToggle = document.getElementById('mgr-digital-media');
     const eventPricingSection = document.getElementById('mgr-event-pricing-section');
     const eventScheduleSection = document.getElementById('mgr-event-schedule-section');
     if (typeEl && typeEl.value !== selectedType) typeEl.value = selectedType;
     const isPublicidad = selectedType === 'publicidad';
+    const isDigital = isPublicidad && !!digitalToggle?.checked;
     if (attrsGrid) attrsGrid.classList.toggle('hidden', !isPublicidad);
     if (materialField) materialField.classList.toggle('hidden', !isPublicidad);
     if (baseField) baseField.classList.toggle('hidden', !isPublicidad);
-    if (measuresField) measuresField.classList.toggle('hidden', !isPublicidad);
+    if (measuresField) measuresField.classList.toggle('hidden', !isPublicidad || isDigital);
     if (convenioField) convenioField.classList.toggle('hidden', !isPublicidad);
+    if (digitalToggleField) digitalToggleField.classList.toggle('hidden', !isPublicidad);
+    if (digitalDetailsField) digitalDetailsField.classList.toggle('hidden', !isDigital);
     if (eventPricingSection) eventPricingSection.classList.toggle('hidden', isPublicidad);
     if (eventScheduleSection) eventScheduleSection.classList.toggle('hidden', isPublicidad);
 };
@@ -469,10 +725,10 @@ async function loadCpMaterialCatalog() {
     renderCpMaterialSuggestions();
 }
 function renderCpCardInfoRows(space) {
-    return getCpCardInfoRows(space).map((row) => `<div class="mb-4 rounded-lg bg-gray-50 border border-gray-100 px-3 py-2 text-[11px] flex justify-between gap-3"><span class="font-black uppercase text-gray-400">${row.label}</span><span class="font-bold text-gray-700 text-right">${row.value}</span></div>`).join('');
+    return getCpCardInfoRows(space).map((row) => `<div class="mb-4 rounded-lg bg-gray-50 border border-gray-100 px-3 py-2 text-[11px] flex justify-between gap-3"><span class="font-black uppercase text-gray-400">${row.label}</span>${row.html || `<span class="font-bold text-gray-700 text-right">${row.value}</span>`}</div>`).join('');
 }
 function renderCpPreviewBadges(space) {
-    return getCpCardInfoRows(space).map((row) => `<span class="px-2 py-1 rounded-full bg-white/15 text-white font-bold">${row.label}: ${row.value}</span>`).join('');
+    return getCpCardInfoRows(space).map((row) => row.html ? '' : `<span class="px-2 py-1 rounded-full bg-white/15 text-white font-bold">${row.label}: ${row.value}</span>`).join('');
 }
 window.safeFormatDate = function (dateStr) { if (!dateStr) return '--'; const parts = dateStr.split('-'); if (parts.length !== 3) return dateStr; return `${parts[2]}/${parts[1]}/${parts[0]}`; };
 function getPremontajePct() { const n = parseFloat(__cpPremontajePct); return Number.isFinite(n) && n >= 0 ? n : 25; }
@@ -554,8 +810,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     const profile = authCtx?.profile || await cpResolveCurrentUserProfile(session.user);
     const cachedRole = String(localStorage.getItem('hub_user_cache_role') || '').trim().toLowerCase();
     const userRole = String(profile?.role || profile?.rol || cachedRole).toLowerCase().trim();
-    const roleHasAccess = (userRole === 'admin') || (userRole === 'casa_de_piedra') || (userRole === 'ambos');
-    if (userRole === 'admin') myPermissions = { access: true, catalog_manage: true };
+    const roleHasAccess = (userRole === 'admin') || (userRole === 'casa_de_piedra') || (userRole === 'verificador');
+    if (userRole === 'admin' || userRole === 'verificador') myPermissions = { access: true, catalog_manage: true };
     else if (roleHasAccess) myPermissions = { access: true, catalog_manage: false };
     else {
         const profilePerms = profile?.app_metadata?.finanzas?.permissions;
@@ -619,7 +875,7 @@ function renderSpaces(list) {
         const taxDetails = getSpaceTaxDetails(s);
         const taxPriceLabel = taxDetails.length === 1 ? taxDetails[0].nombre : 'Impuestos';
         if (adjustmentType === 'aumento') adjustedBase += adjustedBase * ((parseFloat(s.ajuste_porcentaje || 0) || 0) / 100);
-        if (adjustmentType === 'descuento') adjustedBase -= adjustedBase * ((parseFloat(s.ajuste_porcentaje || 0) || 0) / 100);
+        if (adjustmentType === 'descuento') adjustedBase -= adjustedBase * (normalizeCpCatalogAdjustmentPercent(adjustmentType, s.ajuste_porcentaje) / 100);
         let totalTax = 0;
         taxDetails.forEach((t) => {
             const rate = parseFloat(t?.porcentaje || 0) > 1 ? (parseFloat(t.porcentaje || 0) / 100) : (parseFloat(t?.porcentaje || 0) || 0);
@@ -753,10 +1009,11 @@ window.addHorarioRow = function (data = null) {
 window.previewImage = function (i, id) { const p = document.getElementById(id); if (i.files && i.files[0]) { const r = new FileReader(); r.onload = e => { p.src = e.target.result; p.classList.remove('hidden'); p.setAttribute('data-modified', 'true'); }; r.readAsDataURL(i.files[0]); } }
 window.clearManagerImage = function (num) { const input = document.getElementById(`mgr-file-${num}`); if (input) input.value = ''; const img = document.getElementById(`mgr-preview-${num}`); if (img) { img.src = ''; img.classList.add('hidden'); img.setAttribute('data-modified', 'true'); } }
 
-window.openManagerModal = function (id) {
+window.openManagerModal = async function (id) {
     if (!myPermissions.catalog_manage) return window.showToast("No tienes permisos.", "error");
     cpCatalogSaveViewState({ selectedSpaceId: String(id || '').trim() });
     document.getElementById('mgr-id').value = id || ''; const container = document.getElementById('mgr-taxes-list'); document.querySelectorAll('.day-block-check').forEach(cb => cb.checked = false); document.querySelectorAll('.day-block-premontaje-check').forEach(cb => cb.checked = false);
+    let managedSpace = null;
     if (container) { container.innerHTML = ''; let currentTaxes = []; if (id) { const s = allSpaces.find(x => x.id === id); currentTaxes = parseIds((s && (s.impuestos_ids || s.impuestos)) || []); } dbTaxes.forEach(t => { const isChecked = currentTaxes.some(cid => String(cid) === String(t.id)) ? 'checked' : ''; container.innerHTML += `<label class="flex items-center gap-2 p-2 border rounded bg-white hover:bg-gray-50 cursor-pointer"><input type="checkbox" value="${t.id}" class="tax-check accent-brand-red cursor-pointer" ${isChecked}><span class="text-[10px] font-bold uppercase text-gray-600 cursor-pointer select-none">${t.nombre} (${t.porcentaje}%)</span></label>`; }); }
 
     const rangesContainer = document.getElementById('mgr-ranges-container'); rangesContainer.innerHTML = '';
@@ -764,6 +1021,7 @@ window.openManagerModal = function (id) {
 
     if (id) {
         const s = allSpaces.find(x => x.id === id);
+        managedSpace = s;
         document.getElementById('mgr-title').innerText = "Editar: " + s.nombre; document.getElementById('mgr-key').value = s.clave; document.getElementById('mgr-key').disabled = true; document.getElementById('mgr-name').value = s.nombre; document.getElementById('mgr-type').value = normalizeCpManagerTypeSelection(s.tipo); document.getElementById('mgr-desc').value = s.descripcion || '';
         document.getElementById('mgr-base').value = parseCpCatalogNumberInput(s.precio_base, 0) || '';
         const savedMaterial = String(s.material || '').trim();
@@ -789,6 +1047,7 @@ window.openManagerModal = function (id) {
         document.querySelectorAll('.day-block-premontaje-check').forEach(cb => { if (blockedPremontaje.includes(cb.value)) cb.checked = true; });
 
         let b2b = {}; try { b2b = typeof s.config_b2b === 'string' ? JSON.parse(s.config_b2b) : (s.config_b2b || {}); } catch (e) { }
+        setCpDigitalMediaManagerValues(b2b.digital_media || b2b.digitalMedia || b2b.medio_digital || null);
         let h = b2b.horarios || []; if (!Array.isArray(h)) { const mapNames = { matutino: 'Matutino', vespertino: 'Vespertino', nocturno: 'Nocturno', todo_dia: 'Todo el día' }; h = Object.keys(h).map(k => ({ nombre: mapNames[k] || k, start: h[k].start, end: h[k].end })).filter(item => item.start && item.end); }
         if (h.length > 0) h.forEach(item => window.addHorarioRow(item)); else window.addHorarioRow();
 
@@ -802,11 +1061,12 @@ window.openManagerModal = function (id) {
             }
         }
     } else {
-        document.getElementById('mgr-title').innerText = "Nuevo Espacio"; document.getElementById('mgr-key').value = ''; document.getElementById('mgr-key').disabled = false; document.getElementById('mgr-name').value = ''; document.getElementById('mgr-type').value = 'espacio'; document.getElementById('mgr-tags').value = ''; document.getElementById('mgr-desc').value = ''; document.getElementById('mgr-base').value = ''; document.getElementById('mgr-material').value = ''; renderCpMaterialSuggestions(); document.getElementById('mgr-ancho').value = ''; document.getElementById('mgr-alto').value = ''; document.getElementById('mgr-unidad').value = 'M'; const convenioToggle = document.getElementById('mgr-allow-convenio'); if (convenioToggle) convenioToggle.checked = true; window.syncCpManagerTypeFields(); window.addRangeRow(); window.addHorarioRow();
+        document.getElementById('mgr-title').innerText = "Nuevo Espacio"; document.getElementById('mgr-key').value = ''; document.getElementById('mgr-key').disabled = false; document.getElementById('mgr-name').value = ''; document.getElementById('mgr-type').value = 'espacio'; document.getElementById('mgr-tags').value = ''; document.getElementById('mgr-desc').value = ''; document.getElementById('mgr-base').value = ''; document.getElementById('mgr-material').value = ''; renderCpMaterialSuggestions(); document.getElementById('mgr-ancho').value = ''; document.getElementById('mgr-alto').value = ''; document.getElementById('mgr-unidad').value = 'M'; const convenioToggle = document.getElementById('mgr-allow-convenio'); if (convenioToggle) convenioToggle.checked = true; setCpDigitalMediaManagerValues(null); window.syncCpManagerTypeFields(); window.addRangeRow(); window.addHorarioRow();
         document.getElementById('mgr-active').checked = true; document.getElementById('btn-delete-mgr').classList.add('hidden');
         for (let i = 1; i <= 5; i++) { const mgrPrev = document.getElementById(`mgr-preview-${i}`); if (mgrPrev) { mgrPrev.src = ''; mgrPrev.classList.add('hidden'); mgrPrev.removeAttribute('data-modified'); } const fi = document.getElementById(`mgr-file-${i}`); if (fi) fi.value = ''; }
     }
     window.syncCpManagerTypeFields();
+    await resetCpManagerContractAssets(managedSpace);
     window.openModal('manager-modal');
 }
 
@@ -826,6 +1086,9 @@ window.saveSpace = async function () {
         const isActive = !!document.getElementById('mgr-active').checked;
         if (!clave) return window.showToast('La clave es obligatoria.', 'error');
         if (!nombre) return window.showToast('El nombre es obligatorio.', 'error');
+        if (ajusteTipo === 'descuento' && ajustePorcentaje > CP_CATALOG_MAX_DISCOUNT_PERCENT) {
+            return window.showToast('El descuento máximo permitido es 10%.', 'error');
+        }
         const selectedTaxes = Array.from(document.querySelectorAll('.tax-check:checked'))
             .map(cb => String(cb.value || '').trim())
             .filter(Boolean);
@@ -849,15 +1112,18 @@ window.saveSpace = async function () {
         try { existingB2b = typeof existingSpace?.config_b2b === 'string' ? JSON.parse(existingSpace.config_b2b) : (existingSpace?.config_b2b || {}); } catch (e) { existingB2b = {}; }
         const tagsArray = (document.getElementById('mgr-tags').value || '').split(',').map(t => t.trim()).filter(Boolean);
         const material = isPublicidad ? String(document.getElementById('mgr-material').value || '').trim() : '';
-        const medidaAncho = isPublicidad ? normalizeCpMeasureValue(document.getElementById('mgr-ancho').value) : null;
-        const medidaAlto = isPublicidad ? normalizeCpMeasureValue(document.getElementById('mgr-alto').value) : null;
-        const medidaUnidad = isPublicidad ? normalizeCpMeasureUnit(document.getElementById('mgr-unidad').value || 'M') : '';
+        const regulationTemplate = String(document.getElementById('mgr-reglamento-template')?.value || '').trim();
+        const digitalMedia = readCpDigitalMediaManagerValues();
+        const usesPhysicalMeasures = isPublicidad && !digitalMedia.enabled;
+        const medidaAncho = usesPhysicalMeasures ? normalizeCpMeasureValue(document.getElementById('mgr-ancho').value) : (isPublicidad && digitalMedia.enabled ? 0 : null);
+        const medidaAlto = usesPhysicalMeasures ? normalizeCpMeasureValue(document.getElementById('mgr-alto').value) : (isPublicidad && digitalMedia.enabled ? 0 : null);
+        const medidaUnidad = usesPhysicalMeasures ? normalizeCpMeasureUnit(document.getElementById('mgr-unidad').value || 'M') : '';
         const permiteConvenio = isPublicidad ? !!document.getElementById('mgr-allow-convenio')?.checked : false;
 
         let horariosArray = [];
         if (!isPublicidad) document.querySelectorAll('.horario-row').forEach(row => { const nombre = row.querySelector('.h-name').value.trim(); const start = row.querySelector('.h-start').value; const end = row.querySelector('.h-end').value; if (nombre && start && end) horariosArray.push({ nombre, start, end }); });
         const horaExtraBase = isPublicidad ? 0 : Math.max(0, parseFloat(existingB2b?.precio_hora_extra || 0) || 0, maxPriceFound);
-        const b2bConfig = isPublicidad ? { precio_hora_extra: 0, horarios: [] } : { precio_hora_extra: horaExtraBase, horarios: horariosArray };
+        const b2bConfig = isPublicidad ? { precio_hora_extra: 0, horarios: [], digital_media: digitalMedia } : { precio_hora_extra: horaExtraBase, horarios: horariosArray };
 
         const payload = {
             clave, nombre, tipo, descripcion: document.getElementById('mgr-desc').value, precio_base: isPublicidad ? publicidadBasePrice : Math.max(0, parseCpCatalogNumberInput(maxPriceFound, 0)),
@@ -870,7 +1136,8 @@ window.saveSpace = async function () {
             ancho: medidaAncho,
             alto: medidaAlto,
             unidad_medida: medidaUnidad,
-            permite_convenio: permiteConvenio
+            permite_convenio: permiteConvenio,
+            reglamento_template: regulationTemplate
         };
 
         const fd = new FormData();
@@ -886,12 +1153,16 @@ window.saveSpace = async function () {
             if (fi && fi.files && fi.files.length > 0) fd.append(fieldName, fi.files[0], fi.files[0].name || `img${i}`);
             else if (preview && preview.getAttribute('data-modified') === 'true' && preview.classList.contains('hidden')) fd.append(fieldName, '');
         }
+        const planoInput = document.getElementById('mgr-plano-file');
+        const clearPlano = String(document.getElementById('mgr-plano-clear')?.value || '0') === '1';
+        if (planoInput && planoInput.files && planoInput.files.length > 0) fd.append('plano_geografico', planoInput.files[0], planoInput.files[0].name || 'plano');
+        else if (clearPlano) fd.append('plano_geografico', '');
 
         const savedSpace = await cpSaveEspacioRecord(id, fd);
         cpCatalogSaveViewState({ selectedSpaceId: String(savedSpace?.id || id || '').trim() });
-        window.showToast("Guardado", "success"); window.closeModal('manager-modal'); loadCatalog(); for (let i = 1; i <= 5; i++) { const fi = document.getElementById(`mgr-file-${i}`); if (fi) fi.value = ''; }
+        window.showToast("Guardado", "success"); window.closeModal('manager-modal'); loadCatalog(); for (let i = 1; i <= 5; i++) { const fi = document.getElementById(`mgr-file-${i}`); if (fi) fi.value = ''; } const planoInputReset = document.getElementById('mgr-plano-file'); const planoClearInput = document.getElementById('mgr-plano-clear'); if (planoInputReset) planoInputReset.value = ''; if (planoClearInput) planoClearInput.value = '0';
 
-    } catch (e) { console.error("Error al guardar:", e); window.showToast("Error al guardar: " + (e?.message || e), "error"); } finally { btn.disabled = false; btn.innerText = "Guardar"; }
+    } catch (e) { window.showToast("Error al guardar: " + (e?.message || e), "error"); } finally { btn.disabled = false; btn.innerText = "Guardar"; }
 }
 
 // LOGICA DE FECHAS DE MONTAJE PARA CATALOG (COTIZACIÓN RÁPIDA)
@@ -1021,7 +1292,7 @@ window.updateQuoteCalculation = function () {
     adminSelectedConcepts.forEach(c => { subtotal += parseFloat(c.amount); });
 
     if (adjustmentType === 'aumento') subtotal += subtotal * (currentSpace.ajuste_porcentaje / 100);
-    if (adjustmentType === 'descuento') subtotal -= subtotal * (currentSpace.ajuste_porcentaje / 100);
+    if (adjustmentType === 'descuento') subtotal -= subtotal * (normalizeCpCatalogAdjustmentPercent(adjustmentType, currentSpace.ajuste_porcentaje) / 100);
 
     let taxAmt = 0; const sTaxes = parseIds(currentSpace.impuestos_ids || currentSpace.impuestos);
     if (sTaxes.length && dbTaxes.length) { sTaxes.forEach(tid => { const t = findCpCatalogTaxRecord(tid, currentSpace); if (t) { const rate = t.porcentaje > 1 ? t.porcentaje / 100 : t.porcentaje; taxAmt += subtotal * rate; } }); }
@@ -1451,7 +1722,7 @@ window.updateQuoteCalculation = function () {
         if (capacityOk) {
             subSpace = base + horarioCost + prem.total + horasCost;
             if (adjustmentType === 'aumento') subSpace += subSpace * ((parseFloat(space.ajuste_porcentaje) || 0) / 100);
-            if (adjustmentType === 'descuento') subSpace -= subSpace * ((parseFloat(space.ajuste_porcentaje) || 0) / 100);
+            if (adjustmentType === 'descuento') subSpace -= subSpace * (normalizeCpCatalogAdjustmentPercent(adjustmentType, space.ajuste_porcentaje) / 100);
         }
         let spaceTaxTotal = 0;
         const taxIds = parseIds(space.impuestos_ids || space.impuestos);
@@ -1538,7 +1809,9 @@ window.generatePDF = async function () {
         if (sp.horasExtra > 0) {
             conceptosB2B.push({ description: `[${sp.spaceName}] Horas Extras (${sp.horasExtra} hrs)`, amount: sp.horasExtraCost, value: sp.horasExtraCost, unit: 'fixed', type: 'b2b_horas', meta: { space_id: sp.spaceId, hours: sp.horasExtra, unit_price: sp.horasExtraUnit } });
         }
-        return { espacio_id: sp.spaceId, espacio_nombre: sp.spaceName, espacio_clave: sp.spaceKey, fecha_inicio: sp.startDate, fecha_fin: sp.endDate, personas: sp.guests, horario: { value: sp.horarioValue, label: sp.horarioText, amount: sp.horarioCost }, premontaje_dias: sp.premontajeDays, premontaje_cortesia_dias: sp.premontajeCourtesyDays || 0, premontaje_fechas: sp.premontajeDates, premontaje_total: sp.premontajeCost, premontaje_detalle: sp.premontajeBreakdown, horas_extra: sp.horasExtra, horas_extra_unitario: sp.horasExtraUnit, horas_extra_total: sp.horasExtraCost, subtotal_espacio: sp.subtotalBeforeTax, impuestos_ids: sp.taxIds, impuestos_total: sp.taxTotal };
+        const spaceRecord = __cpGetSpaceById(sp.spaceId) || {};
+        const digitalMedia = getCpSpaceDigitalMediaConfig(spaceRecord);
+        return { espacio_id: sp.spaceId, espacio_nombre: sp.spaceName, espacio_clave: sp.spaceKey, fecha_inicio: sp.startDate, fecha_fin: sp.endDate, personas: sp.guests, horario: { value: sp.horarioValue, label: sp.horarioText, amount: sp.horarioCost }, premontaje_dias: sp.premontajeDays, premontaje_cortesia_dias: sp.premontajeCourtesyDays || 0, premontaje_fechas: sp.premontajeDates, premontaje_total: sp.premontajeCost, premontaje_detalle: sp.premontajeBreakdown, horas_extra: sp.horasExtra, horas_extra_unitario: sp.horasExtraUnit, horas_extra_total: sp.horasExtraCost, subtotal_espacio: sp.subtotalBeforeTax, impuestos_ids: sp.taxIds, impuestos_total: sp.taxTotal, material: spaceRecord.material || null, digital_media: digitalMedia, tipo_medio: digitalMedia.enabled ? digitalMedia.media_type : null };
     });
     adminSelectedConcepts.forEach(c => conceptosB2B.push(c));
 

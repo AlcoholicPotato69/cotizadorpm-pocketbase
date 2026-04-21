@@ -78,7 +78,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     const { data: profile } = await window.globalPocketBase.from('app_users').select('*').eq('id', session.user.id).single();
 const __role = String(profile.role || '').toLowerCase().trim();
-const __roleHasAccess = (__role === 'admin') || (__role === 'plaza_mayor') || (__role === 'ambos');
+const __roleHasAccess = (__role === 'admin') || (__role === 'plaza_mayor');
 
 const roleDefaultPerms = {
     access: true,

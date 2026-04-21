@@ -136,6 +136,7 @@
     <!-- Local Animations -->
     <link rel="preload" as="style" href="../assets/libs/css/animate.min.css">
     <link rel="stylesheet" href="../assets/libs/css/animate.min.css">
+    <link rel="icon" type="image/png" href="../assets/img/logo.png">
 </head>
 <body class="bg-brand-gray text-gray-800 min-h-screen flex flex-col">
 
@@ -256,13 +257,13 @@
             // 1. Inicializar cliente de autenticacion nativo
             hubAuthNative = window.PB_SERVICES && window.PB_SERVICES.auth ? window.PB_SERVICES.auth : null;
             useNativeAuth = !!hubAuthNative;
-            if (!useNativeAuth) {
-                if (typeof window.PB_CLIENT === 'undefined') {
-                    console.error("CRÍTICO: No hay cliente de autenticación nativo.");
-                    alert("Error de sistema: cliente no inicializado.");
-                    return;
-                }
+            if (typeof window.PB_CLIENT !== 'undefined') {
                 hubPocketBase = window.globalPocketBase || window.pbClient || window.PB_CLIENT.createClient(HUB_URL, HUB_KEY);
+            }
+            if (!useNativeAuth && !hubPocketBase) {
+                console.error("CRÍTICO: No hay cliente de autenticación nativo.");
+                alert("Error de sistema: cliente no inicializado.");
+                return;
             }
             
             // 3. LISTENERS DE EVENTOS (Ahora es seguro asignarlos)
@@ -359,6 +360,40 @@
             document.getElementById('main-container').classList.remove('bg-brand-gray');
         }
 
+        function normalizeDashboardRole(value) {
+            const role = String(value || '').toLowerCase().trim();
+            if (role === 'administrador' || role === 'superadmin' || role === 'super_admin') return 'admin';
+            if (role === 'ambos' || role === 'both' || role === 'user' || role === 'usuario') return '';
+            return role;
+        }
+
+        function normalizeDashboardTenant(value) {
+            const tenant = String(value || '').toLowerCase().trim();
+            if (tenant === 'pm' || tenant === 'plaza mayor' || tenant === 'plaza_mayor') return 'plaza_mayor';
+            if (tenant === 'cp' || tenant === 'casa de piedra' || tenant === 'casa_de_piedra') return 'casa_de_piedra';
+            return tenant;
+        }
+
+        function canOpenControlFromDashboard(role) {
+            const normalized = normalizeDashboardRole(role);
+            return normalized === 'admin' || normalized === 'verificador';
+        }
+
+        function isControlDashboardModule(module) {
+            const path = String(module?.url_path || module?.path || module?.href || '').toLowerCase();
+            const name = String(module?.name || module?.title || '').toLowerCase();
+            return /(^|\/)control\.html(?:$|[?#])/.test(path) || name === 'control' || name === 'control operativo';
+        }
+
+        function resolveDashboardControlPrefix(profile) {
+            const preferredTenant = normalizeDashboardTenant(profile?.tenant_default || profile?.default_tenant || '');
+            if (preferredTenant === 'casa_de_piedra') return 'cotizadorcp';
+            const tenants = Array.isArray(profile?.allowed_tenants)
+                ? profile.allowed_tenants.map(normalizeDashboardTenant).filter(Boolean)
+                : [];
+            return tenants.length === 1 && tenants[0] === 'casa_de_piedra' ? 'cotizadorcp' : 'cotizador';
+        }
+
         async function showDashboard(user) {
             // Carga silenciosa de layout.js para mantener la sesión global activa al navegar
             if (!document.querySelector('script[src="./js/layout.js"]')) {
@@ -388,10 +423,10 @@
 
             if (profileError) { console.warn('No se pudo cargar el perfil:', profileError); }
 
-            const roleFallback = String(user?.role || 'user').toLowerCase().trim();
+            let roleFallback = normalizeDashboardRole(user?.role || user?.rol || '');
             const allowedFallback = Array.isArray(user?.allowed_tenants)
-                ? user.allowed_tenants
-                : (roleFallback === 'admin'
+                ? user.allowed_tenants.map(normalizeDashboardTenant).filter(Boolean)
+                : ((roleFallback === 'admin' || roleFallback === 'verificador')
                     ? ['plaza_mayor', 'casa_de_piedra']
                     : ((roleFallback === 'plaza_mayor' || roleFallback === 'casa_de_piedra') ? [roleFallback] : []));
 
@@ -422,9 +457,9 @@
             
             // Cargar contenido
             loadApps(user, profile);
-            if (!(window.HUB_CONFIG && window.HUB_CONFIG.localMode) && !useNativeAuth) {
+            if (!(window.HUB_CONFIG && window.HUB_CONFIG.localMode)) {
                 loadNotifications(user.id);
-            } else if (useNativeAuth) {
+            } else {
                 const notifBtn = document.getElementById('btn-toggle-notifs');
                 const notifDrop = document.getElementById('dash-notif-dropdown');
                 const notifBadge = document.getElementById('dash-badge');
@@ -438,13 +473,14 @@
             const grid = document.getElementById('apps-grid');
                         if ((window.HUB_CONFIG && window.HUB_CONFIG.localMode) || useNativeAuth) {
                             const p = preloadedProfile || user || {};
-                            const userRole = String(p.role || 'user').toLowerCase().trim();
+                            let userRole = normalizeDashboardRole(p.role || p.rol || '');
                             const allowedTenants = Array.isArray(p.allowed_tenants)
-                                ? p.allowed_tenants.map(t => String(t).toLowerCase().trim())
-                                : (userRole === 'admin'
+                                ? p.allowed_tenants.map(normalizeDashboardTenant).filter(Boolean)
+                                : ((userRole === 'admin' || userRole === 'verificador')
                                     ? ['plaza_mayor', 'casa_de_piedra']
                                     : ((userRole === 'plaza_mayor' || userRole === 'casa_de_piedra') ? [userRole] : []));
                             const isAdmin = userRole === 'admin';
+                            const isVerifier = userRole === 'verificador';
 
                             const hasPM = isAdmin || allowedTenants.includes('plaza_mayor');
                             const hasCP = isAdmin || allowedTenants.includes('casa_de_piedra');
@@ -526,14 +562,32 @@
 
                             grid.innerHTML = '';
                             grid.className = defaultGridClass;
-                            // Admin (o usuario con ambos tenants): muestra tarjetas de cotizadores + config si es admin
+                            if (isVerifier) {
+                                grid.className = dualGridClass;
+                                const preferredTenant = String(p.tenant_default || p.default_tenant || '').toLowerCase().trim();
+                                const verifierPrefix = (preferredTenant === 'casa_de_piedra' || (!hasPM && hasCP)) ? 'cotizadorcp' : 'cotizador';
+                                const verifierColor = verifierPrefix === 'cotizadorcp' ? 'cp' : 'red';
+                                const verifierCards = [
+                                    { name: 'Clientes', description: 'Expedientes, validación y dictámenes. Dentro podrás cambiar entre Plaza Mayor y Casa de Piedra desde la barra superior.', icon: 'fa-user-check', url_path: `${verifierPrefix}/clientes.html`, color: verifierColor },
+                                    { name: 'Precios Plaza Mayor', description: 'Catálogo, precios y ajustes autorizados de Plaza Mayor.', icon: 'fa-tags', url_path: 'cotizador/catalog.html', color: 'red', logoUrl: pmLogo },
+                                    { name: 'Precios Casa de Piedra', description: 'Catálogo, precios y ajustes autorizados de Casa de Piedra.', icon: 'fa-gem', url_path: 'cotizadorcp/catalog.html', color: 'cp', logoUrl: cpLogo },
+                                    { name: 'Control', description: 'Bitácora, responsables y reportes en una vista independiente.', icon: 'fa-shield-halved', url_path: `${verifierPrefix}/control.html`, color: verifierColor },
+                                    { name: 'Configuracion', description: 'Conceptos, impuestos, plantillas, reglamentos y ajustes operativos por tenant.', icon: 'fa-gear', url_path: 'system/config.html', color: 'admin' },
+                                ];
+                                verifierCards.forEach(app => grid.innerHTML += cardHTML(app));
+                                return;
+                            }
+                            // Admin o perfiles con ambos tenants: muestra tarjetas de cotizadores; solo admin ve Control/Config.
                             if (isAdmin || (hasPM && hasCP)) {
                                 const cotizadores = [
                                     { name: 'Cotizador - Plaza Mayor', description: 'Acceso al cotizador de Plaza Mayor.', icon: 'fa-store', url_path: 'cotizador/catalog.html', color: 'red', logoUrl: pmLogo },
                                     { name: 'Cotizador - Casa de Piedra', description: 'Acceso al cotizador de Casa de Piedra.', icon: 'fa-gem', url_path: 'cotizadorcp/catalog.html', color: 'cp', logoUrl: cpLogo },
                                 ];
                                 if (isAdmin) {
-                                    grid.className = 'grid grid-cols-1 sm:grid-cols-3 gap-4 md:gap-6 max-w-5xl mx-auto';
+                                    const adminPreferredTenant = String(p.tenant_default || p.default_tenant || '').toLowerCase().trim();
+                                    const adminControlPrefix = adminPreferredTenant === 'casa_de_piedra' ? 'cotizadorcp' : 'cotizador';
+                                    grid.className = 'grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 md:gap-6 max-w-7xl mx-auto';
+                                    cotizadores.push({ name: 'Control Operativo', description: 'Supervisión independiente de bitácoras, responsables y reportes.', icon: 'fa-shield-halved', url_path: `${adminControlPrefix}/control.html`, color: 'admin' });
                                     cotizadores.push({ name: 'Configuracion', description: 'Panel de administracion: conceptos, impuestos, documentos y plantillas PDF.', icon: 'fa-gear', url_path: 'system/config.html', color: 'admin' });
                                 } else {
                                     grid.className = dualGridClass;
@@ -566,15 +620,31 @@
                             return;
                         }
 
-            const profile = preloadedProfile; 
-            const userRole = (profile?.role || 'usuario').toLowerCase().trim();
+            const profile = preloadedProfile || user || {};
+            const userRole = normalizeDashboardRole(profile?.role || profile?.rol || user?.role || user?.rol || '');
+            const userCanOpenControl = canOpenControlFromDashboard(userRole);
 
             const { data: roleData } = await hubPocketBase.from('roles').select('allowed_modules').eq('name', userRole).single();
             let allowedModulesIds = userRole === 'admin' ? ['*'] : (roleData?.allowed_modules?.map(id => Number(id)) || []); 
 
             const { data: allModules } = await hubPocketBase.from('modules').select('*').eq('active', true).order('orden', { ascending: true });
 
-            const filteredModules = allModules ? allModules.filter(module => allowedModulesIds.includes('*') || allowedModulesIds.includes(module.id)) : [];
+            const filteredModules = allModules ? allModules.filter(module => {
+                const assigned = allowedModulesIds.includes('*') || allowedModulesIds.includes(Number(module.id));
+                if (!assigned) return false;
+                if (isControlDashboardModule(module)) return userCanOpenControl;
+                return true;
+            }) : [];
+            if (userCanOpenControl && !filteredModules.some(isControlDashboardModule)) {
+                const controlPrefix = resolveDashboardControlPrefix(profile);
+                filteredModules.push({
+                    name: userRole === 'admin' ? 'Control Operativo' : 'Control',
+                    description: 'Bitácora, responsables y reportes en una vista independiente.',
+                    icon: 'fa-solid fa-shield-halved',
+                    url_path: `${controlPrefix}/control.html`,
+                    color: userRole === 'admin' ? 'gray' : 'red'
+                });
+            }
 
             grid.innerHTML = '';
             if (filteredModules.length === 0) {
@@ -615,6 +685,10 @@
         }
 
         // --- SISTEMA DE NOTIFICACIONES ---
+        let dashboardNotifPollTimer = null;
+        let dashboardNotifLastKey = '';
+        let dashboardNotifVisibilityBound = false;
+
         function getManualLink(type, originalLink) {
             const t = (type || '').toLowerCase();
             const pathPrefix = './'; 
@@ -623,6 +697,7 @@
             if (t.includes('ticket')) return pathPrefix + 'tickets/index.html';
             if (t.includes('orden') || t.includes('order')) return pathPrefix + 'cotizador/orders.html';
             if (t.includes('recibo') || t.includes('receipt')) return pathPrefix + 'cotizador/receipts.html';
+            if (t.includes('cliente') || t.includes('document')) return originalLink || pathPrefix + 'cotizador/clientes.html';
             if (t.includes('cotiza') || t.includes('catalog')) return pathPrefix + 'cotizador/catalog.html';
             if (t.includes('fina')) return pathPrefix + 'finanzas/index.html';
             
@@ -630,21 +705,39 @@
         }
 
         async function loadNotifications(userId) {
+            if (dashboardNotifPollTimer) clearInterval(dashboardNotifPollTimer);
             hubPocketBase.channel('dash-notif-v1')
                 .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'hub_notifications', filter: `user_id=eq.${userId}` }, 
                 () => { fetchNotifs(userId); playSound(); })
                 .subscribe();
 
-            await fetchNotifs(userId);
+            await fetchNotifs(userId, { initial: true });
+            dashboardNotifPollTimer = window.setInterval(() => {
+                fetchNotifs(userId, { notifyNew: true });
+            }, 15000);
+            if (!dashboardNotifVisibilityBound) {
+                dashboardNotifVisibilityBound = true;
+                document.addEventListener('visibilitychange', () => {
+                    if (document.visibilityState === 'visible' && currentUser?.id) fetchNotifs(currentUser.id, { notifyNew: true });
+                });
+                window.addEventListener('focus', () => {
+                    if (currentUser?.id) fetchNotifs(currentUser.id, { notifyNew: true });
+                });
+            }
         }
 
-        async function fetchNotifs(userId) {
+        async function fetchNotifs(userId, options = {}) {
             const { data } = await hubPocketBase.from('hub_notifications')
                 .select('*')
                 .eq('user_id', userId)
                 .order('created_at', { ascending: false })
                 .limit(10);
-            renderNotifs(data || []);
+            const rows = Array.isArray(data) ? data : [];
+            const latest = rows[0] || null;
+            const latestKey = latest ? String(latest.id || latest.created_at || latest.created || '') : '';
+            if (options.notifyNew === true && dashboardNotifLastKey && latestKey && latestKey !== dashboardNotifLastKey) playSound();
+            if (latestKey) dashboardNotifLastKey = latestKey;
+            renderNotifs(rows);
         }
 
         function renderNotifs(data) {
@@ -663,7 +756,8 @@
                     
                     if (sourceType.includes('calendar')) { icon = 'fa-calendar text-blue-500'; bgIcon = 'bg-blue-50'; }
                     else if (sourceType.includes('ticket')) { icon = 'fa-ticket text-orange-500'; bgIcon = 'bg-orange-50'; }
-                    else if (sourceType.includes('finanzas') || sourceType.includes('order')) { icon = 'fa-file-invoice-dollar text-brand-red'; bgIcon = 'bg-red-50'; }
+                    else if (sourceType.includes('finanzas') || sourceType.includes('order') || sourceType.includes('cotizador')) { icon = 'fa-file-invoice-dollar text-brand-red'; bgIcon = 'bg-red-50'; }
+                    else if (sourceType.includes('client') || sourceType.includes('document')) { icon = 'fa-user-check text-brand-red'; bgIcon = 'bg-red-50'; }
                     
                     const smartLink = getManualLink(sourceType, n.link);
 
@@ -701,14 +795,14 @@
         }
 
         window.deleteNotif = async function(id) {
-            if(currentUser && !useNativeAuth) {
+            if(currentUser) {
                 await hubPocketBase.from('hub_notifications').delete().eq('id', id);
                 fetchNotifs(currentUser.id);
             }
         }
 
         async function clearAllNotifs() {
-            if(currentUser && !useNativeAuth && confirm('¿Estás seguro de borrar todas las notificaciones?')) {
+            if(currentUser && confirm('¿Estás seguro de borrar todas las notificaciones?')) {
                 await hubPocketBase.from('hub_notifications').delete().eq('user_id', currentUser.id);
                 fetchNotifs(currentUser.id);
             }

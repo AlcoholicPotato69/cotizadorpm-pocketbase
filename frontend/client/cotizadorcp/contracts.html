@@ -11,6 +11,7 @@
     <script src="../../assets/libs/js/tailwindcss.js"></script>
     <link rel="preload" as="style" href="../../assets/libs/css/all.min.css">
     <link rel="stylesheet" href="../../assets/libs/css/all.min.css">
+    <script src="../../assets/libs/js/pdf.min.js"></script>
     <script src="../../assets/libs/js/jspdf.js"></script>
     <script src="../../assets/libs/js/html2pdf.js"></script>
     <script src="../js/hub-config.js"></script>
@@ -90,7 +91,7 @@
     <link rel="stylesheet" href="../../assets/libs/css/animate.min.css">
 </head>
 <body data-page-mode="contracts" class="bg-brand-gray text-gray-800 flex flex-col h-screen overflow-hidden">
-    <div id="toast-container" class="fixed bottom-5 right-5 z-[70] flex flex-col gap-2"></div>
+    <div id="toast-container" class="fixed bottom-5 right-5 z-[10000] flex flex-col gap-2 pointer-events-none"></div>
     <script>const TENANT_SCHEMA='finanzas_casadepiedra';</script>
   <script src="../js/layout.js"></script>
     
@@ -415,6 +416,7 @@
                     </div>
                     
                     <div class="mt-auto space-y-3 pb-4">
+                        <button id="btn-generate-contract" onclick="window.generateContractPdf()" class="w-full bg-brand-dark text-white py-3 rounded-xl text-xs font-bold uppercase hover:bg-black transition shadow-lg flex items-center justify-center gap-2"><i class="fa-solid fa-file-circle-plus"></i> Generar Contrato PDF</button>
                         <button onclick="window.printContract()" class="w-full bg-white border border-gray-300 text-gray-700 py-3 rounded-xl text-xs font-bold uppercase hover:bg-gray-50 transition shadow-sm flex items-center justify-center gap-2"><i class="fa-solid fa-print"></i> Imprimir Borrador</button>
                         <button id="btn-open-finalize" onclick="window.openFinalizeModal()" disabled class="w-full bg-gray-300 text-white py-3 rounded-xl text-xs font-bold uppercase shadow-none cursor-not-allowed transition flex items-center justify-center gap-2"><i class="fa-solid fa-file-contract"></i> Guardar y Finalizar</button>
                     </div>
@@ -473,7 +475,7 @@
         </div>
     </div>
 
-    <div id="generic-confirm-modal" class="fixed inset-0 bg-black/80 z-[110] hidden flex items-center justify-center p-4 backdrop-blur-sm animate-enter">
+    <div id="generic-confirm-modal" class="fixed inset-0 bg-black/80 z-[9000] hidden flex items-center justify-center p-4 backdrop-blur-sm animate-enter">
         <div class="bg-white w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden p-6 text-center">
             <i class="fa-solid fa-circle-question text-4xl text-gray-300 mb-4"></i>
             <h3 class="font-bold text-lg mb-2 text-gray-800" id="confirm-title">¿Estás seguro?</h3>
@@ -549,6 +551,7 @@
     </div>
 
     <div id="receipt-pdf-render" class="absolute top-0 left-0 -z-50 pointer-events-none opacity-0" style="width: 816px; min-height: 1056px; background: white;"></div>
+    <script src="../js/pdf-editor-hitbox.js"></script>
     <script src="../js/pdf-margin-guides.js"></script>
     <script src="contracts.js?v=20260413-cp-contract-tags-v2"></script>
 </body>

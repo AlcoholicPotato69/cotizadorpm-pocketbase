@@ -25,10 +25,10 @@ if errorlevel 1 (
 echo [INFO] Verificando migraciones y estructura de la base local...
 "%ROOT_DIR%\backend\pocketbase.exe" migrate up --dir="%PB_DATA_DIR%" --hooksDir="%PB_HOOKS_DIR%" --migrationsDir="%PB_MIGRATIONS_DIR%" > "%MIGRATE_LOG%" 2>&1
 set "MIGRATE_RC=%ERRORLEVEL%"
-findstr /I /C:"failed to apply migration" /C:"Error:" "%MIGRATE_LOG%" >nul
-set "MIGRATE_HAS_ERROR=%ERRORLEVEL%"
-if not "%MIGRATE_RC%"=="0" goto :migrate_fail
-if "%MIGRATE_HAS_ERROR%"=="0" goto :migrate_fail
+if not "%MIGRATE_RC%"=="0" (
+  echo [ERROR] migrate up salio con codigo %MIGRATE_RC%
+  goto :migrate_fail
+)
 del /q "%MIGRATE_LOG%" >nul 2>&1
 
 echo.

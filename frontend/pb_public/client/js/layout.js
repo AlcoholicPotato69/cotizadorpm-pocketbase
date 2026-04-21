@@ -43,6 +43,9 @@
     
     let layoutClient;
     let myId = '';
+    let layoutNotifPollTimer = null;
+    let layoutNotifLastKey = '';
+    let layoutNotifVisibilityBound = false;
     
     const scriptTag = document.querySelector('script[src*="layout.js"]');
     const pathPrefix = scriptTag ? scriptTag.getAttribute('src').replace('js/layout.js', '') : './';
@@ -368,9 +371,9 @@
         if (!c) {
             c = document.createElement('div');
             c.id = 'toast-container';
-            c.className = 'fixed bottom-6 right-6 z-[9999] flex flex-col gap-3 pointer-events-none';
             document.body.appendChild(c);
         }
+        c.className = 'fixed bottom-6 right-6 z-[10000] flex flex-col gap-3 pointer-events-none';
         return c;
     }
 
@@ -397,7 +400,7 @@
         window.openConfirm = (msg, onYes) => {
             let modal = document.getElementById('generic-confirm-modal');
             if (!modal) { modal = document.createElement('div'); modal.id = 'generic-confirm-modal'; document.body.appendChild(modal); }
-            modal.className = 'fixed inset-0 bg-slate-900/80 z-[100] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300';
+            modal.className = 'fixed inset-0 bg-slate-900/80 z-[9000] flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300';
             modal.innerHTML = `<div class="bg-white w-full max-w-sm rounded-3xl shadow-2xl p-8 text-center transform scale-100 transition-transform duration-300"><div class="w-16 h-16 bg-red-50 text-brand-red rounded-full flex items-center justify-center mx-auto text-3xl mb-5 shadow-sm"><i class="fa-solid fa-triangle-exclamation"></i></div><h3 class="font-black text-xl text-gray-800 mb-2">Confirmación</h3><p class="text-sm text-gray-500 font-medium mb-8 leading-relaxed">${msg || '¿Estás seguro?'}</p><div class="flex gap-3 justify-center"><button id="btn-conf-cancel" class="px-6 py-2.5 rounded-xl border border-gray-200 text-gray-600 font-bold hover:bg-gray-50 transition text-xs uppercase tracking-wide">Cancelar</button><button id="btn-conf-yes" class="px-6 py-2.5 bg-brand-red text-white rounded-xl font-bold hover:bg-brand-red/90 shadow-lg shadow-red-100 transition transform hover:-translate-y-0.5 text-xs uppercase tracking-wide">Confirmar</button></div></div>`;
             modal.classList.remove('hidden');
             const cleanup = () => modal.classList.add('hidden');
@@ -410,7 +413,7 @@
         window.openInputModal = (title, msg, currentValue, onSave) => {
             let modal = document.getElementById('generic-input-modal');
             if (!modal) { modal = document.createElement('div'); modal.id = 'generic-input-modal'; document.body.appendChild(modal); }
-            modal.className = 'fixed inset-0 bg-slate-900/80 z-[100] flex items-center justify-center p-4 backdrop-blur-sm';
+            modal.className = 'fixed inset-0 bg-slate-900/80 z-[9000] flex items-center justify-center p-4 backdrop-blur-sm';
             modal.innerHTML = `<div class="bg-white w-full max-w-sm rounded-3xl shadow-2xl p-8 text-center"><h3 class="font-black text-xl text-gray-800 mb-2">${title}</h3><p class="text-xs text-gray-400 font-bold uppercase tracking-wider mb-6">${msg}</p><input type="text" id="gen-input-val" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl font-bold text-center outline-none focus:border-brand-red transition mb-6" value="${currentValue || ''}"><div class="flex gap-3 justify-center"><button id="btn-inp-cancel" class="px-6 py-2.5 rounded-xl font-bold text-gray-500 hover:bg-gray-50 transition border border-transparent hover:border-gray-200">Cancelar</button><button id="btn-inp-save" class="px-6 py-2.5 bg-brand-dark text-white rounded-xl font-bold hover:bg-black shadow-lg transition transform hover:-translate-y-0.5">Guardar</button></div></div>`;
             modal.classList.remove('hidden');
             const input = document.getElementById('gen-input-val');
@@ -456,6 +459,10 @@
         
         if (t.includes('orden') || t.includes('order')) {
             return pathPrefix + 'cotizador/orders.html';
+        }
+
+        if (t.includes('client') || t.includes('cliente') || t.includes('document')) {
+            return originalLink || pathPrefix + 'cotizador/clientes.html';
         }
 
         if (t.includes('cotiza') || t.includes('catalog')) {
@@ -572,8 +579,13 @@
         return ctx;
     }
 
+    function shouldDeferSystemPageAuth(routeCtx) {
+        return !!routeCtx?.isSystem && window.__HUB_SYSTEM_PAGE_MANAGES_AUTH === true;
+    }
+
     function redirectLayoutToLogin(routeCtx, reason = 'missing_session') {
         const route = routeCtx || resolveLayoutRouteContext();
+        if (shouldDeferSystemPageAuth(route)) return false;
         if (route.isLoginPage || window.__HUB_SUPPRESS_AUTO_REDIRECTS === true) return false;
         window.__HUB_PAGE_ACCESS_DENIED = true;
         window.__HUB_PAGE_ACCESS_DENIED_REASON = String(reason || 'missing_session');
@@ -645,7 +657,9 @@
                     canAccessCurrentRoute: false,
                     deniedReason: 'missing_session'
                 }, { reason: 'layout_manager_missing_session' });
-                if (opts.redirectOnFail !== false) redirectLayoutToLogin(routeCtx, 'missing_session');
+                if (opts.redirectOnFail !== false && !shouldDeferSystemPageAuth(routeCtx)) {
+                    redirectLayoutToLogin(routeCtx, 'missing_session');
+                }
                 return null;
             }
 
@@ -679,7 +693,7 @@
             if (authCtx.canAccessCurrentRoute === false && opts.requireAccess !== false) {
                 const stableFallback = buildStableLayoutFallback(routeCtx, 'layout_manager_access_guard');
                 if (stableFallback) return applyResolvedLayoutAuthContext(stableFallback, { reason: 'layout_manager_access_fallback' });
-                if (opts.redirectOnFail !== false) {
+                if (opts.redirectOnFail !== false && !shouldDeferSystemPageAuth(routeCtx)) {
                     window.__HUB_PAGE_ACCESS_DENIED = true;
                     window.__HUB_PAGE_ACCESS_DENIED_REASON = authCtx.tenantAllowed ? 'insufficient_permissions' : 'tenant_forbidden';
                     redirectLayoutToLogin(routeCtx, window.__HUB_PAGE_ACCESS_DENIED_REASON);
@@ -711,8 +725,14 @@
                 if (!routeCtx?.isLoginPage) redirectLayoutToLogin(routeCtx, 'missing_session');
             });
         };
+        const handleSessionCleared = (event) => {
+            if (routeCtx?.isLoginPage) return;
+            const reason = String(event?.detail?.reason || 'session_cleared').trim() || 'session_cleared';
+            redirectLayoutToLogin(routeCtx, reason);
+        };
         window.addEventListener('focus', guardedEnsure);
         window.addEventListener('pageshow', guardedEnsure);
+        window.addEventListener('hub:session-cleared', handleSessionCleared);
         document.addEventListener('visibilitychange', function () {
             if (document.visibilityState !== 'visible') return;
             guardedEnsure();
@@ -805,6 +825,7 @@
         const safe = String(value || '').trim().toLowerCase();
         if (!safe) return '';
         if (safe === 'administrador' || safe === 'superadmin' || safe === 'super_admin') return 'admin';
+        if (safe === 'both' || safe === 'ambos' || safe === 'user' || safe === 'usuario') return '';
         return safe;
     }
 
@@ -833,7 +854,7 @@
             unique.add(normalized);
         });
         const normalizedRole = normalizeLayoutRole(role);
-        if (normalizedRole === 'admin' || normalizedRole === 'ambos') {
+        if (normalizedRole === 'admin' || normalizedRole === 'verificador') {
             unique.add('plaza_mayor');
             unique.add('casa_de_piedra');
         } else if (normalizedRole === 'plaza_mayor' || normalizedRole === 'casa_de_piedra') {
@@ -1048,10 +1069,15 @@
 
     function resolveClientsPermission(perms, fallbackAccess) {
         if (!perms || typeof perms !== 'object') return !!fallbackAccess;
-        if (hasOwn(perms, 'clients_view') || hasOwn(perms, 'clients_manage')) {
-            return !!perms.clients_view || !!perms.clients_manage;
+        if (hasOwn(perms, 'clients_view') || hasOwn(perms, 'clients_manage') || hasOwn(perms, 'clients_verify')) {
+            return !!perms.clients_view || !!perms.clients_manage || !!perms.clients_verify;
         }
         return !!fallbackAccess;
+    }
+
+    function resolveControlPermission(authCtx) {
+        const role = normalizeLayoutRole(authCtx?.role || authCtx?.profile?.role || authCtx?.user?.role || '');
+        return authCtx?.isAdmin === true || role === 'admin' || role === 'verificador';
     }
 
     function buildLayoutPermissions(identity, routeCtx) {
@@ -1063,28 +1089,47 @@
             ? { ...profile.app_metadata.finanzas.permissions }
             : {};
         const tenant = routeCtx && routeCtx.tenant ? routeCtx.tenant : null;
-        const roleHasTenantAccess = role === 'admin' || role === 'ambos' || (!!tenant && role === tenant);
+        const roleHasTenantAccess = role === 'admin' || role === 'verificador' || (!!tenant && role === tenant);
         const tenantAllowed = !tenant || roleHasTenantAccess || allowedTenants.includes(tenant) || defaultTenant === tenant;
 
         let permissions;
         if (role === 'admin') {
             permissions = {
                 access: true,
+                catalog_view: true,
                 orders_view: true,
                 orders_edit: true,
                 reports_view: true,
                 clients_view: true,
                 clients_manage: true,
+                clients_verify: true,
+                clients_all_docs: true,
                 catalog_manage: true
             };
-        } else if (!!tenant && (role === tenant || role === 'ambos')) {
+        } else if (role === 'verificador') {
             permissions = {
                 access: true,
+                catalog_view: true,
+                orders_view: false,
+                orders_edit: false,
+                reports_view: false,
+                clients_view: true,
+                clients_manage: false,
+                clients_verify: true,
+                clients_all_docs: true,
+                catalog_manage: true
+            };
+        } else if (!!tenant && role === tenant) {
+            permissions = {
+                access: true,
+                catalog_view: true,
                 orders_view: true,
                 orders_edit: true,
                 reports_view: true,
-                clients_view: true,
-                clients_manage: true,
+                clients_view: false,
+                clients_manage: false,
+                clients_verify: false,
+                clients_all_docs: false,
                 catalog_manage: false
             };
         } else {
@@ -1119,6 +1164,13 @@
         const accessFallback = perms.access !== false;
 
         switch (routeCtx.file) {
+            case 'catalog.html':
+                return resolveRoutePermission(perms, 'catalog_view', accessFallback);
+            case 'agenda.html':
+            case 'contracts.html':
+            case 'receipts.html':
+            case 'invoices.html':
+            case 'montajes.html':
             case 'orders.html':
             case 'order_detail.html':
             case 'cotizacion.html':
@@ -1128,6 +1180,8 @@
                 return resolveRoutePermission(perms, 'reports_view', accessFallback);
             case 'clientes.html':
                 return resolveClientsPermission(perms, accessFallback);
+            case 'control.html':
+                return resolveControlPermission(authCtx);
             default:
                 return !!accessFallback;
         }
@@ -1138,12 +1192,12 @@
         const perms = authCtx.permissions || {};
         const accessFallback = perms.access !== false;
         const navRules = {
-            'catalog.html': !!accessFallback,
-            'agenda.html': !!accessFallback,
-            'contracts.html': !!accessFallback,
-            'receipts.html': !!accessFallback,
-            'invoices.html': !!accessFallback,
-            'montajes.html': !!accessFallback,
+            'catalog.html': resolveRoutePermission(perms, 'catalog_view', accessFallback),
+            'agenda.html': resolveRoutePermission(perms, 'orders_view', accessFallback),
+            'contracts.html': resolveRoutePermission(perms, 'orders_view', accessFallback),
+            'receipts.html': resolveRoutePermission(perms, 'orders_view', accessFallback),
+            'invoices.html': resolveRoutePermission(perms, 'orders_view', accessFallback),
+            'montajes.html': resolveRoutePermission(perms, 'orders_view', accessFallback),
             'orders.html': resolveRoutePermission(perms, 'orders_view', accessFallback),
             'cotizacion.html': resolveRoutePermission(perms, 'orders_view', accessFallback),
             'reports.html': resolveRoutePermission(perms, 'reports_view', accessFallback),
@@ -1154,6 +1208,10 @@
             document.querySelectorAll(`a[href="${page}"], a[data-href="${page}"]`).forEach((link) => {
                 link.classList.toggle('hidden', !visible);
             });
+        });
+        document.querySelectorAll('nav a[href], nav a[data-href]').forEach((link) => {
+            const href = String(link.getAttribute('href') || link.getAttribute('data-href') || '').toLowerCase();
+            if (/(^|\/)control\.html(?:$|[?#])/.test(href)) link.remove();
         });
         const settingsBtn = document.getElementById('layout-settings-btn');
         if (settingsBtn) {
@@ -1692,7 +1750,7 @@
                     canAccessCurrentRoute: false,
                     deniedReason: 'missing_session'
                 });
-                if (!routeCtx.isLoginPage && pathPrefix !== '' && window.__HUB_SUPPRESS_AUTO_REDIRECTS !== true) {
+                if (!routeCtx.isLoginPage && pathPrefix !== '' && window.__HUB_SUPPRESS_AUTO_REDIRECTS !== true && !shouldDeferSystemPageAuth(routeCtx)) {
                     window.__HUB_PAGE_ACCESS_DENIED = true;
                     window.__HUB_PAGE_ACCESS_DENIED_REASON = 'missing_session';
                     try { window.__HUB_ALLOW_NEXT_UNLOAD?.('layout_missing_session'); } catch (_) {}
@@ -1727,6 +1785,7 @@
                         applyResolvedLayoutAuthContext(stableFallback, { reason: 'access_guard_fallback' });
                         return;
                     }
+                    if (shouldDeferSystemPageAuth(routeCtx)) return;
                     window.__HUB_PAGE_ACCESS_DENIED = true;
                     window.__HUB_PAGE_ACCESS_DENIED_REASON = authCtx.tenantAllowed ? 'insufficient_permissions' : 'tenant_forbidden';
                     try { window.__HUB_ALLOW_NEXT_UNLOAD?.('layout_access_guard'); } catch (_) {}
@@ -1760,6 +1819,7 @@
                         applyResolvedLayoutAuthContext(stableFallback, { reason: 'layout_identity_error_fallback' });
                         return;
                     }
+                    if (shouldDeferSystemPageAuth(routeCtx)) return;
                     window.__HUB_PAGE_ACCESS_DENIED = true;
                     window.__HUB_PAGE_ACCESS_DENIED_REASON = authCtx.tenantAllowed ? 'insufficient_permissions' : 'tenant_forbidden';
                     try { window.__HUB_ALLOW_NEXT_UNLOAD?.('layout_access_guard_fallback'); } catch (_) {}
@@ -1883,6 +1943,18 @@
     function initUnifiedNotifications() {
         if (IS_LOCAL) return;
         if (!layoutClient) return;
+        if (layoutNotifPollTimer) clearInterval(layoutNotifPollTimer);
+        loadHistory({ initial: true });
+        layoutNotifPollTimer = window.setInterval(() => {
+            loadHistory({ notifyNew: true });
+        }, 15000);
+        if (!layoutNotifVisibilityBound) {
+            layoutNotifVisibilityBound = true;
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible') loadHistory({ notifyNew: true });
+            });
+            window.addEventListener('focus', () => loadHistory({ notifyNew: true }));
+        }
         layoutClient.channel('global-hub-v10')
             .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'hub_notifications', filter: `user_id=eq.${myId}` }, 
             (payload) => {
@@ -1988,6 +2060,7 @@
         if (type === 'calendar') { borderClass = 'border-blue-500'; iconClass = 'fa-calendar-check text-blue-600'; bgIcon = 'bg-blue-50'; }
         else if (type === 'ticket') { borderClass = 'border-orange-500'; iconClass = 'fa-ticket text-orange-600'; bgIcon = 'bg-orange-50'; }
         else if (type === 'finanzas' || type === 'cotizador' || type === 'order') { borderClass = 'border-brand-red'; iconClass = 'fa-file-invoice-dollar text-brand-red'; bgIcon = 'bg-red-50'; }
+        else if (String(type || '').includes('client') || String(type || '').includes('document')) { borderClass = 'border-brand-red'; iconClass = 'fa-user-check text-brand-red'; bgIcon = 'bg-red-50'; }
 
         const w = document.createElement('div'); 
         w.className = `pointer-events-auto w-80 bg-white rounded-2xl shadow-2xl border-l-4 ${borderClass} p-4 transform transition-all duration-500 translate-x-full opacity-0 flex gap-3`;
@@ -1998,19 +2071,32 @@
         setTimeout(() => { w.classList.add('translate-x-full', 'opacity-0'); setTimeout(() => w.remove(), 500); }, 6000);
     }
 
-    async function loadHistory() {
+    async function loadHistory(options = {}) {
         if (!layoutClient) return;
         const list = document.getElementById('global-notif-list'); const badge = document.getElementById('global-badge'); if(!list) return;
         const { data } = await layoutClient.from('hub_notifications').select('*').eq('user_id', myId).order('created_at', { ascending: false }).limit(10);
+        const rows = Array.isArray(data) ? data : [];
+        const latest = rows[0] || null;
+        const latestKey = latest ? String(latest.id || latest.created_at || latest.created || '') : '';
+        const shouldNotify = options.notifyNew === true && !!layoutNotifLastKey && !!latestKey && latestKey !== layoutNotifLastKey;
+        if (shouldNotify) {
+            const sourceType = latest.source_app || latest.type || 'system';
+            spawnWidget(latest.title, latest.message, sourceType, getManualLink(sourceType, latest.link));
+            const audio = new Audio('' + NOTIFY_SOUND + '');
+            audio.volume = 0.2;
+            audio.play().catch(()=>{});
+        }
+        if (latestKey) layoutNotifLastKey = latestKey;
         list.innerHTML = '';
-        if (data && data.length > 0) {
-            badge.innerText = data.length; badge.classList.remove('hidden');
-            data.forEach(n => {
+        if (rows.length > 0) {
+            badge.innerText = rows.length; badge.classList.remove('hidden');
+            rows.forEach(n => {
                 const sourceType = n.source_app || n.type || 'system';
                 let icon = 'fa-bell text-gray-400'; let bgIcon = 'bg-gray-50';
                 if (sourceType === 'calendar') { icon = 'fa-calendar text-blue-500'; bgIcon = 'bg-blue-50'; }
                 if (sourceType === 'ticket') { icon = 'fa-ticket text-orange-500'; bgIcon = 'bg-orange-50'; }
                 if (sourceType === 'finanzas' || sourceType === 'cotizador' || sourceType === 'order') { icon = 'fa-file-invoice-dollar text-brand-red'; bgIcon = 'bg-red-50'; }
+                if (String(sourceType || '').includes('client') || String(sourceType || '').includes('document')) { icon = 'fa-user-check text-brand-red'; bgIcon = 'bg-red-50'; }
                 const item = document.createElement('div');
                 item.className = "p-4 relative group hover:bg-gray-50 transition cursor-pointer flex gap-3 items-start";
                 item.innerHTML = `<div class="w-8 h-8 rounded-full ${bgIcon} flex items-center justify-center shrink-0 mt-0.5"><i class="fa-solid ${icon}"></i></div><div class="flex-grow"><div class="flex justify-between items-start"><p class="text-xs font-bold text-gray-800">${n.title}</p><span class="text-[9px] text-gray-400 font-mono">${new Date(n.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span></div><p class="text-[11px] text-gray-500 leading-snug mt-0.5 pr-4">${n.message}</p></div><button onclick="event.stopPropagation(); window.layoutApi.deleteNotif('${n.id}')" class="absolute bottom-2 right-3 opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-500 transition"><i class="fa-solid fa-trash-can"></i></button>`;

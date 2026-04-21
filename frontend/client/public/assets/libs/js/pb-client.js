@@ -4,24 +4,17 @@
  */
 (function () {
   const AUTH_KEYS = ['pb_native_auth_v1', 'pb_compat_auth_v1', 'pb_auth'];
-  const HUB_NOTIFS_KEY = 'pb_native_hub_notifications_v1';
+  const APP_ROLES = ['admin', 'plaza_mayor', 'casa_de_piedra', 'verificador'];
 
   function trimSlash(url) { return String(url || '').replace(/\/+$/, ''); }
   function clone(v) { return v == null ? v : JSON.parse(JSON.stringify(v)); }
-  function nowIso() { return new Date().toISOString(); }
-  function uuidv4() {
-    if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-      const r = Math.random() * 16 | 0; const v = c === 'x' ? r : (r & 0x3 | 0x8); return v.toString(16);
-    });
-  }
-  function isObject(v){ return !!v && typeof v === 'object' && !Array.isArray(v); }
-  function safeJsonParse(v, fallback){ try { return JSON.parse(v); } catch(_) { return fallback; } }
+  function isObject(v) { return !!v && typeof v === 'object' && !Array.isArray(v); }
+  function safeJsonParse(v, fallback) { try { return JSON.parse(v); } catch (_) { return fallback; } }
   function readAuthStorage(key) {
     try {
       const sessionValue = sessionStorage.getItem(key);
       if (sessionValue) return sessionValue;
-    } catch (_) {}
+    } catch (_) { }
     try {
       return localStorage.getItem(key);
     } catch (_) {
@@ -29,12 +22,12 @@
     }
   }
   function writeAuthStorage(key, value) {
-    try { sessionStorage.setItem(key, value); } catch (_) {}
-    try { localStorage.removeItem(key); } catch (_) {}
+    try { sessionStorage.setItem(key, value); } catch (_) { }
+    try { localStorage.removeItem(key); } catch (_) { }
   }
   function clearAuthStorage(key) {
-    try { sessionStorage.removeItem(key); } catch (_) {}
-    try { localStorage.removeItem(key); } catch (_) {}
+    try { sessionStorage.removeItem(key); } catch (_) { }
+    try { localStorage.removeItem(key); } catch (_) { }
   }
   function normalizeDateString(v) {
     const s = String(v || '').trim();
@@ -92,23 +85,26 @@
   function mapProfileOut(record) {
     if (!record) return record;
     record = normalizeDeepDates(record);
-    const role = String(record.role || 'user').toLowerCase().trim();
+    let role = String(record.role || '').toLowerCase().trim();
+    if (role === 'administrador' || role === 'superadmin' || role === 'super_admin') role = 'admin';
+    if (role === 'both' || role === 'ambos' || role === 'user' || role === 'usuario') role = '';
+    if (role && APP_ROLES.indexOf(role) === -1) role = '';
     const allowedRaw = Array.isArray(record.allowed_tenants)
       ? record.allowed_tenants
       : (function () {
-          const parsed = parseJsonFieldValue(record.allowed_tenants);
-          return Array.isArray(parsed) ? parsed : [];
-        })();
+        const parsed = parseJsonFieldValue(record.allowed_tenants);
+        return Array.isArray(parsed) ? parsed : [];
+      })();
     let allowed = allowedRaw.filter(Boolean).map(v => String(v).toLowerCase().trim());
     if (!allowed.length) {
-      if (role === 'admin') allowed = ['plaza_mayor', 'casa_de_piedra'];
+      if (role === 'admin' || role === 'verificador') allowed = ['plaza_mayor', 'casa_de_piedra'];
       else if (role === 'plaza_mayor' || role === 'casa_de_piedra') allowed = [role];
     }
     return {
       ...record,
       id: record.id,
       username: record.login_username || record.username || '',
-      role: role || 'user',
+      role: role || '',
       allowed_tenants: allowed,
       tenant_default: record.tenant_default || record.default_tenant || null,
       default_tenant: record.tenant_default || record.default_tenant || null,
@@ -151,6 +147,11 @@
       AUTH_KEYS.forEach(function (key) {
         clearAuthStorage(key);
       });
+      try { localStorage.removeItem('hub_auth_last_activity_v1'); } catch (_) { }
+      try { localStorage.removeItem('hub_user_cache_name'); } catch (_) { }
+      try { localStorage.removeItem('hub_user_cache_email'); } catch (_) { }
+      try { localStorage.removeItem('hub_user_cache_role'); } catch (_) { }
+      try { sessionStorage.removeItem('hub_layout_last_good_auth_v1'); } catch (_) { }
       return;
     }
     const normalized = normalizeAuthPayload(payload);
@@ -198,6 +199,8 @@
       coerceJsonFields(out, ['valor_json']);
     } else if (collection === 'impuestos') {
       coerceJsonFields(out, ['impuestos_aplicados']);
+    } else if (collection === 'clientes') {
+      coerceJsonFields(out, ['telefonos_adicionales', 'correos_adicionales', 'documentos_estado', 'expediente_validacion']);
     } else if (collection === 'espacios') {
       coerceJsonFields(out, ['impuestos_ids', 'etiquetas', 'precios_por_dia', 'dias_bloqueados', 'config_b2b']);
     } else if (collection === 'cotizaciones') {
@@ -265,7 +268,7 @@
       const field = mapFieldName(originalCollection, mm[1], 'filter');
       const op = mm[2];
       const value = mm[3];
-      const mappedOp = ({eq:'=',neq:'!=',lte:'<=',gte:'>=',lt:'<',gt:'>'})[op] || '=';
+      const mappedOp = ({ eq: '=', neq: '!=', lte: '<=', gte: '>=', lt: '<', gt: '>' })[op] || '=';
       out.push(field + ' ' + mappedOp + ' ' + escapeFilterValue(value));
     }
     return out;
@@ -365,7 +368,7 @@
     _tenantFilterParts() {
       const tenant = this.client.tenant;
       if (!tenant) return [];
-      if (['app_users','hub_notifications'].indexOf(this.collection) !== -1) return [];
+      if (this.collection === 'app_users' || this.collection === 'hub_notifications') return [];
       return ['tenant = ' + escapeFilterValue(tenant)];
     }
     _buildFilter() {
@@ -398,13 +401,13 @@
       if (typeof FormData !== 'undefined' && payload instanceof FormData) {
         const fd = new FormData();
         for (const pair of payload.entries()) fd.append(pair[0], pair[1]);
-        if (this.client.tenant && ['app_users','hub_notifications'].indexOf(this.collection) === -1 && !fd.get('tenant')) fd.append('tenant', this.client.tenant);
+        if (this.client.tenant && this.collection !== 'app_users' && this.collection !== 'hub_notifications' && !fd.get('tenant')) fd.append('tenant', this.client.tenant);
         return fd;
       }
       let p = clone(payload);
       if (Array.isArray(p)) p = p[0];
       if (!isObject(p)) return p;
-      if (this.client.tenant && ['app_users','hub_notifications'].indexOf(this.collection) === -1 && !p.tenant) p.tenant = this.client.tenant;
+      if (this.client.tenant && this.collection !== 'app_users' && this.collection !== 'hub_notifications' && !p.tenant) p.tenant = this.client.tenant;
       if (this.collection === 'app_users') {
         if (Object.prototype.hasOwnProperty.call(p, 'username')) { p.login_username = p.username; delete p.username; }
         if (Object.prototype.hasOwnProperty.call(p, 'default_tenant')) { p.tenant_default = p.default_tenant; delete p.default_tenant; }
@@ -428,7 +431,6 @@
     }
     async execute() {
       try {
-        if (this.originalTable === 'hub_notifications') return await this._execHubNotifications();
         if (this.action === 'select') {
           const items = await this._findMatchingRecords();
           const mapped = items.map(r => this._mapOut(r));
@@ -484,39 +486,6 @@
         return { data: null, error: errObj(e.message || String(e), e) };
       }
     }
-    async _execHubNotifications() {
-      const raw = safeJsonParse(localStorage.getItem(HUB_NOTIFS_KEY) || '[]', []);
-      const list = Array.isArray(raw) ? raw : [];
-      const save = (items) => localStorage.setItem(HUB_NOTIFS_KEY, JSON.stringify(items));
-      if (this.action === 'select') {
-        let out = list.slice();
-        for (const f of this.filters) {
-          if (f.op === 'eq') out = out.filter(x => String(x[f.field]) === String(f.value));
-        }
-        if (this.sort) {
-          const desc = this.sort.startsWith('-');
-          const field = desc ? this.sort.slice(1) : this.sort;
-          out.sort((a,b) => String(a[field] || '').localeCompare(String(b[field] || '')) * (desc ? -1 : 1));
-        }
-        if (this.limitNum) out = out.slice(0, this.limitNum);
-        if (this.singleMode === 'single') return { data: out[0] || null, error: out[0] ? null : errObj('Expected single record') };
-        if (this.singleMode === 'maybeSingle') return { data: out[0] || null, error: null };
-        return { data: out, error: null };
-      }
-      if (this.action === 'insert') {
-        const p = clone(this.payload);
-        p.id = p.id || uuidv4();
-        p.created_at = p.created_at || nowIso();
-        list.unshift(p); save(list);
-        return { data: p, error: null };
-      }
-      if (this.action === 'delete') {
-        let out = list.slice();
-        for (const f of this.filters) if (f.op === 'eq') out = out.filter(x => String(x[f.field]) !== String(f.value));
-        save(out); return { data: null, error: null };
-      }
-      return { data: null, error: null };
-    }
   }
 
   class StorageBucket {
@@ -563,7 +532,7 @@
       try {
         const byId = await fetchOne(this.client.baseUrl, 'cotizaciones', value);
         if (byId && byId.id) return byId;
-      } catch (_) {}
+      } catch (_) { }
       const filter = this._tenantFilter() + ' && id = ' + escapeFilterValue(value);
       const list = await fetchRecords(this.client.baseUrl, 'cotizaciones', { perPage: 1, filter: filter });
       return (list.items || [])[0] || null;
@@ -584,7 +553,7 @@
         }
         if (current === path) return;
         await updateRecord(this.client.baseUrl, 'cotizaciones', quote.id, { [field]: path });
-      } catch (_) {}
+      } catch (_) { }
     }
     async upload(path, file) {
       try {
@@ -720,30 +689,32 @@
           return { data: { user: session?.data?.session?.user || null }, error: session?.error || null };
         },
         signOut: async () => {
-          try { await pbFetch(this.baseUrl, '/api/hub/session/logout', { method: 'POST' }); } catch (_) {}
+          try { await pbFetch(this.baseUrl, '/api/hub/session/logout', { method: 'POST' }); } catch (_) { }
           writeAuth(null);
           return { error: null };
         },
-        onAuthStateChange: function(){ return { data: { subscription: { unsubscribe: function(){} } } }; }
+        onAuthStateChange: function () { return { data: { subscription: { unsubscribe: function () { } } } }; }
       };
       this.storage = { from: (bucket) => new StorageBucket(this, bucket) };
-      this.functions = { invoke: async (name, opts) => {
-        try {
-          const data = await pbFetch(this.baseUrl, '/api/' + String(name || '').replace(/^\/+/, ''), { method: (opts && opts.method) || 'POST', body: (opts && opts.body) || null, headers: Object.assign({}, authHeader(), (opts && opts.headers) || {}) });
-          return { data: data, error: null };
-        } catch (e) { return { data: null, error: errObj(e.message || String(e)) }; }
-      } };
+      this.functions = {
+        invoke: async (name, opts) => {
+          try {
+            const data = await pbFetch(this.baseUrl, '/api/' + String(name || '').replace(/^\/+/, ''), { method: (opts && opts.method) || 'POST', body: (opts && opts.body) || null, headers: Object.assign({}, authHeader(), (opts && opts.headers) || {}) });
+            return { data: data, error: null };
+          } catch (e) { return { data: null, error: errObj(e.message || String(e)) }; }
+        }
+      };
     }
     from(table) { return new QueryBuilder(this, table); }
     schema(schemaName) { return new PocketBaseClient(this.baseUrl, { db: { schema: schemaName } }); }
-    channel() { const self = { on(){ return self; }, subscribe(){ return self; }, unsubscribe(){ return self; } }; return self; }
-    getChannels(){ return []; }
-    removeChannel(){ return Promise.resolve(true); }
-    removeAllChannels(){ return Promise.resolve(true); }
+    channel() { const self = { on() { return self; }, subscribe() { return self; }, unsubscribe() { return self; } }; return self; }
+    getChannels() { return []; }
+    removeChannel() { return Promise.resolve(true); }
+    removeAllChannels() { return Promise.resolve(true); }
   }
 
   window.PB_CLIENT = {
-    createClient: function(baseUrl, anonKey, options) {
+    createClient: function (baseUrl, anonKey, options) {
       return new PocketBaseClient(baseUrl, options || {});
     }
   };

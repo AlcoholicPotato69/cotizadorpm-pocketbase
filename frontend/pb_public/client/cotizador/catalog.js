@@ -10,6 +10,361 @@
 // ---------------------------
 let clientProfiles = [];
 let clientProfilesById = {};
+const PM_QUOTE_REQUIRED_DOC_FIELDS = ['doc_acta_constitutiva', 'doc_ine', 'doc_comprobante_domicilio', 'doc_constancia_fiscal'];
+const PM_QUOTE_CONSTANCIA_VALID_DAYS = 30;
+const PM_QUOTE_COMPROBANTE_VALID_DAYS = 90;
+
+function normalizeQuoteDateValue(value) {
+    const raw = String(value || '').trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+    if (/^\d{4}-\d{2}-\d{2}[ T]/.test(raw)) return raw.slice(0, 10);
+    return '';
+}
+
+function normalizeQuotePhoneValue(value) {
+    const digits = String(value || '').replace(/\D+/g, '').slice(-10);
+    return digits.length === 10 ? digits : '';
+}
+
+function readQuoteClientArray(value) {
+    if (Array.isArray(value)) return value;
+    if (typeof value === 'string') {
+        const raw = value.trim();
+        if (!raw) return [];
+        try {
+            const parsed = JSON.parse(raw);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (_) {
+            return [];
+        }
+    }
+    return [];
+}
+
+function readQuoteClientValidation(client = {}) {
+    const raw = client?.expediente_validacion;
+    if (raw && typeof raw === 'object') return raw;
+    if (typeof raw === 'string') {
+        try {
+            const parsed = JSON.parse(raw);
+            return parsed && typeof parsed === 'object' ? parsed : {};
+        } catch (_) {
+            return {};
+        }
+    }
+    return {};
+}
+
+function readQuoteClientDocuments(validation = {}) {
+    const docs = validation?.documents;
+    return docs && typeof docs === 'object' ? docs : {};
+}
+
+function readQuoteClientDocumentInfo(client = {}, field) {
+    const validation = readQuoteClientValidation(client);
+    const docs = readQuoteClientDocuments(validation);
+    return docs[field] && typeof docs[field] === 'object' ? docs[field] : {};
+}
+
+function readQuoteClientDocumentState(client = {}, field) {
+    const raw = client?.documentos_estado;
+    if (!raw || typeof raw !== 'object') return {};
+    return raw[field] && typeof raw[field] === 'object' ? raw[field] : {};
+}
+
+function isQuoteClientDocumentOmitted(client = {}, field) {
+    const doc = readQuoteClientDocumentInfo(client, field);
+    const state = String(doc?.estado || doc?.status || '').trim().toLowerCase();
+    return doc?.omitido === true || state === 'omitido';
+}
+
+function hasQuoteClientDocumentFile(client = {}, field) {
+    const doc = readQuoteClientDocumentInfo(client, field);
+    if (doc?.uploaded === true) return true;
+    if (String(doc?.fileName || '').trim()) return true;
+    const raw = client?.[field];
+    if (Array.isArray(raw)) return String(raw[0] || '').trim() !== '';
+    return String(raw || '').trim() !== '';
+}
+
+function getQuoteClientDocumentStatus(client = {}, field) {
+    const doc = readQuoteClientDocumentInfo(client, field);
+    if (isQuoteClientDocumentOmitted(client, field)) return 'omitido';
+    const status = String(doc?.estado || doc?.status || '').trim().toLowerCase();
+    if (status) return status;
+    return hasQuoteClientDocumentFile(client, field) ? 'pendiente' : 'pendiente';
+}
+
+function getQuoteClientDocumentActivityDate(client = {}, field) {
+    const doc = readQuoteClientDocumentInfo(client, field);
+    const state = readQuoteClientDocumentState(client, field);
+    return normalizeQuoteDateValue(
+        state?.subido_at
+        || doc?.subidoAt
+        || doc?.subido_at
+        || state?.aprobado_at
+        || doc?.aprobadoAt
+        || state?.revisado_at
+        || doc?.revisadoAt
+        || client?.created_at
+        || client?.created
+    );
+}
+
+function getQuoteClientDocumentReferenceDate(client = {}, field) {
+    const validation = readQuoteClientValidation(client);
+    const activityDate = getQuoteClientDocumentActivityDate(client, field);
+    if (field === 'doc_constancia_fiscal') {
+        return normalizeQuoteDateValue(
+            activityDate
+            || validation?.constanciaFiscalSubidaEl
+            || validation?.constancia_fiscal_subida_el
+            || validation?.constanciaFiscalEmitidaEl
+            || validation?.constancia_fiscal_emitida_el
+            || client?.constancia_fiscal_emitida_el
+        );
+    }
+    if (field === 'doc_comprobante_domicilio') {
+        return normalizeQuoteDateValue(
+            validation?.comprobanteDomicilioEmitidoEl
+            || validation?.comprobante_domicilio_emitido_el
+            || client?.comprobante_domicilio_emitido_el
+            || activityDate
+        );
+    }
+    return activityDate;
+}
+
+function evaluateQuoteClientDate(dateValue, maxAgeDays) {
+    const normalized = normalizeQuoteDateValue(dateValue);
+    if (!normalized) return { valid: false };
+    const target = new Date(`${normalized}T00:00:00Z`);
+    if (Number.isNaN(target.getTime())) return { valid: false };
+    const now = new Date();
+    const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const ageDays = Math.floor((todayUtc.getTime() - target.getTime()) / 86400000);
+    return {
+        valid: ageDays >= 0 && ageDays <= Math.max(0, Number(maxAgeDays) || 0)
+    };
+}
+
+function isQuoteReadyFlagValue(value) {
+    if (value === true) return true;
+    if (typeof value === 'number') return value === 1;
+    const normalized = String(value ?? '').trim().toLowerCase();
+    return ['1', 'true', 'si', 'sí', 'yes', 'aprobado', 'aprobada', 'validado', 'validada', 'listo', 'lista', 'activo', 'activa'].includes(normalized);
+}
+
+function isQuoteReadyStatusValue(value) {
+    const normalized = String(value ?? '').trim().toLowerCase();
+    return ['validado', 'validada', 'aprobado', 'aprobada', 'listo', 'lista', 'listo_para_cotizar', 'lista_para_cotizar', 'activo', 'activa'].includes(normalized);
+}
+
+function isQuoteClientProfileReady(client = {}) {
+    if (!client || typeof client !== 'object') return false;
+    const validation = readQuoteClientValidation(client);
+    const rawStatus = String(client?.perfil_estatus || validation?.status || '').trim().toLowerCase();
+    if (
+        isQuoteReadyFlagValue(client?.perfil_validado) ||
+        isQuoteReadyFlagValue(validation?.readyForQuotes) ||
+        isQuoteReadyFlagValue(validation?.ready) ||
+        isQuoteReadyFlagValue(validation?.puedeCotizar) ||
+        isQuoteReadyFlagValue(validation?.quoteApproved) ||
+        isQuoteReadyFlagValue(validation?.quoteReady) ||
+        isQuoteReadyFlagValue(validation?.readyForContracts) ||
+        isQuoteReadyStatusValue(rawStatus)
+    ) return true;
+    const hasName = String(client?.nombre_completo || '').trim() !== '';
+    const hasEmail = String(client?.correo || '').trim() !== '';
+    const hasRfc = String(client?.rfc || '').trim() !== '';
+    const hasPhone = !!normalizeQuotePhoneValue(client?.telefono)
+        || readQuoteClientArray(client?.telefonos_adicionales).some((phone) => !!normalizeQuotePhoneValue(phone));
+    if (!hasName || !hasEmail || !hasRfc || !hasPhone) return false;
+
+    let allDocsApproved = true;
+    let anyRejected = false;
+    for (let i = 0; i < PM_QUOTE_REQUIRED_DOC_FIELDS.length; i += 1) {
+        const field = PM_QUOTE_REQUIRED_DOC_FIELDS[i];
+        const uploaded = hasQuoteClientDocumentFile(client, field);
+        const omitted = isQuoteClientDocumentOmitted(client, field);
+        const status = getQuoteClientDocumentStatus(client, field);
+        if (!uploaded && !omitted) return false;
+        if (status === 'rechazado') anyRejected = true;
+        if (status !== 'aprobado' && status !== 'omitido') allDocsApproved = false;
+    }
+    if (anyRejected || !allDocsApproved) return false;
+
+    const constanciaOmitted = isQuoteClientDocumentOmitted(client, 'doc_constancia_fiscal');
+    const comprobanteOmitted = isQuoteClientDocumentOmitted(client, 'doc_comprobante_domicilio');
+    const constanciaDate = getQuoteClientDocumentReferenceDate(client, 'doc_constancia_fiscal');
+    const comprobanteDate = getQuoteClientDocumentReferenceDate(client, 'doc_comprobante_domicilio');
+    const constanciaValid = constanciaOmitted ? true : evaluateQuoteClientDate(constanciaDate, PM_QUOTE_CONSTANCIA_VALID_DAYS).valid;
+    const comprobanteValid = comprobanteOmitted ? true : evaluateQuoteClientDate(comprobanteDate, PM_QUOTE_COMPROBANTE_VALID_DAYS).valid;
+    return !!(constanciaValid && comprobanteValid);
+}
+
+function getValidatedClientProfiles() {
+    return clientProfiles.filter((client) => isQuoteClientProfileReady(client));
+}
+
+function isQuickQuoteModeEnabled() {
+    return !!document.getElementById('cli-quick-quote')?.checked;
+}
+
+function fillQuoteClientFields(client = {}) {
+    const nameEl = document.getElementById('cli-name');
+    const phoneEl = document.getElementById('cli-phone');
+    const emailEl = document.getElementById('cli-email');
+    const rfcEl = document.getElementById('cli-rfc');
+    if (nameEl) nameEl.value = client?.nombre_completo || '';
+    if (phoneEl) phoneEl.value = client?.telefono || '';
+    if (emailEl) emailEl.value = client?.correo || '';
+    if (rfcEl) rfcEl.value = client?.rfc || '';
+}
+
+function clearQuoteClientFields() {
+    fillQuoteClientFields({});
+}
+
+function clearQuoteClientAssociation(options = {}) {
+    const selectEl = document.getElementById('cli-select');
+    const hiddenIdEl = document.getElementById('cli-id');
+    if (selectEl) selectEl.value = '';
+    if (hiddenIdEl) hiddenIdEl.value = '';
+    if (options.clearFields === true) clearQuoteClientFields();
+}
+
+function getSelectedQuoteClientProfile() {
+    const hiddenIdEl = document.getElementById('cli-id');
+    const selectEl = document.getElementById('cli-select');
+    const selectedId = String(hiddenIdEl?.value || selectEl?.value || '').trim();
+    if (!selectedId) return null;
+    const selected = clientProfilesById[selectedId] || null;
+    if (!selected) return null;
+    if (!isQuoteClientProfileReady(selected) && !isQuickQuoteModeEnabled()) return null;
+    if (hiddenIdEl) hiddenIdEl.value = selectedId;
+    return selected;
+}
+
+function buildQuoteClientSnapshot() {
+    const selectedProfile = getSelectedQuoteClientProfile();
+    if (selectedProfile && !isQuickQuoteModeEnabled()) {
+        fillQuoteClientFields(selectedProfile);
+        return {
+            id: String(selectedProfile.id || '').trim(),
+            name: String(selectedProfile.nombre_completo || '').trim(),
+            rfc: String(selectedProfile.rfc || '').trim().toUpperCase(),
+            phone: String(selectedProfile.telefono || '').trim(),
+            email: String(selectedProfile.correo || '').trim().toLowerCase()
+        };
+    }
+    return {
+        id: '',
+        name: String(document.getElementById('cli-name')?.value || '').trim(),
+        rfc: String(document.getElementById('cli-rfc')?.value || '').trim().toUpperCase(),
+        phone: String(document.getElementById('cli-phone')?.value || '').trim(),
+        email: String(document.getElementById('cli-email')?.value || '').trim().toLowerCase()
+    };
+}
+
+function syncQuoteClientEntryMode() {
+    const validatedProfiles = getValidatedClientProfiles();
+    const hasValidatedProfiles = validatedProfiles.length > 0;
+    const quickMode = !hasValidatedProfiles || isQuickQuoteModeEnabled();
+    const selectEl = document.getElementById('cli-select');
+    const hintEl = document.getElementById('cli-profile-hint');
+    const manualWrap = document.getElementById('cli-manual-fields');
+    const quickRow = document.getElementById('cli-quick-quote-row');
+    const quickCheckbox = document.getElementById('cli-quick-quote');
+
+    if (manualWrap) {
+        const selectedProfileId = String(selectEl?.value || document.getElementById('cli-id')?.value || '').trim();
+        const hideManualFields = !!selectedProfileId && !quickMode;
+        manualWrap.classList.toggle('hidden', hideManualFields);
+        manualWrap.style.display = hideManualFields ? 'none' : '';
+        manualWrap.setAttribute('aria-hidden', hideManualFields ? 'true' : 'false');
+    }
+    if (quickRow) quickRow.classList.toggle('hidden', !hasValidatedProfiles);
+    if (selectEl) {
+        selectEl.disabled = !hasValidatedProfiles;
+        selectEl.classList.toggle('opacity-60', selectEl.disabled);
+        selectEl.classList.toggle('cursor-not-allowed', selectEl.disabled);
+    }
+
+    if (hintEl) {
+        if (!hasValidatedProfiles) hintEl.textContent = 'No hay perfiles validados disponibles. Captura los datos y se creará un perfil pendiente automáticamente.';
+        else if (quickMode) hintEl.textContent = 'Cotización rápida activa: al generar se creará un perfil nuevo pendiente para completar su expediente después.';
+        else hintEl.textContent = 'Selecciona un perfil validado. Si el cliente aún no existe, activa cotización rápida.';
+    }
+
+    if (!hasValidatedProfiles && quickCheckbox) quickCheckbox.checked = false;
+}
+
+function bindQuoteClientFieldListeners() {
+    ['cli-name', 'cli-phone', 'cli-email', 'cli-rfc'].forEach((fieldId) => {
+        const field = document.getElementById(fieldId);
+        if (!field || field.dataset.quoteClientBound === '1') return;
+        field.dataset.quoteClientBound = '1';
+        field.addEventListener('input', () => {
+            const hiddenIdEl = document.getElementById('cli-id');
+            if (hiddenIdEl?.value) clearQuoteClientAssociation();
+        });
+    });
+}
+
+function bindQuoteClientModeToggle() {
+    const quickCheckbox = document.getElementById('cli-quick-quote');
+    if (!quickCheckbox || quickCheckbox.dataset.quoteQuickBound === '1') return;
+    quickCheckbox.dataset.quoteQuickBound = '1';
+    const syncMode = () => { window.toggleQuoteQuickClientMode(); };
+    quickCheckbox.addEventListener('change', syncMode);
+    quickCheckbox.addEventListener('input', syncMode);
+    quickCheckbox.addEventListener('click', () => {
+        window.setTimeout(syncMode, 0);
+    });
+}
+window.toggleQuoteQuickClientMode = function () {
+    const quickCheckbox = document.getElementById('cli-quick-quote');
+    if (!quickCheckbox) return;
+    if (quickCheckbox.checked) clearQuoteClientAssociation({ clearFields: true });
+    else clearQuoteClientFields();
+    syncQuoteClientEntryMode();
+};
+
+async function createQuickQuoteClientProfile(cli) {
+    const payload = {
+        tenant: PM_TENANT_SLUG,
+        nombre_completo: String(cli?.name || '').trim(),
+        telefono: String(cli?.phone || '').trim(),
+        correo: String(cli?.email || '').trim().toLowerCase() || null,
+        rfc: String(cli?.rfc || '').trim().toUpperCase() || null,
+        perfil_estatus: 'pendiente_expediente',
+        perfil_validado: false,
+        perfil_completo: false
+    };
+    const { data, error } = await window.tenantPocketBase.from('clientes').insert(payload);
+    if (error) throw error;
+    const created = Array.isArray(data) ? (data[0] || null) : (data || null);
+    const createdId = String(created?.id || '').trim();
+    if (!createdId) throw new Error('No se pudo crear el perfil rápido del cliente.');
+    clientProfiles.push(created || { ...payload, id: createdId });
+    clientProfilesById[createdId] = created || { ...payload, id: createdId };
+    const hiddenIdEl = document.getElementById('cli-id');
+    if (hiddenIdEl) hiddenIdEl.value = createdId;
+    return createdId;
+}
+
+async function resolveQuoteClientId(cli) {
+    const selectedProfile = getSelectedQuoteClientProfile();
+    if (selectedProfile) return String(selectedProfile.id || '').trim();
+    const hiddenIdEl = document.getElementById('cli-id');
+    const existingId = String(hiddenIdEl?.value || '').trim();
+    if (existingId) return existingId;
+    if (getValidatedClientProfiles().length > 0 && !isQuickQuoteModeEnabled()) {
+        throw new Error('Selecciona un perfil validado o activa cotización rápida.');
+    }
+    return createQuickQuoteClientProfile(cli);
+}
 
 async function loadClientProfilesForQuoteModal() {
     const sel = document.getElementById('cli-select');
@@ -19,46 +374,45 @@ async function loadClientProfilesForQuoteModal() {
     try {
         const { data, error } = await window.tenantPocketBase
             .from('clientes')
-            .select('id,nombre_completo,telefono,correo,rfc')
+            .select('id,nombre_completo,telefono,telefonos_adicionales,correo,rfc,perfil_validado,perfil_estatus,documentos_estado,expediente_validacion,constancia_fiscal_emitida_el,comprobante_domicilio_emitido_el,doc_acta_constitutiva,doc_ine,doc_comprobante_domicilio,doc_constancia_fiscal,created_at,created')
             .order('nombre_completo', { ascending: true });
 
         if (error) throw error;
 
-        clientProfiles = data || [];
+        clientProfiles = (data || []).slice().sort((a, b) => {
+            const aReady = isQuoteClientProfileReady(a) ? 1 : 0;
+            const bReady = isQuoteClientProfileReady(b) ? 1 : 0;
+            if (aReady !== bReady) return bReady - aReady;
+            return String(a?.nombre_completo || '').localeCompare(String(b?.nombre_completo || ''), 'es');
+        });
         clientProfilesById = {};
         clientProfiles.forEach(c => clientProfilesById[c.id] = c);
+        const validatedProfiles = getValidatedClientProfiles();
 
-        sel.innerHTML = '<option value="">— Capturar manualmente —</option>' + clientProfiles
-            .map(c => `<option value="${c.id}">${(c.nombre_completo || '').toUpperCase()}</option>`)
+        sel.innerHTML = '<option value="">' + (validatedProfiles.length ? '— Selecciona un perfil validado —' : '— Sin perfiles validados disponibles —') + '</option>' + validatedProfiles
+            .map(c => `<option value="${c.id}">${(c.nombre_completo || '').toUpperCase()} • LISTO</option>`)
             .join('');
 
         sel.onchange = () => {
             const id = sel.value;
+            const quickCheckbox = document.getElementById('cli-quick-quote');
             if (!id) {
                 if (hid) hid.value = '';
+                if (!isQuickQuoteModeEnabled()) clearQuoteClientFields();
+                syncQuoteClientEntryMode();
                 return;
             }
             const c = clientProfilesById[id];
             if (!c) return;
+            if (quickCheckbox?.checked) quickCheckbox.checked = false;
             if (hid) hid.value = id;
-            const n = document.getElementById('cli-name');
-            const p = document.getElementById('cli-phone');
-            const e = document.getElementById('cli-email');
-            const r = document.getElementById('cli-rfc');
-            if (n) n.value = c.nombre_completo || '';
-            if (p) p.value = (c.telefono || '');
-            if (e) e.value = (c.correo || '');
-            if (r) r.value = (c.rfc || '');
+            fillQuoteClientFields(c);
+            syncQuoteClientEntryMode();
         };
 
-        const clearAssoc = () => {
-            if (sel.value) sel.value = '';
-            if (hid) hid.value = '';
-        };
-        ['cli-name', 'cli-phone', 'cli-email', 'cli-rfc'].forEach(id => {
-            const el = document.getElementById(id);
-            if (el) el.addEventListener('input', clearAssoc);
-        });
+        bindQuoteClientFieldListeners();
+        bindQuoteClientModeToggle();
+        syncQuoteClientEntryMode();
     } catch (e) {
         console.warn("No se pudo cargar clientes", e);
     }
@@ -81,6 +435,89 @@ const PM_CONVENIOS_CFG_KEY = 'convenios_pm';
 const PM_CONVENIO_INDEFINITE_END = '2099-12-31';
 let allSpaces = [], dbTaxes = [], dbMaterials = [], dbLocations = [], pmConvenioCatalog = [], currentSpace = null, currentPricing = { base: 0, final: 0 };
 let myPermissions = { access: false, catalog_manage: false };
+const PM_REGULATION_TEMPLATE_PATH = 'templates_reglamentos';
+const PM_MANAGER_STORAGE_BUCKET = 'documentos';
+
+function paintPmManagerPlanoStatus(options = {}) {
+    const statusEl = document.getElementById('mgr-plano-current');
+    if (!statusEl) return;
+    if (Object.prototype.hasOwnProperty.call(options, 'fileName')) statusEl.dataset.currentFileName = String(options.fileName || '');
+    if (Object.prototype.hasOwnProperty.call(options, 'url')) statusEl.dataset.currentUrl = String(options.url || '');
+    const currentFileName = String(statusEl.dataset.currentFileName || '').trim();
+    const currentUrl = String(statusEl.dataset.currentUrl || '').trim();
+    const clearRequested = String(document.getElementById('mgr-plano-clear')?.value || '0') === '1';
+    const selectedFile = document.getElementById('mgr-plano-file')?.files?.[0] || null;
+    statusEl.innerHTML = '';
+    if (selectedFile) {
+        statusEl.textContent = `Nuevo archivo: ${selectedFile.name}`;
+        return;
+    }
+    if (clearRequested) {
+        statusEl.textContent = 'Se eliminará al guardar.';
+        return;
+    }
+    if (currentUrl) {
+        const prefix = document.createElement('span');
+        prefix.textContent = 'Actual: ';
+        const link = document.createElement('a');
+        link.href = currentUrl;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.className = 'font-bold text-brand-red underline';
+        link.textContent = currentFileName || 'Ver archivo';
+        statusEl.appendChild(prefix);
+        statusEl.appendChild(link);
+        return;
+    }
+    statusEl.textContent = currentFileName ? `Actual: ${currentFileName}` : 'Sin archivo asignado.';
+}
+
+async function loadPmManagerRegulationTemplates(selectedFile = '') {
+    const select = document.getElementById('mgr-reglamento-template');
+    if (!select || !window.globalPocketBase?.storage) return;
+    select.innerHTML = '<option value="">Usar reglamento predeterminado</option>';
+    try {
+        const { data, error } = await window.globalPocketBase.storage.from(PM_MANAGER_STORAGE_BUCKET).list(PM_REGULATION_TEMPLATE_PATH);
+        if (error) throw error;
+        (Array.isArray(data) ? data : [])
+            .map((file) => ({ name: String(file?.name || '').trim() }))
+            .filter((file) => !!file.name)
+            .sort((a, b) => a.name.localeCompare(b.name, 'es'))
+            .forEach((file) => {
+                const opt = document.createElement('option');
+                opt.value = file.name;
+                opt.textContent = file.name;
+                select.appendChild(opt);
+            });
+    } catch (_) { }
+    select.value = Array.from(select.options).some((opt) => opt.value === selectedFile) ? selectedFile : '';
+}
+
+async function resetPmManagerContractAssets(space = null) {
+    const fileInput = document.getElementById('mgr-plano-file');
+    const clearInput = document.getElementById('mgr-plano-clear');
+    if (fileInput) fileInput.value = '';
+    if (clearInput) clearInput.value = '0';
+    await loadPmManagerRegulationTemplates(String(space?.reglamento_template || '').trim());
+    paintPmManagerPlanoStatus({
+        fileName: String(space?.plano_geografico_file || space?.plano_geografico || '').trim(),
+        url: String(space?.plano_geografico_url || '').trim()
+    });
+}
+
+window.handleManagerPlanoGeograficoChange = function () {
+    const clearInput = document.getElementById('mgr-plano-clear');
+    if (clearInput) clearInput.value = '0';
+    paintPmManagerPlanoStatus();
+};
+
+window.clearManagerPlanoGeografico = function () {
+    const fileInput = document.getElementById('mgr-plano-file');
+    const clearInput = document.getElementById('mgr-plano-clear');
+    if (fileInput) fileInput.value = '';
+    if (clearInput) clearInput.value = '1';
+    paintPmManagerPlanoStatus();
+};
 let pmQuoteSpaces = [];
 let pmActiveSpaceId = null;
 let pmQuoteDateCalendar = null;
@@ -662,15 +1099,22 @@ function syncManagerTypeFields(selectedType = '') {
     const materialField = document.getElementById('mgr-material-field');
     const locationField = document.getElementById('mgr-location-field');
     const measuresField = document.getElementById('mgr-measures-field');
+    const digitalToggleField = document.getElementById('mgr-digital-toggle-field');
+    const digitalDetailsField = document.getElementById('mgr-digital-media-field');
+    const digitalToggle = document.getElementById('mgr-digital-media');
     const attributesGrid = document.getElementById('mgr-attributes-grid');
     const showMaterial = isCatalogAdvertisingType(type);
     const showLocation = isCatalogLocalOrIslandType(type);
     const showMeasures = isCatalogTypeWithMeasures(type);
+    const isDigital = showMaterial && !!digitalToggle?.checked;
     if (materialField) materialField.classList.toggle('hidden', !showMaterial);
     if (locationField) locationField.classList.toggle('hidden', !showLocation);
-    if (measuresField) measuresField.classList.toggle('hidden', !showMeasures);
+    if (measuresField) measuresField.classList.toggle('hidden', !showMeasures || isDigital);
+    if (digitalToggleField) digitalToggleField.classList.toggle('hidden', !showMaterial);
+    if (digitalDetailsField) digitalDetailsField.classList.toggle('hidden', !isDigital);
     if (attributesGrid) attributesGrid.classList.toggle('hidden', !showMaterial && !showLocation && !showMeasures);
 }
+window.syncManagerTypeFields = syncManagerTypeFields;
 function normalizePmLocationLabel(value) {
     return String(value || '').trim().replace(/\s+/g, ' ');
 }
@@ -711,6 +1155,117 @@ function renderCatalogMeasureParts(space, options = {}) {
     const valueClass = options.valueClass || 'text-gray-800';
     return `<div class="${wrapperClass}">${parts.map((part) => `<span class="${chipClass}"><span class="${labelClass}">${part.label}</span><span class="${valueClass}">${part.value}</span></span>`).join('')}</div>`;
 }
+const PM_SPACE_DAYS = [
+    { key: 'lunes', short: 'L' },
+    { key: 'martes', short: 'M' },
+    { key: 'miercoles', short: 'X' },
+    { key: 'jueves', short: 'J' },
+    { key: 'viernes', short: 'V' },
+    { key: 'sabado', short: 'S' },
+    { key: 'domingo', short: 'D' }
+];
+function getCatalogSpaceB2bConfig(space) {
+    try {
+        const raw = space?.config_b2b;
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : (raw || {});
+        return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (_) {
+        return {};
+    }
+}
+function normalizeCatalogScheduleItems(value) {
+    if (Array.isArray(value)) return value.filter(item => item && item.start && item.end);
+    if (value && typeof value === 'object') {
+        const mapNames = { matutino: 'Matutino', vespertino: 'Vespertino', nocturno: 'Nocturno', todo_dia: 'Todo el día' };
+        return Object.keys(value)
+            .map(key => ({ nombre: mapNames[key] || key, start: value[key]?.start, end: value[key]?.end }))
+            .filter(item => item.start && item.end);
+    }
+    return [];
+}
+function formatCatalogSpaceSchedule(space) {
+    const schedules = normalizeCatalogScheduleItems(getCatalogSpaceB2bConfig(space).horarios);
+    if (!schedules.length) return 'Sin horarios';
+    return schedules.map(item => `${item.nombre || 'Horario'} ${item.start}-${item.end}`).join(' | ');
+}
+function getCatalogSpaceMaxCapacity(space) {
+    let rules = [];
+    try { rules = typeof space?.precios_por_dia === 'string' ? JSON.parse(space.precios_por_dia) : (space?.precios_por_dia || []); } catch (_) { rules = []; }
+    if (!Array.isArray(rules) || !rules.length) return 999999;
+    const finite = rules.map(rule => parseInt(rule?.max, 10)).filter(value => Number.isFinite(value) && value > 0 && value < 999999);
+    return finite.length ? Math.max(...finite) : 999999;
+}
+function formatCatalogSpaceCapacity(space) {
+    const max = getCatalogSpaceMaxCapacity(space);
+    return max >= 999999 ? 'Sin límite' : `${max} personas`;
+}
+function renderCatalogSpaceDaysStatus(space) {
+    const blocked = new Set(parseIds(space?.dias_bloqueados).map(day => normalizeCatalogSearchText(day)));
+    const chip = (day, blockedDay = false) => `<span class="inline-flex items-center justify-center w-5 h-5 rounded border text-[10px] font-black ${blockedDay ? 'border-red-200 bg-red-50 text-red-600' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}">${day.short}</span>`;
+    const availableDays = PM_SPACE_DAYS.filter(day => !blocked.has(day.key));
+    const blockedDays = PM_SPACE_DAYS.filter(day => blocked.has(day.key));
+    return `<div class="flex flex-col items-end gap-1">
+        <div class="flex flex-wrap items-center justify-end gap-1"><span class="text-[9px] font-black uppercase text-gray-400">Disp.</span>${availableDays.map(day => chip(day)).join('')}</div>
+        <div class="flex flex-wrap items-center justify-end gap-1"><span class="text-[9px] font-black uppercase text-gray-400">Bloq.</span>${blockedDays.length ? blockedDays.map(day => chip(day, true)).join('') : '<span class="text-[10px] font-black text-gray-400">--</span>'}</div>
+    </div>`;
+}
+function normalizePmDigitalMediaConfig(value = {}) {
+    const source = value && typeof value === 'object' ? value : {};
+    const enabled = !!(source.enabled ?? source.activo ?? source.es_digital);
+    const rawType = normalizeCatalogSearchText(source.media_type || source.tipo_medio || source.tipo || source.formato || 'imagen');
+    const durationValue = normalizeSpaceMeasureValue(source.duration_value ?? source.duracion_valor ?? source.duracion);
+    const unit = String(source.duration_unit || source.duracion_unidad || 'segundos').trim().toLowerCase();
+    const pixelWidth = normalizeSpaceMeasureValue(source.pixel_width ?? source.pixeles_ancho ?? source.ancho_px);
+    const pixelHeight = normalizeSpaceMeasureValue(source.pixel_height ?? source.pixeles_alto ?? source.alto_px);
+    return {
+        enabled,
+        media_type: rawType.includes('video') ? 'video' : 'imagen',
+        duration_value: durationValue,
+        duration_unit: unit === 'minutos' ? 'minutos' : 'segundos',
+        pixel_width: pixelWidth,
+        pixel_height: pixelHeight
+    };
+}
+function formatPmDigitalMediaType(value) {
+    return normalizePmDigitalMediaConfig(value).media_type === 'video' ? 'Video' : 'Imagen';
+}
+function formatPmDigitalMediaPixels(value) {
+    const cfg = normalizePmDigitalMediaConfig(value);
+    if (cfg.pixel_width === null || cfg.pixel_height === null) return 'Sin pixeles';
+    return `${trimCatalogMeasureNumber(cfg.pixel_width)} x ${trimCatalogMeasureNumber(cfg.pixel_height)} px`;
+}
+function formatPmDigitalMediaDuration(value) {
+    const cfg = normalizePmDigitalMediaConfig(value);
+    if (cfg.duration_value === null) return 'Sin duración';
+    return `${trimCatalogMeasureNumber(cfg.duration_value)} ${cfg.duration_unit}`;
+}
+function setPmDigitalMediaManagerValues(value) {
+    const cfg = normalizePmDigitalMediaConfig(value);
+    const enabled = document.getElementById('mgr-digital-media');
+    const mediaType = document.getElementById('mgr-digital-media-type');
+    const durationValue = document.getElementById('mgr-digital-duration-value');
+    const durationUnit = document.getElementById('mgr-digital-duration-unit');
+    const pixelWidth = document.getElementById('mgr-digital-pixel-width');
+    const pixelHeight = document.getElementById('mgr-digital-pixel-height');
+    if (enabled) enabled.checked = cfg.enabled;
+    if (mediaType) mediaType.value = cfg.media_type;
+    if (durationValue) durationValue.value = cfg.duration_value ?? '';
+    if (durationUnit) durationUnit.value = cfg.duration_unit;
+    if (pixelWidth) pixelWidth.value = cfg.pixel_width ?? '';
+    if (pixelHeight) pixelHeight.value = cfg.pixel_height ?? '';
+    syncManagerTypeFields();
+}
+function readPmDigitalMediaManagerValues() {
+    const enabled = !!document.getElementById('mgr-digital-media')?.checked;
+    return normalizePmDigitalMediaConfig({
+        enabled,
+        media_type: document.getElementById('mgr-digital-media-type')?.value,
+        duration_value: document.getElementById('mgr-digital-duration-value')?.value,
+        duration_unit: document.getElementById('mgr-digital-duration-unit')?.value,
+        pixel_width: document.getElementById('mgr-digital-pixel-width')?.value,
+        pixel_height: document.getElementById('mgr-digital-pixel-height')?.value
+    });
+}
 function getCatalogSpaceInfoRows(space, options = {}) {
     const rows = [];
     const includeType = options.includeType === true;
@@ -720,13 +1275,29 @@ function getCatalogSpaceInfoRows(space, options = {}) {
     const locationLabel = getSpaceLocationLabel(space);
     if (includeType) rows.push({ label: 'Tipo', value: space?.tipo || '--' });
     if (localLike && locationLabel) rows.push({ label: 'Ubicación', value: locationLabel });
-    if (advertising || localLike) rows.push({ label: 'Medidas', value: getCatalogSpaceMeasuresLabel(space) });
+    const b2b = advertising ? getCatalogSpaceB2bConfig(space) : {};
+    const digitalMedia = advertising ? normalizePmDigitalMediaConfig(b2b.digital_media || b2b.digitalMedia || b2b.medio_digital || {}) : null;
+    if (advertising && digitalMedia?.enabled) {
+        rows.push({ label: 'Formato', value: formatPmDigitalMediaType(digitalMedia) });
+        rows.push({ label: 'Pixeles', value: formatPmDigitalMediaPixels(digitalMedia) });
+        rows.push({ label: 'Duración', value: formatPmDigitalMediaDuration(digitalMedia) });
+    } else if (advertising || localLike) {
+        rows.push({ label: 'Medidas', value: getCatalogSpaceMeasuresLabel(space) });
+    }
+    if (localLike && !advertising) {
+        rows.push({ label: 'Horarios', value: formatCatalogSpaceSchedule(space) });
+        rows.push({ label: 'Personas', value: formatCatalogSpaceCapacity(space) });
+        rows.push({ label: 'Días', html: renderCatalogSpaceDaysStatus(space) });
+    }
     if (!localLike) rows.push({ label: 'Material', value: getSpaceMaterialLabel(space) });
     if (!advertising && !localLike) rows.push({ label: 'Impuestos', value: getSpaceTaxLabel(space) });
-    return rows.filter((row) => String(row?.value || '').trim());
+    return rows.filter((row) => row?.html || String(row?.value || '').trim());
 }
 function renderCatalogSpaceInfoRows(space, options = {}) {
     return getCatalogSpaceInfoRows(space, options).map((row) => {
+        if (row.html) {
+            return `<div class="flex justify-between items-start gap-3 rounded-lg bg-gray-50 border border-gray-100 px-3 py-2"><span class="font-black uppercase text-gray-400">${row.label}</span>${row.html}</div>`;
+        }
         const isMeasures = row.label === 'Medidas';
         const valueHtml = isMeasures
             ? renderCatalogMeasureParts(space)
@@ -736,6 +1307,7 @@ function renderCatalogSpaceInfoRows(space, options = {}) {
 }
 function renderCatalogPreviewBadges(space) {
     return getCatalogSpaceInfoRows(space).map((row) => {
+        if (row.html) return '';
         if (row.label === 'Medidas') {
             const parts = getCatalogSpaceMeasureParts(space);
             if (!parts.length) return `<span class="px-2 py-1 rounded-full bg-white/15 text-white font-bold">Medidas: Sin medidas</span>`;
@@ -767,6 +1339,11 @@ function normalizeCatalogAdjustmentType(value) {
     if (raw === 'porcentaje') return 'aumento';
     if (raw === 'aumento' || raw === 'descuento' || raw === 'monto_fijo') return raw;
     return 'ninguno';
+}
+const PM_MAX_DISCOUNT_PERCENT = 10;
+function normalizeCatalogAdjustmentPercent(type, value) {
+    const pct = Math.max(0, parseCatalogNumberInput(value, 0));
+    return normalizeCatalogAdjustmentType(type) === 'descuento' ? Math.min(pct, PM_MAX_DISCOUNT_PERCENT) : pct;
 }
 function parseCatalogNumberInput(value, fallback = 0) {
     const normalized = String(value ?? '').trim().replace(',', '.');
@@ -1064,7 +1641,7 @@ function buildSpacePrice(space, opts = {}) {
     let subtotal = hasCustom ? (parseFloat(opts.customBase) || 0) : (parseFloat(space.precio_base || 0) || 0);
     if (!hasCustom) {
         if (adjustmentType === 'aumento') subtotal += subtotal * ((parseFloat(space.ajuste_porcentaje || 0) || 0) / 100);
-        if (adjustmentType === 'descuento') subtotal -= subtotal * ((parseFloat(space.ajuste_porcentaje || 0) || 0) / 100);
+        if (adjustmentType === 'descuento') subtotal -= subtotal * (normalizeCatalogAdjustmentPercent(adjustmentType, space.ajuste_porcentaje) / 100);
     }
     const taxIds = parseIds(space.impuestos_ids || space.impuestos);
     let taxes = 0;
@@ -1211,7 +1788,7 @@ function calculateDayByDayTotal(space, startStr, endStr, guests, options = {}) {
         let price = parseFloat(space.precio_base || 0);
         const adjustmentType = normalizeCatalogAdjustmentType(space.ajuste_tipo);
         if (adjustmentType === 'aumento') price += price * ((parseFloat(space.ajuste_porcentaje || 0) || 0) / 100);
-        if (adjustmentType === 'descuento') price -= price * ((parseFloat(space.ajuste_porcentaje || 0) || 0) / 100);
+        if (adjustmentType === 'descuento') price -= price * (normalizeCatalogAdjustmentPercent(adjustmentType, space.ajuste_porcentaje) / 100);
 
         // Check for blocked days
         if (!options.ignoreBlocks && pmQuoteBlockedRanges.some(b => rangesOverlap(key, key, b.start, b.end))) {
@@ -1566,10 +2143,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     const profile = authCtx?.profile || await pmResolveCurrentUserProfile(session.user);
     const cachedRole = String(localStorage.getItem('hub_user_cache_role') || '').trim().toLowerCase();
     const userRole = String(profile?.role || profile?.rol || cachedRole).toLowerCase().trim();
-    const roleHasAccess = (userRole === 'admin') || (userRole === 'plaza_mayor') || (userRole === 'ambos');
+    const roleHasAccess = (userRole === 'admin') || (userRole === 'plaza_mayor') || (userRole === 'verificador');
     const roleDefaultPerms = { access: true, orders_view: true, reports_view: true, clients_view: true, clients_manage: true };
 
-    if (userRole === 'admin') myPermissions = { ...roleDefaultPerms, catalog_manage: true };
+    if (userRole === 'admin' || userRole === 'verificador') myPermissions = { ...roleDefaultPerms, catalog_manage: true };
     else if (roleHasAccess) myPermissions = { ...roleDefaultPerms, catalog_manage: false };
     else {
         const profilePerms = profile?.app_metadata?.finanzas?.permissions;
@@ -1762,8 +2339,9 @@ function renderSpaces(list) {
             badgeHTML = `<div class="absolute top-2 left-2 bg-green-500 text-white text-[10px] font-bold px-2 py-1 rounded shadow-md z-10 flex items-center gap-1"><i class="fa-solid fa-arrow-trend-up"></i> +${s.ajuste_porcentaje}%</div>`;
         }
         if (adjustmentType === 'descuento') {
-            adjustedBase -= s.precio_base * (s.ajuste_porcentaje / 100);
-            badgeHTML = `<div class="absolute top-2 left-2 bg-red-500 text-white text-[10px] font-bold px-2 py-1 rounded shadow-md z-10 flex items-center gap-1"><i class="fa-solid fa-tag"></i> -${s.ajuste_porcentaje}%</div>`;
+            const discountPct = normalizeCatalogAdjustmentPercent(adjustmentType, s.ajuste_porcentaje);
+            adjustedBase -= s.precio_base * (discountPct / 100);
+            badgeHTML = `<div class="absolute top-2 left-2 bg-red-500 text-white text-[10px] font-bold px-2 py-1 rounded shadow-md z-10 flex items-center gap-1"><i class="fa-solid fa-tag"></i> -${discountPct}%</div>`;
         }
 
         let totalTax = 0;
@@ -1820,6 +2398,9 @@ function renderSpaces(list) {
                 </div>
                     <div class="space-y-2 mb-4 text-[11px]">
                         ${quoteInfoRows.map((row) => {
+                            if (row.html) {
+                                return `<div class="flex justify-between items-start gap-2"><span class="text-gray-400 font-bold uppercase">${row.label}</span>${row.html}</div>`;
+                            }
                             if (row.label === 'Medidas') {
                                 return `<div class="flex justify-between items-start gap-2"><span class="text-gray-400 font-bold uppercase">Medidas</span>${renderCatalogMeasureParts(s, {
                                     wrapperClass: 'flex flex-wrap justify-end gap-1',
@@ -2099,12 +2680,13 @@ window.updateQuoteCalculation = function () {
 window.clearManagerImage = function (num) { const input = document.getElementById(`mgr-file-${num}`); if (input) input.value = ''; const img = document.getElementById(`mgr-preview-${num}`); if (img) { img.src = ''; img.classList.add('hidden'); img.setAttribute('data-modified', 'true'); } }
 
 
-window.openManagerModal = function (id) {
+window.openManagerModal = async function (id) {
     if (IS_PM_QUOTE_PAGE) return window.showToast("Esta vista es solo para cotizar.", "error");
     if (!myPermissions.catalog_manage) return window.showToast("No tienes permisos.", "error");
     pmCatalogSaveViewState({ selectedSpaceId: String(id || '').trim() });
     document.getElementById('mgr-id').value = id || '';
     const container = document.getElementById('mgr-taxes-list');
+    let managedSpace = null;
     if (container) {
         container.innerHTML = '';
         let currentTaxes = [];
@@ -2118,6 +2700,7 @@ window.openManagerModal = function (id) {
     if (id) {
         const s = getSpaceById(id);
         if (!s) return window.showToast("No se encontro el espacio para editar.", "error");
+        managedSpace = s;
         document.getElementById('mgr-title').innerText = "Editar: " + s.nombre;
         document.getElementById('mgr-key').value = s.clave; document.getElementById('mgr-key').disabled = true;
         document.getElementById('mgr-name').value = s.nombre; document.getElementById('mgr-type').value = normalizePmManagerTypeSelection(s.tipo);
@@ -2144,6 +2727,9 @@ window.openManagerModal = function (id) {
         document.getElementById('mgr-active').checked = s.activa !== false;
         const convenioToggle = document.getElementById('mgr-allow-convenio');
         if (convenioToggle) convenioToggle.checked = pmSpaceAllowsConvenio(s);
+        let b2b = {};
+        try { b2b = typeof s.config_b2b === 'string' ? JSON.parse(s.config_b2b) : (s.config_b2b || {}); } catch (_) { b2b = {}; }
+        setPmDigitalMediaManagerValues(b2b.digital_media || b2b.digitalMedia || b2b.medio_digital || null);
 
         let allUrls = []; try { if (s.imagen_url && typeof s.imagen_url === 'string' && s.imagen_url.startsWith('[')) allUrls = JSON.parse(s.imagen_url); else if (s.imagen_url) allUrls = [s.imagen_url]; } catch (e) { }
         for (let i = 1; i <= 5; i++) {
@@ -2165,6 +2751,7 @@ window.openManagerModal = function (id) {
         document.getElementById('mgr-desc').value = ''; document.getElementById('mgr-active').checked = true;
         const convenioToggle = document.getElementById('mgr-allow-convenio');
         if (convenioToggle) convenioToggle.checked = true;
+        setPmDigitalMediaManagerValues(null);
         for (let i = 1; i <= 5; i++) {
             const mgrPrev = document.getElementById(`mgr-preview-${i}`); if (mgrPrev) { mgrPrev.src = ''; mgrPrev.classList.add('hidden'); mgrPrev.removeAttribute('data-modified'); }
             const fi = document.getElementById(`mgr-file-${i}`); if (fi) fi.value = '';
@@ -2172,6 +2759,7 @@ window.openManagerModal = function (id) {
         document.getElementById('btn-delete-mgr').classList.add('hidden');
         syncManagerTypeFields('espacio');
     }
+    await resetPmManagerContractAssets(managedSpace);
     window.openModal('manager-modal');
 }
 
@@ -2190,6 +2778,9 @@ window.saveSpace = async function () {
     const allowsConvenio = !!document.getElementById('mgr-allow-convenio')?.checked;
     if (!clave) return window.showToast('La clave es obligatoria.', 'error');
     if (!nombre) return window.showToast('El nombre es obligatorio.', 'error');
+    if (ajusteTipo === 'descuento' && ajustePorcentaje > PM_MAX_DISCOUNT_PERCENT) {
+        return window.showToast('El descuento máximo permitido es 10%.', 'error');
+    }
     const selectedTaxes = Array.from(document.querySelectorAll('.tax-check:checked'))
         .map(cb => String(cb.value || '').trim())
         .filter(Boolean);
@@ -2198,9 +2789,11 @@ window.saveSpace = async function () {
     const rawTags = document.getElementById('mgr-tags').value || '';
     const selectedType = normalizePmManagerTypeSelection(document.getElementById('mgr-type').value || '');
     const allowsMaterial = isCatalogAdvertisingType(selectedType);
-    const allowsMeasures = isCatalogTypeWithMeasures(selectedType);
+    const digitalMedia = readPmDigitalMediaManagerValues();
+    const allowsMeasures = isCatalogTypeWithMeasures(selectedType) && !(allowsMaterial && digitalMedia.enabled);
     const material = allowsMaterial ? (document.getElementById('mgr-material').value || '') : '';
     const location = isCatalogLocalOrIslandType(selectedType) ? (document.getElementById('mgr-location').value || '') : '';
+    const regulationTemplate = String(document.getElementById('mgr-reglamento-template')?.value || '').trim();
     const tagsArray = syncPmTagsWithSelections(rawTags.split(',').map(t => t.trim()).filter(Boolean), material, location);
     const medidaAncho = allowsMeasures ? normalizeSpaceMeasureValue(document.getElementById('mgr-ancho').value) : null;
     const medidaAlto = allowsMeasures ? normalizeSpaceMeasureValue(document.getElementById('mgr-alto').value) : null;
@@ -2208,6 +2801,9 @@ window.saveSpace = async function () {
     document.getElementById('mgr-tags').value = tagsArray.join(', ');
     document.getElementById('mgr-material').value = material;
     document.getElementById('mgr-location').value = normalizePmLocationLabel(location);
+    const existingSpace = id ? getSpaceById(id) : null;
+    let existingB2b = {};
+    try { existingB2b = typeof existingSpace?.config_b2b === 'string' ? JSON.parse(existingSpace.config_b2b) : (existingSpace?.config_b2b || {}); } catch (_) { existingB2b = {}; }
 
     const payload = {
         clave,
@@ -2226,8 +2822,12 @@ window.saveSpace = async function () {
         activo: isActive,
         activa: isActive,
         permite_convenio: allowsConvenio,
-        impuestos_ids: selectedTaxes
+        impuestos_ids: selectedTaxes,
+        reglamento_template: regulationTemplate
     };
+    if (isCatalogAdvertisingType(selectedType)) {
+        payload.config_b2b = { ...existingB2b, digital_media: digitalMedia };
+    }
 
     const buildFormData = (payloadToSave) => {
         const fd = new FormData();
@@ -2249,6 +2849,13 @@ window.saveSpace = async function () {
                 fd.append(fieldName, ''); // Clear existing file
             }
         }
+        const planoInput = document.getElementById('mgr-plano-file');
+        const clearPlano = String(document.getElementById('mgr-plano-clear')?.value || '0') === '1';
+        if (planoInput && planoInput.files && planoInput.files.length > 0) {
+            fd.append('plano_geografico', planoInput.files[0], planoInput.files[0].name || 'plano');
+        } else if (clearPlano) {
+            fd.append('plano_geografico', '');
+        }
         return fd;
     };
     const persistSpacePayload = async (payloadToSave) => {
@@ -2265,7 +2872,12 @@ window.saveSpace = async function () {
     try {
         const savedSpace = await persistSpacePayload(payload);
         const preservedViewState = pmCatalogSaveViewState({ selectedSpaceId: String(savedSpace?.id || id || '').trim() });
-        for (let i = 1; i <= 5; i++) { const fi = document.getElementById(`mgr-file-${i}`); if (fi) fi.value = ''; } window.showToast("Guardado", "success"); window.closeModal('manager-modal'); await loadCatalog(preservedViewState);
+        for (let i = 1; i <= 5; i++) { const fi = document.getElementById(`mgr-file-${i}`); if (fi) fi.value = ''; }
+        const planoInput = document.getElementById('mgr-plano-file');
+        const planoClear = document.getElementById('mgr-plano-clear');
+        if (planoInput) planoInput.value = '';
+        if (planoClear) planoClear.value = '0';
+        window.showToast("Guardado", "success"); window.closeModal('manager-modal'); await loadCatalog(preservedViewState);
     } catch (e) {
         console.error(e);
         window.showToast("Error al guardar: " + e.message, "error");
@@ -2308,6 +2920,7 @@ window.toggleQuoteSpaceCard = function (spaceId) {
         document.getElementById('cli-email').value = '';
         const cliSel = document.getElementById('cli-select'); if (cliSel) cliSel.value = '';
         const cliId = document.getElementById('cli-id'); if (cliId) cliId.value = '';
+        const quickQuote = document.getElementById('cli-quick-quote'); if (quickQuote) quickQuote.checked = false;
         const quoteName = document.getElementById('q-quote-name'); if (quoteName) quoteName.value = '';
         loadClientProfilesForQuoteModal();
     }
@@ -2373,6 +2986,7 @@ window.openQuoteModal = function (id) {
     document.getElementById('cli-name').value = ''; document.getElementById('cli-rfc').value = ''; document.getElementById('cli-phone').value = ''; document.getElementById('cli-email').value = '';
     const cliSel = document.getElementById('cli-select'); if (cliSel) cliSel.value = '';
     const cliId = document.getElementById('cli-id'); if (cliId) cliId.value = '';
+    const quickQuote = document.getElementById('cli-quick-quote'); if (quickQuote) quickQuote.checked = false;
     loadClientProfilesForQuoteModal();
     const avail = document.getElementById('avail-msg'); if (avail) avail.classList.add('hidden');
     const btnGenerate = document.getElementById('btn-generate'); if (btnGenerate) btnGenerate.disabled = true;
@@ -2385,13 +2999,22 @@ window.generatePDF = async function () {
     const availabilityOk = await window.checkAvailability();
     if (!availabilityOk) return window.showToast("Hay espacios con conflicto de fechas o datos incompletos.", "error");
 
-    const cli = { name: document.getElementById('cli-name').value, rfc: document.getElementById('cli-rfc').value, phone: document.getElementById('cli-phone').value.trim(), email: document.getElementById('cli-email').value.trim() };
+    if (getValidatedClientProfiles().length > 0 && !isQuickQuoteModeEnabled() && !String(document.getElementById('cli-id')?.value || '').trim()) {
+        return window.showToast('Selecciona un perfil validado o activa cotización rápida.', 'error');
+    }
+    const cli = buildQuoteClientSnapshot();
     if (!cli.name) return window.showToast("Falta nombre del cliente", "error");
 
     const phoneRegex = /^\d{10}$/;
     if (!phoneRegex.test(cli.phone)) return window.showToast("El teléfono debe tener 10 dígitos numéricos.", "error");
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(cli.email)) return window.showToast("El correo electrónico no es válido.", "error");
+    let quoteClientId = '';
+    try {
+        quoteClientId = await resolveQuoteClientId(cli);
+    } catch (error) {
+        return window.showToast(error?.message || 'No se pudo preparar el perfil del cliente.', 'error');
+    }
 
     let spaces = [];
     if (isQuoteWorkspacePage()) {
@@ -2459,6 +3082,8 @@ window.generatePDF = async function () {
         const medidaAncho = fullSpace.medida_ancho ?? fullSpace.ancho ?? null;
         const medidaAlto = fullSpace.medida_alto ?? fullSpace.alto ?? null;
         const medidaUnidad = fullSpace.medida_unidad || fullSpace.unidad_medida || 'M';
+        const b2b = getCatalogSpaceB2bConfig(fullSpace);
+        const digitalMedia = normalizePmDigitalMediaConfig(b2b.digital_media || b2b.digitalMedia || b2b.medio_digital || {});
         const convenioItems = buildQuoteConvenioPayloadItems({ concepts: sp.concepts });
         return {
             espacio_id: sp.spaceId,
@@ -2485,6 +3110,8 @@ window.generatePDF = async function () {
             convenio_items: convenioItems,
             // Nuevos campos para PDF
             material: fullSpace.material || null,
+            digital_media: digitalMedia,
+            tipo_medio: digitalMedia.enabled ? digitalMedia.media_type : null,
             ubicacion: normalizePmLocationLabel(fullSpace.ubicacion || '') || null,
             medida_ancho: medidaAncho,
             medida_alto: medidaAlto,
@@ -2497,7 +3124,7 @@ window.generatePDF = async function () {
     });
     const audit = await pmResolveQuoteActorAudit();
     const payload = {
-        cliente_id: (document.getElementById('cli-id') ? (document.getElementById('cli-id').value || null) : null),
+        cliente_id: quoteClientId || null,
         nombre_cotizacion: quoteName,
         espacio_id: first.spaceId,
         espacio_nombre: spaces.length === 1 ? first.spaceName : `${first.spaceName} + ${spaces.length - 1} espacio(s)`,

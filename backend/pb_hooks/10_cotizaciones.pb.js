@@ -169,6 +169,249 @@
     record.set("orden_compra_file", []);
   }
 
+  function normalizePhone(v) {
+    var digits = String(v || "").replace(/\D+/g, "").slice(-10);
+    return digits.length === 10 ? digits : "";
+  }
+
+  function normalizeEmail(v) {
+    var value = sanitizeText(v, 255).toLowerCase();
+    if (!value) return "";
+    return /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]{2,}$/.test(value) ? value : "";
+  }
+
+  function parseMoney(value) {
+    if (typeof value === "number") return isNaN(value) ? NaN : value;
+    if (typeof value === "string") {
+      var raw = value.replace(/,/g, "").trim();
+      if (!raw) return NaN;
+      var parsed = parseFloat(raw);
+      return isNaN(parsed) ? NaN : parsed;
+    }
+    if (value === null || value === undefined) return NaN;
+    var numeric = parseFloat(String(value || "").replace(/,/g, "").trim());
+    return isNaN(numeric) ? NaN : numeric;
+  }
+
+  function safeMoney(value, fallback) {
+    var parsed = parseMoney(value);
+    if (!isNaN(parsed) && isFinite(parsed)) return parsed;
+    return typeof fallback === "number" ? fallback : 0;
+  }
+
+  function hasRecordValue(value) {
+    if (Array.isArray(value)) return value.filter(Boolean).length > 0;
+    if (value && typeof value === "object") return true;
+    return sanitizeText(value, 500) !== "";
+  }
+
+  function loadClientRecord(clientId) {
+    var safeId = sanitizeText(clientId, 64).replace(/[^a-zA-Z0-9]/g, "");
+    if (!safeId) return null;
+    try {
+      return $app.findRecordById("clientes", safeId);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function syncQuoteClientSnapshot(record) {
+    var clientRecord = loadClientRecord(record.getString("cliente_id"));
+    if (!clientRecord) return;
+
+    var tenant = sanitizeText(record.getString("tenant"), 40).toLowerCase();
+    var clientTenant = sanitizeText(clientRecord.getString("tenant"), 40).toLowerCase();
+    if (tenant && clientTenant && tenant !== clientTenant) {
+      throw new BadRequestError("El perfil del cliente no pertenece al tenant de esta cotización.");
+    }
+
+    var clientName = sanitizeText(clientRecord.getString("nombre_completo"), 255);
+    var clientRfc = sanitizeText(clientRecord.getString("rfc"), 40).toUpperCase();
+    var clientPhone = normalizePhone(clientRecord.getString("telefono"));
+    var clientEmail = normalizeEmail(clientRecord.getString("correo"));
+
+    if (clientName) record.set("cliente_nombre", clientName);
+    if (clientRfc) record.set("cliente_rfc", clientRfc);
+    if (clientPhone) {
+      record.set("cliente_telefono", clientPhone);
+      if (!sanitizeText(record.getString("cliente_contacto"), 80)) {
+        record.set("cliente_contacto", clientPhone);
+      }
+    }
+    if (clientEmail) record.set("cliente_email", clientEmail);
+
+    var datosFiscales = safeObject(record.get("datos_fiscales"));
+    if (clientRfc) datosFiscales.rfc_receptor = clientRfc;
+    if (clientName) datosFiscales.razon_social_receptor = clientName;
+    if (clientEmail) datosFiscales.correo_receptor = clientEmail;
+    record.set("datos_fiscales", datosFiscales);
+  }
+
+  function clientHasSavedDictamen(clientId, tenant) {
+    var safeId = sanitizeText(clientId, 64).replace(/[^a-zA-Z0-9]/g, "");
+    var safeTenant = sanitizeText(tenant, 40).toLowerCase();
+    if (!safeId || (safeTenant !== "plaza_mayor" && safeTenant !== "casa_de_piedra")) return false;
+    try {
+      var records = $app.findRecordsByFilter(
+        "clientes_dictamenes",
+        "cliente = '" + safeId + "' && tenant = '" + safeTenant + "'",
+        "-created",
+        1,
+        0
+      ) || [];
+      for (var i = 0; i < records.length; i += 1) {
+        if (hasRecordValue(records[i].get("pdf"))) return true;
+      }
+    } catch (_) { }
+    return false;
+  }
+
+  function ensureClientReadyForContract(record) {
+    var clientId = sanitizeText(record.getString("cliente_id"), 64).replace(/[^a-zA-Z0-9]/g, "");
+    if (!clientId) {
+      throw new BadRequestError("Para generar contrato debes seleccionar un perfil de cliente validado.");
+    }
+    var clientRecord = loadClientRecord(clientId);
+    if (!clientRecord) {
+      throw new BadRequestError("No se encontro el perfil de cliente asociado al contrato.");
+    }
+    var tenant = sanitizeText(record.getString("tenant"), 40).toLowerCase();
+    var clientTenant = sanitizeText(clientRecord.getString("tenant"), 40).toLowerCase();
+    if (tenant && clientTenant && tenant !== clientTenant) {
+      throw new BadRequestError("El perfil del cliente no pertenece al tenant de esta cotización.");
+    }
+    var validation = safeObject(clientRecord.get("expediente_validacion"));
+    var readyForQuotes =
+      isTruthyReadyFlag(clientRecord.get("perfil_validado")) ||
+      isTruthyReadyFlag(validation.readyForQuotes) ||
+      isTruthyReadyFlag(validation.ready) ||
+      isTruthyReadyFlag(validation.puedeCotizar) ||
+      isTruthyReadyFlag(validation.quoteApproved) ||
+      isTruthyReadyFlag(validation.quoteReady) ||
+      isTruthyReadyFlag(validation.readyForContracts) ||
+      isReadyStatusValue(clientRecord.getString("perfil_estatus")) ||
+      isReadyStatusValue(validation.status);
+    if (!readyForQuotes) {
+      throw new BadRequestError("El expediente del cliente debe estar completo, vigente y aprobado antes de generar contrato.");
+    }
+    if (!clientHasSavedDictamen(clientId, clientTenant || tenant)) {
+      throw new BadRequestError("Para generar contrato necesitas un dictamen aprobado o guardado del cliente.");
+    }
+  }
+
+  function comparableValue(record, field) {
+    if (!record) return "";
+    var value = record.get(field);
+    if (value === null || value === undefined) return "";
+    if (Array.isArray(value)) return JSON.stringify(value.filter(Boolean));
+    if (value && typeof value === "object") return JSON.stringify(value);
+    return String(value || "");
+  }
+
+  function contractFieldsTouched(record, original) {
+    var fields = ["numero_contrato", "contrato_url", "contrato_file"];
+    for (var i = 0; i < fields.length; i += 1) {
+      var field = fields[i];
+      if (!hasRecordValue(record.get(field))) continue;
+      if (!original || comparableValue(record, field) !== comparableValue(original, field)) return true;
+    }
+    return false;
+  }
+
+  function isTruthyReadyFlag(value) {
+    if (value === true || value === 1) return true;
+    var normalized = sanitizeText(value, 40).toLowerCase();
+    return normalized === "true" ||
+      normalized === "1" ||
+      normalized === "si" ||
+      normalized === "sí" ||
+      normalized === "yes" ||
+      normalized === "aprobado" ||
+      normalized === "aprobada" ||
+      normalized === "validado" ||
+      normalized === "validada" ||
+      normalized === "listo" ||
+      normalized === "lista";
+  }
+
+  function isReadyStatusValue(value) {
+    var normalized = sanitizeText(value, 80).toLowerCase();
+    return normalized === "validado" ||
+      normalized === "validada" ||
+      normalized === "aprobado" ||
+      normalized === "aprobada" ||
+      normalized === "listo" ||
+      normalized === "lista" ||
+      normalized === "listo_para_cotizar" ||
+      normalized === "lista_para_cotizar";
+  }
+
+  function normalizeDiscountType(value) {
+    var raw = sanitizeText(value, 40).toLowerCase();
+    if (raw === "descuento" || raw === "discount") return "descuento";
+    if (raw === "porcentaje" || raw === "percent" || raw === "percentage") return "porcentaje";
+    if (raw === "monto_fijo" || raw === "fixed" || raw === "fijo") return "monto_fijo";
+    return raw || "ninguno";
+  }
+
+  function getQuoteDiscountBase(record) {
+    var breakdown = safeObject(record.get("desglose_precios"));
+    var candidates = [
+      breakdown.subtotal_antes_impuestos,
+      breakdown.auto_calculado,
+      breakdown.precio_final_usado,
+      record.get("precio_final")
+    ];
+    for (var i = 0; i < candidates.length; i += 1) {
+      var value = safeMoney(candidates[i], -1);
+      if (value > 0) return value;
+    }
+    return 0;
+  }
+
+  function enforceQuoteDiscountLimit(record) {
+    var maxPercent = 10;
+    var base = getQuoteDiscountBase(record);
+    var maxFixed = base * (maxPercent / 100);
+    var totalFixedDiscount = 0;
+    var topType = normalizeDiscountType(record.getString("tipo_ajuste"));
+    var topValue = Math.max(0, safeMoney(record.get("valor_ajuste"), 0));
+    if (topType === "descuento" && topValue > 0) {
+      if (record.get("ajuste_es_porcentaje") === true) {
+        if (topValue > maxPercent) {
+          throw new BadRequestError("El descuento maximo permitido es 10%.");
+        }
+        totalFixedDiscount += base * (topValue / 100);
+      } else {
+        totalFixedDiscount += topValue;
+      }
+    }
+
+    var concepts = safeArray(record.get("conceptos_adicionales"));
+    for (var i = 0; i < concepts.length; i += 1) {
+      var concept = safeObject(concepts[i]);
+      var conceptType = normalizeDiscountType(concept.type || concept.tipo || concept.kind);
+      if (conceptType !== "descuento") continue;
+      var amount = Math.max(0, safeMoney(concept.amount !== undefined ? concept.amount : concept.value, 0));
+      var unit = normalizeDiscountType(concept.unit || concept.unidad || "");
+      if (unit === "porcentaje") {
+        if (amount > maxPercent) {
+          throw new BadRequestError("El descuento maximo permitido es 10%.");
+        }
+        totalFixedDiscount += base * (amount / 100);
+      } else {
+        totalFixedDiscount += amount;
+      }
+    }
+
+    if (base <= 0 && totalFixedDiscount > 0.01) {
+      throw new BadRequestError("No se puede aplicar descuento sin una base de cotización válida.");
+    }
+    if (base > 0 && totalFixedDiscount > maxFixed + 0.01) {
+      throw new BadRequestError("El descuento total no puede superar el 10% de la cotización.");
+    }
+  }
+
   function getPublicThrottleStore() {
     if (!globalThis.__COTIZADOR_PUBLIC_QUOTE_THROTTLE__) {
       globalThis.__COTIZADOR_PUBLIC_QUOTE_THROTTLE__ = {};
@@ -620,7 +863,10 @@
       }
     }
 
+    syncQuoteClientSnapshot(e.record);
     ensureQuoteFinancials(e.record);
+    enforceQuoteDiscountLimit(e.record);
+    if (contractFieldsTouched(e.record, null)) ensureClientReadyForContract(e.record);
 
     e.next();
   }, "cotizaciones");
@@ -636,6 +882,10 @@
     if (e.hasSuperuserAuth && e.hasSuperuserAuth()) {
       return e.next();
     }
+    var original = e && e.record && typeof e.record.originalCopy === "function" ? e.record.originalCopy() : null;
+    syncQuoteClientSnapshot(e.record);
+    enforceQuoteDiscountLimit(e.record);
+    if (contractFieldsTouched(e.record, original)) ensureClientReadyForContract(e.record);
     e.next();
   }, "cotizaciones");
 

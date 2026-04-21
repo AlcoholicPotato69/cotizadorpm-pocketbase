@@ -308,7 +308,7 @@ async function initClients() {
 
 function resolvePermissions(profile) {
     const role = String(profile?.role || '').toLowerCase().trim();
-    const roleHasAccess = role === 'admin' || role === 'casa_de_piedra' || role === 'ambos';
+    const roleHasAccess = role === 'admin' || role === 'casa_de_piedra';
     if (role === 'admin' || roleHasAccess) return { access: true, orders_edit: true };
     return {
         access: !!profile?.app_metadata?.finanzas?.permissions?.access,

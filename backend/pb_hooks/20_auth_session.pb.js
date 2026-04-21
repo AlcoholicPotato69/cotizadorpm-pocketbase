@@ -191,9 +191,9 @@
         })
         .filter(Boolean);
 
-      const role = String(record?.getString("role") || "user").trim().toLowerCase();
+      const role = String(record?.getString("role") || "").trim().toLowerCase();
       if (!list.length) {
-        if (role === "admin") list = ["plaza_mayor", "casa_de_piedra"];
+        if (role === "admin" || role === "verificador") list = ["plaza_mayor", "casa_de_piedra"];
         else if (role === "plaza_mayor" || role === "casa_de_piedra") list = [role];
       }
       return list;
@@ -211,7 +211,7 @@
             (email ? email.split("@")[0] : "") ||
             ""
         ).trim(),
-        role: String(record.getString("role") || "user").trim().toLowerCase() || "user",
+        role: String(record.getString("role") || "").trim().toLowerCase() || "",
         allowed_tenants: normalizeAllowedTenants(record),
         tenant_default: record.get("tenant_default") || null,
         default_tenant: record.get("tenant_default") || null
@@ -359,9 +359,9 @@
         })
         .filter(Boolean);
 
-      const role = String(record?.getString("role") || "user").trim().toLowerCase();
+      const role = String(record?.getString("role") || "").trim().toLowerCase();
       if (!list.length) {
-        if (role === "admin") list = ["plaza_mayor", "casa_de_piedra"];
+        if (role === "admin" || role === "verificador") list = ["plaza_mayor", "casa_de_piedra"];
         else if (role === "plaza_mayor" || role === "casa_de_piedra") list = [role];
       }
       return list;
@@ -379,7 +379,7 @@
             (email ? email.split("@")[0] : "") ||
             ""
         ).trim(),
-        role: String(record.getString("role") || "user").trim().toLowerCase() || "user",
+        role: String(record.getString("role") || "").trim().toLowerCase() || "",
         allowed_tenants: normalizeAllowedTenants(record),
         tenant_default: record.get("tenant_default") || null,
         default_tenant: record.get("tenant_default") || null
@@ -505,9 +505,9 @@
         })
         .filter(Boolean);
 
-      const role = String(record?.getString("role") || "user").trim().toLowerCase();
+      const role = String(record?.getString("role") || "").trim().toLowerCase();
       if (!list.length) {
-        if (role === "admin") list = ["plaza_mayor", "casa_de_piedra"];
+        if (role === "admin" || role === "verificador") list = ["plaza_mayor", "casa_de_piedra"];
         else if (role === "plaza_mayor" || role === "casa_de_piedra") list = [role];
       }
       return list;
@@ -525,7 +525,7 @@
             (email ? email.split("@")[0] : "") ||
             ""
         ).trim(),
-        role: String(record.getString("role") || "user").trim().toLowerCase() || "user",
+        role: String(record.getString("role") || "").trim().toLowerCase() || "",
         allowed_tenants: normalizeAllowedTenants(record),
         tenant_default: record.get("tenant_default") || null,
         default_tenant: record.get("tenant_default") || null

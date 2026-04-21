@@ -608,9 +608,12 @@ function __contractsWrapLetterheadPage(innerHtml, options = {}) {
 // Aislar plantillas por tenant: Casa de Piedra usa su propio bucket
 const TEMPLATE_BUCKET = 'documentos-cp';
 const TEMPLATE_PATH = 'templates_contratos';
+const REGULATION_TEMPLATE_PATH = 'templates_reglamentos';
 const LETTERHEAD_PATH = 'membretes_pdf';
 const CFG_TEMPLATE_DEFAULT_KEY = 'contract_template_default';
+const CFG_REGULATION_TEMPLATE_DEFAULT_KEY = 'reglamento_template_default';
 const CFG_LETTERHEAD_KEY = 'pdf_letterhead_path';
+const PDFJS_WORKER_PATH = '../../assets/libs/js/pdf.worker.min.js';
 const __CP_CONTRACT_TEMPLATE_LETTERHEAD_STORAGE_KEY = 'cp_contract_template_letterhead_enabled';
 let __contractsActiveTemplateFile = '';
 let __contractsTemplateTextPositions = {};
@@ -637,6 +640,7 @@ const CP_CONTRACTS_VIEW_STATE_SCOPE = `cp_contracts:${__CP_CONTRACTS_PAGE_MODE |
 let currentRemainingBalance = 0;
 let pendingAction = null;
 let defaultTemplateFile = '';
+let defaultRegulationTemplateFile = '';
 let __contractsTemplateLetterheadEnabled = true;
 
 function cpContractsParseJson(value) {
@@ -910,6 +914,7 @@ let __contractsPdfStyleUiState = { collapsed: false, pinned: false };
 let __contractsPdfStyleActiveProfile = 'receipt';
 let __contractsPdfResourceSelectedId = '';
 let __contractsPdfResourcePointerState = null;
+let __contractsPdfResourceClipboard = null;
 let __contractsPdfMarginGuideController = null;
 let __contractsReceiptEditLocked = true;
 let __contractsReceiptInspectorState = null;
@@ -1036,6 +1041,38 @@ function __contractsResolveResourceTemplate(value, context = {}) {
     return output;
 }
 
+function __contractsResolveTemplateActorName() {
+    const candidates = [
+        window.currentUserProfile?.login_username,
+        window.currentUserProfile?.record?.login_username,
+        window.currentUserProfile?.profile?.login_username,
+        window.currentUserProfile?.Usernames,
+        window.currentUserProfile?.username,
+        window.currentUserProfile?.record?.username,
+        window.currentUserProfile?.profile?.username,
+        window.currentUserProfile?.full_name,
+        window.currentUserProfile?.name,
+        window.currentUserProfile?.record?.full_name,
+        window.currentUserProfile?.record?.name,
+        window.currentUserProfile?.profile?.full_name,
+        window.currentUserProfile?.profile?.name,
+        window.currentUserProfile?.email ? String(window.currentUserProfile.email).split('@')[0] : '',
+        window.currentUserProfile?.record?.email ? String(window.currentUserProfile.record.email).split('@')[0] : ''
+    ];
+    const resolved = candidates.map((value) => String(value || '').trim()).find(Boolean);
+    return resolved || 'Usuario';
+}
+
+function __contractsResolveTemplateActorEmail() {
+    const candidates = [
+        window.currentUserProfile?.email,
+        window.currentUserProfile?.record?.email,
+        window.currentUserProfile?.profile?.email,
+        window.currentUserProfile?.user?.email
+    ];
+    return candidates.map((value) => String(value || '').trim()).find(Boolean) || '';
+}
+
 function __contractsBuildReceiptResourceContext({ isLiquidated, dateStr, timeStr, pdfContent, signLabels } = {}) {
     const content = __contractsNormalizePdfContent(pdfContent || {});
     const labels = __contractsNormalizePdfSignLabels(signLabels || {});
@@ -1059,7 +1096,9 @@ function __contractsBuildReceiptResourceContext({ isLiquidated, dateStr, timeStr
             SIGN_RIGHT_NAME: liquidatedMode ? String(labels.liquidatedRightName || '') : String(labels.receiptRightName || ''),
             SIGN_RIGHT_ROLE: liquidatedMode ? String(labels.liquidatedRightRole || '') : String(labels.receiptRightRole || ''),
             SIGN_CLIENT_NAME: clientName || String(labels.clientName || ''),
-            SIGN_CLIENT_ROLE: clientRole
+            SIGN_CLIENT_ROLE: clientRole,
+            CURRENT_USER_NAME: __contractsResolveTemplateActorName(),
+            CURRENT_USER_EMAIL: __contractsResolveTemplateActorEmail()
         }
     };
 }
@@ -1078,18 +1117,126 @@ const __CP_CONTRACTS_PDF_TEMPLATE_TOKENS = Object.freeze([
     { token: 'SIGN_RIGHT_NAME', label: 'Firma derecha: nombre' },
     { token: 'SIGN_RIGHT_ROLE', label: 'Firma derecha: cargo' },
     { token: 'SIGN_CLIENT_NAME', label: 'Firma cliente: nombre' },
-    { token: 'SIGN_CLIENT_ROLE', label: 'Firma cliente: cargo' }
+    { token: 'SIGN_CLIENT_ROLE', label: 'Firma cliente: cargo' },
+    { token: 'CURRENT_USER_NAME', label: 'Usuario actual' },
+    { token: 'CURRENT_USER_EMAIL', label: 'Correo del usuario actual' }
 ]);
 
+let __contractsPdfTemplateInsertTarget = null;
+let __contractsPdfTemplateInsertMeta = null;
+function __contractsPdfTemplateSelectorEscape(value) {
+    return String(value ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+function __contractsIsPdfTemplateEditableField(node) {
+    if (!(node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement)) return false;
+    if (node.disabled || node.readOnly) return false;
+    if (node instanceof HTMLInputElement) {
+        const type = String(node.type || 'text').toLowerCase();
+        if (!['text', 'search', 'email', 'url', 'tel'].includes(type)) return false;
+    }
+    return !!(
+        String(node.getAttribute('data-res-field') || '').trim()
+        || String(node.getAttribute('data-base-field') || '').trim()
+        || String(node.getAttribute('data-pdf-inspector-field') || '').trim()
+    );
+}
+function __contractsDescribePdfTemplateInsertTarget(node) {
+    if (!__contractsIsPdfTemplateEditableField(node)) return null;
+    const resId = String(node.getAttribute('data-res-id') || '').trim();
+    const resField = String(node.getAttribute('data-res-field') || '').trim();
+    if (resId && resField) return { type: 'resource', id: resId, field: resField };
+    const baseId = String(node.getAttribute('data-base-id') || '').trim();
+    const baseField = String(node.getAttribute('data-base-field') || '').trim();
+    if (baseId && baseField) return { type: 'base', id: baseId, field: baseField };
+    const inspectorId = String(node.getAttribute('data-target-id') || '').trim();
+    const inspectorField = String(node.getAttribute('data-pdf-inspector-field') || '').trim();
+    if (inspectorId && inspectorField) return { type: 'inspector', id: inspectorId, field: inspectorField };
+    return null;
+}
+function __contractsResolvePdfTemplateInsertTargetFromMeta(meta) {
+    if (!meta || typeof meta !== 'object') return null;
+    if (meta.type === 'resource' && meta.id && meta.field) {
+        return document.querySelector(`[data-res-id="${__contractsPdfTemplateSelectorEscape(meta.id)}"][data-res-field="${__contractsPdfTemplateSelectorEscape(meta.field)}"]`);
+    }
+    if (meta.type === 'base' && meta.id && meta.field) {
+        return document.querySelector(`[data-base-id="${__contractsPdfTemplateSelectorEscape(meta.id)}"][data-base-field="${__contractsPdfTemplateSelectorEscape(meta.field)}"]`);
+    }
+    if (meta.type === 'inspector' && meta.id && meta.field) {
+        return document.querySelector(`[data-target-id="${__contractsPdfTemplateSelectorEscape(meta.id)}"][data-pdf-inspector-field="${__contractsPdfTemplateSelectorEscape(meta.field)}"]`);
+    }
+    return null;
+}
+function __contractsRememberPdfTemplateInsertTarget(node) {
+    const meta = __contractsDescribePdfTemplateInsertTarget(node);
+    if (!meta) return;
+    __contractsPdfTemplateInsertTarget = node;
+    __contractsPdfTemplateInsertMeta = meta;
+}
+function __contractsResolvePdfTemplateInsertTarget() {
+    if (__contractsIsPdfTemplateEditableField(document.activeElement)) {
+        __contractsRememberPdfTemplateInsertTarget(document.activeElement);
+        return document.activeElement;
+    }
+    if (__contractsPdfTemplateInsertTarget instanceof Element && document.body.contains(__contractsPdfTemplateInsertTarget) && __contractsIsPdfTemplateEditableField(__contractsPdfTemplateInsertTarget)) {
+        return __contractsPdfTemplateInsertTarget;
+    }
+    const restored = __contractsResolvePdfTemplateInsertTargetFromMeta(__contractsPdfTemplateInsertMeta);
+    if (__contractsIsPdfTemplateEditableField(restored)) {
+        __contractsPdfTemplateInsertTarget = restored;
+        return restored;
+    }
+    return null;
+}
+function __contractsInsertPdfTemplateToken(token) {
+    const safeToken = String(token || '').trim().replace(/^\{\{\s*|\s*\}\}$/g, '');
+    if (!safeToken) return false;
+    const insertValue = `{{${safeToken}}}`;
+    const target = __contractsResolvePdfTemplateInsertTarget();
+    if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) {
+        try {
+            navigator.clipboard.writeText(insertValue);
+            window.showToast?.('Etiqueta copiada', 'success');
+        } catch (_) {}
+        return false;
+    }
+    const currentValue = String(target.value || '');
+    const start = typeof target.selectionStart === 'number' ? target.selectionStart : currentValue.length;
+    const end = typeof target.selectionEnd === 'number' ? target.selectionEnd : start;
+    target.value = `${currentValue.slice(0, start)}${insertValue}${currentValue.slice(end)}`;
+    const caret = start + insertValue.length;
+    try {
+        target.focus();
+        target.setSelectionRange?.(caret, caret);
+    } catch (_) {}
+    target.dispatchEvent(new Event('input', { bubbles: true }));
+    target.dispatchEvent(new Event('change', { bubbles: true }));
+    window.showToast?.('Etiqueta insertada', 'success');
+    return true;
+}
+function __contractsBuildTemplateTagButtonHtml(item, options = {}) {
+    const opts = options && typeof options === 'object' ? options : {};
+    const scope = String(opts.scope || 'cp-contracts').trim();
+    const token = String(item?.token || '').trim();
+    const label = String(item?.label || token || '').trim();
+    const tokenLabel = `{{${token}}}`;
+    if (opts.style === 'modal') {
+        return `
+        <button type="button" data-pdf-template-scope="${__contractsSafeHtml(scope)}" data-pdf-template-token="${__contractsSafeHtml(token)}" class="flex items-center justify-between gap-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-left transition hover:border-brand-red hover:bg-red-50/40">
+            <div class="min-w-0">
+                <code class="text-[11px] font-black text-brand-red">${__contractsSafeHtml(tokenLabel)}</code>
+                <p class="mt-1 text-[11px] font-semibold text-gray-600">${__contractsSafeHtml(label)}</p>
+            </div>
+            <span class="shrink-0 rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-brand-dark shadow-sm">Insertar</span>
+        </button>`;
+    }
+    return `<button type="button" data-pdf-template-scope="${__contractsSafeHtml(scope)}" data-pdf-template-token="${__contractsSafeHtml(token)}" title="${__contractsSafeHtml(label)}" class="inline-flex items-center rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[10px] font-black text-brand-red shadow-sm transition hover:border-brand-red hover:text-brand-red">${__contractsSafeHtml(tokenLabel)}</button>`;
+}
+
 function __contractsTemplateTagsModalHtml() {
-    const rows = __CP_CONTRACTS_PDF_TEMPLATE_TOKENS.map((item) => `
-        <div class="flex items-center justify-between gap-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2">
-            <code class="text-[11px] font-black text-brand-red">{{${item.token}}}</code>
-            <span class="text-[11px] font-semibold text-gray-600 text-right">${item.label}</span>
-        </div>`).join('');
+    const rows = __CP_CONTRACTS_PDF_TEMPLATE_TOKENS.map((item) => __contractsBuildTemplateTagButtonHtml(item, { style: 'modal' })).join('');
     return `<div class="bg-white rounded-2xl shadow-2xl border border-gray-200 w-full max-w-2xl p-6">
         <div class="flex items-start justify-between gap-4 mb-4">
-            <div><h3 class="text-lg font-black text-gray-900 uppercase tracking-tight">Etiquetas para PDF</h3><p class="text-xs text-gray-500 mt-1">Puedes pegarlas en firmas, titulos, subtitulos y recursos de texto del editor PDF.</p></div>
+            <div><h3 class="text-lg font-black text-gray-900 uppercase tracking-tight">Etiquetas para PDF</h3><p class="text-xs text-gray-500 mt-1">Haz clic para insertarlas en el ultimo campo de texto o firma que estabas editando. Si no hay campo activo, se copiaran al portapapeles.</p></div>
             <button type="button" onclick="window.closeModal('pdf-template-tags-modal')" class="text-gray-400 hover:text-gray-700"><i class="fa-solid fa-xmark text-xl"></i></button>
         </div>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[60vh] overflow-y-auto pr-1">${rows}</div>
@@ -1110,10 +1257,7 @@ window.openPdfTemplateTagsModal = function () {
 };
 
 function __contractsTemplateTagsInlineHtml() {
-    return `<div class="flex flex-wrap gap-2">${__CP_CONTRACTS_PDF_TEMPLATE_TOKENS.map((item) => `
-        <span class="inline-flex items-center rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[10px] font-black text-brand-red shadow-sm">
-            {{${item.token}}}
-        </span>`).join('')}</div>`;
+    return `<div class="flex flex-wrap gap-2">${__CP_CONTRACTS_PDF_TEMPLATE_TOKENS.map((item) => __contractsBuildTemplateTagButtonHtml(item)).join('')}</div>`;
 }
 
 function __contractsSyncPdfTemplateTagHelpers() {
@@ -1122,10 +1266,28 @@ function __contractsSyncPdfTemplateTagHelpers() {
     });
 }
 
+function __contractsBindPdfTemplateTagHelpers() {
+    if (document.body.dataset.cpContractsPdfTemplateHelpersBound === '1') return;
+    document.body.dataset.cpContractsPdfTemplateHelpersBound = '1';
+    document.addEventListener('focusin', (event) => {
+        __contractsRememberPdfTemplateInsertTarget(event.target);
+    });
+    document.addEventListener('click', (event) => {
+        const button = event.target instanceof Element ? event.target.closest('[data-pdf-template-scope="cp-contracts"][data-pdf-template-token]') : null;
+        if (!button) return;
+        event.preventDefault();
+        __contractsInsertPdfTemplateToken(String(button.getAttribute('data-pdf-template-token') || ''));
+    });
+}
+
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', __contractsSyncPdfTemplateTagHelpers, { once: true });
+    document.addEventListener('DOMContentLoaded', () => {
+        __contractsSyncPdfTemplateTagHelpers();
+        __contractsBindPdfTemplateTagHelpers();
+    }, { once: true });
 } else {
     __contractsSyncPdfTemplateTagHelpers();
+    __contractsBindPdfTemplateTagHelpers();
 }
 
 function __contractsBuildDefaultReceiptResources() {
@@ -2769,9 +2931,7 @@ async function __contractsLoadSharedPdfStyleConfig(profile = 'receipt') {
         const resolved = __contractsExtractPdfStyleProfile(record.config || __CP_CONTRACTS_PDF_STYLE_DEFAULTS, profileKey);
         __contractsSetPdfStyleConfig(resolved || __CP_CONTRACTS_PDF_STYLE_DEFAULTS, { applyToDom: false });
         __contractsPdfStyleActiveProfile = profileKey;
-    } catch (e) {
-        console.warn('No se pudo cargar estilo PDF compartido (CP contracts):', e);
-    }
+    } catch (_) {}
 }
 
 async function __contractsPersistSharedPdfStyleConfig(style) {
@@ -2790,9 +2950,7 @@ async function __contractsPersistSharedPdfStyleConfig(style) {
         __contractsPdfStyleConfigRecordId = saved.id;
         __contractsPdfStyleConfigStore = 'pdf_overlays';
         __contractsPdfStyleRawPayload = payload;
-    } catch (e) {
-        console.warn('No se pudo guardar estilo PDF compartido en pdf_overlays (CP contracts):', e);
-    }
+    } catch (_) {}
 }
 
 function __contractsScheduleSharedPdfStyleSync(style) {
@@ -3011,6 +3169,7 @@ function __contractsInitPdfStyleEditor() {
 
     __contractsBindPdfResourceEditor();
     __contractsBindPdfResourceDrag();
+    __contractsBindPdfResourceClipboard();
     __contractsInitPdfResourceModalDrag();
     editorWrap.classList.add('hidden');
     __contractsEnsureReceiptEditingChrome();
@@ -3103,6 +3262,90 @@ function __contractsAddPdfResource(type) {
     __contractsPdfResourceSelectedId = resources[resources.length - 1].id;
     __contractsCommitPdfResources(resources);
     return newId;
+}
+
+function __contractsIsPdfClipboardEditableTarget(target) {
+    if (!(target instanceof Element)) return false;
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return true;
+    if (target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return true;
+    return !!target.closest('.tox, .CodeMirror, .monaco-editor');
+}
+
+function __contractsBuildPdfClipboardResourceClone(resource, offsetStep = 24) {
+    const base = resource && typeof resource === 'object' ? { ...resource } : null;
+    if (!base) return null;
+    const nextId = `cpc_res_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+    return __contractsNormalizePdfResources([{
+        ...base,
+        id: nextId,
+        x: __contractsClampStyleNumber((parseInt(base.x, 10) || 0) + offsetStep, -4000, 4000, 80),
+        y: __contractsClampStyleNumber((parseInt(base.y, 10) || 0) + offsetStep, -5000, 5000, 120)
+    }])[0] || null;
+}
+
+function __contractsCopySelectedPdfResourceToClipboard() {
+    const selectedId = String(__contractsPdfResourceSelectedId || '').trim();
+    if (!selectedId || selectedId.startsWith('base:')) return false;
+    const selected = __contractsGetPdfResourcesFromState().find((resource) => resource.id === selectedId);
+    if (!selected) return false;
+    const safeCopy = __contractsNormalizePdfResources([{ ...selected }])[0];
+    if (!safeCopy) return false;
+    __contractsPdfResourceClipboard = safeCopy;
+    try {
+        window.__HUB_PDF_RESOURCE_CLIPBOARD = {
+            source: 'cp-contracts',
+            at: Date.now(),
+            resource: { ...safeCopy }
+        };
+    } catch (_) {}
+    return true;
+}
+
+function __contractsPastePdfResourceFromClipboard() {
+    const sharedClipboard = window.__HUB_PDF_RESOURCE_CLIPBOARD?.resource;
+    const source = __contractsPdfResourceClipboard || (sharedClipboard && typeof sharedClipboard === 'object' ? { ...sharedClipboard } : null);
+    if (!source) return '';
+    const clone = __contractsBuildPdfClipboardResourceClone(source);
+    if (!clone) return '';
+    const resources = __contractsGetPdfResourcesFromState();
+    resources.push(clone);
+    __contractsPdfResourceSelectedId = clone.id;
+    __contractsCommitPdfResources(resources);
+    __contractsPdfResourceClipboard = { ...clone };
+    try {
+        window.__HUB_PDF_RESOURCE_CLIPBOARD = {
+            source: 'cp-contracts',
+            at: Date.now(),
+            resource: { ...clone }
+        };
+    } catch (_) {}
+    return clone.id;
+}
+
+function __contractsBindPdfResourceClipboard() {
+    if (document.body.dataset.cpContractsPdfClipboardBound === '1') return;
+    document.body.dataset.cpContractsPdfClipboardBound = '1';
+    document.addEventListener('keydown', (event) => {
+        if (event.defaultPrevented) return;
+        if (!__contractsIsAdminProfile() || __contractsReceiptEditLocked) return;
+        if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+        if (__contractsIsPdfClipboardEditableTarget(event.target)) return;
+        const preview = document.getElementById('receipt-preview-box');
+        if (!preview || preview.classList.contains('hidden')) return;
+        const key = String(event.key || '').toLowerCase();
+        if (key === 'c') {
+            if (!__contractsCopySelectedPdfResourceToClipboard()) return;
+            event.preventDefault();
+            try { window.showToast?.('Elemento PDF copiado', 'success'); } catch (_) {}
+            return;
+        }
+        if (key === 'v') {
+            const pastedId = __contractsPastePdfResourceFromClipboard();
+            if (!pastedId) return;
+            event.preventDefault();
+            try { window.showToast?.('Elemento PDF duplicado', 'success'); } catch (_) {}
+        }
+    }, true);
 }
 
 function __contractsRenderPdfResourcesEditorList() {
@@ -3278,9 +3521,10 @@ function __contractsBindPdfResourceDrag() {
         return { x: scaleX > 0 ? scaleX : 1, y: scaleY > 0 ? scaleY : 1 };
     };
     const getResizeHit = (node, event) => {
+        if (window.PdfEditorHitbox?.resolveResizeHit) return window.PdfEditorHitbox.resolveResizeHit(node, event);
         const rect = node?.getBoundingClientRect?.();
         if (!rect) return { resize: false, proportional: false, cursor: 'move' };
-        const threshold = Math.min(18, Math.max(10, Math.min(rect.width, rect.height) / 3));
+        const threshold = Math.min(24, Math.max(14, Math.min(rect.width, rect.height) / 2.75));
         let left = (event.clientX - rect.left) <= threshold;
         let right = (rect.right - event.clientX) <= threshold;
         let top = (event.clientY - rect.top) <= threshold;
@@ -3560,19 +3804,24 @@ async function __contractsSignedUrl(path) {
 
 async function __contractsLoadPreferences() {
     defaultTemplateFile = '';
+    defaultRegulationTemplateFile = '';
     CP_PDF_LETTERHEAD_URL = (window.HUB_CONFIG && (window.HUB_CONFIG.cpPdfLetterheadUrl || window.HUB_CONFIG.pdfLetterheadCasaPiedraUrl)) || '../public/assets/img/cp-letterhead-default.png';
     try {
         const { data, error } = await window.tenantPocketBase
             .from('configuracion')
             .select('*')
             .eq('tenant', __CP_CONTRACTS_PDF_STYLE_TENANT)
-            .in('clave', [CFG_TEMPLATE_DEFAULT_KEY, CFG_LETTERHEAD_KEY]);
+            .in('clave', [CFG_TEMPLATE_DEFAULT_KEY, CFG_REGULATION_TEMPLATE_DEFAULT_KEY, CFG_LETTERHEAD_KEY]);
         if (error) throw error;
         const rows = Array.isArray(data) ? data : [];
         const templateRow = __contractsPickLatestConfigRow(rows.filter((row) => String(row?.clave || '').toLowerCase() === CFG_TEMPLATE_DEFAULT_KEY));
         const templateCfg = __contractsParseJsonObjectLike(templateRow?.valor_json);
         const templatePath = templateCfg.path || templateCfg.file_path || templateCfg.value || '';
         defaultTemplateFile = templateCfg.file_name || __contractsBasename(templatePath) || '';
+        const regulationRow = __contractsPickLatestConfigRow(rows.filter((row) => String(row?.clave || '').toLowerCase() === CFG_REGULATION_TEMPLATE_DEFAULT_KEY));
+        const regulationCfg = __contractsParseJsonObjectLike(regulationRow?.valor_json);
+        const regulationPath = regulationCfg.path || regulationCfg.file_path || regulationCfg.value || '';
+        defaultRegulationTemplateFile = regulationCfg.file_name || __contractsBasename(regulationPath) || '';
         const letterheadRow = __contractsPickLatestConfigRow(rows.filter((row) => String(row?.clave || '').toLowerCase() === CFG_LETTERHEAD_KEY));
         const letterheadCfg = __contractsParseJsonObjectLike(letterheadRow?.valor_json);
         const savedPath = letterheadCfg.path || letterheadCfg.file_path || letterheadCfg.value || '';
@@ -3650,8 +3899,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     __contractsLoadTemplateLetterheadPreference();
     __contractsBindTemplateLetterheadToggle();
 
-    console.log("Sistema iniciado correctamente. Cargando módulos...");
-
     // 4. Cargar Datos
     cpContractsApplyViewStateControls();
     await loadApprovedOrders();
@@ -3685,7 +3932,6 @@ async function loadApprovedOrders() {
     listContainer.innerHTML = '<div class="p-8 text-center text-gray-400 text-xs italic">Cargando...</div>';
     
     try {
-        console.log("Solicitando órdenes aprobadas...");
         const { data, error } = await window.tenantPocketBase
             .from('cotizaciones')
             .select('*')
@@ -3694,17 +3940,302 @@ async function loadApprovedOrders() {
 
         if (error) throw error;
 
-        console.log(`Órdenes cargadas: ${data?.length || 0}`);
-        approvedOrders = (data || []).filter((order) => !cpContractsIsConvenioOrder(order));
+        approvedOrders = (await __contractsAttachClientReadiness(data || [])).filter((order) => !cpContractsIsConvenioOrder(order));
         cpContractsRestoringViewState = true;
         cpContractsFilterApprovedOrders(document.getElementById('search-approved')?.value || '', { skipSave: true });
         cpContractsRestoringViewState = false;
         cpContractsRestoreViewStateAfterRender();
 
     } catch (e) {
-        console.error("Error al cargar órdenes:", e);
-        listContainer.innerHTML = `<div class="p-8 text-center text-red-400 text-xs">Error de conexión: ${e.message}</div>`;
+        listContainer.innerHTML = '<div class="p-8 text-center text-red-400 text-xs">No se pudieron cargar las órdenes aprobadas.</div>';
     }
+}
+
+function __contractsSafeObject(value) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+    if (typeof value === 'string') {
+        try {
+            const parsed = JSON.parse(value);
+            return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+        } catch (_) {
+            return {};
+        }
+    }
+    return {};
+}
+
+function __contractsSafeArray(value) {
+    if (Array.isArray(value)) return value;
+    if (typeof value === 'string') {
+        try {
+            const parsed = JSON.parse(value);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (_) {
+            return [];
+        }
+    }
+    return [];
+}
+
+function __contractsIsTruthyReadyFlag(value) {
+    if (value === true) return true;
+    if (typeof value === 'number') return value === 1;
+    const normalized = String(value ?? '').trim().toLowerCase();
+    return ['1', 'true', 'si', 'sí', 'yes', 'aprobado', 'aprobada', 'validado', 'validada', 'listo', 'lista', 'activo', 'activa'].includes(normalized);
+}
+
+function __contractsIsReadyStatusValue(value) {
+    const normalized = String(value ?? '').trim().toLowerCase();
+    return ['validado', 'validada', 'aprobado', 'aprobada', 'listo', 'lista', 'listo_para_cotizar', 'lista_para_cotizar', 'activo', 'activa'].includes(normalized);
+}
+
+function __contractsEscapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function __contractsTemplateValueMap(order, options = {}) {
+    const space = options?.space && typeof options.space === 'object' ? options.space : null;
+    const contractDate = order?.fecha_contrato ? window.formatDate(order.fecha_contrato) : new Date().toLocaleDateString('es-MX');
+    return [
+        { token: /{{CLIENTE}}/g, value: order?.cliente_nombre || '---' },
+        { token: /{{RFC}}/g, value: order?.cliente_rfc || order?.datos_fiscales?.rfc_receptor || '---' },
+        { token: /{{TELEFONO}}/g, value: order?.cliente_contacto || '---' },
+        { token: /{{EMAIL}}/g, value: order?.cliente_email || '---' },
+        { token: /{{ESPACIO}}/g, value: space?.nombre || space?.espacio_nombre || order?.espacio_nombre || '---' },
+        { token: /{{CLAVE}}/g, value: space?.clave || space?.espacio_clave || order?.espacio_clave || '---' },
+        { token: /{{FECHA_INICIO}}/g, value: window.formatDate(space?.fecha_inicio || order?.fecha_inicio) || '---' },
+        { token: /{{FECHA_FIN}}/g, value: window.formatDate(space?.fecha_fin || order?.fecha_fin) || '---' },
+        { token: /{{MONTO_TOTAL}}/g, value: window.formatMoney(order?.precio_final || 0) },
+        { token: /{{FECHA_HOY}}/g, value: new Date().toLocaleDateString('es-MX') },
+        { token: /{{NUM_ORDEN}}/g, value: order?.numero_orden || '---' },
+        { token: /{{NUM_CONTRATO}}/g, value: order?.numero_contrato || 'PENDIENTE' },
+        { token: /{{FECHA_CONTRATO}}/g, value: contractDate }
+    ];
+}
+
+function __contractsApplyTemplateTokens(text, order, options = {}) {
+    const highlight = options?.highlight === true;
+    let output = String(text || '');
+    __contractsTemplateValueMap(order, options).forEach(({ token, value }) => {
+        const safeValue = String(value || '---');
+        output = output.replace(token, highlight ? `<span class="var-highlight">${safeValue}</span>` : __contractsEscapeHtml(safeValue));
+    });
+    return output;
+}
+
+function __contractsApplyTemplatePlainText(text, order, options = {}) {
+    let output = String(text || '');
+    __contractsTemplateValueMap(order, options).forEach(({ token, value }) => {
+        output = output.replace(token, String(value || '---'));
+    });
+    return output;
+}
+
+function __contractsTemplateToHtml(text, order, options = {}) {
+    const raw = String(text || '');
+    const looksLikeHtml = /<\s*(html|body|div|p|section|table|span|h1|h2|h3|article|main|header|footer|style|br)\b/i.test(raw);
+    if (looksLikeHtml) return __contractsApplyTemplateTokens(raw, order, options);
+    const replacedText = __contractsApplyTemplatePlainText(raw, order, options);
+    return `<div style="white-space:pre-wrap;font-size:12px;line-height:1.65;color:#111827;">${__contractsEscapeHtml(replacedText)}</div>`;
+}
+
+function __contractsOrderSpaces(order) {
+    const rows = __contractsSafeArray(order?.espacios_detalle);
+    if (rows.length) {
+        return rows.map((detail, index) => ({
+            id: String(detail?.espacio_id || '').trim(),
+            nombre: String(detail?.espacio_nombre || '').trim() || `Espacio ${index + 1}`,
+            clave: String(detail?.espacio_clave || '').trim(),
+            fecha_inicio: detail?.fecha_inicio || order?.fecha_inicio || '',
+            fecha_fin: detail?.fecha_fin || order?.fecha_fin || '',
+            __detail: detail || null
+        }));
+    }
+    return [{
+        id: String(order?.espacio_id || '').trim(),
+        nombre: String(order?.espacio_nombre || '').trim() || 'Espacio',
+        clave: String(order?.espacio_clave || '').trim(),
+        fecha_inicio: order?.fecha_inicio || '',
+        fecha_fin: order?.fecha_fin || '',
+        __detail: null
+    }];
+}
+
+async function __contractsLoadOrderSpaceRecords(order) {
+    const refs = __contractsOrderSpaces(order);
+    const ids = Array.from(new Set(refs.map((item) => String(item?.id || '').trim()).filter(Boolean)));
+    const byId = {};
+    if (ids.length) {
+        try {
+            const { data, error } = await window.tenantPocketBase.from('espacios').select('*').in('id', ids);
+            if (error) throw error;
+            (data || []).forEach((space) => { byId[String(space?.id || '').trim()] = space; });
+        } catch (_) { }
+    }
+    return refs.map((ref, index) => {
+        const record = byId[ref.id] || {};
+        return {
+            ...record,
+            id: ref.id || record.id || `space_${index + 1}`,
+            nombre: ref.nombre || record.nombre || `Espacio ${index + 1}`,
+            clave: ref.clave || record.clave || '',
+            espacio_nombre: ref.nombre || record.nombre || `Espacio ${index + 1}`,
+            espacio_clave: ref.clave || record.clave || '',
+            fecha_inicio: ref.fecha_inicio || order?.fecha_inicio || '',
+            fecha_fin: ref.fecha_fin || order?.fecha_fin || ''
+        };
+    });
+}
+
+function __contractsLooksLikePdf(fileName, url = '') {
+    return /\.pdf(?:$|\?)/i.test(String(fileName || '')) || /\.pdf(?:$|\?)/i.test(String(url || ''));
+}
+
+function __contractsLooksLikeImage(fileName, url = '') {
+    return /\.(png|jpe?g|gif|webp|bmp|svg)(?:$|\?)/i.test(String(fileName || '')) || /\.(png|jpe?g|gif|webp|bmp|svg)(?:$|\?)/i.test(String(url || ''));
+}
+
+async function __contractsRenderPdfUrlToImages(url) {
+    const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'] || null;
+    if (!pdfjsLib) throw new Error('pdf.js no disponible');
+    if (pdfjsLib.GlobalWorkerOptions) pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_PATH;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('No se pudo abrir el PDF del plano.');
+    const buffer = await response.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
+    const pages = [];
+    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum += 1) {
+        const page = await pdf.getPage(pageNum);
+        const viewport = page.getViewport({ scale: 1.4 });
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.width = Math.ceil(viewport.width);
+        canvas.height = Math.ceil(viewport.height);
+        await page.render({ canvasContext: context, viewport }).promise;
+        pages.push(canvas.toDataURL('image/png'));
+    }
+    return pages;
+}
+
+function __contractsBuildAnnexPage(title, subtitle, bodyHtml) {
+    return `<section class="contract-annex-page">
+  <header class="contract-annex-header">
+    <p class="contract-annex-kicker">Anexo</p>
+    <h2 class="contract-annex-title">${__contractsEscapeHtml(title)}</h2>
+    ${subtitle ? `<p class="contract-annex-subtitle">${__contractsEscapeHtml(subtitle)}</p>` : ''}
+  </header>
+  <div class="contract-annex-body">${bodyHtml}</div>
+</section>`;
+}
+
+async function __contractsBuildPlanAnnexPages(order, spaces) {
+    const pages = [];
+    const missing = [];
+    for (let index = 0; index < spaces.length; index += 1) {
+        const space = spaces[index] || {};
+        const fileName = String(space?.plano_geografico_file || space?.plano_geografico || '').trim();
+        const fileUrl = String(space?.plano_geografico_url || '').trim();
+        const title = `Plano geográfico - ${space?.nombre || space?.espacio_nombre || `Espacio ${index + 1}`}`;
+        if (!fileName && !fileUrl) {
+            missing.push(space?.nombre || space?.espacio_nombre || `Espacio ${index + 1}`);
+            continue;
+        }
+        if (__contractsLooksLikeImage(fileName, fileUrl)) {
+            pages.push(__contractsBuildAnnexPage(title, fileName, `<img src="${fileUrl}" alt="${__contractsEscapeHtml(title)}" crossorigin="anonymous" class="contract-annex-image">`));
+            continue;
+        }
+        if (__contractsLooksLikePdf(fileName, fileUrl)) {
+            const images = await __contractsRenderPdfUrlToImages(fileUrl);
+            images.forEach((src, pageIndex) => {
+                const subtitle = images.length > 1 ? `${fileName || 'PDF'} - Pág. ${pageIndex + 1}` : fileName;
+                pages.push(__contractsBuildAnnexPage(title, subtitle, `<img src="${src}" alt="${__contractsEscapeHtml(title)}" class="contract-annex-image">`));
+            });
+            continue;
+        }
+        pages.push(__contractsBuildAnnexPage(title, fileName || 'Archivo no embebible', `<div class="contract-annex-note">Se detectó un archivo asociado al espacio, pero su formato no se pudo integrar como vista previa dentro del contrato.</div>`));
+    }
+    if (missing.length) throw new Error(`Falta asignar plano geográfico a: ${missing.join(', ')}.`);
+    return pages;
+}
+
+async function __contractsBuildRegulationAnnexPages(order, spaces) {
+    const pages = [];
+    for (let index = 0; index < spaces.length; index += 1) {
+        const space = spaces[index] || {};
+        const templateFile = String(space?.reglamento_template || defaultRegulationTemplateFile || '').trim();
+        if (!templateFile) {
+            throw new Error(`Falta asignar reglamento a: ${space?.nombre || space?.espacio_nombre || `Espacio ${index + 1}`}.`);
+        }
+        const { data, error } = await window.globalPocketBase.storage.from(TEMPLATE_BUCKET).download(`${REGULATION_TEMPLATE_PATH}/${templateFile}`);
+        if (error) throw error;
+        const rawText = await data.text();
+        const regulationHtml = __contractsTemplateToHtml(rawText, order, { space });
+        pages.push(__contractsBuildAnnexPage(`Reglamento - ${space?.nombre || space?.espacio_nombre || `Espacio ${index + 1}`}`, templateFile, regulationHtml));
+    }
+    return pages;
+}
+
+function __contractsSetFinalizeButtonEnabled(enabled) {
+    const btnFinalize = document.getElementById('btn-open-finalize');
+    if (!btnFinalize) return;
+    btnFinalize.disabled = !enabled;
+    btnFinalize.classList.toggle('bg-gray-300', !enabled);
+    btnFinalize.classList.toggle('cursor-not-allowed', !enabled);
+    btnFinalize.classList.toggle('bg-green-600', !!enabled);
+    btnFinalize.classList.toggle('hover:bg-green-700', !!enabled);
+    btnFinalize.classList.toggle('shadow-lg', !!enabled);
+}
+
+function __contractsSetGenerateButtonEnabled(enabled) {
+    const btnGenerate = document.getElementById('btn-generate-contract');
+    if (!btnGenerate) return;
+    btnGenerate.disabled = !enabled;
+    btnGenerate.classList.toggle('opacity-50', !enabled);
+    btnGenerate.classList.toggle('cursor-not-allowed', !enabled);
+}
+
+async function __contractsAttachClientReadiness(orders = []) {
+    const rows = Array.isArray(orders) ? orders : [];
+    const ids = Array.from(new Set(rows.map((order) => String(order?.cliente_id || '').trim()).filter(Boolean)));
+    if (!ids.length) return rows.map((order) => ({ ...order, __client_profile: null }));
+    try {
+        const { data, error } = await window.tenantPocketBase
+            .from('clientes')
+            .select('id,perfil_validado,perfil_estatus,expediente_validacion')
+            .in('id', ids);
+        if (error) throw error;
+        const byId = {};
+        (data || []).forEach((client) => { byId[String(client.id || '')] = client; });
+        return rows.map((order) => ({ ...order, __client_profile: byId[String(order?.cliente_id || '')] || null }));
+    } catch (_) {
+        return rows.map((order) => ({ ...order, __client_profile: null }));
+    }
+}
+
+function __contractsCanGenerateContract(order) {
+    if (!order || !String(order.cliente_id || '').trim()) return false;
+    const client = order.__client_profile || null;
+    if (!client) return false;
+    const validation = __contractsSafeObject(client.expediente_validacion);
+    const readyForQuotes = __contractsIsTruthyReadyFlag(client.perfil_validado) || __contractsIsTruthyReadyFlag(validation.readyForQuotes) || __contractsIsTruthyReadyFlag(validation.ready) || __contractsIsTruthyReadyFlag(validation.puedeCotizar) || __contractsIsTruthyReadyFlag(validation.quoteApproved) || __contractsIsTruthyReadyFlag(validation.quoteReady) || __contractsIsReadyStatusValue(client.perfil_estatus || validation.status);
+    const hasDictamen = __contractsIsTruthyReadyFlag(validation.readyForContracts) || __contractsIsTruthyReadyFlag(validation.dictamenGuardado) || __contractsIsTruthyReadyFlag(validation.dictamenAprobado);
+    return !!(readyForQuotes && hasDictamen);
+}
+
+function __contractsContractBlockReason(order) {
+    if (!order || !String(order.cliente_id || '').trim()) return 'Esta orden no tiene un perfil de cliente asociado.';
+    const client = order.__client_profile || null;
+    if (!client) return 'No se pudo validar el perfil del cliente asociado.';
+    const validation = __contractsSafeObject(client.expediente_validacion);
+    const readyForQuotes = __contractsIsTruthyReadyFlag(client.perfil_validado) || __contractsIsTruthyReadyFlag(validation.readyForQuotes) || __contractsIsTruthyReadyFlag(validation.ready) || __contractsIsTruthyReadyFlag(validation.puedeCotizar) || __contractsIsTruthyReadyFlag(validation.quoteApproved) || __contractsIsTruthyReadyFlag(validation.quoteReady) || __contractsIsReadyStatusValue(client.perfil_estatus || validation.status);
+    if (!readyForQuotes) return 'El expediente del cliente debe estar completo, vigente y aprobado.';
+    if (!(__contractsIsTruthyReadyFlag(validation.readyForContracts) || __contractsIsTruthyReadyFlag(validation.dictamenGuardado) || __contractsIsTruthyReadyFlag(validation.dictamenAprobado))) return 'Falta guardar o aprobar el dictamen del cliente.';
+    return '';
 }
 
 function renderOrderList(list) {
@@ -3718,14 +4249,19 @@ function renderOrderList(list) {
     
     list.forEach(o => {
         const paidComplete = __contractsIsPaidComplete(o);
+        const contractReady = __contractsCanGenerateContract(o);
         const paidBadge = paidComplete
             ? '<span class="text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-300">Pagado</span>'
             : '';
+        const contractBadge = contractReady
+            ? ''
+            : '<span class="text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-300">Contrato bloqueado</span>';
         const item = document.createElement('div');
         item.setAttribute('data-order-id', String(o.id || ''));
-        item.className = `bg-white border p-3 rounded-lg hover:bg-gray-50 cursor-pointer transition group shadow-sm mb-2 ${paidComplete ? 'border-emerald-200 bg-emerald-50/40' : 'border-gray-100'}`;
+        item.title = contractReady ? '' : __contractsContractBlockReason(o);
+        item.className = `bg-white border p-3 rounded-lg hover:bg-gray-50 cursor-pointer transition group shadow-sm mb-2 ${paidComplete ? 'border-emerald-200 bg-emerald-50/40' : (contractReady ? 'border-gray-100' : 'border-amber-200 bg-amber-50/50')}`;
         item.onclick = () => selectOrder(o);
-        item.innerHTML = `<div class="flex justify-between mb-1"><span class="font-bold text-xs text-gray-800 group-hover:text-brand-red transition truncate w-32">${o.cliente_nombre}</span><div class="flex items-center gap-1">${paidBadge}<span class="text-[9px] font-mono text-gray-400 bg-gray-50 border border-gray-200 px-1 rounded">${o.numero_orden || '---'}</span></div></div><div class="flex justify-between items-center"><span class="text-[10px] text-gray-500 truncate w-24"><i class="fa-solid fa-map-pin mr-1"></i>${o.espacio_nombre}</span><span class="text-xs font-black text-gray-800">${formatMoney(o.precio_final)}</span></div>`;
+        item.innerHTML = `<div class="flex justify-between mb-1"><span class="font-bold text-xs text-gray-800 group-hover:text-brand-red transition truncate w-32">${o.cliente_nombre}</span><div class="flex items-center gap-1">${paidBadge}${contractBadge}<span class="text-[9px] font-mono text-gray-400 bg-gray-50 border border-gray-200 px-1 rounded">${o.numero_orden || '---'}</span></div></div><div class="flex justify-between items-center"><span class="text-[10px] text-gray-500 truncate w-24"><i class="fa-solid fa-map-pin mr-1"></i>${o.espacio_nombre}</span><span class="text-xs font-black text-gray-800">${formatMoney(o.precio_final)}</span></div>`;
         container.appendChild(item);
     });
 }
@@ -3739,6 +4275,7 @@ function __contractsSyncPaidIndicator(order) {
 
 function selectOrder(order) {
     selectedOrder = order;
+    const contractReady = __contractsCanGenerateContract(order);
     cpContractsSaveViewState({ selectedOrderId: String(order?.id || '').trim() });
     
     // UI Updates
@@ -3763,12 +4300,8 @@ function selectOrder(order) {
     // GESTIÓN DE BOTONES Y ESTADOS DE CONTRATO
     const cNumInput = document.getElementById('contract-num-assign');
     const cSaveBtn = document.getElementById('btn-save-contract-num');
-    const btnFinalize = document.getElementById('btn-open-finalize');
-
-    // Estado inicial de "Guardar y Finalizar": SIEMPRE DESHABILITADO al cargar
-    btnFinalize.disabled = true;
-    btnFinalize.classList.add('bg-gray-300', 'cursor-not-allowed');
-    btnFinalize.classList.remove('bg-green-600', 'hover:bg-green-700', 'shadow-lg');
+    __contractsSetFinalizeButtonEnabled(!!(contractReady && order.contrato_url));
+    __contractsSetGenerateButtonEnabled(contractReady);
 
     // Lógica para input de Número de Contrato
     if (order.numero_contrato) {
@@ -3778,9 +4311,11 @@ function selectOrder(order) {
         cSaveBtn.classList.add('opacity-50', 'cursor-not-allowed');
     } else {
         cNumInput.value = '';
-        cNumInput.disabled = false;
-        cSaveBtn.disabled = false;
-        cSaveBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+        cNumInput.disabled = !contractReady;
+        cSaveBtn.disabled = !contractReady;
+        cSaveBtn.classList.toggle('opacity-50', !contractReady);
+        cSaveBtn.classList.toggle('cursor-not-allowed', !contractReady);
+        if (!contractReady) window.showToast?.(__contractsContractBlockReason(order), 'warning');
     }
 
     // Calculations Recibos
@@ -3846,6 +4381,7 @@ function selectOrder(order) {
 // NUEVA FUNCIÓN: GUARDAR SOLO EL NÚMERO DE CONTRATO
 window.saveContractNumber = function() {
     if(!selectedOrder) return;
+    if (!__contractsCanGenerateContract(selectedOrder)) return window.showToast(__contractsContractBlockReason(selectedOrder), 'error');
     const val = document.getElementById('contract-num-assign').value.trim();
     if(!val) return window.showToast("Escribe un número de contrato", "error");
 
@@ -3873,9 +4409,8 @@ window.saveContractNumber = function() {
                 window.loadSelectedTemplate();
             }
 
-        } catch(e) {
-            console.error(e);
-            window.showToast("Error al guardar: " + e.message, "error");
+        } catch(_) {
+            window.showToast("No se pudo guardar el número de contrato.", "error");
         }
     });
 };
@@ -3932,6 +4467,7 @@ window.saveMissingData = async function() {
         window.closeModal('missing-data-modal');
         Object.assign(selectedOrder, updates);
         if(pendingAction === 'receipt') window.generateAndSaveReceipt();
+        else if(pendingAction === 'generate_contract') window.generateContractPdf();
         else if(pendingAction === 'finalize') window.confirmFinalize();
         pendingAction = null;
     } catch(e) { window.showToast("Error al guardar: " + e.message, "error"); }
@@ -4037,9 +4573,8 @@ window.generateAndSaveLiquidationCertificate = async function() {
         selectedOrder.historial_pagos = updatedHistory;
         loadApprovedOrders();
         selectOrder(selectedOrder);
-    } catch (e) {
-        console.error(e);
-        window.showToast("Error al generar constancia: " + (e.message || e), "error");
+    } catch (_) {
+        window.showToast("No se pudo generar la constancia.", "error");
     } finally {
         btn.disabled = false;
         btn.innerHTML = '<i class="fa-solid fa-circle-check"></i> PAGADO';
@@ -4075,7 +4610,7 @@ window.generateAndSaveReceipt = async function() {
         window.showToast("Recibo generado", "success");
         const link = document.createElement('a'); link.href = URL.createObjectURL(pdfBlob); link.download = fileName; link.click();
         loadApprovedOrders(); selectedOrder.historial_pagos = updatedHistory; selectOrder(selectedOrder);
-    } catch (e) { console.error(e); window.showToast("Error: " + e.message, "error"); } 
+    } catch (_) { window.showToast("No se pudo generar el recibo.", "error"); }
     finally { if (currentRemainingBalance > 0.01) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> Generar y Guardar'; } }
 }
 
@@ -4138,21 +4673,7 @@ window.loadSelectedTemplate = async function() {
 
         if(error) throw error;
         let text = await data.text();
-
-        const hl = (val) => `<span class="var-highlight">${val || '---'}</span>`;
-        text = text
-            .replace(/{{CLIENTE}}/g, hl(selectedOrder.cliente_nombre))
-            .replace(/{{RFC}}/g, hl(selectedOrder.cliente_rfc || '---'))
-            .replace(/{{TELEFONO}}/g, hl(selectedOrder.cliente_contacto))
-            .replace(/{{EMAIL}}/g, hl(selectedOrder.cliente_email))
-            .replace(/{{ESPACIO}}/g, hl(selectedOrder.espacio_nombre))
-            .replace(/{{CLAVE}}/g, hl(selectedOrder.espacio_clave))
-            .replace(/{{FECHA_INICIO}}/g, hl(window.formatDate(selectedOrder.fecha_inicio)))
-            .replace(/{{FECHA_FIN}}/g, hl(window.formatDate(selectedOrder.fecha_fin)))
-            .replace(/{{MONTO_TOTAL}}/g, hl(window.formatMoney(selectedOrder.precio_final)))
-            .replace(/{{FECHA_HOY}}/g, hl(new Date().toLocaleDateString('es-MX')))
-            .replace(/{{NUM_ORDEN}}/g, hl(selectedOrder.numero_orden))
-            .replace(/{{NUM_CONTRATO}}/g, hl(selectedOrder.numero_contrato || 'PENDIENTE'));
+        text = __contractsTemplateToHtml(text, selectedOrder, { highlight: true });
 
         text = __contractsTransparentPdfHtml(text);
 
@@ -4166,45 +4687,103 @@ window.loadSelectedTemplate = async function() {
         setContractPreviewSrcdoc(text);
         setTimeout(window.adjustPreviewScale, 50);
         setTimeout(() => __contractsPdfMarginGuideController?.refresh(), 90);
-    } catch (e) {
-        console.error(e);
+    } catch (_) {
         window.showToast("Error al cargar plantilla", "error");
         setContractPreviewSrcdoc(null);
     }
 };
-function __contractsBuildPrintableContractHtml(previewDoc) {
-    const headHtml = previewDoc?.head ? previewDoc.head.innerHTML : '';
-    const bodyHtml = previewDoc?.body ? previewDoc.body.innerHTML : '';
-    
-    // The bodyHtml already contains the wrapped letterhead if enabled, because we modified loadSelectedTemplate to apply it there.
-    const printableBody = bodyHtml;
-
-    return `<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-${headHtml}
-<style>
+function __contractsBuildPrintableContractPayload(previewDoc, options = {}) {
+    const annexPages = Array.isArray(options?.annexPages) ? options.annexPages.join('') : '';
+    return {
+        headHtml: previewDoc?.head ? previewDoc.head.innerHTML : '',
+        bodyHtml: `${previewDoc?.body ? previewDoc.body.innerHTML : ''}${annexPages}`,
+        extraStyles: `
   @page { size: letter portrait; margin: 0; }
   html, body { margin: 0; padding: 0; width: 100%; background: #ffffff; }
   body {
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
-    display: ${__contractsIsTemplateLetterheadEnabled() ? 'flex' : 'block'};
-    justify-content: ${__contractsIsTemplateLetterheadEnabled() ? 'center' : 'initial'};
-    align-items: ${__contractsIsTemplateLetterheadEnabled() ? 'flex-start' : 'initial'};
+    display: block;
   }
   .var-highlight { font-weight: bold; background: transparent !important; padding: 0 !important; border-radius: 0 !important; }
-</style>
+  .contract-annex-page {
+    page-break-before: always;
+    min-height: 1056px;
+    box-sizing: border-box;
+    padding: 56px 54px 64px;
+    background: #ffffff;
+    color: #111827;
+    font-family: Arial, Helvetica, sans-serif;
+  }
+  .contract-annex-header {
+    border-bottom: 1px solid #e5e7eb;
+    padding-bottom: 16px;
+    margin-bottom: 24px;
+  }
+  .contract-annex-kicker {
+    margin: 0 0 8px;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #9ca3af;
+    font-weight: 700;
+  }
+  .contract-annex-title {
+    margin: 0;
+    font-size: 24px;
+    line-height: 1.2;
+    color: #111827;
+  }
+  .contract-annex-subtitle {
+    margin: 8px 0 0;
+    font-size: 12px;
+    color: #6b7280;
+  }
+  .contract-annex-body {
+    font-size: 12px;
+    line-height: 1.65;
+    color: #111827;
+  }
+  .contract-annex-image {
+    display: block;
+    max-width: 100%;
+    max-height: 860px;
+    margin: 0 auto;
+    object-fit: contain;
+    border: 1px solid #e5e7eb;
+  }
+  .contract-annex-note {
+    padding: 16px;
+    border: 1px solid #d1d5db;
+    background: #f9fafb;
+    border-radius: 8px;
+  }`
+    };
+}
+
+function __contractsBuildPrintableContractHtml(previewDoc, options = {}) {
+    const payload = __contractsBuildPrintableContractPayload(previewDoc, options);
+    return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+${payload.headHtml}
+<style>${payload.extraStyles}</style>
 </head>
 <body>
-${printableBody}
+${payload.bodyHtml}
 </body>
 </html>`;
 }
 
+function __contractsBuildPrintableContractFragment(previewDoc, options = {}) {
+    const payload = __contractsBuildPrintableContractPayload(previewDoc, options);
+    return `${payload.headHtml}<style>${payload.extraStyles}</style>${payload.bodyHtml}`;
+}
+
 window.printContract = function() {
     if(!selectedOrder) return;
+    if (!__contractsCanGenerateContract(selectedOrder)) return window.showToast(__contractsContractBlockReason(selectedOrder), 'error');
 
     const iframe = document.getElementById('contract-preview-iframe');
     const doc = iframe && iframe.contentDocument;
@@ -4234,10 +4813,69 @@ window.printContract = function() {
     btnFinalize.classList.add('bg-green-600', 'hover:bg-green-700', 'shadow-lg');
 };
 
-window.openFinalizeModal = function() { pendingAction = 'finalize'; if(!validateRequiredData()) return; const contractNum = document.getElementById('contract-num-assign').value; if(!contractNum) return window.showToast("Asigna un Número de Contrato.", "error"); window.openModal('finalize-modal'); }
+window.openFinalizeModal = function() { pendingAction = 'finalize'; if (!__contractsCanGenerateContract(selectedOrder)) return window.showToast(__contractsContractBlockReason(selectedOrder), 'error'); if(!validateRequiredData()) return; const contractNum = document.getElementById('contract-num-assign').value; if(!contractNum) return window.showToast("Asigna un Número de Contrato.", "error"); window.openModal('finalize-modal'); }
+
+window.generateContractPdf = async function () {
+    if (!selectedOrder) return;
+    if (!__contractsCanGenerateContract(selectedOrder)) return window.showToast(__contractsContractBlockReason(selectedOrder), 'error');
+    pendingAction = 'generate_contract';
+    if (!validateRequiredData()) return;
+    const contractNum = String(document.getElementById('contract-num-assign')?.value || '').trim();
+    if (!contractNum) { pendingAction = null; return window.showToast("Asigna un NÃºmero de Contrato.", "error"); }
+    const templateFile = String(document.getElementById('template-selector')?.value || '').trim();
+    if (!templateFile) { pendingAction = null; return window.showToast("Selecciona una plantilla de contrato.", "error"); }
+    const iframe = document.getElementById('contract-preview-iframe');
+    const btnGenerate = document.getElementById('btn-generate-contract');
+    if (btnGenerate) { btnGenerate.disabled = true; btnGenerate.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generando...'; }
+    try {
+        await window.loadSelectedTemplate();
+        const doc = iframe && iframe.contentDocument;
+        if (!doc?.body) throw new Error('No hay contrato cargado.');
+        const spaces = await __contractsLoadOrderSpaceRecords(selectedOrder);
+        const planPages = await __contractsBuildPlanAnnexPages(selectedOrder, spaces);
+        const regulationPages = await __contractsBuildRegulationAnnexPages(selectedOrder, spaces);
+        const hiddenContainer = document.getElementById('receipt-pdf-render');
+        hiddenContainer.innerHTML = __contractsBuildPrintableContractFragment(doc, { annexPages: [...planPages, ...regulationPages] });
+        const element = hiddenContainer;
+        await new Promise((resolve) => setTimeout(resolve, 700));
+        const fileName = `Contrato_${contractNum}_${Date.now()}.pdf`;
+        const pdfBlob = await html2pdf().set({
+            margin: 0,
+            filename: fileName,
+            image: { type: 'jpeg', quality: 0.98 },
+            html2canvas: { scale: 2, useCORS: true, scrollY: 0 },
+            jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' },
+            pagebreak: { mode: ['css', 'legacy'] }
+        }).from(element).output('blob');
+        hiddenContainer.innerHTML = '';
+        const path = `${selectedOrder.id}/${Date.now()}_contrato_generado.pdf`;
+        const { error: upErr } = await window.globalPocketBase.storage.from(TEMPLATE_BUCKET).upload(path, pdfBlob);
+        if (upErr) throw upErr;
+        const generatedAt = new Date().toISOString();
+        const { error: dbErr } = await window.tenantPocketBase.from('cotizaciones').update({ contrato_url: path, numero_contrato: contractNum, fecha_contrato: generatedAt, flujo_estado: 'contrato_generado' }).eq('id', selectedOrder.id);
+        if (dbErr) throw dbErr;
+        selectedOrder.contrato_url = path;
+        selectedOrder.numero_contrato = contractNum;
+        selectedOrder.fecha_contrato = generatedAt;
+        selectedOrder.flujo_estado = 'contrato_generado';
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(pdfBlob);
+        link.download = fileName;
+        link.click();
+        __contractsSetFinalizeButtonEnabled(true);
+        window.showToast("Contrato generado y guardado", "success");
+    } catch (e) {
+        console.error(e);
+        window.showToast("No se pudo generar el contrato: " + (e?.message || e), "error");
+    } finally {
+        pendingAction = null;
+        if (btnGenerate) { btnGenerate.disabled = false; btnGenerate.innerHTML = '<i class="fa-solid fa-file-circle-plus"></i> Generar Contrato PDF'; }
+    }
+}
 
 window.confirmFinalize = async function() { 
     if(!selectedOrder || !signedFileToUpload) return; 
+    if (!__contractsCanGenerateContract(selectedOrder)) return window.showToast(__contractsContractBlockReason(selectedOrder), 'error');
     const btn = document.getElementById('btn-confirm-finalize'); 
     const contractNum = document.getElementById('contract-num-assign').value; 
     btn.innerText = "Procesando..."; 
@@ -4249,7 +4887,7 @@ window.confirmFinalize = async function() {
         
         // MODIFICADO: Se elimina 'status: finalizada'. 
         // La orden permanece en el estado actual (aprobada) hasta que se suba la factura.
-        const { error: dbErr } = await window.tenantPocketBase.from('cotizaciones').update({ contrato_url: path, numero_contrato: contractNum, fecha_contrato: new Date().toISOString() }).eq('id', selectedOrder.id); 
+        const { error: dbErr } = await window.tenantPocketBase.from('cotizaciones').update({ contrato_url: path, numero_contrato: contractNum, fecha_contrato: new Date().toISOString(), flujo_estado: 'contrato_firmado' }).eq('id', selectedOrder.id); 
         
         if(dbErr) throw dbErr; 
         window.showToast("Contrato Guardado Correctamente", "success"); 
@@ -4376,9 +5014,8 @@ window.saveExternalReceipt = async function() {
         selectedOrder.historial_pagos = updatedHistory; 
         selectOrder(selectedOrder);
         
-    } catch(e) {
-        console.error(e);
-        window.showToast("Error: " + e.message, "error");
+    } catch(_) {
+        window.showToast("No se pudo guardar el comprobante.", "error");
     } finally {
         btn.innerText = "Guardar";
         btn.disabled = false;
@@ -4420,7 +5057,7 @@ function getReceiptHTML(isVisual = false) {
         signLabels
     });
     const pdfStyleInlineVars = __contractsPdfStyleVarsInline(pdfStyle);
-    const pdfStyleTag = `<style>.cpc-pdf-root{font-family:var(--cp-font-family)!important;}.cpc-pdf-root .cpc-pdf-shift{transform:translate(var(--cp-offset-x),var(--cp-offset-y));}.cpc-pdf-root .cpc-pdf-main{padding:var(--cp-margin-top) var(--cp-margin-right) var(--cp-margin-bottom) var(--cp-margin-left)!important;}.cpc-pdf-root .cpc-pdf-header{border-bottom-width:var(--cp-header-line)!important;justify-content:var(--cp-header-justify)!important;}.cpc-pdf-root .cpc-pdf-sign-line{width:100%;height:var(--cp-sign-line)!important;background:#111827!important;border-radius:999px;}.cpc-pdf-root .cpc-pdf-title{font-size:var(--cp-title-size)!important;line-height:1.05!important;text-align:var(--cp-header-align)!important;}.cpc-pdf-root .cpc-pdf-meta,.cpc-pdf-root .cpc-pdf-meta *{font-size:var(--cp-meta-size)!important;text-align:var(--cp-meta-align)!important;}.cpc-pdf-root .cpc-pdf-table-head th{font-size:var(--cp-table-head-size)!important;}.cpc-pdf-root .cpc-pdf-table-body td,.cpc-pdf-root .cpc-pdf-table-body p,.cpc-pdf-root .cpc-pdf-table-body span{font-size:var(--cp-table-body-size)!important;line-height:var(--cp-line-height)!important;}.cpc-pdf-root .cpc-pdf-table-body td:first-child,.cpc-pdf-root .cpc-pdf-table-body td:first-child *{text-align:var(--cp-table-align)!important;}.cpc-pdf-root .cpc-pdf-summary,.cpc-pdf-root .cpc-pdf-summary *{text-align:var(--cp-summary-align)!important;}.cpc-pdf-root .cpc-pdf-quick,.cpc-pdf-root .cpc-pdf-quick *{font-size:var(--cp-quick-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-quick-align)!important;}.cpc-pdf-root .cpc-pdf-general-conditions,.cpc-pdf-root .cpc-pdf-general-conditions *{font-size:var(--cp-conditions-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-conditions-align)!important;}.cpc-pdf-root .cpc-pdf-sign,.cpc-pdf-root .cpc-pdf-sign *{font-size:var(--cp-sign-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-sign-align)!important;}.cpc-pdf-root .cpc-pdf-footer-text{font-size:var(--cp-footer-size)!important;text-align:var(--cp-footer-align)!important;}.cpc-pdf-root [data-base-resource]{position:relative;transform-origin:top left;}.cpc-pdf-root .cpc-pdf-resource,.cpc-pdf-root .cpc-pdf-editable{cursor:default;box-sizing:border-box;outline:none;outline-offset:1px;}.cpc-pdf-root .cpc-pdf-editable::before{content:'';position:absolute;inset:-1px;border:1px dashed rgba(193,98,30,.28);border-radius:inherit;background:radial-gradient(circle at top left,#c1621e 0 3px,transparent 3.2px),radial-gradient(circle at top right,#c1621e 0 3px,transparent 3.2px),radial-gradient(circle at bottom left,#c1621e 0 3px,transparent 3.2px),radial-gradient(circle at bottom right,#c1621e 0 3px,transparent 3.2px);background-size:12px 12px;background-repeat:no-repeat;opacity:0;pointer-events:none;}.cpc-pdf-root .cpc-pdf-editable::after{content:'';position:absolute;right:-7px;bottom:-7px;width:12px;height:12px;border-radius:999px;background:#c1621e;box-shadow:0 0 0 2px #fff;opacity:0;pointer-events:none;}.cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-resource,.cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-editable{outline:1px dashed rgba(193,98,30,.45);}.cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-resource,.cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-editable{cursor:move;}.cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-editable::before,.cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-editable::after{opacity:.94;}.cpc-pdf-root .cpc-pdf-edit-selected{outline:2px solid #c1621e!important;}.cpc-pdf-root .cpc-pdf-edit-selected::before,.cpc-pdf-root .cpc-pdf-edit-selected::after{opacity:1;transform:scale(1.04);} .cpc-pdf-delete-btn { position:absolute; top:-8px; right:-8px; width:22px; height:22px; border-radius:50%; background:#c1621e; color:#fff; display:none; align-items:center; justify-content:center; cursor:pointer; font-size:11px; z-index:80; box-shadow:0 0 0 2px #fff; pointer-events:auto; } .cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-resource.cpc-pdf-edit-selected .cpc-pdf-delete-btn { display:flex; } .cpc-pdf-delete-btn:hover { background:#a85519; transform:scale(1.08); transition:all .2s; }</style>`;
+    const pdfStyleTag = `<style>.cpc-pdf-root{font-family:var(--cp-font-family)!important;}.cpc-pdf-root .cpc-pdf-shift{transform:translate(var(--cp-offset-x),var(--cp-offset-y));}.cpc-pdf-root .cpc-pdf-main{padding:var(--cp-margin-top) var(--cp-margin-right) var(--cp-margin-bottom) var(--cp-margin-left)!important;}.cpc-pdf-root .cpc-pdf-header{border-bottom-width:var(--cp-header-line)!important;justify-content:var(--cp-header-justify)!important;}.cpc-pdf-root .cpc-pdf-sign-line{width:100%;height:var(--cp-sign-line)!important;background:#111827!important;border-radius:999px;}.cpc-pdf-root .cpc-pdf-title{font-size:var(--cp-title-size)!important;line-height:1.05!important;text-align:var(--cp-header-align)!important;}.cpc-pdf-root .cpc-pdf-meta,.cpc-pdf-root .cpc-pdf-meta *{font-size:var(--cp-meta-size)!important;text-align:var(--cp-meta-align)!important;}.cpc-pdf-root .cpc-pdf-table-head th{font-size:var(--cp-table-head-size)!important;}.cpc-pdf-root .cpc-pdf-table-body td,.cpc-pdf-root .cpc-pdf-table-body p,.cpc-pdf-root .cpc-pdf-table-body span{font-size:var(--cp-table-body-size)!important;line-height:var(--cp-line-height)!important;}.cpc-pdf-root .cpc-pdf-table-body td:first-child,.cpc-pdf-root .cpc-pdf-table-body td:first-child *{text-align:var(--cp-table-align)!important;}.cpc-pdf-root .cpc-pdf-summary,.cpc-pdf-root .cpc-pdf-summary *{text-align:var(--cp-summary-align)!important;}.cpc-pdf-root .cpc-pdf-quick,.cpc-pdf-root .cpc-pdf-quick *{font-size:var(--cp-quick-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-quick-align)!important;}.cpc-pdf-root .cpc-pdf-general-conditions,.cpc-pdf-root .cpc-pdf-general-conditions *{font-size:var(--cp-conditions-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-conditions-align)!important;}.cpc-pdf-root .cpc-pdf-sign,.cpc-pdf-root .cpc-pdf-sign *{font-size:var(--cp-sign-size)!important;line-height:var(--cp-line-height)!important;text-align:var(--cp-sign-align)!important;}.cpc-pdf-root .cpc-pdf-footer-text{font-size:var(--cp-footer-size)!important;text-align:var(--cp-footer-align)!important;}.cpc-pdf-root [data-base-resource]{position:relative;transform-origin:top left;}.cpc-pdf-root .cpc-pdf-resource,.cpc-pdf-root .cpc-pdf-editable{cursor:default;box-sizing:border-box;outline:none;outline-offset:1px;}.cpc-pdf-root .cpc-pdf-resource::before,.cpc-pdf-root .cpc-pdf-editable::before{content:'';position:absolute;inset:-1px;border:1px dashed rgba(193,98,30,.28);border-radius:inherit;background:radial-gradient(circle at top left,#c1621e 0 3px,transparent 3.2px),radial-gradient(circle at top right,#c1621e 0 3px,transparent 3.2px),radial-gradient(circle at bottom left,#c1621e 0 3px,transparent 3.2px),radial-gradient(circle at bottom right,#c1621e 0 3px,transparent 3.2px);background-size:12px 12px;background-repeat:no-repeat;opacity:0;pointer-events:none;}.cpc-pdf-root .cpc-pdf-resource::after,.cpc-pdf-root .cpc-pdf-editable::after{content:'';position:absolute;right:-7px;bottom:-7px;width:12px;height:12px;border-radius:999px;background:#c1621e;box-shadow:0 0 0 2px #fff;opacity:0;pointer-events:none;}.cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-resource,.cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-editable{outline:1px dashed rgba(193,98,30,.45);cursor:move;}.cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-resource::before,.cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-resource::after,.cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-editable::before,.cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-editable::after{opacity:.94;}.cpc-pdf-root .cpc-pdf-edit-selected{outline:2px solid #c1621e!important;}.cpc-pdf-root .cpc-pdf-edit-selected::before,.cpc-pdf-root .cpc-pdf-edit-selected::after{opacity:1;transform:scale(1.04);} .cpc-pdf-delete-btn { position:absolute; top:-8px; right:-8px; width:22px; height:22px; border-radius:50%; background:#c1621e; color:#fff; display:none; align-items:center; justify-content:center; cursor:pointer; font-size:11px; z-index:80; box-shadow:0 0 0 2px #fff; pointer-events:auto; } .cpc-pdf-root.cpc-pdf-admin-enabled .cpc-pdf-resource.cpc-pdf-edit-selected .cpc-pdf-delete-btn { display:flex; } .cpc-pdf-delete-btn:hover { background:#a85519; transform:scale(1.08); transition:all .2s; }</style>`;
     const wrapStyledReceipt = (rawHtml, extraPages = 0) => {
         const pageOneRaw = __contractsInjectResourcesIntoPage(rawHtml, __contractsRenderPdfResources(pdfStyle, 1, resourceContext));
         const pages = [

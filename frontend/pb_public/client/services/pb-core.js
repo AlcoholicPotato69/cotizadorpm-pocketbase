@@ -117,19 +117,22 @@
 
   function normalizeUser(record) {
     if (!record) return null;
-    const role = String(record.role || "user").toLowerCase().trim();
+    let role = String(record.role || "").toLowerCase().trim();
+    if (role === "administrador" || role === "superadmin" || role === "super_admin") role = "admin";
+    if (role === "both" || role === "ambos" || role === "user" || role === "usuario") role = "";
+    if (role && ["admin", "plaza_mayor", "casa_de_piedra", "verificador"].indexOf(role) === -1) role = "";
     let allowed = Array.isArray(record.allowed_tenants)
       ? record.allowed_tenants.map((x) => String(x || "").toLowerCase().trim()).filter(Boolean)
       : [];
     if (!allowed.length) {
-      if (role === "admin") allowed = ["plaza_mayor", "casa_de_piedra"];
+      if (role === "admin" || role === "verificador") allowed = ["plaza_mayor", "casa_de_piedra"];
       else if (role === "plaza_mayor" || role === "casa_de_piedra") allowed = [role];
     }
     return {
       id: record.id,
       email: record.email || "",
       username: record.login_username || record.username || "",
-      role: role || "user",
+      role: role || "",
       allowed_tenants: allowed,
       tenant_default: record.tenant_default || null,
       default_tenant: record.tenant_default || null

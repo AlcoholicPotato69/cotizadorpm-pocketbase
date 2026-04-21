@@ -830,7 +830,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const { data: profile } = await window.globalPocketBase.from('app_users').select('role, app_metadata').eq('id', session.user.id).single();
     const role = String(profile?.role || '').toLowerCase().trim();
-    const roleHasAccess = role === 'admin' || role === 'plaza_mayor' || role === 'ambos';
+    const roleHasAccess = role === 'admin' || role === 'plaza_mayor';
     const perms = role === 'admin'
         ? { orders_view: true, reports_view: true }
         : (roleHasAccess ? { orders_view: true, reports_view: true } : (profile?.app_metadata?.finanzas?.permissions || {}));

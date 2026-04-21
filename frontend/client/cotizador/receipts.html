@@ -88,9 +88,10 @@
     <!-- Local Animations -->
     <link rel="preload" as="style" href="../../assets/libs/css/animate.min.css">
     <link rel="stylesheet" href="../../assets/libs/css/animate.min.css">
+    <link rel="icon" type="image/png" href="../assets/img/logo.png">
 </head>
 <body data-page-mode="receipts" class="bg-brand-gray text-gray-800 flex flex-col h-screen overflow-hidden">
-    <div id="toast-container" class="fixed bottom-5 right-5 z-[70] flex flex-col gap-2"></div>
+    <div id="toast-container" class="fixed bottom-5 right-5 z-[10000] flex flex-col gap-2 pointer-events-none"></div>
     <script>const TENANT_SCHEMA='finanzas';</script>
   <script src="../js/layout.js"></script>
     
@@ -439,7 +440,7 @@
         </div>
     </div>
 
-    <div id="generic-confirm-modal" class="fixed inset-0 bg-black/80 z-[110] hidden flex items-center justify-center p-4 backdrop-blur-sm animate-enter">
+    <div id="generic-confirm-modal" class="fixed inset-0 bg-black/80 z-[9000] hidden flex items-center justify-center p-4 backdrop-blur-sm animate-enter">
         <div class="bg-white w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden p-6 text-center">
             <i class="fa-solid fa-circle-question text-4xl text-gray-300 mb-4"></i>
             <h3 class="font-bold text-lg mb-2 text-gray-800" id="confirm-title">¿Estás seguro?</h3>
@@ -526,6 +527,7 @@
     </div>
 
     <div id="receipt-pdf-render" class="absolute top-0 left-0 -z-50 pointer-events-none opacity-0" style="width: 816px; min-height: 1056px; background: white;"></div>
+    <script src="../js/pdf-editor-hitbox.js"></script>
     <script src="../js/pdf-margin-guides.js"></script>
     <script src="receipts.js?v=20260413-pm-receipt-tags-v2"></script>
 </body>

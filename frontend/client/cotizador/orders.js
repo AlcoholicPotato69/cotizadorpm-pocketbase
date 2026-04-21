@@ -613,11 +613,17 @@ async function loadClientProfilesForOrderModal() {
     if (!sel || !window.tenantPocketBase) return;
 
     try {
-        const { data, error } = await window.tenantPocketBase.from('clientes').select('id,nombre_completo,telefono,correo,rfc').order('nombre_completo', { ascending: true });
+        const { data, error } = await window.tenantPocketBase.from('clientes').select('id,nombre_completo,telefono,correo,rfc,perfil_validado,perfil_estatus').order('nombre_completo', { ascending: true });
         if (error) throw error;
-        orderClientProfiles = data || []; orderClientProfilesById = {}; orderClientProfiles.forEach(c => orderClientProfilesById[c.id] = c);
+        orderClientProfiles = (data || []).slice().sort((a, b) => {
+            const aReady = a?.perfil_validado === true ? 1 : 0;
+            const bReady = b?.perfil_validado === true ? 1 : 0;
+            if (aReady !== bReady) return bReady - aReady;
+            return String(a?.nombre_completo || '').localeCompare(String(b?.nombre_completo || ''), 'es');
+        });
+        orderClientProfilesById = {}; orderClientProfiles.forEach(c => orderClientProfilesById[c.id] = c);
         const current = String(sel.value || hid?.value || '').trim();
-        sel.innerHTML = '<option value="">— Sin perfil —</option>' + orderClientProfiles.map(c => `<option value="${c.id}">${(c.nombre_completo || '').toUpperCase()}</option>`).join('');
+        sel.innerHTML = '<option value="">— Sin perfil —</option>' + orderClientProfiles.map(c => `<option value="${c.id}">${(c.nombre_completo || '').toUpperCase()} • ${c?.perfil_validado === true ? 'LISTO' : 'PENDIENTE'}</option>`).join('');
         if (current) {
             sel.value = current;
             if (hid) hid.value = sel.value || '';
@@ -626,6 +632,12 @@ async function loadClientProfilesForOrderModal() {
         sel.onchange = () => {
             const id = sel.value; if (!id) { if (hid) hid.value = ''; return; }
             const c = orderClientProfilesById[id]; if (!c) return;
+            if (c.perfil_validado !== true) {
+                if (hid) hid.value = '';
+                sel.value = '';
+                window.showToast?.('Este perfil aun no tiene expediente validado. Usa captura manual o pide al cliente completar su expediente.', 'info');
+                return;
+            }
             if (hid) hid.value = id;
             if(document.getElementById('oed-client')) document.getElementById('oed-client').value = c.nombre_completo || '';
             if(document.getElementById('oed-phone')) document.getElementById('oed-phone').value = (c.telefono || '');
@@ -3182,6 +3194,7 @@ let __pmPdfStyleSyncTimer = null;
 let __pmPdfStyleUiState = { collapsed: false, pinned: false };
 let __pmPdfResourceEditorSelectedId = '';
 let __pmPdfResourcePointerState = null;
+let __pmPdfResourceClipboard = null;
 let __pmPdfStyleActiveProfile = 'quote';
 let __pmPdfMarginGuideController = null;
 let __pmPdfEditLocked = true;
@@ -3319,15 +3332,125 @@ function __pmBuildPdfTemplateContext(order = {}, extra = {}) {
         VENUE_NAME: extra.venueName || 'Plaza Mayor'
     };
 }
+let __pmPdfTemplateInsertTarget = null;
+let __pmPdfTemplateInsertMeta = null;
+function __pmPdfTemplateSelectorEscape(value) {
+    return String(value ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+function __pmIsPdfTemplateEditableField(node) {
+    if (!(node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement)) return false;
+    if (node.disabled || node.readOnly) return false;
+    if (node instanceof HTMLInputElement) {
+        const type = String(node.type || 'text').toLowerCase();
+        if (!['text', 'search', 'email', 'url', 'tel'].includes(type)) return false;
+    }
+    return !!(
+        String(node.getAttribute('data-res-field') || '').trim()
+        || String(node.getAttribute('data-base-field') || '').trim()
+        || String(node.getAttribute('data-pdf-inspector-field') || '').trim()
+    );
+}
+function __pmDescribePdfTemplateInsertTarget(node) {
+    if (!__pmIsPdfTemplateEditableField(node)) return null;
+    const resId = String(node.getAttribute('data-res-id') || '').trim();
+    const resField = String(node.getAttribute('data-res-field') || '').trim();
+    if (resId && resField) return { type: 'resource', id: resId, field: resField };
+    const baseId = String(node.getAttribute('data-base-id') || '').trim();
+    const baseField = String(node.getAttribute('data-base-field') || '').trim();
+    if (baseId && baseField) return { type: 'base', id: baseId, field: baseField };
+    const inspectorId = String(node.getAttribute('data-target-id') || '').trim();
+    const inspectorKind = String(node.getAttribute('data-target-kind') || '').trim();
+    const inspectorField = String(node.getAttribute('data-pdf-inspector-field') || '').trim();
+    if (inspectorId && inspectorField) return { type: 'inspector', id: inspectorId, kind: inspectorKind, field: inspectorField };
+    return null;
+}
+function __pmResolvePdfTemplateInsertTargetFromMeta(meta) {
+    if (!meta || typeof meta !== 'object') return null;
+    if (meta.type === 'resource' && meta.id && meta.field) {
+        return document.querySelector(`[data-res-id="${__pmPdfTemplateSelectorEscape(meta.id)}"][data-res-field="${__pmPdfTemplateSelectorEscape(meta.field)}"]`);
+    }
+    if (meta.type === 'base' && meta.id && meta.field) {
+        return document.querySelector(`[data-base-id="${__pmPdfTemplateSelectorEscape(meta.id)}"][data-base-field="${__pmPdfTemplateSelectorEscape(meta.field)}"]`);
+    }
+    if (meta.type === 'inspector' && meta.id && meta.field) {
+        return document.querySelector(`[data-target-id="${__pmPdfTemplateSelectorEscape(meta.id)}"][data-pdf-inspector-field="${__pmPdfTemplateSelectorEscape(meta.field)}"]`);
+    }
+    return null;
+}
+function __pmRememberPdfTemplateInsertTarget(node) {
+    const meta = __pmDescribePdfTemplateInsertTarget(node);
+    if (!meta) return;
+    __pmPdfTemplateInsertTarget = node;
+    __pmPdfTemplateInsertMeta = meta;
+}
+function __pmResolvePdfTemplateInsertTarget() {
+    if (__pmIsPdfTemplateEditableField(document.activeElement)) {
+        __pmRememberPdfTemplateInsertTarget(document.activeElement);
+        return document.activeElement;
+    }
+    if (__pmPdfTemplateInsertTarget instanceof Element && document.body.contains(__pmPdfTemplateInsertTarget) && __pmIsPdfTemplateEditableField(__pmPdfTemplateInsertTarget)) {
+        return __pmPdfTemplateInsertTarget;
+    }
+    const restored = __pmResolvePdfTemplateInsertTargetFromMeta(__pmPdfTemplateInsertMeta);
+    if (__pmIsPdfTemplateEditableField(restored)) {
+        __pmPdfTemplateInsertTarget = restored;
+        return restored;
+    }
+    return null;
+}
+function __pmInsertPdfTemplateToken(token) {
+    const safeToken = String(token || '').trim().replace(/^\{\{\s*|\s*\}\}$/g, '');
+    if (!safeToken) return false;
+    const insertValue = `{{${safeToken}}}`;
+    const target = __pmResolvePdfTemplateInsertTarget();
+    if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) {
+        try {
+            navigator.clipboard.writeText(insertValue);
+            window.showToast?.('Etiqueta copiada', 'success');
+        } catch (_) {}
+        return false;
+    }
+    const currentValue = String(target.value || '');
+    const start = typeof target.selectionStart === 'number' ? target.selectionStart : currentValue.length;
+    const end = typeof target.selectionEnd === 'number' ? target.selectionEnd : start;
+    target.value = `${currentValue.slice(0, start)}${insertValue}${currentValue.slice(end)}`;
+    const caret = start + insertValue.length;
+    try {
+        target.focus();
+        target.setSelectionRange?.(caret, caret);
+    } catch (_) {}
+    target.dispatchEvent(new Event('input', { bubbles: true }));
+    target.dispatchEvent(new Event('change', { bubbles: true }));
+    window.showToast?.('Etiqueta insertada', 'success');
+    return true;
+}
+function __pmBuildTemplateTagButtonHtml(item, options = {}) {
+    const opts = options && typeof options === 'object' ? options : {};
+    const scope = String(opts.scope || 'pm-orders').trim();
+    const token = String(item?.token || '').trim();
+    const label = String(item?.label || token || '').trim();
+    const tokenLabel = `{{${token}}}`;
+    if (opts.style === 'modal') {
+        return `
+        <button type="button" data-pdf-template-scope="${__pmSafeHtml(scope)}" data-pdf-template-token="${__pmSafeHtml(token)}" class="flex items-center justify-between gap-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-left transition hover:border-brand-red hover:bg-red-50/40">
+            <div class="min-w-0">
+                <code class="text-[11px] font-black text-brand-red">${__pmSafeHtml(tokenLabel)}</code>
+                <p class="mt-1 text-[11px] font-semibold text-gray-600">${__pmSafeHtml(label)}</p>
+            </div>
+            <span class="shrink-0 rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-brand-dark shadow-sm">Insertar</span>
+        </button>`;
+    }
+    const compact = opts.compact === true;
+    const classes = compact
+        ? 'inline-flex items-center rounded-full border border-amber-200 bg-white/90 px-2.5 py-1 text-[10px] font-black text-brand-red shadow-sm transition hover:border-brand-red hover:text-brand-red'
+        : 'inline-flex items-center rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[10px] font-black text-brand-red shadow-sm transition hover:border-brand-red hover:text-brand-red';
+    return `<button type="button" data-pdf-template-scope="${__pmSafeHtml(scope)}" data-pdf-template-token="${__pmSafeHtml(token)}" title="${__pmSafeHtml(label)}" class="${classes}">${__pmSafeHtml(tokenLabel)}</button>`;
+}
 function __pmTemplateTagsModalHtml() {
-    const rows = __PM_PDF_TEMPLATE_TOKENS.map((item) => `
-        <div class="flex items-center justify-between gap-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2">
-            <code class="text-[11px] font-black text-brand-red">{{${__pmSafeHtml(item.token)}}}</code>
-            <span class="text-[11px] font-semibold text-gray-600 text-right">${__pmSafeHtml(item.label)}</span>
-        </div>`).join('');
+    const rows = __PM_PDF_TEMPLATE_TOKENS.map((item) => __pmBuildTemplateTagButtonHtml(item, { style: 'modal' })).join('');
     return `<div class="bg-white rounded-2xl shadow-2xl border border-gray-200 w-full max-w-2xl p-6">
         <div class="flex items-start justify-between gap-4 mb-4">
-            <div><h3 class="text-lg font-black text-gray-900 uppercase tracking-tight">Etiquetas para PDF</h3><p class="text-xs text-gray-500 mt-1">Puedes pegarlas en firmas, titulos, subtitulos y recursos de texto del editor PDF.</p></div>
+            <div><h3 class="text-lg font-black text-gray-900 uppercase tracking-tight">Etiquetas para PDF</h3><p class="text-xs text-gray-500 mt-1">Haz clic para insertarlas en el ultimo campo de texto o firma que estabas editando. Si no hay campo activo, se copiaran al portapapeles.</p></div>
             <button type="button" onclick="window.closeModal('pdf-template-tags-modal')" class="text-gray-400 hover:text-gray-700"><i class="fa-solid fa-xmark text-xl"></i></button>
         </div>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[60vh] overflow-y-auto pr-1">${rows}</div>
@@ -3345,21 +3468,46 @@ window.openPdfTemplateTagsModal = function () {
     modal.innerHTML = __pmTemplateTagsModalHtml();
     window.openModal('pdf-template-tags-modal');
 };
-function __pmTemplateTagsInlineHtml() {
-    return `<div class="flex flex-wrap gap-2">${__PM_PDF_TEMPLATE_TOKENS.map((item) => `
-        <span class="inline-flex items-center rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[10px] font-black text-brand-red shadow-sm">
-            {{${__pmSafeHtml(item.token)}}}
-        </span>`).join('')}</div>`;
+function __pmTemplateTagsInlineHtml(options = {}) {
+    const opts = options && typeof options === 'object' ? options : {};
+    return `<div class="flex flex-wrap gap-2">${__PM_PDF_TEMPLATE_TOKENS.map((item) => __pmBuildTemplateTagButtonHtml(item, { compact: opts.compact === true })).join('')}</div>`;
 }
 function __pmSyncPdfTemplateTagHelpers() {
     document.querySelectorAll('[data-pdf-template-helper="pm"]').forEach((host) => {
         host.innerHTML = __pmTemplateTagsInlineHtml();
     });
 }
+function __pmTemplateTagsInspectorCardHtml() {
+    return `<div class="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-3 space-y-2">
+        <div class="flex items-center justify-between gap-3">
+            <p class="text-[10px] font-black uppercase tracking-widest text-amber-700">Etiquetas del sistema</p>
+            <button type="button" data-pdf-inspector-action="open-template-tags" class="rounded-full border border-amber-300 bg-white px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-amber-700 transition hover:border-brand-red hover:text-brand-red">Ver todas</button>
+        </div>
+        <p class="text-[10px] text-amber-900/80">Haz clic en una etiqueta para insertarla en el ultimo campo activo de texto, firma o contenido base.</p>
+        ${__pmTemplateTagsInlineHtml({ compact: true })}
+    </div>`;
+}
+function __pmBindPdfTemplateTagHelpers() {
+    if (document.body.dataset.pmPdfTemplateHelpersBound === '1') return;
+    document.body.dataset.pmPdfTemplateHelpersBound = '1';
+    document.addEventListener('focusin', (event) => {
+        __pmRememberPdfTemplateInsertTarget(event.target);
+    });
+    document.addEventListener('click', (event) => {
+        const button = event.target instanceof Element ? event.target.closest('[data-pdf-template-scope="pm-orders"][data-pdf-template-token]') : null;
+        if (!button) return;
+        event.preventDefault();
+        __pmInsertPdfTemplateToken(String(button.getAttribute('data-pdf-template-token') || ''));
+    });
+}
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', __pmSyncPdfTemplateTagHelpers, { once: true });
+    document.addEventListener('DOMContentLoaded', () => {
+        __pmSyncPdfTemplateTagHelpers();
+        __pmBindPdfTemplateTagHelpers();
+    }, { once: true });
 } else {
     __pmSyncPdfTemplateTagHelpers();
+    __pmBindPdfTemplateTagHelpers();
 }
 
 function __pmGetOrderBaseContentFields(baseKey) {
@@ -4159,6 +4307,7 @@ function __pmRenderPdfInspector() {
     if (!(body instanceof HTMLElement)) return;
     if (target.kind === 'base') {
         const contentFields = Array.isArray(target.contentFields) ? target.contentFields : [];
+        const templateHelperSection = contentFields.length ? __pmTemplateTagsInspectorCardHtml() : '';
         const layoutSection = target.canMove
             ? `<div class="grid grid-cols-2 gap-3 text-xs text-gray-600">
                 <label class="flex flex-col gap-1"><span class="text-[10px] font-black uppercase tracking-wide text-gray-400">X</span><input data-pdf-inspector-field="x" data-target-kind="base" data-target-id="${__pmSafeHtml(target.id)}" type="number" min="${__PM_PDF_BASE_LAYOUT_LIMITS.x.min}" max="${__PM_PDF_BASE_LAYOUT_LIMITS.x.max}" value="${target.layout.x}" class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 outline-none transition focus:border-brand-red"></label>
@@ -4182,11 +4331,15 @@ function __pmRenderPdfInspector() {
         body.innerHTML = `
             ${layoutSection}
             ${contentSection}
+            ${templateHelperSection}
             ${resetButton}
         `;
         return;
     }
     const resource = target.resource;
+    const templateHelperSection = (target.allowText || (Array.isArray(target.contentFields) && target.contentFields.length))
+        ? __pmTemplateTagsInspectorCardHtml()
+        : '';
     const contentSection = Array.isArray(target.contentFields) && target.contentFields.length
         ? `<div class="space-y-3 rounded-2xl border border-gray-100 bg-gray-50 px-3 py-3">
             <p class="text-[10px] font-black uppercase tracking-widest text-gray-400">Contenido</p>
@@ -4211,6 +4364,7 @@ function __pmRenderPdfInspector() {
     body.innerHTML = `
         ${target.allowText ? `<label class="flex flex-col gap-1 text-xs text-gray-600"><span class="text-[10px] font-black uppercase tracking-wide text-gray-400">Texto</span><textarea data-pdf-inspector-field="text" data-target-kind="resource" data-target-id="${__pmSafeHtml(resource.id)}" rows="4" class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 outline-none transition focus:border-brand-red">${__pmSafeHtml(resource.text)}</textarea></label>` : ''}
         ${contentSection}
+        ${templateHelperSection}
         <div class="grid grid-cols-2 gap-3 text-xs text-gray-600">
             ${moveFields}
             ${target.showTypography ? `<label class="flex flex-col gap-1"><span class="text-[10px] font-black uppercase tracking-wide text-gray-400">Fuente</span><input data-pdf-inspector-field="fontSize" data-target-kind="resource" data-target-id="${__pmSafeHtml(resource.id)}" type="number" min="8" max="72" value="${resource.fontSize}" class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 outline-none transition focus:border-brand-red"></label>` : ''}
@@ -4346,6 +4500,10 @@ function __pmHandlePdfInspectorClick(event) {
         const kind = String(actionEl.getAttribute('data-target-kind') || '').trim();
         if (action === 'close') {
             __pmClosePdfInspector();
+            return;
+        }
+        if (action === 'open-template-tags') {
+            window.openPdfTemplateTagsModal?.();
             return;
         }
         if (action === 'reset' && kind === 'base' && id) {
@@ -5185,6 +5343,90 @@ function __pmAddPdfResource(type) {
     return newId;
 }
 
+function __pmIsPdfClipboardEditableTarget(target) {
+    if (!(target instanceof Element)) return false;
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return true;
+    if (target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return true;
+    return !!target.closest('.tox, .CodeMirror, .monaco-editor');
+}
+
+function __pmBuildPdfClipboardResourceClone(resource, offsetStep = 24) {
+    const base = resource && typeof resource === 'object' ? { ...resource } : null;
+    if (!base) return null;
+    const nextId = `pmres_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+    return __pmNormalizePdfResources([{
+        ...base,
+        id: nextId,
+        x: __pmClampStyleNumber((parseInt(base.x, 10) || 0) + offsetStep, -4000, 4000, 80),
+        y: __pmClampStyleNumber((parseInt(base.y, 10) || 0) + offsetStep, -5000, 5000, 120)
+    }])[0] || null;
+}
+
+function __pmCopySelectedPdfResourceToClipboard() {
+    const selectedId = String(__pmPdfResourceEditorSelectedId || '').trim();
+    if (!selectedId || selectedId.startsWith('base:')) return false;
+    const selected = __pmGetPdfResourcesFromState().find((resource) => resource.id === selectedId);
+    if (!selected) return false;
+    const safeCopy = __pmNormalizePdfResources([{ ...selected }])[0];
+    if (!safeCopy) return false;
+    __pmPdfResourceClipboard = safeCopy;
+    try {
+        window.__HUB_PDF_RESOURCE_CLIPBOARD = {
+            source: 'pm-orders',
+            at: Date.now(),
+            resource: { ...safeCopy }
+        };
+    } catch (_) {}
+    return true;
+}
+
+function __pmPastePdfResourceFromClipboard() {
+    const sharedClipboard = window.__HUB_PDF_RESOURCE_CLIPBOARD?.resource;
+    const source = __pmPdfResourceClipboard || (sharedClipboard && typeof sharedClipboard === 'object' ? { ...sharedClipboard } : null);
+    if (!source) return '';
+    const clone = __pmBuildPdfClipboardResourceClone(source);
+    if (!clone) return '';
+    const resources = __pmGetPdfResourcesFromState();
+    resources.push(clone);
+    __pmPdfResourceEditorSelectedId = clone.id;
+    __pmCommitPdfResources(resources);
+    __pmPdfResourceClipboard = { ...clone };
+    try {
+        window.__HUB_PDF_RESOURCE_CLIPBOARD = {
+            source: 'pm-orders',
+            at: Date.now(),
+            resource: { ...clone }
+        };
+    } catch (_) {}
+    return clone.id;
+}
+
+function __pmBindPdfResourceClipboard() {
+    if (document.body.dataset.pmPdfClipboardBound === '1') return;
+    document.body.dataset.pmPdfClipboardBound = '1';
+    document.addEventListener('keydown', (event) => {
+        if (event.defaultPrevented) return;
+        if (!__pmIsAdminProfile() || __pmPdfEditLocked) return;
+        if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+        if (__pmIsPdfClipboardEditableTarget(event.target)) return;
+        const preview = document.getElementById('pdf-content');
+        if (!preview || preview.classList.contains('hidden')) return;
+        const key = String(event.key || '').toLowerCase();
+        if (key === 'c') {
+            if (!__pmCopySelectedPdfResourceToClipboard()) return;
+            event.preventDefault();
+            try { window.showToast?.('Elemento PDF copiado', 'success'); } catch (_) {}
+            return;
+        }
+        if (key === 'v') {
+            const pastedId = __pmPastePdfResourceFromClipboard();
+            if (!pastedId) return;
+            event.preventDefault();
+            try { window.showToast?.('Elemento PDF duplicado', 'success'); } catch (_) {}
+        }
+    }, true);
+}
+
 function __pmRenderPdfResourcesEditorList() {
     const list = document.getElementById('pdf-style-resources-list');
     if (!list || !__pmIsAdminProfile()) return;
@@ -5401,9 +5643,10 @@ function __pmGetPdfPointerScale(node) {
 }
 
 function __pmResolvePdfResizeHit(node, event) {
+    if (window.PdfEditorHitbox?.resolveResizeHit) return window.PdfEditorHitbox.resolveResizeHit(node, event);
     const rect = node instanceof HTMLElement ? node.getBoundingClientRect() : null;
     if (!rect) return { resize: false, proportional: false, cursor: 'move' };
-    const threshold = Math.min(18, Math.max(10, Math.min(rect.width, rect.height) / 3));
+    const threshold = Math.min(24, Math.max(14, Math.min(rect.width, rect.height) / 2.75));
     let left = (event.clientX - rect.left) <= threshold;
     let right = (rect.right - event.clientX) <= threshold;
     let top = (event.clientY - rect.top) <= threshold;
@@ -5683,6 +5926,7 @@ function __pmInitPdfStyleEditor() {
     __pmApplyPdfStyleEditorUiState();
     __pmBindPdfResourceEditor();
     __pmBindPdfResourceDrag();
+    __pmBindPdfResourceClipboard();
     __pmEnsurePdfEditingChrome();
     editorWrap.classList.add('hidden');
 }
@@ -5701,7 +5945,7 @@ window.getOrderHTML = function(o, type) {
     const pdfStyle = __pmGetPdfStyleConfig();
     const pdfContent = __pmNormalizePdfContent(pdfStyle.content);
     const pdfStyleInlineVars = __pmPdfStyleVarsInline(pdfStyle);
-    const pdfStyleTag = `<style>.pm-pdf-root{font-family:var(--pm-font-family)!important;}.pm-pdf-root .pm-pdf-shift{transform:translate(var(--pm-offset-x),var(--pm-offset-y));position:relative;}.pm-pdf-root .pm-pdf-header{border-bottom-width:var(--pm-header-line)!important;justify-content:var(--pm-header-justify)!important;}.pm-pdf-root .pm-pdf-header>div:last-child{text-align:var(--pm-header-align)!important;}.pm-pdf-root .pm-pdf-title{font-size:var(--pm-title-size)!important;line-height:1.05!important;text-align:var(--pm-header-align)!important;}.pm-pdf-root .pm-pdf-folio{font-size:var(--pm-meta-size)!important;text-align:var(--pm-meta-align)!important;}.pm-pdf-root .pm-pdf-date{font-size:var(--pm-date-size)!important;text-align:var(--pm-meta-align)!important;}.pm-pdf-root .pm-pdf-table-head th{font-size:var(--pm-table-head-size)!important;}.pm-pdf-root .pm-pdf-table-body td,.pm-pdf-root .pm-pdf-table-body p,.pm-pdf-root .pm-pdf-table-body span{font-size:var(--pm-table-body-size)!important;line-height:var(--pm-line-height)!important;}.pm-pdf-root .pm-pdf-table-body td:first-child,.pm-pdf-root .pm-pdf-table-body td:first-child *{text-align:var(--pm-table-align)!important;}.pm-pdf-root .pm-pdf-summary,.pm-pdf-root .pm-pdf-summary *{text-align:var(--pm-summary-align)!important;}.pm-pdf-root .pm-pdf-quick,.pm-pdf-root .pm-pdf-quick *{font-size:var(--pm-quick-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-quick-align)!important;}.pm-pdf-root .pm-pdf-general-conditions,.pm-pdf-root .pm-pdf-general-conditions *{font-size:var(--pm-conditions-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-conditions-align)!important;}.pm-pdf-root .pm-pdf-sign,.pm-pdf-root .pm-pdf-sign *{font-size:var(--pm-sign-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-sign-align)!important;}.pm-pdf-root .pm-pdf-footer-text{font-size:var(--pm-footer-size)!important;text-align:var(--pm-footer-align)!important;}.pm-pdf-root .pm-pdf-amount,.pm-pdf-root .pm-pdf-table-body td:last-child,.pm-pdf-root .pm-pdf-summary td:last-child{white-space:nowrap!important;word-break:normal!important;overflow-wrap:normal!important;font-variant-numeric:tabular-nums;}.pm-pdf-root .pm-pdf-summary-table-wrap{width:20rem;max-width:100%;margin-left:auto;}.pm-pdf-root [data-base-resource]{position:relative;transform-origin:top left;}.pm-pdf-root .pm-pdf-resource,.pm-pdf-root .pm-pdf-editable{cursor:default;box-sizing:border-box;outline:none;outline-offset:2px;}.pm-pdf-root .pm-pdf-editable::before{content:'';position:absolute;inset:-1px;border:1px dashed rgba(239,68,68,.28);border-radius:inherit;background:radial-gradient(circle at top left,#ef4444 0 3px,transparent 3.2px),radial-gradient(circle at top right,#ef4444 0 3px,transparent 3.2px),radial-gradient(circle at bottom left,#ef4444 0 3px,transparent 3.2px),radial-gradient(circle at bottom right,#ef4444 0 3px,transparent 3.2px);background-size:12px 12px;background-repeat:no-repeat;opacity:0;pointer-events:none;}.pm-pdf-root .pm-pdf-editable::after{content:'';position:absolute;right:-7px;bottom:-7px;width:12px;height:12px;border-radius:999px;background:#ef4444;box-shadow:0 0 0 2px #fff;opacity:0;pointer-events:none;}.pm-pdf-root .pm-pdf-base-selected,.pm-pdf-root .pm-pdf-edit-selected{outline:none;outline-offset:2px;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-resource,.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-editable{cursor:move;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-editable{outline:1px dashed rgba(239,68,68,.45);}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-editable::before,.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-editable::after{opacity:.94;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-base-selected,.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-edit-selected{outline:2px solid #ef4444;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-edit-selected::before,.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-edit-selected::after{opacity:1;}.pm-pdf-delete-btn{position:absolute;top:-8px;right:-8px;width:22px;height:22px;border-radius:50%;background:#ef4444;color:#fff;display:none;align-items:center;justify-content:center;cursor:pointer;font-size:11px;z-index:80;box-shadow:0 0 0 2px #fff;pointer-events:auto;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-edit-selected .pm-pdf-delete-btn{display:flex;}.pm-pdf-delete-btn:hover{background:#dc2626;transform:scale(1.08);transition:all .2s;}</style>`;
+    const pdfStyleTag = `<style>.pm-pdf-root{font-family:var(--pm-font-family)!important;}.pm-pdf-root .pm-pdf-shift{transform:translate(var(--pm-offset-x),var(--pm-offset-y));position:relative;}.pm-pdf-root .pm-pdf-header{border-bottom-width:var(--pm-header-line)!important;justify-content:var(--pm-header-justify)!important;}.pm-pdf-root .pm-pdf-header>div:last-child{text-align:var(--pm-header-align)!important;}.pm-pdf-root .pm-pdf-title{font-size:var(--pm-title-size)!important;line-height:1.05!important;text-align:var(--pm-header-align)!important;}.pm-pdf-root .pm-pdf-folio{font-size:var(--pm-meta-size)!important;text-align:var(--pm-meta-align)!important;}.pm-pdf-root .pm-pdf-date{font-size:var(--pm-date-size)!important;text-align:var(--pm-meta-align)!important;}.pm-pdf-root .pm-pdf-table-head th{font-size:var(--pm-table-head-size)!important;}.pm-pdf-root .pm-pdf-table-body td,.pm-pdf-root .pm-pdf-table-body p,.pm-pdf-root .pm-pdf-table-body span{font-size:var(--pm-table-body-size)!important;line-height:var(--pm-line-height)!important;}.pm-pdf-root .pm-pdf-table-body td:first-child,.pm-pdf-root .pm-pdf-table-body td:first-child *{text-align:var(--pm-table-align)!important;}.pm-pdf-root .pm-pdf-summary,.pm-pdf-root .pm-pdf-summary *{text-align:var(--pm-summary-align)!important;}.pm-pdf-root .pm-pdf-quick,.pm-pdf-root .pm-pdf-quick *{font-size:var(--pm-quick-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-quick-align)!important;}.pm-pdf-root .pm-pdf-general-conditions,.pm-pdf-root .pm-pdf-general-conditions *{font-size:var(--pm-conditions-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-conditions-align)!important;}.pm-pdf-root .pm-pdf-sign,.pm-pdf-root .pm-pdf-sign *{font-size:var(--pm-sign-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-sign-align)!important;}.pm-pdf-root .pm-pdf-footer-text{font-size:var(--pm-footer-size)!important;text-align:var(--pm-footer-align)!important;}.pm-pdf-root .pm-pdf-amount,.pm-pdf-root .pm-pdf-table-body td:last-child,.pm-pdf-root .pm-pdf-summary td:last-child{white-space:nowrap!important;word-break:normal!important;overflow-wrap:normal!important;font-variant-numeric:tabular-nums;}.pm-pdf-root .pm-pdf-summary-table-wrap{width:20rem;max-width:100%;margin-left:auto;}.pm-pdf-root [data-base-resource]{position:relative;transform-origin:top left;}.pm-pdf-root .pm-pdf-resource,.pm-pdf-root .pm-pdf-editable{cursor:default;box-sizing:border-box;outline:none;outline-offset:2px;}.pm-pdf-root .pm-pdf-resource::before,.pm-pdf-root .pm-pdf-editable::before{content:'';position:absolute;inset:-1px;border:1px dashed rgba(239,68,68,.28);border-radius:inherit;background:radial-gradient(circle at top left,#ef4444 0 3px,transparent 3.2px),radial-gradient(circle at top right,#ef4444 0 3px,transparent 3.2px),radial-gradient(circle at bottom left,#ef4444 0 3px,transparent 3.2px),radial-gradient(circle at bottom right,#ef4444 0 3px,transparent 3.2px);background-size:12px 12px;background-repeat:no-repeat;opacity:0;pointer-events:none;}.pm-pdf-root .pm-pdf-resource::after,.pm-pdf-root .pm-pdf-editable::after{content:'';position:absolute;right:-7px;bottom:-7px;width:12px;height:12px;border-radius:999px;background:#ef4444;box-shadow:0 0 0 2px #fff;opacity:0;pointer-events:none;}.pm-pdf-root .pm-pdf-base-selected,.pm-pdf-root .pm-pdf-edit-selected{outline:none;outline-offset:2px;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-resource,.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-editable{cursor:move;outline:1px dashed rgba(239,68,68,.45);}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-resource::before,.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-resource::after,.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-editable::before,.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-editable::after{opacity:.94;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-base-selected,.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-edit-selected{outline:2px solid #ef4444;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-edit-selected::before,.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-edit-selected::after{opacity:1;}.pm-pdf-delete-btn{position:absolute;top:-8px;right:-8px;width:22px;height:22px;border-radius:50%;background:#ef4444;color:#fff;display:none;align-items:center;justify-content:center;cursor:pointer;font-size:11px;z-index:80;box-shadow:0 0 0 2px #fff;pointer-events:auto;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-edit-selected .pm-pdf-delete-btn{display:flex;}.pm-pdf-delete-btn:hover{background:#dc2626;transform:scale(1.08);transition:all .2s;}</style>`;
     const pdfTableFitTag = `<style>.pm-pdf-root .pm-pdf-table-head th{font-size:var(--pm-fit-head-size,var(--pm-table-head-size))!important;padding-top:var(--pm-fit-cell-py,.5rem)!important;padding-bottom:var(--pm-fit-cell-py,.5rem)!important;padding-left:var(--pm-fit-cell-px,.75rem)!important;padding-right:var(--pm-fit-cell-px,.75rem)!important;}.pm-pdf-root .pm-pdf-table-body td,.pm-pdf-root .pm-pdf-table-body p,.pm-pdf-root .pm-pdf-table-body span{font-size:var(--pm-fit-body-size,var(--pm-table-body-size))!important;line-height:var(--pm-fit-line-height,var(--pm-line-height))!important;}.pm-pdf-root .pm-pdf-table-body td{padding-top:var(--pm-fit-cell-py,.5rem)!important;padding-bottom:var(--pm-fit-cell-py,.5rem)!important;padding-left:var(--pm-fit-cell-px,.75rem)!important;padding-right:var(--pm-fit-cell-px,.75rem)!important;}</style>`;
 
     const now = new Date(); const dateStr = now.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' }); const genDateTime = now.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'medium' }); let docTitle = isOrder ? "ORDEN DE COMPRA" : "COTIZACIÓN"; 

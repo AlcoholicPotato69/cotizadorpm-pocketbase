@@ -91,7 +91,7 @@
     } else if (collectionName === "impuestos") {
       coerceJsonFields(out, ["impuestos_aplicados"]);
     } else if (collectionName === "espacios") {
-      coerceJsonFields(out, ["impuestos_ids", "etiquetas", "precios_por_dia", "dias_bloqueados", "config_b2b"]);
+      coerceJsonFields(out, ["impuestos_ids", "etiquetas", "precios_por_dia", "dias_bloqueados", "dias_bloqueados_premontaje", "config_b2b"]);
     } else if (collectionName === "cotizaciones") {
       coerceJsonFields(out, [
         "desglose_precios",
@@ -123,6 +123,17 @@
         );
       });
       out.imagen_url = imageUrls.length ? JSON.stringify(imageUrls) : "";
+      const planoFile = Array.isArray(record.plano_geografico) ? record.plano_geografico[0] : record.plano_geografico;
+      out.plano_geografico_file = planoFile || "";
+      out.plano_geografico_url = (planoFile && record.id)
+        ? (
+          baseUrl +
+          "/api/files/espacios/" +
+          encodeURIComponent(record.id) +
+          "/" +
+          encodeURIComponent(planoFile)
+        )
+        : "";
     }
 
     return out;
