@@ -790,6 +790,7 @@
     let isAdminUser = false;
     let isVerifierUser = false;
     let canEditConfigUser = false;
+    let resolvedConfigRole = '';
     let currentView = 'v_concepts';
     let currentTenant = 'pm'; // pm | cp
 
@@ -2738,6 +2739,15 @@
       }
     }
 
+    function readAnyStoredAuthState(){
+      const keys = ['pb_native_auth_v1', 'pb_compat_auth_v1', 'pb_auth'];
+      for (const key of keys) {
+        const parsed = readUsers1StoredAuthState(key);
+        if (parsed && typeof parsed === 'object') return parsed;
+      }
+      return null;
+    }
+
     function collectUsers1RoleCandidates(...groups){
       const out = [];
       const seen = new Set();
@@ -2780,7 +2790,7 @@
 
     async function resolveConfigAccess(){
       isAdminUser = await requireAdmin();
-      const hintedRole = getConfigRoleHints();
+      const hintedRole = resolvedConfigRole || getConfigRoleHints();
       isVerifierUser = !isAdminUser && hintedRole === 'verificador';
       canEditConfigUser = isAdminUser || isVerifierUser;
       return canEditConfigUser;
@@ -2814,16 +2824,18 @@
     }
 
     async function requireAdmin(){
+      resolvedConfigRole = '';
       const layoutCtx = getResolvedLayoutAuthContext();
       if (layoutCtx?.isAdmin === true && layoutCtx?.canAccessCurrentRoute !== false) {
         try { localStorage.setItem('hub_user_cache_role', 'admin'); } catch (_) {}
+        resolvedConfigRole = 'admin';
         return true;
       }
 
       const cachedRole = normalizeAdminRole(localStorage.getItem('hub_user_cache_role'));
-      if (cachedRole === 'admin') return true;
 
       const authState = readAnyStoredAuthState();
+      const authStateHasToken = !!String(authState?.token || authState?.access_token || '').trim();
       const profileHints = [
         window.currentUserProfile,
         window.currentUserProfile?.app_user,
@@ -2838,12 +2850,15 @@
         profileHints.map(item => item?.metadata?.role)
       );
       if (hintedRoles.includes('admin')) {
-        try { localStorage.setItem('hub_user_cache_role', 'admin'); } catch (_) {}
-        return true;
+        resolvedConfigRole = 'admin';
+        if (layoutCtx?.canAccessCurrentRoute !== false && (layoutCtx?.user || layoutCtx?.profile)) {
+          try { localStorage.setItem('hub_user_cache_role', 'admin'); } catch (_) {}
+          return true;
+        }
       }
 
       const sb = getUsersAdminClient();
-      if (!sb) return cachedRole === 'admin';
+      if (!sb) return false;
 
       let session = null;
       try {
@@ -2858,12 +2873,12 @@
           sessionUser = userResp?.data?.user || userResp?.user || null;
         } catch (_) {}
       }
+      const hasLiveSession = !!sessionUser;
 
       const identitySources = [
         sessionUser,
-        authState?.user,
-        authState?.record,
-        ...profileHints
+        ...profileHints,
+        ...(hasLiveSession || authStateHasToken ? [authState?.user, authState?.record] : [])
       ].filter(Boolean);
 
       const userRoleCandidates = collectUsers1RoleCandidates(
@@ -2876,8 +2891,9 @@
         ]
       );
 
-      if (userRoleCandidates.includes('admin')) {
+      if (userRoleCandidates.includes('admin') && (hasLiveSession || authStateHasToken)) {
         localStorage.setItem('hub_user_cache_role', 'admin');
+        resolvedConfigRole = 'admin';
         return true;
       }
 
@@ -2926,9 +2942,11 @@
         );
         if (resolvedRole) {
           localStorage.setItem('hub_user_cache_role', resolvedRole);
+          resolvedConfigRole = resolvedRole;
         }
         return resolvedRole === 'admin';
       } catch (_) {}
+      if (cachedRole && hasLiveSession) resolvedConfigRole = cachedRole;
       return false;
     }
 
@@ -2972,6 +2990,7 @@
         { id: 'menu-concepts', view: 'v_concepts' },
         { id: 'menu-taxes', view: 'v_taxes' },
         { id: 'menu-docs', view: 'v_docs' },
+        { id: 'menu-users', view: 'v_users' },
         { id: 'menu-cp-settings', view: 'v_cp_settings' }
       ];
       links.forEach(item => {
@@ -3811,8 +3830,9 @@
         const tbody = document.getElementById('users-tbody');
         tbody.innerHTML = '<tr><td colspan="5" class="py-8 text-center text-gray-400 font-bold italic"><i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Cargando...</td></tr>';
         try {
-          const pb = getDB();
-          const { data: records, error } = await pb.from('app_users').select('*').limit(50);
+          const pb = getUsersAdminClient();
+          if (!pb) throw new Error('No se pudo inicializar PocketBase.');
+          const { data: records, error } = await pb.from('app_users').select('*').order('login_username', { ascending: true }).limit(100);
           
           if (error) {
               throw error;
@@ -3869,8 +3889,10 @@
              `;
           });
           tbody.innerHTML = html;
-        } catch(_) {
-          tbody.innerHTML = '<tr><td colspan="5" class="py-8 text-center text-red-500 font-bold">No se pudo cargar el listado de usuarios.</td></tr>';
+        } catch(e) {
+          const message = String(e?.message || e || 'Error desconocido');
+          tbody.innerHTML = `<tr><td colspan="5" class="py-8 text-center text-red-500 font-bold">No se pudo cargar el listado de usuarios: ${escapePdfEditorHtml(message)}</td></tr>`;
+          showToast('No se pudo cargar usuarios: ' + message, 'error');
         }
       };
 

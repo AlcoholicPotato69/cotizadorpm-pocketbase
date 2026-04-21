@@ -613,17 +613,20 @@ async function loadClientProfilesForOrderModal() {
     if (!sel || !window.tenantPocketBase) return;
 
     try {
-        const { data, error } = await window.tenantPocketBase.from('clientes').select('id,nombre_completo,telefono,correo,rfc,perfil_validado,perfil_estatus').order('nombre_completo', { ascending: true });
+        const { data, error } = await window.tenantPocketBase
+            .from('clientes')
+            .select('id,nombre_completo,telefono,telefonos_adicionales,correo,rfc,perfil_validado,perfil_estatus,documentos_estado,expediente_validacion,constancia_fiscal_emitida_el,comprobante_domicilio_emitido_el,doc_acta_constitutiva,doc_ine,doc_comprobante_domicilio,doc_constancia_fiscal,created_at,created')
+            .order('nombre_completo', { ascending: true });
         if (error) throw error;
         orderClientProfiles = (data || []).slice().sort((a, b) => {
-            const aReady = a?.perfil_validado === true ? 1 : 0;
-            const bReady = b?.perfil_validado === true ? 1 : 0;
+            const aReady = __pmIsOrderClientProfileReady(a) ? 1 : 0;
+            const bReady = __pmIsOrderClientProfileReady(b) ? 1 : 0;
             if (aReady !== bReady) return bReady - aReady;
             return String(a?.nombre_completo || '').localeCompare(String(b?.nombre_completo || ''), 'es');
         });
         orderClientProfilesById = {}; orderClientProfiles.forEach(c => orderClientProfilesById[c.id] = c);
         const current = String(sel.value || hid?.value || '').trim();
-        sel.innerHTML = '<option value="">— Sin perfil —</option>' + orderClientProfiles.map(c => `<option value="${c.id}">${(c.nombre_completo || '').toUpperCase()} • ${c?.perfil_validado === true ? 'LISTO' : 'PENDIENTE'}</option>`).join('');
+        sel.innerHTML = '<option value="">— Sin perfil —</option>' + orderClientProfiles.map(c => `<option value="${c.id}">${(c.nombre_completo || '').toUpperCase()} • ${__pmIsOrderClientProfileReady(c) ? 'LISTO' : 'PENDIENTE'}</option>`).join('');
         if (current) {
             sel.value = current;
             if (hid) hid.value = sel.value || '';
@@ -632,7 +635,7 @@ async function loadClientProfilesForOrderModal() {
         sel.onchange = () => {
             const id = sel.value; if (!id) { if (hid) hid.value = ''; return; }
             const c = orderClientProfilesById[id]; if (!c) return;
-            if (c.perfil_validado !== true) {
+            if (!__pmIsOrderClientProfileReady(c)) {
                 if (hid) hid.value = '';
                 sel.value = '';
                 window.showToast?.('Este perfil aun no tiene expediente validado. Usa captura manual o pide al cliente completar su expediente.', 'info');
@@ -646,7 +649,19 @@ async function loadClientProfilesForOrderModal() {
         };
         const clearAssoc = () => { if (sel.value) sel.value = ''; if (hid) hid.value = ''; };
         ['oed-client','oed-phone','oed-email','fiscal-rfc-re'].forEach(id => { const el = document.getElementById(id); if (el) el.addEventListener('input', clearAssoc); });
+        window.HUB_CLIENT_PROFILE_HOVER?.bindSelect?.(sel, () => {
+            const selectedId = String(sel?.value || hid?.value || '').trim();
+            return selectedId ? (orderClientProfilesById[selectedId] || null) : null;
+        }, { tenant: 'plaza_mayor' });
     } catch (e) { console.warn("No se pudo cargar clientes", e); }
+}
+
+function __pmIsOrderClientProfileReady(client) {
+    if (!client) return false;
+    if (window.HUB_CLIENT_PROFILE_HOVER?.isQuoteReady) {
+        return window.HUB_CLIENT_PROFILE_HOVER.isQuoteReady(client, 'plaza_mayor');
+    }
+    return client?.perfil_validado === true;
 }
 
 function __pmOrderNormalizeMatchValue(value) {

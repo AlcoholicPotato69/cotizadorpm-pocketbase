@@ -4351,7 +4351,7 @@ async function __pmContractsAttachClientReadiness(orders = []) {
     try {
         const { data, error } = await window.tenantPocketBase
             .from('clientes')
-            .select('id,perfil_validado,perfil_estatus,expediente_validacion')
+            .select('id,nombre_completo,telefono,telefonos_adicionales,correo,rfc,perfil_validado,perfil_estatus,documentos_estado,expediente_validacion,constancia_fiscal_emitida_el,comprobante_domicilio_emitido_el,doc_acta_constitutiva,doc_ine,doc_comprobante_domicilio,doc_constancia_fiscal,created_at,created')
             .in('id', ids);
         if (error) throw error;
         const byId = {};
@@ -4366,6 +4366,9 @@ function __pmContractsCanGenerateContract(order) {
     if (!order || !String(order.cliente_id || '').trim()) return false;
     const client = order.__client_profile || null;
     if (!client) return false;
+    if (window.HUB_CLIENT_PROFILE_HOVER?.isContractReady) {
+        return window.HUB_CLIENT_PROFILE_HOVER.isContractReady(client, 'plaza_mayor');
+    }
     const validation = __pmContractsSafeObject(client.expediente_validacion);
     const readyForQuotes = __pmContractsIsTruthyReadyFlag(client.perfil_validado) || __pmContractsIsTruthyReadyFlag(validation.readyForQuotes) || __pmContractsIsTruthyReadyFlag(validation.ready) || __pmContractsIsTruthyReadyFlag(validation.puedeCotizar) || __pmContractsIsTruthyReadyFlag(validation.quoteApproved) || __pmContractsIsTruthyReadyFlag(validation.quoteReady) || __pmContractsIsReadyStatusValue(client.perfil_estatus || validation.status);
     const hasDictamen = __pmContractsIsTruthyReadyFlag(validation.readyForContracts) || __pmContractsIsTruthyReadyFlag(validation.dictamenGuardado) || __pmContractsIsTruthyReadyFlag(validation.dictamenAprobado);
@@ -4376,6 +4379,11 @@ function __pmContractsContractBlockReason(order) {
     if (!order || !String(order.cliente_id || '').trim()) return 'Esta orden no tiene un perfil de cliente asociado.';
     const client = order.__client_profile || null;
     if (!client) return 'No se pudo validar el perfil del cliente asociado.';
+    if (window.HUB_CLIENT_PROFILE_HOVER?.isQuoteReady) {
+        if (!window.HUB_CLIENT_PROFILE_HOVER.isQuoteReady(client, 'plaza_mayor')) return 'El expediente del cliente debe estar completo, vigente y aprobado.';
+        if (!window.HUB_CLIENT_PROFILE_HOVER.hasDictamen(client, 'plaza_mayor')) return 'Falta guardar o aprobar el dictamen del cliente.';
+        return '';
+    }
     const validation = __pmContractsSafeObject(client.expediente_validacion);
     const readyForQuotes = __pmContractsIsTruthyReadyFlag(client.perfil_validado) || __pmContractsIsTruthyReadyFlag(validation.readyForQuotes) || __pmContractsIsTruthyReadyFlag(validation.ready) || __pmContractsIsTruthyReadyFlag(validation.puedeCotizar) || __pmContractsIsTruthyReadyFlag(validation.quoteApproved) || __pmContractsIsTruthyReadyFlag(validation.quoteReady) || __pmContractsIsReadyStatusValue(client.perfil_estatus || validation.status);
     if (!readyForQuotes) return 'El expediente del cliente debe estar completo, vigente y aprobado.';

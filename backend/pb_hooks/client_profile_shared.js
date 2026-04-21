@@ -873,6 +873,8 @@
     e.record.set("correo", sanitizeText(e.record.get("correo"), 255).toLowerCase());
     e.record.set("telefono", normalizePhone(e.record.get("telefono")));
     e.record.set("rfc", sanitizeText(e.record.get("rfc"), 40).toUpperCase());
+    const profileOrigin = sanitizeText(e.record.get("perfil_origen"), 40).toLowerCase();
+    e.record.set("perfil_origen", profileOrigin === "cotizacion_rapida" ? "cotizacion_rapida" : "manual");
     validateUploadedFilesForRequest(e);
     applyValidationToRecord(e.record, { touchPublicUpdateAt: false });
     return e.next();

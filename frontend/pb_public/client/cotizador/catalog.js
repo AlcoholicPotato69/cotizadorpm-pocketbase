@@ -164,7 +164,12 @@ function isQuoteClientProfileReady(client = {}) {
     if (!client || typeof client !== 'object') return false;
     const validation = readQuoteClientValidation(client);
     const rawStatus = String(client?.perfil_estatus || validation?.status || '').trim().toLowerCase();
+    if (['rechazado', 'rechazada', 'rechazado_expediente', 'rechazada_expediente', 'documentos_rechazados'].includes(rawStatus)) return false;
     if (
+        isQuoteReadyFlagValue(client?.perfil_completo) ||
+        isQuoteReadyFlagValue(validation?.isComplete) ||
+        isQuoteReadyFlagValue(validation?.complete) ||
+        isQuoteReadyFlagValue(validation?.perfilCompleto) ||
         isQuoteReadyFlagValue(client?.perfil_validado) ||
         isQuoteReadyFlagValue(validation?.readyForQuotes) ||
         isQuoteReadyFlagValue(validation?.ready) ||
@@ -181,7 +186,6 @@ function isQuoteClientProfileReady(client = {}) {
         || readQuoteClientArray(client?.telefonos_adicionales).some((phone) => !!normalizeQuotePhoneValue(phone));
     if (!hasName || !hasEmail || !hasRfc || !hasPhone) return false;
 
-    let allDocsApproved = true;
     let anyRejected = false;
     for (let i = 0; i < PM_QUOTE_REQUIRED_DOC_FIELDS.length; i += 1) {
         const field = PM_QUOTE_REQUIRED_DOC_FIELDS[i];
@@ -190,9 +194,8 @@ function isQuoteClientProfileReady(client = {}) {
         const status = getQuoteClientDocumentStatus(client, field);
         if (!uploaded && !omitted) return false;
         if (status === 'rechazado') anyRejected = true;
-        if (status !== 'aprobado' && status !== 'omitido') allDocsApproved = false;
     }
-    if (anyRejected || !allDocsApproved) return false;
+    if (anyRejected) return false;
 
     const constanciaOmitted = isQuoteClientDocumentOmitted(client, 'doc_constancia_fiscal');
     const comprobanteOmitted = isQuoteClientDocumentOmitted(client, 'doc_comprobante_domicilio');
@@ -270,34 +273,32 @@ function buildQuoteClientSnapshot() {
 function syncQuoteClientEntryMode() {
     const validatedProfiles = getValidatedClientProfiles();
     const hasValidatedProfiles = validatedProfiles.length > 0;
-    const quickMode = !hasValidatedProfiles || isQuickQuoteModeEnabled();
+    const quickMode = isQuickQuoteModeEnabled();
     const selectEl = document.getElementById('cli-select');
     const hintEl = document.getElementById('cli-profile-hint');
     const manualWrap = document.getElementById('cli-manual-fields');
     const quickRow = document.getElementById('cli-quick-quote-row');
-    const quickCheckbox = document.getElementById('cli-quick-quote');
 
     if (manualWrap) {
-        const selectedProfileId = String(selectEl?.value || document.getElementById('cli-id')?.value || '').trim();
-        const hideManualFields = !!selectedProfileId && !quickMode;
+        const hideManualFields = !quickMode;
         manualWrap.classList.toggle('hidden', hideManualFields);
         manualWrap.style.display = hideManualFields ? 'none' : '';
         manualWrap.setAttribute('aria-hidden', hideManualFields ? 'true' : 'false');
     }
-    if (quickRow) quickRow.classList.toggle('hidden', !hasValidatedProfiles);
+    if (quickRow) quickRow.classList.remove('hidden');
     if (selectEl) {
-        selectEl.disabled = !hasValidatedProfiles;
+        selectEl.disabled = !hasValidatedProfiles || quickMode;
         selectEl.classList.toggle('opacity-60', selectEl.disabled);
         selectEl.classList.toggle('cursor-not-allowed', selectEl.disabled);
     }
 
     if (hintEl) {
-        if (!hasValidatedProfiles) hintEl.textContent = 'No hay perfiles validados disponibles. Captura los datos y se creará un perfil pendiente automáticamente.';
+        if (!hasValidatedProfiles) hintEl.textContent = 'No hay perfiles completos disponibles. Captura los datos y se creará un perfil pendiente automáticamente.';
         else if (quickMode) hintEl.textContent = 'Cotización rápida activa: al generar se creará un perfil nuevo pendiente para completar su expediente después.';
-        else hintEl.textContent = 'Selecciona un perfil validado. Si el cliente aún no existe, activa cotización rápida.';
+        else hintEl.textContent = 'Selecciona un perfil completo. Si el cliente aún no existe, activa cotización rápida.';
     }
-
-    if (!hasValidatedProfiles && quickCheckbox) quickCheckbox.checked = false;
+    if (hintEl && quickMode) hintEl.textContent = 'Cotizacion rapida activa: al generar se creara un perfil nuevo pendiente para completar su expediente despues.';
+    if (hintEl && !quickMode && !hasValidatedProfiles) hintEl.textContent = 'No hay perfiles completos disponibles. Activa cotizacion rapida para capturar los datos y crear un perfil pendiente.';
 }
 
 function bindQuoteClientFieldListeners() {
@@ -327,7 +328,7 @@ window.toggleQuoteQuickClientMode = function () {
     const quickCheckbox = document.getElementById('cli-quick-quote');
     if (!quickCheckbox) return;
     if (quickCheckbox.checked) clearQuoteClientAssociation({ clearFields: true });
-    else clearQuoteClientFields();
+    else clearQuoteClientAssociation({ clearFields: true });
     syncQuoteClientEntryMode();
 };
 
@@ -338,6 +339,7 @@ async function createQuickQuoteClientProfile(cli) {
         telefono: String(cli?.phone || '').trim(),
         correo: String(cli?.email || '').trim().toLowerCase() || null,
         rfc: String(cli?.rfc || '').trim().toUpperCase() || null,
+        perfil_origen: 'cotizacion_rapida',
         perfil_estatus: 'pendiente_expediente',
         perfil_validado: false,
         perfil_completo: false
@@ -359,9 +361,9 @@ async function resolveQuoteClientId(cli) {
     if (selectedProfile) return String(selectedProfile.id || '').trim();
     const hiddenIdEl = document.getElementById('cli-id');
     const existingId = String(hiddenIdEl?.value || '').trim();
-    if (existingId) return existingId;
-    if (getValidatedClientProfiles().length > 0 && !isQuickQuoteModeEnabled()) {
-        throw new Error('Selecciona un perfil validado o activa cotización rápida.');
+    if (existingId && isQuickQuoteModeEnabled()) return existingId;
+    if (!isQuickQuoteModeEnabled()) {
+        throw new Error('Selecciona un perfil completo o activa cotización rápida.');
     }
     return createQuickQuoteClientProfile(cli);
 }
@@ -374,7 +376,7 @@ async function loadClientProfilesForQuoteModal() {
     try {
         const { data, error } = await window.tenantPocketBase
             .from('clientes')
-            .select('id,nombre_completo,telefono,telefonos_adicionales,correo,rfc,perfil_validado,perfil_estatus,documentos_estado,expediente_validacion,constancia_fiscal_emitida_el,comprobante_domicilio_emitido_el,doc_acta_constitutiva,doc_ine,doc_comprobante_domicilio,doc_constancia_fiscal,created_at,created')
+            .select('id,nombre_completo,telefono,telefonos_adicionales,correo,rfc,perfil_completo,perfil_validado,perfil_estatus,documentos_estado,expediente_validacion,constancia_fiscal_emitida_el,comprobante_domicilio_emitido_el,doc_acta_constitutiva,doc_ine,doc_comprobante_domicilio,doc_constancia_fiscal,created_at,created')
             .order('nombre_completo', { ascending: true });
 
         if (error) throw error;
@@ -389,8 +391,8 @@ async function loadClientProfilesForQuoteModal() {
         clientProfiles.forEach(c => clientProfilesById[c.id] = c);
         const validatedProfiles = getValidatedClientProfiles();
 
-        sel.innerHTML = '<option value="">' + (validatedProfiles.length ? '— Selecciona un perfil validado —' : '— Sin perfiles validados disponibles —') + '</option>' + validatedProfiles
-            .map(c => `<option value="${c.id}">${(c.nombre_completo || '').toUpperCase()} • LISTO</option>`)
+        sel.innerHTML = '<option value="">' + (validatedProfiles.length ? '— Selecciona un perfil completo —' : '— Sin perfiles completos disponibles —') + '</option>' + validatedProfiles
+            .map(c => `<option value="${c.id}">${(c.nombre_completo || '').toUpperCase()} • COMPLETO</option>`)
             .join('');
 
         sel.onchange = () => {
@@ -2999,8 +3001,8 @@ window.generatePDF = async function () {
     const availabilityOk = await window.checkAvailability();
     if (!availabilityOk) return window.showToast("Hay espacios con conflicto de fechas o datos incompletos.", "error");
 
-    if (getValidatedClientProfiles().length > 0 && !isQuickQuoteModeEnabled() && !String(document.getElementById('cli-id')?.value || '').trim()) {
-        return window.showToast('Selecciona un perfil validado o activa cotización rápida.', 'error');
+    if (!isQuickQuoteModeEnabled() && !getSelectedQuoteClientProfile()) {
+        return window.showToast('Selecciona un perfil completo o activa cotización rápida.', 'error');
     }
     const cli = buildQuoteClientSnapshot();
     if (!cli.name) return window.showToast("Falta nombre del cliente", "error");

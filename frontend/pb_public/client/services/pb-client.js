@@ -450,18 +450,22 @@
         }
         if (this.action === 'upsert') {
           const payload = this._normalizePayload(this.payload);
-          const conflictField = mapFieldName(this.originalTable, this.onConflict || 'id', 'filter');
-          const filterField = conflictField;
-          const filterVal = (typeof FormData !== 'undefined' && payload instanceof FormData)
-            ? payload.get(filterField)
-            : (payload && typeof payload === 'object' ? payload[filterField] : undefined);
-          if (filterVal === undefined || filterVal === null || filterVal === '') {
+          const conflictFields = String(this.onConflict || 'id')
+            .split(',')
+            .map(field => mapFieldName(this.originalTable, field.trim(), 'filter'))
+            .filter(Boolean);
+          const conflictValues = conflictFields.map(field => (
+            (typeof FormData !== 'undefined' && payload instanceof FormData)
+              ? payload.get(field)
+              : (payload && typeof payload === 'object' ? payload[field] : undefined)
+          ));
+          if (!conflictFields.length || conflictValues.some(value => value === undefined || value === null || value === '')) {
             const created = await createRecord(this.client.baseUrl, this.collection, payload);
             return { data: this._mapOut(created), error: null };
           }
           const temp = new QueryBuilder(this.client, this.originalTable);
           temp.collection = this.collection;
-          temp.eq(filterField, filterVal);
+          conflictFields.forEach((field, index) => temp.eq(field, conflictValues[index]));
           const found = await temp._findMatchingRecords();
           if (found.length) {
             const updated = await updateRecord(this.client.baseUrl, this.collection, found[0].id, payload);

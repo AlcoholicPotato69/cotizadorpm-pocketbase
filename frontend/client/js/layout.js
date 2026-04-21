@@ -1148,7 +1148,8 @@
             tenantAllowed: !!tenantAllowed,
             permissions,
             rawPermissions,
-            isAdmin: role === 'admin'
+            isAdmin: role === 'admin',
+            isVerifier: role === 'verificador'
         };
     }
 
@@ -1156,7 +1157,7 @@
         if (!routeCtx) return true;
         if (routeCtx.isLoginPage) return true;
         if (!authCtx || !authCtx.session || !authCtx.session.user) return false;
-        if (routeCtx.isSystem) return authCtx.isAdmin === true;
+        if (routeCtx.isSystem) return authCtx.isAdmin === true || authCtx.isVerifier === true || normalizeLayoutRole(authCtx.role || '') === 'verificador';
         if (!routeCtx.tenant) return true;
         if (authCtx.tenantAllowed !== true) return false;
 
@@ -1215,10 +1216,334 @@
         });
         const settingsBtn = document.getElementById('layout-settings-btn');
         if (settingsBtn) {
-            if (authCtx.isAdmin) settingsBtn.classList.replace('hidden', 'flex');
+            if (authCtx.isAdmin || authCtx.isVerifier || normalizeLayoutRole(authCtx.role || '') === 'verificador') settingsBtn.classList.replace('hidden', 'flex');
             else settingsBtn.classList.add('hidden');
         }
     }
+
+    (function installClientProfileHoverHelper() {
+        if (window.HUB_CLIENT_PROFILE_HOVER) return;
+
+        const REQUIRED_BY_TENANT = {
+            plaza_mayor: [
+                { field: 'doc_acta_constitutiva', label: 'Acta constitutiva' },
+                { field: 'doc_ine', label: 'INE' },
+                { field: 'doc_comprobante_domicilio', label: 'Comprobante de domicilio', dateField: 'comprobante_domicilio_emitido_el', validDays: 90 },
+                { field: 'doc_constancia_fiscal', label: 'Constancia fiscal', dateField: 'constancia_fiscal_emitida_el', validDays: 30 }
+            ],
+            casa_de_piedra: [
+                { field: 'doc_ine', label: 'INE' },
+                { field: 'doc_comprobante_domicilio', label: 'Comprobante de domicilio', dateField: 'comprobante_domicilio_emitido_el', validDays: 90 },
+                { field: 'doc_constancia_fiscal', label: 'Constancia fiscal', dateField: 'constancia_fiscal_emitida_el', validDays: 30 }
+            ]
+        };
+        let hoverTimer = 0;
+        let hoverModal = null;
+        let activeTrigger = null;
+
+        function escapeProfileHtml(value) {
+            return String(value == null ? '' : value).replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+        }
+
+        function safeProfileObject(value) {
+            if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+            if (typeof value === 'string') {
+                try {
+                    const parsed = JSON.parse(value);
+                    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+                } catch (_) {}
+            }
+            return {};
+        }
+
+        function safeProfileArray(value) {
+            if (Array.isArray(value)) return value;
+            if (typeof value === 'string') {
+                try {
+                    const parsed = JSON.parse(value);
+                    return Array.isArray(parsed) ? parsed : [];
+                } catch (_) {}
+            }
+            return [];
+        }
+
+        function normalizeProfileDate(value) {
+            const raw = String(value || '').trim();
+            if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+            if (/^\d{4}-\d{2}-\d{2}[ T]/.test(raw)) return raw.slice(0, 10);
+            return '';
+        }
+
+        function isTruthyProfileFlag(value) {
+            if (value === true) return true;
+            if (typeof value === 'number') return value === 1;
+            const normalized = String(value ?? '').trim().toLowerCase();
+            return ['1', 'true', 'si', 'sí', 'yes', 'aprobado', 'aprobada', 'validado', 'validada', 'listo', 'lista', 'activo', 'activa'].includes(normalized);
+        }
+
+        function isReadyProfileStatus(value) {
+            const normalized = String(value ?? '').trim().toLowerCase();
+            return ['validado', 'validada', 'aprobado', 'aprobada', 'listo', 'lista', 'listo_para_cotizar', 'lista_para_cotizar', 'activo', 'activa'].includes(normalized);
+        }
+
+        function normalizeProfileTenant(value, fallback = 'plaza_mayor') {
+            const tenant = String(value || '').trim().toLowerCase();
+            if (tenant === 'cp' || tenant === 'casa de piedra' || tenant === 'casa_de_piedra') return 'casa_de_piedra';
+            if (tenant === 'pm' || tenant === 'plaza mayor' || tenant === 'plaza_mayor') return 'plaza_mayor';
+            return fallback;
+        }
+
+        function normalizeProfilePhone(value) {
+            const digits = String(value || '').replace(/\D+/g, '').slice(-10);
+            return digits.length === 10 ? digits : '';
+        }
+
+        function profileHasFile(profile, field, docInfo = {}) {
+            if (docInfo.uploaded === true || String(docInfo.fileName || '').trim()) return true;
+            const raw = profile?.[field];
+            if (Array.isArray(raw)) return String(raw[0] || '').trim() !== '';
+            return String(raw || '').trim() !== '';
+        }
+
+        function getProfileDocState(profile, field) {
+            const validation = safeProfileObject(profile?.expediente_validacion);
+            const docs = safeProfileObject(validation.documents);
+            const docInfo = safeProfileObject(docs[field]);
+            const states = safeProfileObject(profile?.documentos_estado);
+            const stateInfo = safeProfileObject(states[field]);
+            const status = String(stateInfo.status || docInfo.estado || docInfo.status || '').trim().toLowerCase();
+            const omitted = stateInfo.omitido === true || docInfo.omitido === true || status === 'omitido';
+            const uploaded = profileHasFile(profile, field, docInfo);
+            const approved = omitted || status === 'aprobado';
+            return {
+                uploaded,
+                omitted,
+                approved,
+                status: omitted ? 'omitido' : (status || (uploaded ? 'pendiente' : 'faltante')),
+                date: normalizeProfileDate(
+                    stateInfo.subido_at
+                    || stateInfo.aprobado_at
+                    || stateInfo.revisado_at
+                    || docInfo.subidoAt
+                    || docInfo.subido_at
+                    || docInfo.aprobadoAt
+                    || docInfo.revisadoAt
+                    || ''
+                )
+            };
+        }
+
+        function getProfileReferenceDate(profile, doc, state) {
+            const validation = safeProfileObject(profile?.expediente_validacion);
+            if (doc.field === 'doc_constancia_fiscal') {
+                return normalizeProfileDate(
+                    state.date
+                    || validation.constanciaFiscalSubidaEl
+                    || validation.constancia_fiscal_subida_el
+                    || validation.constanciaFiscalEmitidaEl
+                    || validation.constancia_fiscal_emitida_el
+                    || profile?.constancia_fiscal_emitida_el
+                );
+            }
+            if (doc.field === 'doc_comprobante_domicilio') {
+                return normalizeProfileDate(
+                    profile?.comprobante_domicilio_emitido_el
+                    || validation.comprobanteDomicilioEmitidoEl
+                    || validation.comprobante_domicilio_emitido_el
+                    || state.date
+                );
+            }
+            return state.date;
+        }
+
+        function isProfileDateValid(dateValue, maxAgeDays) {
+            const normalized = normalizeProfileDate(dateValue);
+            if (!normalized) return false;
+            const parsed = new Date(normalized + 'T00:00:00Z');
+            if (Number.isNaN(parsed.getTime())) return false;
+            const now = new Date();
+            const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+            const ageDays = Math.floor((todayUtc.getTime() - parsed.getTime()) / 86400000);
+            return ageDays >= 0 && ageDays <= Math.max(0, Number(maxAgeDays) || 0);
+        }
+
+        function getProfileChecks(profile, tenantHint) {
+            const tenant = normalizeProfileTenant(profile?.tenant || tenantHint, tenantHint || 'plaza_mayor');
+            const docs = REQUIRED_BY_TENANT[tenant] || REQUIRED_BY_TENANT.plaza_mayor;
+            const validation = safeProfileObject(profile?.expediente_validacion);
+            const hasName = String(profile?.nombre_completo || '').trim() !== '';
+            const hasEmail = String(profile?.correo || '').trim() !== '';
+            const hasRfc = String(profile?.rfc || '').trim() !== '';
+            const hasPhone = !!normalizeProfilePhone(profile?.telefono) || safeProfileArray(profile?.telefonos_adicionales).some((phone) => !!normalizeProfilePhone(phone));
+            const docChecks = docs.map((doc) => {
+                const state = getProfileDocState(profile, doc.field);
+                const referenceDate = getProfileReferenceDate(profile, doc, state);
+                const validDate = !doc.validDays || state.omitted || isProfileDateValid(referenceDate, doc.validDays);
+                return {
+                    ...doc,
+                    ...state,
+                    referenceDate,
+                    validDate,
+                    ok: (state.uploaded || state.omitted) && state.approved && validDate
+                };
+            });
+            const docsReady = docChecks.every((doc) => doc.ok);
+            const dataReady = hasName && hasEmail && hasRfc && hasPhone;
+            const readyByFlag =
+                isTruthyProfileFlag(profile?.perfil_validado)
+                || isTruthyProfileFlag(validation.readyForQuotes)
+                || isTruthyProfileFlag(validation.ready)
+                || isTruthyProfileFlag(validation.puedeCotizar)
+                || isTruthyProfileFlag(validation.quoteApproved)
+                || isTruthyProfileFlag(validation.quoteReady)
+                || isReadyProfileStatus(profile?.perfil_estatus || validation.status);
+            const canQuote = readyByFlag || (dataReady && docsReady);
+            const hasDictamen =
+                isTruthyProfileFlag(validation.readyForContracts)
+                || isTruthyProfileFlag(validation.dictamenGuardado)
+                || isTruthyProfileFlag(validation.dictamenAprobado);
+            return {
+                tenant,
+                data: [
+                    { label: 'Nombre', ok: hasName },
+                    { label: 'Correo', ok: hasEmail },
+                    { label: 'RFC', ok: hasRfc },
+                    { label: 'Telefono', ok: hasPhone }
+                ],
+                docs: docChecks,
+                canQuote,
+                hasDictamen,
+                canContract: canQuote && hasDictamen,
+                status: String(profile?.perfil_estatus || validation.status || '').trim()
+            };
+        }
+
+        function buildProfileHtml(profile, options = {}) {
+            const checks = getProfileChecks(profile, options.tenant || profile?.tenant);
+            const name = String(profile?.nombre_completo || 'Perfil de cliente').trim();
+            const line = (label, ok, detail) => `
+                <label style="display:flex;align-items:flex-start;gap:8px;margin:6px 0;color:${ok ? '#065f46' : '#92400e'};">
+                    <input type="checkbox" disabled ${ok ? 'checked' : ''} style="margin-top:2px;accent-color:#059669;">
+                    <span><strong>${escapeProfileHtml(label)}</strong>${detail ? `<small style="display:block;color:#64748b;font-weight:700;">${escapeProfileHtml(detail)}</small>` : ''}</span>
+                </label>`;
+            const docRows = checks.docs.map((doc) => {
+                const detail = doc.omitted
+                    ? 'Omitido por verificador'
+                    : (doc.ok
+                        ? (doc.referenceDate ? `Vigente desde ${doc.referenceDate}` : 'Aprobado')
+                        : (doc.uploaded ? `Estado: ${doc.status}` : 'No cargado'));
+                return line(doc.label, doc.ok, detail);
+            }).join('');
+            const dataRows = checks.data.map((item) => line(item.label, item.ok)).join('');
+            return `
+                <div style="font-size:11px;font-weight:900;letter-spacing:.16em;text-transform:uppercase;color:#0f172a;margin-bottom:4px;">${escapeProfileHtml(name)}</div>
+                <div style="font-size:11px;color:#64748b;font-weight:800;margin-bottom:10px;">${checks.tenant === 'casa_de_piedra' ? 'Casa de Piedra' : 'Plaza Mayor'}${checks.status ? ` · ${escapeProfileHtml(checks.status)}` : ''}</div>
+                ${line('Puede cotizar', checks.canQuote)}
+                ${line('Dictamen guardado/aprobado', checks.hasDictamen)}
+                ${line('Puede generar contrato', checks.canContract)}
+                <div style="height:1px;background:#e2e8f0;margin:10px 0;"></div>
+                <div style="font-size:10px;font-weight:900;text-transform:uppercase;color:#94a3b8;margin-bottom:4px;">Datos</div>
+                ${dataRows}
+                <div style="font-size:10px;font-weight:900;text-transform:uppercase;color:#94a3b8;margin:10px 0 4px;">Documentos</div>
+                ${docRows}
+            `;
+        }
+
+        function ensureProfileModal() {
+            if (hoverModal) return hoverModal;
+            hoverModal = document.createElement('div');
+            hoverModal.id = 'hub-client-profile-hover-card';
+            hoverModal.setAttribute('role', 'tooltip');
+            hoverModal.style.cssText = 'position:fixed;z-index:10050;display:none;width:min(340px,calc(100vw - 24px));max-height:min(78vh,620px);overflow:auto;border:1px solid rgba(148,163,184,.35);border-radius:18px;background:#fff;box-shadow:0 26px 62px rgba(15,23,42,.24);padding:14px 16px;color:#334155;font-size:12px;line-height:1.4;';
+            hoverModal.addEventListener('mouseenter', () => { if (hoverTimer) clearTimeout(hoverTimer); hoverTimer = 0; });
+            hoverModal.addEventListener('mouseleave', hideProfileModal);
+            document.body.appendChild(hoverModal);
+            return hoverModal;
+        }
+
+        function positionProfileModal(trigger, modal) {
+            const rect = trigger?.getBoundingClientRect ? trigger.getBoundingClientRect() : null;
+            if (!rect) return;
+            modal.style.display = 'block';
+            modal.style.left = '0px';
+            modal.style.top = '0px';
+            const card = modal.getBoundingClientRect();
+            let top = rect.bottom + 10;
+            let left = rect.left;
+            if (left + card.width > window.innerWidth - 12) left = window.innerWidth - card.width - 12;
+            if (left < 12) left = 12;
+            if (top + card.height > window.innerHeight - 12) top = Math.max(12, rect.top - card.height - 10);
+            modal.style.left = `${left}px`;
+            modal.style.top = `${top}px`;
+        }
+
+        function showProfileModal(trigger, profile, options = {}) {
+            if (!profile) return;
+            const modal = ensureProfileModal();
+            modal.innerHTML = buildProfileHtml(profile, options);
+            activeTrigger = trigger || null;
+            positionProfileModal(trigger, modal);
+        }
+
+        function hideProfileModal() {
+            if (hoverTimer) clearTimeout(hoverTimer);
+            hoverTimer = 0;
+            if (hoverModal) hoverModal.style.display = 'none';
+            activeTrigger = null;
+        }
+
+        function scheduleProfileModal(trigger, getProfile, options = {}) {
+            if (hoverTimer) clearTimeout(hoverTimer);
+            hoverTimer = window.setTimeout(() => {
+                hoverTimer = 0;
+                const profile = typeof getProfile === 'function' ? getProfile() : null;
+                if (!profile) return;
+                showProfileModal(trigger, profile, options);
+            }, Math.max(250, Number(options.delayMs) || 700));
+        }
+
+        function bindSelect(selectEl, getProfile, options = {}) {
+            if (!selectEl || selectEl.dataset.clientProfileHoverBound === '1') return;
+            selectEl.dataset.clientProfileHoverBound = '1';
+            selectEl.addEventListener('mouseenter', () => scheduleProfileModal(selectEl, getProfile, options));
+            selectEl.addEventListener('focus', () => scheduleProfileModal(selectEl, getProfile, options));
+            selectEl.addEventListener('mouseleave', (event) => {
+                const related = event.relatedTarget || null;
+                if (hoverModal && related && hoverModal.contains(related)) return;
+                hideProfileModal();
+            });
+            selectEl.addEventListener('blur', hideProfileModal);
+            selectEl.addEventListener('change', () => {
+                if (!hoverModal || hoverModal.style.display === 'none') return;
+                const profile = typeof getProfile === 'function' ? getProfile() : null;
+                if (profile) showProfileModal(selectEl, profile, options);
+                else hideProfileModal();
+            });
+        }
+
+        window.addEventListener('scroll', () => {
+            if (!activeTrigger) return;
+            hideProfileModal();
+        }, true);
+        window.addEventListener('resize', hideProfileModal);
+
+        window.HUB_CLIENT_PROFILE_HOVER = {
+            bindSelect,
+            show: showProfileModal,
+            hide: hideProfileModal,
+            getChecks: getProfileChecks,
+            isQuoteReady(profile, tenant) {
+                return getProfileChecks(profile || {}, tenant).canQuote;
+            },
+            hasDictamen(profile, tenant) {
+                return getProfileChecks(profile || {}, tenant).hasDictamen;
+            },
+            isContractReady(profile, tenant) {
+                return getProfileChecks(profile || {}, tenant).canContract;
+            },
+            buildHtml: buildProfileHtml
+        };
+    })();
 
     async function loadLayoutIdentity(sessionUser) {
         const fields = '*';

@@ -8,7 +8,7 @@ migrate((app) => {
   const ownNotification = '@request.auth.id != "" && (user_id = @request.auth.id || @request.auth.role = "admin")';
   const tenantScopedAccess = [
     '@request.auth.id != ""',
-    '(',
+    '&& (',
     '  @request.auth.role = "admin"',
     '  || @request.auth.role = "verificador"',
     '  || @request.auth.allowed_tenants ?= tenant',
@@ -19,7 +19,7 @@ migrate((app) => {
   ].join(" ");
   const tenantScopedCreate = [
     '@request.auth.id != ""',
-    '(',
+    '&& (',
     '  @request.auth.role = "admin"',
     '  || @request.auth.role = "verificador"',
     '  || @request.auth.allowed_tenants ?= @request.body.tenant',
@@ -216,7 +216,7 @@ migrate((app) => {
   if (pdfOverlays) {
     const overlayRead = [
       '@request.auth.id != ""',
-      '(',
+      '&& (',
       '  @request.auth.role = "admin"',
       '  || @request.auth.role = "verificador"',
       '  || @request.auth.allowed_tenants ?= tenant',

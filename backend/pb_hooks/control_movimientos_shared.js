@@ -791,10 +791,12 @@
     const actor = buildActor(e, clientName, "usuario");
     e.next();
     const clientId = trim(e.record.get("id"));
+    const profileOrigin = trim(recordValue(e.record, "perfil_origen")).toLowerCase();
+    const isQuickProfile = profileOrigin === "cotizacion_rapida";
 
     saveMovement({
       tenant,
-      tipo_movimiento: "cliente_creado",
+      tipo_movimiento: isQuickProfile ? "perfil_rapido_creado" : "cliente_creado",
       entidad_tipo: "cliente",
       entidad_id: clientId,
       entidad_nombre: clientName,
@@ -803,8 +805,13 @@
       actor_id: actor.id,
       actor_nombre: actor.name,
       actor_role: actor.role,
-      resumen: "Cliente " + clientName + " creado",
-      metadata: {}
+      resumen: isQuickProfile
+        ? "Perfil rapido creado desde cotizacion rapida para " + clientName
+        : "Cliente " + clientName + " creado",
+      metadata: {
+        perfil_origen: profileOrigin || "manual",
+        perfil_estatus: trim(recordValue(e.record, "perfil_estatus"))
+      }
     });
   }
 
