@@ -214,6 +214,33 @@ body {
 .additional-info-muted { display:block; margin-top:3px; color:var(--muted); font-size:12px; line-height:1.5; }
 .additional-entry-list { margin-bottom:8px; }
 .additional-entry-action { max-width:280px; }
+.quote-history-panel { display:flex; flex-direction:column; gap:14px; background:var(--card-bg); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; box-shadow:var(--shadow-sm); }
+.quote-history-head { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; flex-wrap:wrap; }
+.quote-history-kicker { font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin-bottom:4px; }
+.quote-history-title { font-size:16px; font-weight:800; color:var(--fg); }
+.quote-history-sub { font-size:13px; color:var(--muted); margin-top:4px; line-height:1.6; }
+.quote-history-summary { display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border-radius:999px; background:var(--border-light); color:var(--fg2); font-size:12px; font-weight:700; }
+.quote-history-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:14px; }
+.quote-card { border:1px solid var(--border); border-radius:var(--radius-lg); padding:18px; background:linear-gradient(180deg,#fff 0%,#f9fafb 100%); box-shadow:var(--shadow-sm); display:flex; flex-direction:column; gap:12px; min-width:0; }
+.quote-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+.quote-card-title { font-size:15px; font-weight:800; color:var(--fg); line-height:1.4; }
+.quote-card-subtitle { font-size:12px; color:var(--muted); margin-top:3px; line-height:1.5; }
+.quote-status-pill { display:inline-flex; align-items:center; justify-content:center; padding:6px 10px; border-radius:999px; font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; white-space:nowrap; }
+.quote-status-pill.pending { background:var(--warning-light); color:var(--warning); }
+.quote-status-pill.approved { background:var(--success-light); color:var(--success); }
+.quote-status-pill.complete { background:var(--info-light); color:var(--info); }
+.quote-status-pill.cancelled { background:var(--danger-light); color:var(--danger); }
+.quote-meta-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px 12px; }
+.quote-meta-item { min-width:0; }
+.quote-meta-label { font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin-bottom:3px; }
+.quote-meta-value { font-size:13px; font-weight:700; color:var(--fg); line-height:1.45; overflow-wrap:anywhere; }
+.quote-docs { display:flex; flex-wrap:wrap; gap:8px; }
+.quote-doc-btn { display:inline-flex; align-items:center; gap:7px; min-height:36px; padding:8px 11px; border:1px solid var(--border); border-radius:12px; background:#fff; color:var(--fg2); font-size:12px; font-weight:700; cursor:pointer; transition:border-color var(--transition),background var(--transition),color var(--transition),transform .12s; }
+.quote-doc-btn:hover { border-color:var(--accent); color:var(--accent); background:var(--accent-light); }
+.quote-doc-btn:active { transform:scale(.98); }
+.quote-doc-btn.disabled, .quote-doc-btn:disabled { opacity:.55; cursor:not-allowed; pointer-events:none; }
+.quote-note { padding:11px 13px; border-radius:12px; background:var(--border-light); color:var(--muted); font-size:12px; line-height:1.6; }
+.quote-empty { padding:18px; border:1px dashed var(--border); border-radius:var(--radius-md); color:var(--muted); font-size:13px; text-align:center; line-height:1.7; background:#fff; }
 .docs-progress-wrap { display:flex; align-items:center; gap:10px; }
 .docs-progress-bar { width:120px; height:6px; background:var(--border); border-radius:99px; overflow:hidden; }
 .docs-progress-fill { height:100%; background:var(--accent); border-radius:99px; transition:width .5s cubic-bezier(.4,0,.2,1); }
@@ -316,6 +343,7 @@ body {
     .additional-info-table td { display:block; width:100%; }
     .additional-info-table th { border-bottom:none; padding-bottom:6px; }
     .additional-info-table td { padding-top:6px; }
+    .quote-meta-grid { grid-template-columns:1fr; }
     .btn-primary{width:100%;justify-content:center;} .auth-gate-card{padding:28px 20px;}
 }
 </style>
@@ -374,7 +402,7 @@ body {
             <div class="complete-constancia-badge" id="complete-constancia-badge">
                 <i class="fas fa-shield-alt"></i><span id="complete-constancia-text">Constancia fiscal vigente</span>
             </div>
-            <p id="complete-contact-note" class="complete-sub" style="margin:18px 0 0; font-size:13px;">Solo puedes actualizar teléfonos alternativos y correos de respaldo.</p>
+            <p id="complete-contact-note" class="complete-sub" style="margin:18px 0 0; font-size:13px;">Tu perfil esta completo y validado. Solo puedes actualizar el correo principal, correos de respaldo y telefonos alternativos.</p>
         </div>
     </div>
 
@@ -493,6 +521,20 @@ body {
                         </tr>
                     </tbody>
                 </table>
+            </div>
+            <div id="quote-history-panel" class="quote-history-panel" style="display:none;" aria-live="polite">
+                <div class="quote-history-head">
+                    <div>
+                        <div class="quote-history-kicker">Documentos comerciales</div>
+                        <h3 class="quote-history-title">Cotizaciones, contratos y facturas</h3>
+                        <p class="quote-history-sub">Aqui podras consultar y descargar los documentos disponibles de tu expediente.</p>
+                    </div>
+                    <div id="quote-history-summary" class="quote-history-summary">Sin documentos emitidos</div>
+                </div>
+                <div id="quote-history-list" class="quote-history-grid"></div>
+                <div id="quote-signature-note" class="quote-note" style="display:none;">
+                    La firma digital del contrato requiere una integracion de DocuSign configurada por administracion y su webhook de regreso.
+                </div>
             </div>
             <div class="docs-grid" id="docs-grid"></div>
             <div class="docs-action-bar">
@@ -869,7 +911,7 @@ async function validateDocument(field, file) {
    CONSTANTES POR TENANT
    ============================================================ */
 var CONSTANCIA_VALID_DAYS = 30;
-var COMPROBANTE_VALID_DAYS = 90;
+var COMPROBANTE_VALID_DAYS = 'calendar_months:3';
 
 var TENANT_CONFIG = {
     plaza_mayor: {
@@ -892,12 +934,12 @@ var DOC_CONFIGS = {
     plaza_mayor: [
         { field:'doc_acta_constitutiva', label:'Acta Constitutiva', desc:'Documento de constitución de la empresa (PDF)', icon:'fa-building', isConstancia:false, accept:'.pdf', requirements:['Archivo PDF completo y legible.','Debe mostrar razón social y representantes o apoderados vigentes.'] },
         { field:'doc_ine', label:'INE o Pasaporte', desc:'Identificación oficial vigente del representante', icon:'fa-id-card', isConstancia:false, accept:'.pdf,.jpg,.jpeg,.png,.webp', requirements:['INE, pasaporte o identificación oficial vigente.','La imagen debe verse completa y legible por ambos lados si aplica.'] },
-        { field:'doc_comprobante_domicilio', label:'Comprobante de Domicilio', desc:'Recibo de luz (CFE), agua o teléfono — no mayor a 3 meses', icon:'fa-home', isConstancia:false, accept:'.pdf,.jpg,.jpeg,.png,.webp', requirements:['Solo se acepta luz, agua o teléfono.','La fecha de emisión no puede exceder 90 días.','Debe verse completo, legible y coincidir con el domicilio del cliente.'] },
+        { field:'doc_comprobante_domicilio', label:'Comprobante de Domicilio', desc:'Recibo de luz (CFE), agua o teléfono — vigente por mes calendario', icon:'fa-home', isConstancia:false, accept:'.pdf,.jpg,.jpeg,.png,.webp', requirements:['Solo se acepta luz, agua o teléfono.','Vigente durante el mes de emisión y los 2 meses siguientes; al iniciar el cuarto mes debe renovarse.','Debe verse completo, legible y coincidir con el domicilio del cliente.'] },
         { field:'doc_constancia_fiscal', label:'Constancia de Situación Fiscal', desc:'PDF del SAT — vigencia por 30 días desde la carga', icon:'fa-file-invoice', isConstancia:true, accept:'.pdf', requirements:['Debe ser PDF oficial del SAT.','Se considera vigente durante 30 días a partir de la carga del archivo.','El RFC y la razón social deben verse completos y legibles.'] }
     ],
     casa_de_piedra: [
         { field:'doc_ine', label:'INE o Pasaporte', desc:'Identificación oficial vigente', icon:'fa-id-card', isConstancia:false, accept:'.pdf,.jpg,.jpeg,.png,.webp', requirements:['INE, pasaporte o identificación oficial vigente.','La imagen debe verse completa y legible por ambos lados si aplica.'] },
-        { field:'doc_comprobante_domicilio', label:'Comprobante de Domicilio', desc:'Recibo de luz (CFE), agua o teléfono — no mayor a 3 meses', icon:'fa-home', isConstancia:false, accept:'.pdf,.jpg,.jpeg,.png,.webp', requirements:['Solo se acepta luz, agua o teléfono.','La fecha de emisión no puede exceder 90 días.','Debe verse completo, legible y coincidir con el domicilio del cliente.'] },
+        { field:'doc_comprobante_domicilio', label:'Comprobante de Domicilio', desc:'Recibo de luz (CFE), agua o teléfono — vigente por mes calendario', icon:'fa-home', isConstancia:false, accept:'.pdf,.jpg,.jpeg,.png,.webp', requirements:['Solo se acepta luz, agua o teléfono.','Vigente durante el mes de emisión y los 2 meses siguientes; al iniciar el cuarto mes debe renovarse.','Debe verse completo, legible y coincidir con el domicilio del cliente.'] },
         { field:'doc_constancia_fiscal', label:'Constancia de Situación Fiscal', desc:'PDF del SAT — vigencia por 30 días desde la carga', icon:'fa-file-invoice', isConstancia:true, accept:'.pdf', requirements:['Debe ser PDF oficial del SAT.','Se considera vigente durante 30 días a partir de la carga del archivo.','El RFC y la razón social deben verse completos y legibles.'] }
     ]
 };
@@ -943,6 +985,9 @@ function fmtDateTime(value) {
         String(parsed.getMinutes()).padStart(2, '0') + ':' +
         String(parsed.getSeconds()).padStart(2, '0');
 }
+function fmtMoney(value) {
+    return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(Number(value || 0) || 0);
+}
 function getInitials(n) { if(!n) return '??'; var p=String(n).trim().split(/\s+/); return p.length===1? p[0].slice(0,2).toUpperCase() : (p[0][0]+p[p.length-1][0]).toUpperCase(); }
 function escapeHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function escapeAttr(s) { return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'&#10;'); }
@@ -973,6 +1018,11 @@ function currentEmails() {
 }
 function hasProfileEdits() {
     var profile = state.profile || {};
+    var correoInput = document.getElementById('edit-correo');
+    var currentEmail = normEmail(correoInput ? correoInput.value : '');
+    var savedEmail = normEmail(profile.correo || '');
+    if (currentEmail !== savedEmail) return true;
+
     var currentPhoneList = currentPhones().slice(0,2).sort().join('|');
     var savedPhoneList = safeArrayRaw(profile.telefonosAdicionales).map(normPhone).filter(Boolean).slice(0,2).sort().join('|');
     if (currentPhoneList !== savedPhoneList) return true;
@@ -1035,6 +1085,162 @@ function safeObjectRaw(v) {
     }
     return {};
 }
+function getPublicQuoteList(profile) {
+    var raw = profile && profile.quotes;
+    return Array.isArray(raw) ? raw : [];
+}
+function formatQuoteDateRange(start, end) {
+    var from = normalizeStoredDate(start);
+    var to = normalizeStoredDate(end);
+    if (!from && !to) return 'Sin fechas';
+    if (from && to && from !== to) return fmtDate(from) + ' al ' + fmtDate(to);
+    return fmtDate(from || to);
+}
+function getQuoteStatusMeta(quote) {
+    var status = String((quote && quote.status) || '').trim().toLowerCase();
+    var flow = String((quote && quote.flujoEstado) || '').trim().toLowerCase();
+    if (status === 'rechazada' || status === 'cancelada' || flow === 'cancelado') {
+        return { label: 'Cancelada', className: 'cancelled' };
+    }
+    if (status === 'finalizada' || flow === 'facturada' || flow === 'contratada') {
+        return { label: 'Finalizada', className: 'complete' };
+    }
+    if (status === 'aprobada' || flow === 'aprobada' || flow === 'orden_compra' || flow === 'contrato') {
+        return { label: 'Aprobada', className: 'approved' };
+    }
+    return { label: 'Pendiente', className: 'pending' };
+}
+function getPublicFileDownloadName(resp, fallbackName) {
+    try {
+        var dispo = String(resp.headers.get('content-disposition') || '').trim();
+        var utfMatch = dispo.match(/filename\*=UTF-8''([^;]+)/i);
+        if (utfMatch && utfMatch[1]) return decodeURIComponent(utfMatch[1]);
+        var plainMatch = dispo.match(/filename="?([^";]+)"?/i);
+        if (plainMatch && plainMatch[1]) return plainMatch[1];
+    } catch (_) {}
+    return fallbackName || 'documento';
+}
+function buildPublicQuoteDownloadUrl(quoteId, kind, paymentIndex) {
+    var params = new URLSearchParams();
+    params.set('access', state.accessToken || '');
+    params.set('quoteId', String(quoteId || '').trim());
+    params.set('kind', String(kind || '').trim());
+    if (paymentIndex !== undefined && paymentIndex !== null && paymentIndex !== '') {
+        params.set('paymentIndex', String(paymentIndex));
+    }
+    return apiUrl('/api/cotizador/public-client-file?' + params.toString());
+}
+async function downloadPublicQuoteAsset(quoteId, kind, paymentIndex, fallbackName) {
+    if (!state.accessToken) throw new Error('No hay una sesion valida para descargar el archivo.');
+    var resp = await fetch(buildPublicQuoteDownloadUrl(quoteId, kind, paymentIndex), {
+        method: 'GET',
+        credentials: 'omit',
+        cache: 'no-store'
+    });
+    if (!resp.ok) {
+        var payload = await resp.json().catch(function(){ return {}; });
+        throw new Error(payload.message || 'No se pudo descargar el archivo.');
+    }
+    var blob = await resp.blob();
+    var fileName = getPublicFileDownloadName(resp, fallbackName);
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement('a');
+    link.href = url;
+    link.download = fileName || 'documento';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(function() {
+        try { URL.revokeObjectURL(url); } catch (_) {}
+    }, 1200);
+}
+function buildQuoteDocButton(quoteId, kind, label, icon, paymentIndex) {
+    return '<button type="button" class="quote-doc-btn" data-quote-id="' + escapeAttr(quoteId) + '" data-quote-kind="' + escapeAttr(kind) + '"' +
+        (paymentIndex !== undefined && paymentIndex !== null ? ' data-payment-index="' + escapeAttr(paymentIndex) + '"' : '') + '>' +
+        '<i class="fas ' + escapeAttr(icon) + '"></i><span>' + escapeHtml(label) + '</span></button>';
+}
+function renderQuoteHistory(profile) {
+    var panel = document.getElementById('quote-history-panel');
+    var list = document.getElementById('quote-history-list');
+    var summary = document.getElementById('quote-history-summary');
+    var signNote = document.getElementById('quote-signature-note');
+    if (!panel || !list || !summary || !signNote) return;
+
+    var quotes = getPublicQuoteList(profile);
+    panel.style.display = 'flex';
+    summary.textContent = quotes.length ? (quotes.length + ' documento(s) emitidos') : 'Sin documentos emitidos';
+
+    if (!quotes.length) {
+        list.innerHTML = '<div class="quote-empty">Cuando se emita una cotizacion, contrato, factura o recibo, aparecera aqui para consulta del cliente.</div>';
+        signNote.style.display = 'none';
+        return;
+    }
+
+    var hasContractDocument = false;
+    list.innerHTML = quotes.map(function(quote) {
+        var docs = safeObjectRaw(quote && quote.documents);
+        var status = getQuoteStatusMeta(quote || {});
+        var docButtons = [];
+        var quoteId = String((quote && quote.id) || '').trim();
+
+        if (docs.cotizacion) docButtons.push(buildQuoteDocButton(quoteId, 'cotizacion', 'Cotizacion', 'fa-file-lines'));
+        if (docs.ordenCompra) docButtons.push(buildQuoteDocButton(quoteId, 'orden_compra', 'Orden de compra', 'fa-file-contract'));
+        if (docs.contrato) {
+            hasContractDocument = true;
+            docButtons.push(buildQuoteDocButton(quoteId, 'contrato', 'Contrato', 'fa-file-signature'));
+        }
+        if (docs.facturaPdf) docButtons.push(buildQuoteDocButton(quoteId, 'factura_pdf', 'Factura PDF', 'fa-file-pdf'));
+        if (docs.facturaXml) docButtons.push(buildQuoteDocButton(quoteId, 'factura_xml', 'Factura XML', 'fa-file-code'));
+        var receiptCount = Math.max(0, parseInt(docs.recibos, 10) || 0);
+        for (var i = 0; i < receiptCount; i += 1) {
+            docButtons.push(buildQuoteDocButton(quoteId, 'recibo', 'Recibo ' + (i + 1), 'fa-receipt', i));
+        }
+
+        var subtitleParts = [];
+        if (quote && quote.folio) subtitleParts.push('Folio ' + quote.folio);
+        if (quote && quote.espacioNombre) subtitleParts.push(quote.espacioNombre);
+
+        return '<article class="quote-card">' +
+            '<div class="quote-card-head">' +
+                '<div>' +
+                    '<div class="quote-card-title">' + escapeHtml((quote && quote.nombre) || 'Cotizacion') + '</div>' +
+                    '<div class="quote-card-subtitle">' + escapeHtml(subtitleParts.join(' · ') || 'Movimiento comercial registrado') + '</div>' +
+                '</div>' +
+                '<span class="quote-status-pill ' + escapeAttr(status.className) + '">' + escapeHtml(status.label) + '</span>' +
+            '</div>' +
+            '<div class="quote-meta-grid">' +
+                '<div class="quote-meta-item"><div class="quote-meta-label">Fechas</div><div class="quote-meta-value">' + escapeHtml(formatQuoteDateRange(quote && quote.fechaInicio, quote && quote.fechaFin)) + '</div></div>' +
+                '<div class="quote-meta-item"><div class="quote-meta-label">Monto</div><div class="quote-meta-value">' + escapeHtml(fmtMoney(quote && quote.precioFinal)) + '</div></div>' +
+                '<div class="quote-meta-item"><div class="quote-meta-label">Contrato</div><div class="quote-meta-value">' + escapeHtml((quote && quote.numeroContrato) || 'Pendiente') + '</div></div>' +
+                '<div class="quote-meta-item"><div class="quote-meta-label">Flujo</div><div class="quote-meta-value">' + escapeHtml(String((quote && quote.flujoEstado) || 'pendiente').replace(/_/g, ' ')) + '</div></div>' +
+            '</div>' +
+            (docButtons.length
+                ? '<div class="quote-docs">' + docButtons.join('') + '</div>'
+                : '<div class="quote-note">Todavia no hay archivos descargables para esta cotizacion.</div>') +
+        '</article>';
+    }).join('');
+
+    signNote.style.display = hasContractDocument ? 'block' : 'none';
+    list.querySelectorAll('.quote-doc-btn[data-quote-id][data-quote-kind]').forEach(function(button) {
+        button.addEventListener('click', async function() {
+            var quoteId = this.getAttribute('data-quote-id') || '';
+            var kind = this.getAttribute('data-quote-kind') || '';
+            var paymentIndex = this.hasAttribute('data-payment-index') ? this.getAttribute('data-payment-index') : '';
+            var originalHtml = this.innerHTML;
+            this.disabled = true;
+            this.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Descargando...</span>';
+            try {
+                await downloadPublicQuoteAsset(quoteId, kind, paymentIndex, kind + '.pdf');
+                setFeedback('Archivo descargado correctamente.', 'success');
+            } catch (error) {
+                setFeedback((error && error.message) || 'No se pudo descargar el archivo.', 'error');
+            } finally {
+                this.disabled = false;
+                this.innerHTML = originalHtml;
+            }
+        });
+    });
+}
 function normalizeStoredDate(v) {
     var raw = String(v || '').trim();
     if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
@@ -1058,8 +1264,36 @@ function toPocketBaseDateTime(v) {
     return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? (raw + ' 00:00:00.000Z') : '';
 }
 
+function formatProfileUtcDate(dateValue) {
+    if (!(dateValue instanceof Date) || isNaN(dateValue.getTime())) return '';
+    return dateValue.getUTCFullYear()+'-'+String(dateValue.getUTCMonth()+1).padStart(2,'0')+'-'+String(dateValue.getUTCDate()).padStart(2,'0');
+}
+function calcCalendarMonthStatus(dateStr, validMonths) {
+    if (!dateStr || !String(dateStr).trim()) return { status:'missing', daysLeft:null };
+    var issued = new Date(String(dateStr).trim()+'T00:00:00Z');
+    if (isNaN(issued.getTime())) return { status:'missing', daysLeft:null };
+    var now = new Date();
+    var todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    if (issued.getTime() > todayUTC.getTime()) return { status:'expired', daysLeft:-1, expiry:'' };
+    var safeMonths = Math.max(1, parseInt(validMonths, 10) || 3);
+    var expiryBoundary = new Date(Date.UTC(issued.getUTCFullYear(), issued.getUTCMonth() + safeMonths, 1));
+    var lastValidDay = new Date(expiryBoundary.getTime() - 86400000);
+    var daysLeft = Math.floor((expiryBoundary.getTime() - todayUTC.getTime()) / 86400000);
+    var expStr = formatProfileUtcDate(lastValidDay);
+    if (todayUTC.getTime() >= expiryBoundary.getTime()) {
+        var expiredDays = Math.max(1, Math.floor((todayUTC.getTime() - expiryBoundary.getTime()) / 86400000) + 1);
+        return { status:'expired', daysLeft:-expiredDays, expiry:expStr };
+    }
+    if (daysLeft <= 14) return { status:'critical', daysLeft:daysLeft, expiry:expStr };
+    if (daysLeft <= 30) return { status:'warning', daysLeft:daysLeft, expiry:expStr };
+    return { status:'ok', daysLeft:daysLeft, expiry:expStr };
+}
 function calcConstanciaStatus(dateStr, validDays) {
     if (!dateStr || !String(dateStr).trim()) return { status:'missing', daysLeft:null };
+    var specialMode = String(validDays || '').trim().toLowerCase();
+    if (specialMode.indexOf('calendar_months:') === 0) {
+        return calcCalendarMonthStatus(dateStr, specialMode.split(':')[1]);
+    }
     var issued = new Date(String(dateStr).trim()+'T00:00:00Z');
     if (isNaN(issued.getTime())) return { status:'missing', daysLeft:null };
     var safeDays = Math.max(1, parseInt(validDays, 10) || CONSTANCIA_VALID_DAYS);
@@ -1194,6 +1428,14 @@ function scheduleMiniInfoHoverHide() {
 function bindMiniInfoModal() {
     if (window.__CLIENT_PROFILE_INFO_MODAL_BOUND__) return;
     window.__CLIENT_PROFILE_INFO_MODAL_BOUND__ = true;
+    var closeBtn = document.getElementById('mini-info-close');
+    var modal = document.getElementById('mini-info-modal');
+    if (closeBtn) closeBtn.addEventListener('click', closeMiniInfoModal);
+    if (modal) {
+        modal.addEventListener('click', function(e) {
+            if (e.target === modal) closeMiniInfoModal();
+        });
+    }
     document.addEventListener('mouseover', function(e) {
         var trigger = e.target && e.target.closest ? e.target.closest('.info-tooltip-btn') : null;
         if (trigger) {
@@ -1218,7 +1460,10 @@ function bindMiniInfoModal() {
     window.addEventListener('scroll', hideMiniInfoHoverCard, true);
     window.addEventListener('resize', hideMiniInfoHoverCard);
     document.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape') hideMiniInfoHoverCard();
+        if (e.key === 'Escape') {
+            hideMiniInfoHoverCard();
+            closeMiniInfoModal();
+        }
     });
 }
 function buildDocumentDatePill(dateValue, label, validDays) {
@@ -1341,7 +1586,21 @@ function renderInfoPanel(profile) {
 
     // Correo editable
     var correoInput = document.getElementById('edit-correo');
-    if (correoInput) correoInput.value = profile.correo || '';
+    var correoHelp = correoInput && correoInput.parentElement ? correoInput.parentElement.querySelector('.info-help-text') : null;
+    if (correoInput) {
+        var additionalOnly = isAdditionalOnlyMode();
+        correoInput.value = profile.correo || '';
+        correoInput.readOnly = !additionalOnly;
+        correoInput.classList.toggle('info-readonly-input', !additionalOnly);
+        correoInput.classList.toggle('bg-white', additionalOnly);
+        correoInput.classList.toggle('cursor-text', additionalOnly);
+        correoInput.classList.toggle('text-gray-800', additionalOnly);
+    }
+    if (correoHelp) {
+        correoHelp.textContent = isAdditionalOnlyMode()
+            ? 'Tu perfil ya fue validado. Aqui puedes actualizar el correo principal y tus contactos alternativos.'
+            : 'El correo principal es informativo. Los cambios se hacen con un administrador.';
+    }
     var dateInput = document.getElementById('constancia-date');
     if (dateInput) dateInput.value = profile.constanciaFiscalEmitidaEl || '';
     var comprobanteInput = document.getElementById('comprobante-date');
@@ -1480,7 +1739,7 @@ function toggleCompleteDocsState(isComplete) {
     if (editView) editView.classList.toggle('additional-only-mode', isComplete);
     if (title) title.textContent = isComplete ? 'Documentación aprobada y datos adicionales' : 'Documentación requerida';
     if (progressWrap) progressWrap.style.display = isComplete ? 'none' : 'flex';
-    if (grid) grid.style.display = 'grid';
+    if (grid) grid.style.display = isComplete ? 'none' : 'grid';
     if (note) note.style.display = isComplete ? 'block' : 'none';
     if (additionalPanel) additionalPanel.style.display = isComplete ? 'block' : 'none';
 }
@@ -1651,7 +1910,8 @@ function renderCompleteState(profile) {
     document.getElementById('expired-banner').style.display = 'none';
     var pendingBanner = document.getElementById('pending-review-banner');
     if (pendingBanner) pendingBanner.style.display = 'none';
-    document.getElementById('complete-state').style.display = 'none';
+    var completeState = document.getElementById('complete-state');
+    if (completeState) completeState.style.display = 'flex';
     toggleCompleteDocsState(true);
 
     var infoGrid = document.getElementById('complete-info-grid');
@@ -1677,6 +1937,7 @@ function renderCompleteState(profile) {
     }
     var st = calcConstanciaStatus(getProfileDocumentValidityDate(profile, 'doc_constancia_fiscal'), getProfileDocumentValidityDays('doc_constancia_fiscal'));
     var constBadge = document.getElementById('complete-constancia-text');
+    var contactNote = document.getElementById('complete-contact-note');
     if (constBadge) constBadge.textContent = st.daysLeft !== null ? 'Constancia vigente — vence en '+st.daysLeft+' días ('+fmtDate(st.expiry)+')' : 'Constancia fiscal vigente';
 }
 
@@ -1702,6 +1963,8 @@ function renderProfile(profile) {
     var pendingBanner = document.getElementById('pending-review-banner');
     if (profileState === 'complete' || profileState === 'documents_approved') {
         renderCompleteState(profile);
+        var completeContactNote = document.getElementById('complete-contact-note');
+        if (completeContactNote) completeContactNote.textContent = 'Tu perfil esta completo y validado. Solo puedes actualizar el correo principal, correos alternativos y telefonos alternativos.';
     } else {
         document.getElementById('complete-state').style.display = 'none';
         document.getElementById('edit-view').style.display = 'grid';
@@ -1720,6 +1983,7 @@ function renderProfile(profile) {
     renderAdditionalInfoTable(profile);
     renderPhones();
     renderEmails();
+    renderQuoteHistory(profile);
     renderDocCards(profile);
     syncSubmitButton();
     if (!options.preserveFeedback) setFeedback('', '');
@@ -1835,6 +2099,7 @@ function buildAdminProfilePayload(raw) {
         profileStatus:profileStatus,
         readyForQuotes:readyForQuotes,
         serverDate:serverDate,
+        quotes:safeArrayRaw(raw.quotes),
         validation:Object.assign({}, validationSource, {
             documents:docs,
             status:profileStatus,
@@ -1898,18 +2163,17 @@ async function submitProfile() {
         var phones = currentPhones().slice(0, 2);
         patchForm.append('telefonos_adicionales', JSON.stringify(phones));
         patchForm.append('correos_adicionales', JSON.stringify(currentEmails().slice(0, 2)));
+        var correoInput = document.getElementById('edit-correo');
+        if (correoInput) {
+            var correoVal = correoInput.value.trim();
+            if (correoVal && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correoVal)) {
+                patchForm.append('correo', correoVal);
+            }
+        }
 
         var hasAny = false;
         if (!additionalOnly) {
             // Correo — solo enviar si tiene formato válido de email
-            var correoInput = document.getElementById('edit-correo');
-            if (correoInput) {
-                var correoVal = correoInput.value.trim();
-                if (correoVal && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correoVal)) {
-                    patchForm.append('correo', correoVal);
-                }
-            }
-
             var dateInput = document.getElementById('constancia-date');
             var constanciaToSend = state.manualDates && state.manualDates['doc_constancia_fiscal']
                 ? state.manualDates['doc_constancia_fiscal']

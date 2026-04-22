@@ -193,7 +193,7 @@
     const cutoff = cutoffDate.toISOString();
     try {
       while (true) {
-        const records = $app.findRecordsByFilter(MOVEMENTS_COLLECTION, `created_at < "${cutoff}"`, "created_at", 100, 0) || [];
+        const records = $app.findRecordsByFilter(MOVEMENTS_COLLECTION, `created < "${cutoff}"`, "-created", 100, 0) || [];
         if (!records.length) break;
         let deleted = 0;
         for (let i = 0; i < records.length; i += 1) {
@@ -240,8 +240,6 @@
       record.set("actor_role", trim(source.actor_role));
       record.set("resumen", trim(source.resumen));
       record.set("metadata", source.metadata && typeof source.metadata === "object" ? source.metadata : {});
-      record.set("created_at", trim(source.created_at) || nowIso);
-      record.set("updated_at", trim(source.updated_at) || nowIso);
       $app.save(record);
       purgeOldMovements();
     } catch (err) {
@@ -279,6 +277,11 @@
     return id ? (prefix + "-" + id.slice(0, 6)) : (prefix + "-PEND");
   }
 
+  function snapshotNumber(value) {
+    const parsed = parseFloat(value);
+    return Number.isFinite(parsed) ? parsed.toFixed(2) : trim(value);
+  }
+
   function snapshotQuote(record) {
     if (!record) return null;
     return {
@@ -291,7 +294,10 @@
       status: normalizeStatus(record.get("status")),
       createdByName: trim(record.get("creado_por_nombre")),
       modifiedByName: trim(record.get("modificado_por_nombre")),
-      price: trim(record.get("precio_final")),
+      price: snapshotNumber(record.get("precio_final")),
+      adjustmentType: trim(record.get("tipo_ajuste")) || "ninguno",
+      adjustmentValue: snapshotNumber(record.get("valor_ajuste")),
+      adjustmentIsPercent: record.get("ajuste_es_porcentaje") === true,
       start: trim(record.get("fecha_inicio")),
       end: trim(record.get("fecha_fin"))
     };
@@ -411,8 +417,20 @@
     }
   }
 
+  function hasQuoteNegotiationChange(before, after) {
+    if (!before || !after) return false;
+    return before.adjustmentType !== after.adjustmentType ||
+      before.adjustmentValue !== after.adjustmentValue ||
+      before.adjustmentIsPercent !== after.adjustmentIsPercent;
+  }
+
   function summarizeQuoteChange(before, after) {
     if (!before || !after) return "Cotizacion actualizada";
+    const negotiationChanged = hasQuoteNegotiationChange(before, after);
+    if (negotiationChanged && before.status !== after.status) {
+      return "Cotizacion " + after.folio + " modifico precio por negociacion y cambio a " + (after.status || "sin estado");
+    }
+    if (negotiationChanged) return "Cotizacion " + after.folio + " modifico precio por negociacion";
     if (before.status !== after.status) return "Cotizacion " + after.folio + " cambio a " + (after.status || "sin estado");
     if (before.name !== after.name) return "Cotizacion " + after.folio + " actualizo el nombre";
     if (before.clientName !== after.clientName) return "Cotizacion " + after.folio + " cambio el cliente";
@@ -661,9 +679,10 @@
 
     const after = snapshotQuote(e.record);
     if (!after || !after.tenant) return;
+    const movementType = hasQuoteNegotiationChange(before, after) ? "modificacion_precio" : "cotizacion_actualizada";
     saveMovement({
       tenant: after.tenant,
-      tipo_movimiento: "cotizacion_actualizada",
+      tipo_movimiento: movementType,
       entidad_tipo: "cotizacion",
       entidad_id: after.id,
       entidad_nombre: after.name,
@@ -675,7 +694,7 @@
       actor_nombre: actor.name,
       actor_role: actor.role,
       resumen: summarizeQuoteChange(before, after),
-      metadata: { antes: before, despues: after }
+      metadata: { antes: before, despues: after, negociacion_precio: movementType === "modificacion_precio" }
     });
     if (before && before.status !== after.status) {
       const notifier = getNotificationsApi();

@@ -793,6 +793,15 @@
     let resolvedConfigRole = '';
     let currentView = 'v_concepts';
     let currentTenant = 'pm'; // pm | cp
+    function resolveInitialTenantFromQuery() {
+      try {
+        const params = new URLSearchParams(window.location.search || '');
+        const raw = String(params.get('tenant') || '').trim().toLowerCase();
+        return (raw === 'cp' || raw === 'casa_de_piedra') ? 'cp' : 'pm';
+      } catch (_) {
+        return 'pm';
+      }
+    }
 
     const PM_SCHEMA = (window.HUB_CONFIG && window.HUB_CONFIG.finanzasSchema) ? window.HUB_CONFIG.finanzasSchema : 'finanzas';
     const CP_SCHEMA = 'finanzas_casadepiedra';
@@ -3393,9 +3402,8 @@
       pmPocketBase = root.schema(PM_SCHEMA);
       cpPocketBase = root.schema(CP_SCHEMA);
 
-      // default PM
-      activePocketBase = pmPocketBase;
-      currentTenant = 'pm';
+      currentTenant = resolveInitialTenantFromQuery();
+      activePocketBase = currentTenant === 'cp' ? cpPocketBase : pmPocketBase;
       paintTenantUI();
       await loadPremontajePct();
       await loadHoraExtraCfg();

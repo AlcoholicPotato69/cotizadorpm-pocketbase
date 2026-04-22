@@ -200,7 +200,7 @@
     } else if (collection === 'impuestos') {
       coerceJsonFields(out, ['impuestos_aplicados']);
     } else if (collection === 'clientes') {
-      coerceJsonFields(out, ['telefonos_adicionales', 'correos_adicionales', 'documentos_estado', 'expediente_validacion']);
+      coerceJsonFields(out, ['telefonos_adicionales', 'correos_adicionales', 'documentos_estado', 'expediente_validacion', 'dictamen']);
     } else if (collection === 'espacios') {
       coerceJsonFields(out, ['impuestos_ids', 'etiquetas', 'precios_por_dia', 'dias_bloqueados', 'config_b2b']);
     } else if (collection === 'cotizaciones') {

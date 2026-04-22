@@ -680,6 +680,7 @@ window.syncCpManagerTypeFields = function () {
     const digitalToggle = document.getElementById('mgr-digital-media');
     const eventPricingSection = document.getElementById('mgr-event-pricing-section');
     const eventScheduleSection = document.getElementById('mgr-event-schedule-section');
+    const planoField = document.getElementById('mgr-plano-field');
     if (typeEl && typeEl.value !== selectedType) typeEl.value = selectedType;
     const isPublicidad = selectedType === 'publicidad';
     const isDigital = isPublicidad && !!digitalToggle?.checked;
@@ -692,6 +693,7 @@ window.syncCpManagerTypeFields = function () {
     if (digitalDetailsField) digitalDetailsField.classList.toggle('hidden', !isDigital);
     if (eventPricingSection) eventPricingSection.classList.toggle('hidden', isPublicidad);
     if (eventScheduleSection) eventScheduleSection.classList.toggle('hidden', isPublicidad);
+    if (planoField) planoField.classList.toggle('hidden', !isPublicidad);
 };
 function escapeCpMaterialOption(value) {
     return String(value || '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
@@ -1055,15 +1057,19 @@ window.openManagerModal = async function (id) {
         let allUrls = []; try { if (s.imagen_url && typeof s.imagen_url === 'string' && s.imagen_url.startsWith('[')) allUrls = JSON.parse(s.imagen_url); else if (s.imagen_url) allUrls = [s.imagen_url]; } catch (e) { }
         for (let i = 1; i <= 5; i++) {
             const mgrPrev = document.getElementById(`mgr-preview-${i}`);
+            const imageFieldName = i === 1 ? 'imagen' : `imagen${i}`;
+            const currentImageFile = Array.isArray(s[imageFieldName]) ? String(s[imageFieldName][0] || '').trim() : String(s[imageFieldName] || '').trim();
             if (mgrPrev) {
                 if (allUrls[i - 1]) { mgrPrev.src = allUrls[i - 1]; mgrPrev.classList.remove('hidden'); mgrPrev.removeAttribute('data-modified'); }
                 else { mgrPrev.src = ''; mgrPrev.classList.add('hidden'); mgrPrev.removeAttribute('data-modified'); }
+                if (currentImageFile) mgrPrev.dataset.currentFileName = currentImageFile;
+                else delete mgrPrev.dataset.currentFileName;
             }
         }
     } else {
         document.getElementById('mgr-title').innerText = "Nuevo Espacio"; document.getElementById('mgr-key').value = ''; document.getElementById('mgr-key').disabled = false; document.getElementById('mgr-name').value = ''; document.getElementById('mgr-type').value = 'espacio'; document.getElementById('mgr-tags').value = ''; document.getElementById('mgr-desc').value = ''; document.getElementById('mgr-base').value = ''; document.getElementById('mgr-material').value = ''; renderCpMaterialSuggestions(); document.getElementById('mgr-ancho').value = ''; document.getElementById('mgr-alto').value = ''; document.getElementById('mgr-unidad').value = 'M'; const convenioToggle = document.getElementById('mgr-allow-convenio'); if (convenioToggle) convenioToggle.checked = true; setCpDigitalMediaManagerValues(null); window.syncCpManagerTypeFields(); window.addRangeRow(); window.addHorarioRow();
         document.getElementById('mgr-active').checked = true; document.getElementById('btn-delete-mgr').classList.add('hidden');
-        for (let i = 1; i <= 5; i++) { const mgrPrev = document.getElementById(`mgr-preview-${i}`); if (mgrPrev) { mgrPrev.src = ''; mgrPrev.classList.add('hidden'); mgrPrev.removeAttribute('data-modified'); } const fi = document.getElementById(`mgr-file-${i}`); if (fi) fi.value = ''; }
+        for (let i = 1; i <= 5; i++) { const mgrPrev = document.getElementById(`mgr-preview-${i}`); if (mgrPrev) { mgrPrev.src = ''; mgrPrev.classList.add('hidden'); mgrPrev.removeAttribute('data-modified'); delete mgrPrev.dataset.currentFileName; } const fi = document.getElementById(`mgr-file-${i}`); if (fi) fi.value = ''; }
     }
     window.syncCpManagerTypeFields();
     await resetCpManagerContractAssets(managedSpace);
@@ -1150,13 +1156,15 @@ window.saveSpace = async function () {
             const fi = document.getElementById(`mgr-file-${i}`);
             const preview = document.getElementById(`mgr-preview-${i}`);
             const fieldName = i === 1 ? 'imagen' : `imagen${i}`;
+            const currentFileName = String(preview?.dataset?.currentFileName || '').trim();
             if (fi && fi.files && fi.files.length > 0) fd.append(fieldName, fi.files[0], fi.files[0].name || `img${i}`);
-            else if (preview && preview.getAttribute('data-modified') === 'true' && preview.classList.contains('hidden')) fd.append(fieldName, '');
+            else if (preview && preview.getAttribute('data-modified') === 'true' && preview.classList.contains('hidden') && currentFileName) fd.append(`${fieldName}-`, currentFileName);
         }
         const planoInput = document.getElementById('mgr-plano-file');
         const clearPlano = String(document.getElementById('mgr-plano-clear')?.value || '0') === '1';
+        const currentPlanoFile = String(document.getElementById('mgr-plano-current')?.dataset?.currentFileName || '').trim();
         if (planoInput && planoInput.files && planoInput.files.length > 0) fd.append('plano_geografico', planoInput.files[0], planoInput.files[0].name || 'plano');
-        else if (clearPlano) fd.append('plano_geografico', '');
+        else if (clearPlano && currentPlanoFile) fd.append('plano_geografico-', currentPlanoFile);
 
         const savedSpace = await cpSaveEspacioRecord(id, fd);
         cpCatalogSaveViewState({ selectedSpaceId: String(savedSpace?.id || id || '').trim() });

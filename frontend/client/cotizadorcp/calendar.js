@@ -35,7 +35,8 @@ let myPermissions = { access: false, orders_edit: false };
 const uiState = {
     search: '',
     spaceId: '',
-    kind: 'all'
+    kind: 'all',
+    spaceCategory: 'all'
 };
 
 const editState = {
@@ -150,6 +151,53 @@ function formatDateMX(ds) {
     if (!d) return '--';
     const [y, m, day] = d.split('-');
     return `${day}/${m}/${y}`;
+}
+
+function normalizeSpaceCategory(value) {
+    const raw = String(value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .trim();
+    if (!raw) return '';
+    if (raw.includes('publicidad')) return 'publicidad';
+    if (raw.includes('salon') || raw.includes('espacio') || raw.includes('local') || raw.includes('isla')) return 'espacio';
+    return raw;
+}
+
+function ensureCalendarHoverCard() {
+    let card = document.getElementById('cp-calendar-hover-card');
+    if (card) return card;
+    card = document.createElement('div');
+    card.id = 'cp-calendar-hover-card';
+    card.className = 'cp-hover-card hidden';
+    document.body.appendChild(card);
+    return card;
+}
+
+function hideCalendarHoverCard() {
+    const card = document.getElementById('cp-calendar-hover-card');
+    if (!card) return;
+    card.classList.add('hidden');
+    card.innerHTML = '';
+}
+
+function showCalendarHoverCard(info) {
+    const ext = info?.event?.extendedProps || {};
+    const color = ext.color || '#374151';
+    const kindLabel = ext.kind === KIND_PREMONTAJE ? 'PREMONTAJE' : 'EVENTO';
+    const status = String(ext.status || 'pendiente').toUpperCase();
+    const card = ensureCalendarHoverCard();
+    card.innerHTML = `
+      <div class="cp-hover-kicker"><span class="cp-hover-dot" style="background:${color};"></span>${kindLabel} · ${status}</div>
+      <div class="cp-hover-title">${ext.spaceName || info.event.title || 'Evento'}</div>
+      <div class="cp-hover-body">${ext.clientLabel || '--'}<br>${formatDateMX(ext.sourceStart)} - ${formatDateMX(ext.sourceEnd)}</div>
+    `;
+    const pageX = Number(info?.jsEvent?.pageX || 0);
+    const pageY = Number(info?.jsEvent?.pageY || 0);
+    card.style.left = `${Math.max(12, pageX + 14)}px`;
+    card.style.top = `${Math.max(12, pageY + 14)}px`;
+    card.classList.remove('hidden');
 }
 
 function hexToRgba(hex, alpha) {
@@ -374,9 +422,18 @@ function buildCalendarEvents() {
         getOrderSpaceEntries(order).forEach(entry => {
             const space = getSpaceById(entry.spaceId);
             const color = space?.color || '#374151';
+            const spaceName = space?.nombre || entry.detail?.espacio_nombre || order.espacio_nombre || `Espacio ${entry.spaceId}`;
+            const spaceCategory = normalizeSpaceCategory(
+                space?.tipo ||
+                space?.espacio_tipo ||
+                entry.detail?.espacio_tipo ||
+                entry.detail?.tipo ||
+                ''
+            );
             const conceptPreview = buildConceptPreview(order, entry);
             const people = entry.detail?.personas ?? order.personas ?? 0;
             const horario = entry.detail?.horario?.label || entry.detail?.horario?.value || '--';
+            const clientLabel = `${String(order.cliente_nombre || 'Cliente').trim()}${order.nombre_cotizacion ? ` / ${String(order.nombre_cotizacion).trim()}` : ''}`;
 
             out.push({
                 id: `ev|${order.id}|${entry.spaceId}|${entry.detailIndex}`,
@@ -394,6 +451,9 @@ function buildCalendarEvents() {
                     color,
                     order,
                     entry,
+                    spaceName,
+                    spaceCategory,
+                    clientLabel,
                     schedule: horario,
                     people: Number(people || 0),
                     concepts: conceptPreview,
@@ -420,6 +480,9 @@ function buildCalendarEvents() {
                         color,
                         order,
                         entry,
+                        spaceName,
+                        spaceCategory,
+                        clientLabel,
                         schedule: horario,
                         people: Number(people || 0),
                         concepts: conceptPreview,
@@ -457,12 +520,14 @@ function applyFilters() {
     uiState.search = String(document.getElementById('cal-search-input')?.value || '').toLowerCase().trim();
     uiState.spaceId = String(document.getElementById('cal-space-filter')?.value || '');
     uiState.kind = String(document.getElementById('cal-kind-filter')?.value || 'all');
+    uiState.spaceCategory = String(document.getElementById('cal-space-type-filter')?.value || 'all');
     syncKindNav();
 
     const filtered = allCalendarEvents.filter(ev => {
         const ext = ev.extendedProps || {};
         if (uiState.spaceId && String(ext.spaceId) !== String(uiState.spaceId)) return false;
         if (uiState.kind !== 'all' && ext.kind !== uiState.kind) return false;
+        if (uiState.spaceCategory !== 'all' && String(ext.spaceCategory || '') !== uiState.spaceCategory) return false;
         if (!uiState.search) return true;
         const order = ext.order || {};
         const space = getSpaceById(ext.spaceId);
@@ -509,11 +574,14 @@ function initCalendar() {
         headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,listMonth' },
         events: allCalendarEvents,
         eventContent: renderEventPill,
-        eventClick: (info) => window.openCalendarEditModal(info.event),
+        eventClick: (info) => {
+            hideCalendarHoverCard();
+            window.openCalendarEditModal(info.event);
+        },
+        eventMouseEnter: showCalendarHoverCard,
+        eventMouseLeave: hideCalendarHoverCard,
         eventDidMount: (info) => {
-            const ext = info.event.extendedProps || {};
-            const kindLabel = ext.kind === KIND_PREMONTAJE ? 'PREMONTAJE' : 'EVENTO';
-            info.el.title = `${kindLabel}\n${info.event.title}\n${formatDateMX(ext.sourceStart)} - ${formatDateMX(ext.sourceEnd)}`;
+            info.el.title = '';
         }
     });
     calendarObj.render();
@@ -802,11 +870,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const kindSel = document.getElementById('cal-kind-filter');
     const spaceSel = document.getElementById('cal-space-filter');
+    const spaceTypeSel = document.getElementById('cal-space-type-filter');
     const searchInput = document.getElementById('cal-search-input');
     if (kindSel) kindSel.value = uiState.kind;
+    if (spaceTypeSel) spaceTypeSel.value = uiState.spaceCategory;
 
     kindSel?.addEventListener('change', applyFilters);
     spaceSel?.addEventListener('change', applyFilters);
+    spaceTypeSel?.addEventListener('change', applyFilters);
     searchInput?.addEventListener('input', applyFilters);
     applyFilters();
 });

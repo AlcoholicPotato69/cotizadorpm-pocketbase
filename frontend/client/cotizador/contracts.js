@@ -4351,7 +4351,7 @@ async function __pmContractsAttachClientReadiness(orders = []) {
     try {
         const { data, error } = await window.tenantPocketBase
             .from('clientes')
-            .select('id,nombre_completo,telefono,telefonos_adicionales,correo,rfc,perfil_validado,perfil_estatus,documentos_estado,expediente_validacion,constancia_fiscal_emitida_el,comprobante_domicilio_emitido_el,doc_acta_constitutiva,doc_ine,doc_comprobante_domicilio,doc_constancia_fiscal,created_at,created')
+            .select('id,nombre_completo,telefono,telefonos_adicionales,correo,rfc,perfil_validado,perfil_estatus,documentos_estado,expediente_validacion,dictamen,constancia_fiscal_emitida_el,comprobante_domicilio_emitido_el,doc_acta_constitutiva,doc_ine,doc_comprobante_domicilio,doc_constancia_fiscal,created_at,created')
             .in('id', ids);
         if (error) throw error;
         const byId = {};
@@ -4370,8 +4370,15 @@ function __pmContractsCanGenerateContract(order) {
         return window.HUB_CLIENT_PROFILE_HOVER.isContractReady(client, 'plaza_mayor');
     }
     const validation = __pmContractsSafeObject(client.expediente_validacion);
+    const dictamen = __pmContractsSafeObject(client.dictamen);
     const readyForQuotes = __pmContractsIsTruthyReadyFlag(client.perfil_validado) || __pmContractsIsTruthyReadyFlag(validation.readyForQuotes) || __pmContractsIsTruthyReadyFlag(validation.ready) || __pmContractsIsTruthyReadyFlag(validation.puedeCotizar) || __pmContractsIsTruthyReadyFlag(validation.quoteApproved) || __pmContractsIsTruthyReadyFlag(validation.quoteReady) || __pmContractsIsReadyStatusValue(client.perfil_estatus || validation.status);
-    const hasDictamen = __pmContractsIsTruthyReadyFlag(validation.readyForContracts) || __pmContractsIsTruthyReadyFlag(validation.dictamenGuardado) || __pmContractsIsTruthyReadyFlag(validation.dictamenAprobado);
+    const hasDictamen =
+        __pmContractsIsTruthyReadyFlag(validation.readyForContracts)
+        || __pmContractsIsTruthyReadyFlag(validation.dictamenAprobado)
+        || __pmContractsIsTruthyReadyFlag(validation.dictamenGuardado)
+        || __pmContractsIsTruthyReadyFlag(validation?.dictamen?.saved)
+        || __pmContractsIsTruthyReadyFlag(dictamen.saved)
+        || __pmContractsIsTruthyReadyFlag(dictamen.approved);
     return !!(readyForQuotes && hasDictamen);
 }
 
@@ -4385,9 +4392,17 @@ function __pmContractsContractBlockReason(order) {
         return '';
     }
     const validation = __pmContractsSafeObject(client.expediente_validacion);
+    const dictamen = __pmContractsSafeObject(client.dictamen);
     const readyForQuotes = __pmContractsIsTruthyReadyFlag(client.perfil_validado) || __pmContractsIsTruthyReadyFlag(validation.readyForQuotes) || __pmContractsIsTruthyReadyFlag(validation.ready) || __pmContractsIsTruthyReadyFlag(validation.puedeCotizar) || __pmContractsIsTruthyReadyFlag(validation.quoteApproved) || __pmContractsIsTruthyReadyFlag(validation.quoteReady) || __pmContractsIsReadyStatusValue(client.perfil_estatus || validation.status);
     if (!readyForQuotes) return 'El expediente del cliente debe estar completo, vigente y aprobado.';
-    if (!(__pmContractsIsTruthyReadyFlag(validation.readyForContracts) || __pmContractsIsTruthyReadyFlag(validation.dictamenGuardado) || __pmContractsIsTruthyReadyFlag(validation.dictamenAprobado))) return 'Falta guardar o aprobar el dictamen del cliente.';
+    if (!(
+        __pmContractsIsTruthyReadyFlag(validation.readyForContracts)
+        || __pmContractsIsTruthyReadyFlag(validation.dictamenAprobado)
+        || __pmContractsIsTruthyReadyFlag(validation.dictamenGuardado)
+        || __pmContractsIsTruthyReadyFlag(validation?.dictamen?.saved)
+        || __pmContractsIsTruthyReadyFlag(dictamen.saved)
+        || __pmContractsIsTruthyReadyFlag(dictamen.approved)
+    )) return 'Falta guardar o aprobar el dictamen del cliente.';
     return '';
 }
 
@@ -4562,8 +4577,9 @@ window.saveContractNumber = function() {
                 window.loadSelectedTemplate();
             }
 
-        } catch(_) {
-            window.showToast("No se pudo guardar el número de contrato.", "error");
+        } catch(err) {
+            const detail = String(err?.message || err || '').trim();
+            window.showToast(`No se pudo guardar el número de contrato.${detail ? ` ${detail}` : ''}`, "error");
         }
     });
 };

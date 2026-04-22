@@ -11,7 +11,7 @@ const FIN_SCHEMA = PAGE_CFG.schema || (window.HUB_CONFIG && window.HUB_CONFIG.fi
 const TENANT_SLUG = PAGE_CFG.tenantSlug || 'plaza_mayor';
 const PUBLIC_PROFILE_PATH = PAGE_CFG.publicProfilePath || '../public/perfil_cliente.html';
 const CONSTANCIA_VALID_DAYS = 30;
-const COMPROBANTE_VALID_DAYS = 90;
+const COMPROBANTE_VALID_DAYS = 'calendar_months:3';
 const CONTROL_MOVEMENTS_RETENTION_MONTHS = 3;
 
 const DOC_REQUIREMENTS = {
@@ -170,6 +170,26 @@ function formatMoney(value) {
 function calcExpiryStatus(dateValue, validDays) {
   const normalized = normalizeStoredDate(dateValue);
   if (!normalized || !validDays) return { status: 'missing', daysLeft: null, expiry: '' };
+  const specialMode = String(validDays || '').trim().toLowerCase();
+  if (specialMode.indexOf('calendar_months:') === 0) {
+    const baseUtc = new Date(`${normalized}T00:00:00Z`);
+    if (Number.isNaN(baseUtc.getTime())) return { status: 'missing', daysLeft: null, expiry: '' };
+    const now = new Date();
+    const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    if (baseUtc.getTime() > todayUtc.getTime()) return { status: 'expired', daysLeft: -1, expiry: '' };
+    const months = Math.max(1, Number(specialMode.split(':')[1]) || 3);
+    const boundary = new Date(Date.UTC(baseUtc.getUTCFullYear(), baseUtc.getUTCMonth() + months, 1));
+    const lastValid = new Date(boundary.getTime() - 86400000);
+    const daysLeft = Math.floor((boundary.getTime() - todayUtc.getTime()) / 86400000);
+    const expiry = lastValid.toISOString().slice(0, 10);
+    if (todayUtc.getTime() >= boundary.getTime()) {
+      const expiredDays = Math.max(1, Math.floor((todayUtc.getTime() - boundary.getTime()) / 86400000) + 1);
+      return { status: 'expired', daysLeft: -expiredDays, expiry };
+    }
+    if (daysLeft <= 7) return { status: 'critical', daysLeft, expiry };
+    if (daysLeft <= 15) return { status: 'warning', daysLeft, expiry };
+    return { status: 'ok', daysLeft, expiry };
+  }
   const base = new Date(`${normalized}T00:00:00`);
   if (Number.isNaN(base.getTime())) return { status: 'missing', daysLeft: null, expiry: '' };
   const expiry = new Date(base);
@@ -260,7 +280,9 @@ function installVerifierTenantNavigation(accessCtx) {
   if (!navContainer) return;
   navContainer.dataset.verifierTenantNav = 'true';
   const navLinks = [
-    { file: 'clientes.html', label: 'Clientes', icon: 'fa-users' }
+    { file: 'catalog.html', label: 'Precios', icon: 'fa-tags' },
+    { file: 'clientes.html', label: 'Clientes', icon: 'fa-users' },
+    { file: 'control.html', label: 'Control', icon: 'fa-clipboard-check' }
   ];
 
   const linksHtml = navLinks.map((item) => {
@@ -780,9 +802,9 @@ async function buildNextControlDictamenFolio(client, year = getControlDictamenYe
   try {
     const { data, error } = await window.tenantPocketBase
       .from(CONTROL_DICTAMEN_COLLECTION)
-      .select('folio,created,created_at')
-      .gte('created', start)
-      .lt('created', end)
+      .select('folio,metadata')
+      .gte('metadata.generated_at', start)
+      .lt('metadata.generated_at', end)
       .limit(500);
     if (error) throw error;
     const rows = Array.isArray(data) ? data : (data ? [data] : []);
@@ -1032,7 +1054,7 @@ function getDictamenRequirementDetail(item) {
   if (!item?.field) return 'Sin detalle';
   if (item.field === 'doc_acta_constitutiva') return 'Documento legal completo y legible.';
   if (item.field === 'doc_ine') return 'Identificación oficial vigente y legible.';
-  if (item.field === 'doc_comprobante_domicilio') return 'Recibo de luz, agua o teléfono con vigencia máxima de 90 días.';
+  if (item.field === 'doc_comprobante_domicilio') return 'Recibo de luz, agua o teléfono vigente durante el mes de emisión y los 2 meses siguientes.';
   if (item.field === 'doc_constancia_fiscal') return 'Constancia SAT legible con vigencia operativa de 30 días.';
   return item.label || 'Documento';
 }
@@ -1170,7 +1192,7 @@ async function fetchControlDictamenHistory(clientId, limit = 1) {
       .from(CONTROL_DICTAMEN_COLLECTION)
       .select('id,tenant,cliente,folio,documentos_hash,responsable_nombre,pdf,metadata,created,created_at,updated,updated_at')
       .eq('cliente', safeClientId)
-      .order('created', { ascending: false })
+      .order('metadata.generated_at', { ascending: false })
       .limit(limit);
     if (error) throw error;
     return Array.isArray(data) ? data : (data ? [data] : []);
@@ -1196,6 +1218,7 @@ async function persistControlDictamenSnapshot(client, folio, blob, filename, doc
   }
 
   const actor = getControlDictamenActorMeta();
+  const generatedAt = new Date().toISOString();
   const form = new FormData();
   const uploadFile = typeof File !== 'undefined'
     ? new File([blob], filename, { type: 'application/pdf' })
@@ -1206,12 +1229,18 @@ async function persistControlDictamenSnapshot(client, folio, blob, filename, doc
   form.append('documentos_hash', documentosHash);
   form.append('responsable_nombre', actor.name);
   form.append('metadata', JSON.stringify({
-    version: 1,
+    version: 2,
     documentos_hash: documentosHash,
     documentos_snapshot: documentSnapshot,
     cliente_nombre: client?.nombre_completo || '',
+    approval_status: 'aprobado',
+    approved: true,
     generated_by: actor,
-    generated_at: new Date().toISOString(),
+    generated_at: generatedAt,
+    reviewed_by: actor,
+    reviewed_at: generatedAt,
+    approved_by: actor,
+    approved_at: generatedAt,
     source: 'control'
   }));
   form.append('pdf', uploadFile, filename);
@@ -1503,12 +1532,22 @@ function getMovementReportFilters() {
   };
 }
 
+function formatMovementTypeLabel(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return '--';
+  if (raw === 'modificacion_precio') return 'Modificacion de precio';
+  return raw;
+}
+
 function getMovementSupervisionText(row) {
   const type = String(row?.tipo_movimiento || '').trim();
   const actor = String(row?.actor_nombre || 'Sistema').trim();
   const role = String(row?.actor_role || '').trim();
   const client = String(row?.cliente_nombre || '').trim();
   const documentName = String(row?.documento_nombre || '').trim();
+  if (type === 'modificacion_precio') {
+    return row?.resumen || `${actor}${role ? ` (${role})` : ''} modifico el precio${client ? ` de ${client}` : ''}.`;
+  }
   if (type === 'documento_aprobado') {
     return `${actor}${role ? ` (${role})` : ''} aprobo ${documentName || 'un documento'}${client ? ` del cliente ${client}` : ''}.`;
   }
@@ -1527,7 +1566,7 @@ function getMovementSupervisionText(row) {
 function buildMovementReportHtml(rows, generatedAtIso = '') {
   const filters = getMovementReportFilters();
   const actorValue = filters.actor || 'Todas las personas';
-  const typeValue = filters.type || 'Todos los movimientos';
+  const typeValue = filters.type ? formatMovementTypeLabel(filters.type) : 'Todos los movimientos';
   const searchValue = filters.search || 'Sin busqueda';
   const dateRange = `${filters.dateFrom || 'Sin inicio'} - ${filters.dateTo || 'Sin fin'}`;
   const generatedBy = getControlDictamenActorMeta();
@@ -1557,7 +1596,7 @@ function buildMovementReportHtml(rows, generatedAtIso = '') {
     <tr>
       <td>${escapeHTML(getDateTimeParts(resolveMovementTimestamp(row)).date)}</td>
       <td>${escapeHTML(getDateTimeParts(resolveMovementTimestamp(row)).time)}</td>
-      <td>${escapeHTML(row.tipo_movimiento || '--')}</td>
+      <td>${escapeHTML(formatMovementTypeLabel(row.tipo_movimiento || '--'))}</td>
       <td>${escapeHTML(row.actor_nombre || 'Sistema')}<br><span>${escapeHTML(row.actor_role || '--')}</span></td>
       <td>${escapeHTML(row.cliente_nombre || row.entidad_nombre || '--')}<br><span>${escapeHTML(row.cliente_id || row.entidad_id || '--')}</span></td>
       <td>${escapeHTML(row.cotizacion_folio || (row.entidad_tipo === 'espacio' ? 'Catalogo' : '--'))}</td>
@@ -1638,6 +1677,11 @@ function latestMovementByClientId() {
 function latestMovementText(row) {
   if (!row) return 'Sin movimientos';
   return `${row.resumen || row.tipo_movimiento || 'Movimiento'} · ${formatDateTime(resolveMovementTimestamp(row))}`;
+}
+
+function latestMovementText(row) {
+  if (!row) return 'Sin movimientos';
+  return `${row.resumen || formatMovementTypeLabel(row.tipo_movimiento) || 'Movimiento'} - ${formatDateTime(resolveMovementTimestamp(row))}`;
 }
 
 function matchesGlobalSearch(parts, searchValue) {
@@ -1751,7 +1795,7 @@ function describeActiveFilters() {
   const { actor, type, search, dateFrom, dateTo } = getMovementReportFilters();
   const parts = [];
   if (actor) parts.push(`Persona: ${actor}`);
-  if (type) parts.push(`Movimiento: ${type}`);
+  if (type) parts.push(`Movimiento: ${formatMovementTypeLabel(type)}`);
   if (dateFrom) parts.push(`Desde: ${dateFrom}`);
   if (dateTo) parts.push(`Hasta: ${dateTo}`);
   if (search) parts.push(`Busqueda: ${search}`);
@@ -1775,7 +1819,7 @@ function renderMovementsTable() {
         <div class="text-[11px] text-gray-400 mt-1">${escapeHTML(getDateTimeParts(resolveMovementTimestamp(row)).time)}</div>
       </td>
       <td class="py-4 pr-3">
-        <span class="inline-flex rounded-full bg-gray-100 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-gray-600">${escapeHTML(row?.tipo_movimiento || '--')}</span>
+        <span class="inline-flex rounded-full bg-gray-100 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-gray-600">${escapeHTML(formatMovementTypeLabel(row?.tipo_movimiento || '--'))}</span>
       </td>
       <td class="py-4 pr-3">
         <div class="font-semibold text-gray-700">${escapeHTML(row?.actor_nombre || 'Sistema')}</div>
@@ -1809,7 +1853,7 @@ function populateFilters() {
     .sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
 
   actorSelect.innerHTML = '<option value="">Todas</option>' + actors.map((value) => `<option value="${escapeHTML(value)}">${escapeHTML(value)}</option>`).join('');
-  typeSelect.innerHTML = '<option value="">Todos</option>' + types.map((value) => `<option value="${escapeHTML(value)}">${escapeHTML(value)}</option>`).join('');
+  typeSelect.innerHTML = '<option value="">Todos</option>' + types.map((value) => `<option value="${escapeHTML(value)}">${escapeHTML(formatMovementTypeLabel(value))}</option>`).join('');
 
   if (currentActor && actors.includes(currentActor)) actorSelect.value = currentActor;
   if (currentType && types.includes(currentType)) typeSelect.value = currentType;
@@ -1833,6 +1877,7 @@ function applyFilters() {
       row?.actor_nombre,
       row?.actor_role,
       row?.tipo_movimiento,
+      formatMovementTypeLabel(row?.tipo_movimiento),
       row?.cliente_nombre,
       row?.cliente_id,
       row?.cotizacion_folio,
@@ -1894,7 +1939,7 @@ async function loadControlData() {
       .select('id,tenant,tipo_movimiento,entidad_tipo,entidad_id,entidad_nombre,cliente_id,cliente_nombre,cotizacion_id,cotizacion_folio,documento_campo,documento_nombre,actor_id,actor_nombre,actor_role,resumen,metadata,created_at,updated_at,created,updated')
       .gte('created_at', movementsCutoffIso)
       .order('created_at', { ascending: false })
-      .limit(5000);
+      .limit(500);
 
     const [clientsResp, ordersResp, movementsResp] = await Promise.all([clientsQuery, ordersQuery, movementsQuery]);
     if (clientsResp.error) throw clientsResp.error;

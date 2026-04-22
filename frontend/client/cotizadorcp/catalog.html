@@ -448,8 +448,8 @@
                             </select>
                             <p class="text-[10px] text-gray-400 mt-2">Si no eliges uno, el contrato usarÃ¡ el reglamento predeterminado del tenant.</p>
                         </div>
-                        <div>
-                            <label class="block text-[10px] font-bold uppercase mb-2 text-gray-500">Plano GeogrÃ¡fico</label>
+                        <div id="mgr-plano-field">
+                            <label class="block text-[10px] font-bold uppercase mb-2 text-gray-500">Plano geografico de publicidad</label>
                             <input type="hidden" id="mgr-plano-clear" value="0">
                             <div class="flex flex-wrap gap-2">
                                 <label class="inline-flex items-center justify-center px-3 py-2 rounded-lg border border-gray-200 text-[10px] font-bold uppercase text-gray-600 cursor-pointer hover:bg-gray-50 transition">
@@ -459,6 +459,7 @@
                                 <button type="button" onclick="window.clearManagerPlanoGeografico?.()" class="px-3 py-2 rounded-lg border border-red-200 text-[10px] font-bold uppercase text-red-600 hover:bg-red-50 transition">Quitar</button>
                             </div>
                             <div id="mgr-plano-current" class="text-[10px] text-gray-500 mt-2 break-all">Sin archivo asignado.</div>
+                            <p class="text-[10px] text-gray-400 mt-2">Acepta imagen o PDF y se anexara al contrato cuando el espacio sea publicidad.</p>
                         </div>
                     </div>
                 </div>

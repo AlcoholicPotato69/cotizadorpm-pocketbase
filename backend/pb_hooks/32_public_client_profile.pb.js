@@ -38,6 +38,10 @@ routerAdd("GET", "/api/cotizador/public-client-profile", function (e) {
   return require(`${__hooks}/client_profile_shared.js`).handlePublicClientProfileGet(e);
 });
 
+routerAdd("GET", "/api/cotizador/public-client-file", function (e) {
+  return require(`${__hooks}/client_profile_shared.js`).handlePublicClientFile(e);
+});
+
 routerAdd("POST", "/api/cotizador/public-client-profile/complete", function (e) {
   return require(`${__hooks}/client_profile_shared.js`).handlePublicClientProfileComplete(e);
 }, $apis.bodyLimit(80 * 1024 * 1024));

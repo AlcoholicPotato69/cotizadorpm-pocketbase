@@ -1110,7 +1110,7 @@
             permissions = {
                 access: true,
                 catalog_view: true,
-                orders_view: false,
+                orders_view: true,
                 orders_edit: false,
                 reports_view: false,
                 clients_view: true,
@@ -1157,12 +1157,35 @@
         if (!routeCtx) return true;
         if (routeCtx.isLoginPage) return true;
         if (!authCtx || !authCtx.session || !authCtx.session.user) return false;
-        if (routeCtx.isSystem) return authCtx.isAdmin === true || authCtx.isVerifier === true || normalizeLayoutRole(authCtx.role || '') === 'verificador';
+        if (routeCtx.isSystem) return authCtx.isAdmin === true || authCtx.isVerifier === true;
         if (!routeCtx.tenant) return true;
         if (authCtx.tenantAllowed !== true) return false;
 
         const perms = authCtx.permissions || {};
         const accessFallback = perms.access !== false;
+        const verifierRole = authCtx.isVerifier === true || normalizeLayoutRole(authCtx.role || authCtx.profile?.role || authCtx.user?.role || '') === 'verificador';
+
+        if (verifierRole) {
+            switch (routeCtx.file) {
+                case 'catalog.html':
+                case 'clientes.html':
+                case 'control.html':
+                case 'orders.html':
+                case 'order_detail.html':
+                    return true;
+                case 'cotizacion.html':
+                case 'agenda.html':
+                case 'contracts.html':
+                case 'receipts.html':
+                case 'invoices.html':
+                case 'montajes.html':
+                case 'reports.html':
+                case 'report.html':
+                    return false;
+                default:
+                    return !!accessFallback;
+            }
+        }
 
         switch (routeCtx.file) {
             case 'catalog.html':
@@ -1188,8 +1211,165 @@
         }
     }
 
+    function isVerifierLayoutContext(authCtx) {
+        return authCtx?.isVerifier === true || normalizeLayoutRole(authCtx?.role || authCtx?.profile?.role || authCtx?.user?.role || '') === 'verificador';
+    }
+
+    function getLayoutNavFile(link) {
+        const rawHref = String(link?.getAttribute?.('href') || link?.getAttribute?.('data-href') || '').trim();
+        if (!rawHref) return '';
+        const cleanHref = rawHref.split('#')[0].split('?')[0].replace(/\\/g, '/');
+        return String(cleanHref.split('/').pop() || '').trim().toLowerCase();
+    }
+
+    function getCurrentVerifierNavFile() {
+        const file = String(window.location.pathname.split('/').pop() || '').trim().toLowerCase();
+        return ['catalog.html', 'clientes.html', 'control.html'].includes(file) ? file : 'catalog.html';
+    }
+
+    function getCurrentVerifierTenantSlug() {
+        const path = String(window.location.pathname || '').toLowerCase();
+        return path.indexOf('/cotizadorcp/') !== -1 ? 'casa_de_piedra' : 'plaza_mayor';
+    }
+
+    function getVerifierTenantDirectory(tenantSlug) {
+        return tenantSlug === 'casa_de_piedra' ? 'cotizadorcp' : 'cotizador';
+    }
+
+    function buildVerifierTenantHref(tenantSlug, page) {
+        const directory = getVerifierTenantDirectory(tenantSlug);
+        const targetPage = ['catalog.html', 'clientes.html', 'control.html'].includes(page) ? page : 'catalog.html';
+        return `../${directory}/${targetPage}`;
+    }
+
+    function getVerifierNavTenants(authCtx) {
+        const rawTenants = Array.isArray(authCtx?.allowedTenants) && authCtx.allowedTenants.length
+            ? authCtx.allowedTenants
+            : (Array.isArray(authCtx?.profile?.allowed_tenants) ? authCtx.profile.allowed_tenants : []);
+        const normalized = rawTenants
+            .map((tenant) => normalizeTenantSlug(tenant))
+            .filter((tenant) => tenant === 'plaza_mayor' || tenant === 'casa_de_piedra');
+        const unique = Array.from(new Set(normalized));
+        if (unique.length) return unique;
+        return ['plaza_mayor', 'casa_de_piedra'];
+    }
+
+    function markLayoutNavActive(link, page) {
+        const currentFile = String(window.location.pathname.split('/').pop() || '').trim().toLowerCase();
+        const isActive = currentFile === page;
+        link.classList.toggle('bg-white/20', isActive);
+        link.classList.toggle('shadow-inner', isActive);
+    }
+
+    function ensureVerifierControlNavLink(navRoot) {
+        if (!navRoot) return;
+        let link = Array.from(navRoot.querySelectorAll('a[href], a[data-href]')).find((item) => {
+            return !item.closest('[data-verifier-tenant-switch]') && getLayoutNavFile(item) === 'control.html';
+        });
+        if (!link) {
+            link = document.createElement('a');
+            link.href = 'control.html';
+            link.className = 'px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap flex items-center gap-2';
+            const spacer = navRoot.querySelector('.flex-grow');
+            if (spacer) navRoot.insertBefore(link, spacer);
+            else navRoot.appendChild(link);
+        }
+        link.innerHTML = '<i class="fa-solid fa-clipboard-check"></i> Control';
+        link.classList.remove('hidden');
+        markLayoutNavActive(link, 'control.html');
+    }
+
+    function ensureVerifierTenantSwitch(navRoot, authCtx) {
+        if (!navRoot) return;
+        let switcher = navRoot.querySelector('[data-verifier-tenant-switch]');
+        if (!switcher) {
+            switcher = document.createElement('div');
+            switcher.setAttribute('data-verifier-tenant-switch', 'true');
+            const spacer = navRoot.querySelector('.flex-grow');
+            if (spacer) spacer.insertAdjacentElement('afterend', switcher);
+            else navRoot.appendChild(switcher);
+        } else {
+            const spacer = navRoot.querySelector('.flex-grow');
+            if (spacer && switcher.previousElementSibling !== spacer) spacer.insertAdjacentElement('afterend', switcher);
+        }
+        const tenants = getVerifierNavTenants(authCtx);
+        if (tenants.length < 2) {
+            switcher.className = 'hidden';
+            switcher.innerHTML = '';
+            return;
+        }
+        const currentTenant = getCurrentVerifierTenantSlug();
+        const currentPage = getCurrentVerifierNavFile();
+        switcher.className = 'ml-auto flex items-center gap-1 rounded-full bg-black/10 p-1 border border-white/15 shrink-0';
+        switcher.innerHTML = tenants.map((tenantSlug) => {
+            const active = tenantSlug === currentTenant;
+            const label = tenantSlug === 'casa_de_piedra' ? 'CP' : 'PM';
+            const title = tenantSlug === 'casa_de_piedra' ? 'Casa de Piedra' : 'Plaza Mayor';
+            const classes = active
+                ? 'bg-white text-brand-red shadow'
+                : 'text-white/80 hover:bg-white/15 hover:text-white';
+            return `<a data-verifier-tenant-option="true" href="${buildVerifierTenantHref(tenantSlug, currentPage)}" title="${title}" class="${classes} rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-wider transition whitespace-nowrap">${label}</a>`;
+        }).join('');
+    }
+
+    function ensureVerifierNavRootExists() {
+        const existingContainers = Array.from(document.querySelectorAll('nav .container'));
+        if (existingContainers.length) return existingContainers;
+        const existingNavs = Array.from(document.querySelectorAll('nav'));
+        if (existingNavs.length) return existingNavs;
+        if (!document.body) return [];
+        const nav = document.createElement('nav');
+        nav.setAttribute('data-verifier-nav', 'true');
+        nav.className = 'bg-brand-red shadow-lg sticky top-16 z-40 border-t border-red-800 transition-all duration-300';
+        nav.innerHTML = `
+            <div class="container mx-auto px-4 flex h-14 items-center text-white gap-2 overflow-x-auto no-scrollbar">
+                <a href="catalog.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap flex items-center gap-2"><i class="fa-solid fa-tags"></i> Precios</a>
+                <a href="clientes.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap flex items-center gap-2"><i class="fa-solid fa-users"></i> Clientes</a>
+                <a href="control.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap flex items-center gap-2"><i class="fa-solid fa-clipboard-check"></i> Control</a>
+                <div class="flex-grow"></div>
+            </div>
+        `;
+        const header = document.getElementById('hub-layout-header-rendered');
+        if (header && header.parentNode) header.insertAdjacentElement('afterend', nav);
+        else document.body.insertBefore(nav, document.body.firstChild);
+        const container = nav.querySelector('.container');
+        return container ? [container] : [nav];
+    }
+
+    function applyVerifierNavPermissions(authCtx) {
+        if (!isVerifierLayoutContext(authCtx)) return false;
+        const routeCtx = resolveLayoutRouteContext();
+        if (routeCtx.isSystem) return false;
+        if (String(window.location.pathname.split('/').pop() || '').toLowerCase() === 'index.html') return false;
+        const navRoots = ensureVerifierNavRootExists();
+        navRoots.forEach((navRoot) => {
+            navRoot.querySelectorAll('a[href], a[data-href]').forEach((link) => {
+                if (link.closest('[data-verifier-tenant-switch]')) return;
+                const page = getLayoutNavFile(link);
+                const visible = page === 'catalog.html' || page === 'clientes.html' || page === 'control.html';
+                link.classList.toggle('hidden', !visible);
+                if (!visible) return;
+                if (page === 'catalog.html') link.innerHTML = '<i class="fa-solid fa-tags"></i> Precios';
+                if (page === 'clientes.html') link.innerHTML = '<i class="fa-solid fa-users"></i> Clientes';
+                markLayoutNavActive(link, page);
+            });
+            ensureVerifierControlNavLink(navRoot);
+            ensureVerifierTenantSwitch(navRoot, authCtx);
+        });
+        const settingsBtn = document.getElementById('layout-settings-btn');
+        if (settingsBtn) {
+            const tenantSlug = getCurrentVerifierTenantSlug();
+            const tenantParam = tenantSlug === 'casa_de_piedra' ? 'cp' : 'pm';
+            settingsBtn.href = `${pathPrefix}system/config.html?tenant=${tenantParam}`;
+            settingsBtn.classList.remove('hidden');
+            settingsBtn.classList.add('flex');
+        }
+        return true;
+    }
+
     function applyLayoutNavPermissions(authCtx) {
         if (!authCtx || !authCtx.permissions) return;
+        if (applyVerifierNavPermissions(authCtx)) return;
         const perms = authCtx.permissions || {};
         const accessFallback = perms.access !== false;
         const navRules = {
@@ -1216,7 +1396,7 @@
         });
         const settingsBtn = document.getElementById('layout-settings-btn');
         if (settingsBtn) {
-            if (authCtx.isAdmin || authCtx.isVerifier || normalizeLayoutRole(authCtx.role || '') === 'verificador') settingsBtn.classList.replace('hidden', 'flex');
+            if (authCtx.isAdmin) settingsBtn.classList.replace('hidden', 'flex');
             else settingsBtn.classList.add('hidden');
         }
     }
@@ -1400,8 +1580,11 @@
             const canQuote = readyByFlag || (dataReady && docsReady);
             const hasDictamen =
                 isTruthyProfileFlag(validation.readyForContracts)
+                || isTruthyProfileFlag(validation.dictamenAprobado)
                 || isTruthyProfileFlag(validation.dictamenGuardado)
-                || isTruthyProfileFlag(validation.dictamenAprobado);
+                || isTruthyProfileFlag(validation?.dictamen?.saved)
+                || isTruthyProfileFlag(profile?.dictamen?.saved)
+                || isTruthyProfileFlag(profile?.dictamen?.approved);
             return {
                 tenant,
                 data: [

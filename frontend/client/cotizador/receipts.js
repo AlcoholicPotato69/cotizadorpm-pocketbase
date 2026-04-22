@@ -4721,7 +4721,7 @@ function __pmContractsCanGenerateContract(order) {
     if (!client) return false;
     const validation = __pmContractsSafeObject(client.expediente_validacion);
     const readyForQuotes = client.perfil_validado === true || validation.readyForQuotes === true || validation.ready === true || String(client.perfil_estatus || validation.status || '').toLowerCase() === 'validado';
-    const hasDictamen = validation.readyForContracts === true || validation.dictamenGuardado === true || validation.dictamenAprobado === true;
+    const hasDictamen = validation.readyForContracts === true || validation.dictamenAprobado === true;
     return !!(readyForQuotes && hasDictamen);
 }
 
@@ -4732,7 +4732,7 @@ function __pmContractsContractBlockReason(order) {
     const validation = __pmContractsSafeObject(client.expediente_validacion);
     const readyForQuotes = client.perfil_validado === true || validation.readyForQuotes === true || validation.ready === true || String(client.perfil_estatus || validation.status || '').toLowerCase() === 'validado';
     if (!readyForQuotes) return 'El expediente del cliente debe estar completo, vigente y aprobado.';
-    if (!(validation.readyForContracts === true || validation.dictamenGuardado === true || validation.dictamenAprobado === true)) return 'Falta guardar o aprobar el dictamen del cliente.';
+    if (!(validation.readyForContracts === true || validation.dictamenAprobado === true)) return 'Falta guardar o aprobar el dictamen del cliente.';
     return '';
 }
 

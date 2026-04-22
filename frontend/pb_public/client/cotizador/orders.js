@@ -613,17 +613,20 @@ async function loadClientProfilesForOrderModal() {
     if (!sel || !window.tenantPocketBase) return;
 
     try {
-        const { data, error } = await window.tenantPocketBase.from('clientes').select('id,nombre_completo,telefono,correo,rfc,perfil_validado,perfil_estatus').order('nombre_completo', { ascending: true });
+        const { data, error } = await window.tenantPocketBase
+            .from('clientes')
+            .select('id,nombre_completo,telefono,telefonos_adicionales,correo,rfc,perfil_validado,perfil_estatus,documentos_estado,expediente_validacion,constancia_fiscal_emitida_el,comprobante_domicilio_emitido_el,doc_acta_constitutiva,doc_ine,doc_comprobante_domicilio,doc_constancia_fiscal,created_at,created')
+            .order('nombre_completo', { ascending: true });
         if (error) throw error;
         orderClientProfiles = (data || []).slice().sort((a, b) => {
-            const aReady = a?.perfil_validado === true ? 1 : 0;
-            const bReady = b?.perfil_validado === true ? 1 : 0;
+            const aReady = __pmIsOrderClientProfileReady(a) ? 1 : 0;
+            const bReady = __pmIsOrderClientProfileReady(b) ? 1 : 0;
             if (aReady !== bReady) return bReady - aReady;
             return String(a?.nombre_completo || '').localeCompare(String(b?.nombre_completo || ''), 'es');
         });
         orderClientProfilesById = {}; orderClientProfiles.forEach(c => orderClientProfilesById[c.id] = c);
         const current = String(sel.value || hid?.value || '').trim();
-        sel.innerHTML = '<option value="">— Sin perfil —</option>' + orderClientProfiles.map(c => `<option value="${c.id}">${(c.nombre_completo || '').toUpperCase()} • ${c?.perfil_validado === true ? 'LISTO' : 'PENDIENTE'}</option>`).join('');
+        sel.innerHTML = '<option value="">— Sin perfil —</option>' + orderClientProfiles.map(c => `<option value="${c.id}">${(c.nombre_completo || '').toUpperCase()} • ${__pmIsOrderClientProfileReady(c) ? 'LISTO' : 'PENDIENTE'}</option>`).join('');
         if (current) {
             sel.value = current;
             if (hid) hid.value = sel.value || '';
@@ -632,7 +635,7 @@ async function loadClientProfilesForOrderModal() {
         sel.onchange = () => {
             const id = sel.value; if (!id) { if (hid) hid.value = ''; return; }
             const c = orderClientProfilesById[id]; if (!c) return;
-            if (c.perfil_validado !== true) {
+            if (!__pmIsOrderClientProfileReady(c)) {
                 if (hid) hid.value = '';
                 sel.value = '';
                 window.showToast?.('Este perfil aun no tiene expediente validado. Usa captura manual o pide al cliente completar su expediente.', 'info');
@@ -646,7 +649,19 @@ async function loadClientProfilesForOrderModal() {
         };
         const clearAssoc = () => { if (sel.value) sel.value = ''; if (hid) hid.value = ''; };
         ['oed-client','oed-phone','oed-email','fiscal-rfc-re'].forEach(id => { const el = document.getElementById(id); if (el) el.addEventListener('input', clearAssoc); });
+        window.HUB_CLIENT_PROFILE_HOVER?.bindSelect?.(sel, () => {
+            const selectedId = String(sel?.value || hid?.value || '').trim();
+            return selectedId ? (orderClientProfilesById[selectedId] || null) : null;
+        }, { tenant: 'plaza_mayor' });
     } catch (e) { console.warn("No se pudo cargar clientes", e); }
+}
+
+function __pmIsOrderClientProfileReady(client) {
+    if (!client) return false;
+    if (window.HUB_CLIENT_PROFILE_HOVER?.isQuoteReady) {
+        return window.HUB_CLIENT_PROFILE_HOVER.isQuoteReady(client, 'plaza_mayor');
+    }
+    return client?.perfil_validado === true;
 }
 
 function __pmOrderNormalizeMatchValue(value) {
@@ -910,6 +925,35 @@ let __pmOrderDetailAutoSaveTimer = null;
 let __pmOrderDetailAutoSaveBound = false;
 let __pmOrderUsersById = Object.create(null);
 let pmConvenioCatalog = [];
+
+function __pmNormalizeOrderAccessRole(value) {
+    const safe = String(value || '').trim().toLowerCase();
+    if (!safe) return '';
+    if (safe === 'administrador' || safe === 'administrator' || safe === 'superadmin' || safe === 'super_admin') return 'admin';
+    return safe;
+}
+
+function __pmResolveOrderAccess() {
+    const authCtx = window.__HUB_AUTH_CONTEXT || {};
+    const profile = authCtx.profile || window.currentUserProfile || {};
+    const perms = (authCtx.permissions && typeof authCtx.permissions === 'object')
+        ? authCtx.permissions
+        : ((profile.app_metadata?.finanzas?.permissions && typeof profile.app_metadata.finanzas.permissions === 'object') ? profile.app_metadata.finanzas.permissions : {});
+    const role = __pmNormalizeOrderAccessRole(authCtx.role || profile.role || profile.rol || '');
+    return { role, perms, isAdmin: authCtx.isAdmin === true || role === 'admin' };
+}
+
+function __pmCanEditOrders() {
+    const access = __pmResolveOrderAccess();
+    if (access.role === 'verificador') return false;
+    if (access.isAdmin) return true;
+    if (Object.prototype.hasOwnProperty.call(access.perms || {}, 'orders_edit')) return access.perms.orders_edit === true;
+    return true;
+}
+
+function __pmOrderReadOnlyMessage() {
+    return 'Modo solo lectura: el verificador puede revisar cotizaciones, pero no crearlas ni modificarlas.';
+}
 
 function __pmNormalizeConvenioName(value) {
     return String(value || '').trim().replace(/\s+/g, ' ');
@@ -1317,6 +1361,7 @@ function __pmBindOrderDetailDirtyTracking() {
 
 function __pmScheduleOrderDetailAutoSave() {
     if (!IS_PM_ORDER_DETAIL_PAGE) return;
+    if (!__pmCanEditOrders()) return;
     const locked = ['aprobada', 'finalizada'].includes(String(currentPreviewOrder?.status || '').toLowerCase());
     if (locked) return;
     const nextStatus = String(document.getElementById('oed-status')?.value || '').toLowerCase();
@@ -1331,6 +1376,7 @@ function __pmScheduleOrderDetailAutoSave() {
 
 function __pmFlushOrderDetailAutoSave() {
     if (!IS_PM_ORDER_DETAIL_PAGE || __pmOrderDetailDirty !== true) return;
+    if (!__pmCanEditOrders()) return;
     if (__pmOrderDetailAutoSaveTimer) {
         clearTimeout(__pmOrderDetailAutoSaveTimer);
         __pmOrderDetailAutoSaveTimer = null;
@@ -1340,6 +1386,7 @@ function __pmFlushOrderDetailAutoSave() {
 
 function __pmBindOrderDetailAutoSave() {
     if (!IS_PM_ORDER_DETAIL_PAGE || __pmOrderDetailAutoSaveBound) return;
+    if (!__pmCanEditOrders()) return;
     const root = document.getElementById('order-edit-modal');
     if (!root) return;
     const onFieldChange = () => __pmScheduleOrderDetailAutoSave();
@@ -2818,6 +2865,7 @@ window.processSaveOrder = async function() {
 };
 
 window.previewOrderForGeneration = async function(id) {
+    if (!__pmCanEditOrders()) return window.showToast(__pmOrderReadOnlyMessage(), "error");
     await __pmEnsurePdfStyleProfile('order', { forceReload: !__pmIsAdminProfile() });
     const order = await __pmEnsureOrderRecord(id);
     if(!order) return;
@@ -2844,6 +2892,7 @@ window.previewOrderForGeneration = async function(id) {
 };
 
 window.confirmAndGeneratePurchaseOrder = async function() {
+    if (!__pmCanEditOrders()) return window.showToast(__pmOrderReadOnlyMessage(), "error");
     window.openConfirm("¿Generar Orden de Compra Oficial? Se guardará una copia exacta.", async () => {
         const btn = document.getElementById('btn-download-preview');
         btn.disabled = true; btn.innerText = "Generando OC...";
@@ -2932,8 +2981,10 @@ window.openDocsModal = function(id) {
     if (!isConvenio) {
         if (order.url_orden_compra) {
             createBtn('Ver Orden de Compra', 'fa-solid fa-file-contract', 'purple', `window.openStoredDocument('${order.url_orden_compra}')`);
-        } else if(['aprobada', 'finalizada'].includes(order.status)) {
+        } else if(['aprobada', 'finalizada'].includes(order.status) && __pmCanEditOrders()) {
             createBtn('Generar Orden de Compra', 'fa-solid fa-plus', 'purple', `window.openOrderPreviewTab('${order.id}', 'order', 'generate')`);
+        } else if(['aprobada', 'finalizada'].includes(order.status)) {
+            createLocked('Orden de Compra (Solo lectura)', 'fa-solid fa-lock');
         } else {
             createLocked('Orden de Compra (Pendiente)', 'fa-solid fa-lock');
         }
@@ -5977,7 +6028,7 @@ window.getOrderHTML = function(o, type) {
     const docMeta = __pmGetQuoteDocumentMeta(o);
     const isConvenio = !isOrder && docMeta.isConvenio;
     const isApprovedQuote = !isOrder && ['aprobada', 'finalizada'].includes(quoteStatus);
-    if (!isOrder && isConvenio) docTitle = isApprovedQuote ? 'CARTA CONVENIO' : 'CONVENIO';
+    if (!isOrder && isConvenio) docTitle = 'CARTA CONVENIO';
     const clientComponent = (isOrder || isApprovedQuote)
         ? `<div class="pm-pdf-summary flex flex-row justify-between items-center mb-2 p-2 bg-gray-50 rounded border border-gray-100" data-base-resource="summary"><div class="w-1/2 border-r border-gray-200 pr-2"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Cliente / Empresa</p><p class="font-black ${nameSizeClass} text-gray-800 leading-tight">${clientName}</p></div><div class="w-1/2 pl-2"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Contacto / Fiscal</p><p class="font-mono text-xs text-gray-700 truncate">${o.cliente_email || 'Sin correo'}</p>${clientRfc ? `<p class="font-mono text-xs text-gray-700 mt-0.5">RFC: <strong>${clientRfc}</strong></p>` : ''}</div></div>`
         : `<div class="pm-pdf-summary mb-2 p-2 bg-gray-50 rounded border border-gray-100" data-base-resource="summary"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Cliente / Empresa</p><p class="font-black ${nameSizeClass} text-gray-800 leading-tight">${clientName}</p></div>`;
@@ -6600,6 +6651,48 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     return acc + __pmResolveTaxRate(t);
   }, 0);
   const money = (v) => new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN" }).format(v || 0);
+  const PM_MAX_DISCOUNT_PERCENT = 10;
+  const normalizePmGlobalAdjustment = (subtotalRaw = 0, options = {}) => {
+    const opts = options && typeof options === "object" ? options : {};
+    const showToast = opts.showToast === true;
+    const typeEl = document.getElementById("oed-adj-type");
+    const valueEl = document.getElementById("oed-adj-val");
+    const unitEl = document.getElementById("oed-adj-unit");
+    const adjType = String(typeEl?.value || "ninguno");
+    const isPct = (String(unitEl?.value || "fixed") === "percent");
+    const subtotal = Math.max(0, parseFloat(subtotalRaw || 0) || 0);
+    const maxFixedDiscount = parseFloat((subtotal * (PM_MAX_DISCOUNT_PERCENT / 100)).toFixed(2));
+    let adjVal = Math.max(0, parseFloat(valueEl?.value || 0) || 0);
+    let message = "";
+
+    if (adjType === "descuento") {
+      if (isPct && adjVal > PM_MAX_DISCOUNT_PERCENT) {
+        adjVal = PM_MAX_DISCOUNT_PERCENT;
+        message = `El descuento maximo permitido es ${PM_MAX_DISCOUNT_PERCENT}%.`;
+      } else if (!isPct && subtotal <= 0 && adjVal > 0) {
+        adjVal = 0;
+        message = "No se puede aplicar descuento sobre un subtotal en 0.";
+      } else if (!isPct && adjVal > maxFixedDiscount) {
+        adjVal = maxFixedDiscount;
+        message = `El descuento maximo permitido para este subtotal es ${money(maxFixedDiscount)}.`;
+      }
+    }
+
+    if (valueEl) {
+      const normalizedValue = Number.isInteger(adjVal) ? String(adjVal) : adjVal.toFixed(2);
+      if (String(valueEl.value || "") !== normalizedValue) valueEl.value = normalizedValue;
+    }
+    if (message && showToast && typeof window.showToast === "function") {
+      window.showToast(message, "warning");
+    }
+    return {
+      adjType,
+      adjVal,
+      isPct,
+      maxFixedDiscount,
+      adjustment: adjType === "ninguno" ? 0 : (isPct ? (subtotal * (adjVal / 100)) : adjVal)
+    };
+  };
   const PM_DETAIL_TABS = ["client", "spaces", "financial", "summary", "expediente"];
   const PM_DETAIL_TAB_KEY_PREFIX = "pm_order_detail_tab_v1:";
   let __pmExpedienteRenderSeq = 0;
@@ -7610,6 +7703,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     }
   }
   window.savePmDraftSnapshot = async function (btnEl = null) {
+    if (!__pmCanEditOrders()) return window.showToast(__pmOrderReadOnlyMessage(), "error");
     const btn = btnEl instanceof HTMLElement ? btnEl : null;
     const original = btn?.innerHTML || "";
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span>Guardando...</span>'; }
@@ -7629,6 +7723,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     }
   };
   window.savePmPurchaseOrderSnapshot = async function (btnEl = null) {
+    if (!__pmCanEditOrders()) return window.showToast(__pmOrderReadOnlyMessage(), "error");
     const btn = btnEl instanceof HTMLElement ? btnEl : null;
     const original = btn?.innerHTML || "";
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span>Guardando...</span>'; }
@@ -8428,16 +8523,15 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     const convenioDeliveredTotal = rows.reduce((a, r) => a + (r.isConvenio ? r.convenioValue : 0), 0);
     const catalogBaseTotal = rows.reduce((a, r) => a + (parseFloat(r.baseMeta?.referenceValue || pmBaseUnitPrice(r.sp) || 0) || 0), 0);
     const conceptsGlobal = rows.reduce((a, r) => a + (r.isConvenio ? r.convenioValue : r.conceptsTotal), 0);
-    const rawAdjType = document.getElementById("oed-adj-type")?.value || "ninguno";
-    const rawAdjVal = parseFloat(document.getElementById("oed-adj-val")?.value || 0) || 0;
-    const rawIsPct = (document.getElementById("oed-adj-unit")?.value || "fixed") === "percent";
-    const adjType = convenioMode ? "ninguno" : rawAdjType;
-    const adjVal = convenioMode ? 0 : rawAdjVal;
-    const isPct = convenioMode ? false : rawIsPct;
-    let adjustment = 0;
+    const normalizedAdj = convenioMode
+      ? { adjType: "ninguno", adjVal: 0, isPct: false, adjustment: 0 }
+      : normalizePmGlobalAdjustment(subtotalRaw, { showToast: true });
+    const adjType = normalizedAdj.adjType;
+    const adjVal = normalizedAdj.adjVal;
+    const isPct = normalizedAdj.isPct;
+    let adjustment = normalizedAdj.adjustment || 0;
     let adjusted = subtotalRaw;
     if (adjType !== "ninguno") {
-      adjustment = isPct ? (subtotalRaw * (adjVal / 100)) : adjVal;
       adjusted = adjType === "descuento" ? Math.max(0, subtotalRaw - adjustment) : subtotalRaw + adjustment;
     }
     let tax = 0;
@@ -8745,6 +8839,9 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     window.recalcTotal();
     if (!pmTotals.spaces.length) throw new Error("No hay espacios activos.");
     const hasConvenioOrder = pmTotals.spaces.some((r) => !!r.isConvenio || !!r.cfg?.convenioEnabled);
+    const normalizedAdj = hasConvenioOrder
+      ? { adjType: "ninguno", adjVal: 0, isPct: false }
+      : normalizePmGlobalAdjustment(pmTotals?.subtotal || 0, { showToast: true });
     const details = pmTotals.spaces.map((r) => {
       const convenioItems = buildConvenioPayloadItems(r.cfg);
       return {
@@ -8819,9 +8916,9 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       espacio_id: first.cfg.spaceId,
       espacio_nombre: pmTotals.spaces.length === 1 ? (first.sp?.nombre || first.cfg.spaceId) : `${first.sp?.nombre || first.cfg.spaceId} + ${pmTotals.spaces.length - 1} espacio(s)`,
       espacio_clave: pmTotals.spaces.length === 1 ? (first.sp?.clave || "") : "MULTI",
-      tipo_ajuste: hasConvenioOrder ? "ninguno" : (document.getElementById("oed-adj-type")?.value || "ninguno"),
-      valor_ajuste: hasConvenioOrder ? 0 : (parseFloat(document.getElementById("oed-adj-val")?.value || 0) || 0),
-      ajuste_es_porcentaje: hasConvenioOrder ? false : ((document.getElementById("oed-adj-unit")?.value || "fixed") === "percent"),
+      tipo_ajuste: normalizedAdj.adjType,
+      valor_ajuste: normalizedAdj.adjVal,
+      ajuste_es_porcentaje: normalizedAdj.isPct,
       conceptos_adicionales: concepts,
       espacios_detalle: details,
       desglose_precios: {
@@ -8888,6 +8985,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
   }
 
   window.attemptSaveOrder = async function () {
+    if (!__pmCanEditOrders()) return window.showToast(__pmOrderReadOnlyMessage(), "error");
     const locked = __pmIsLockedOrder();
     if (locked) return window.showToast("La cotización aprobada está bloqueada para edición.", "error");
     saveActiveFromForm();
@@ -8923,6 +9021,10 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     const relaxed = !!opts.relaxed;
     const keepOpen = !!opts.keepOpen || IS_PM_ORDER_DETAIL_PAGE;
     const skipReload = !!opts.skipReload || IS_PM_ORDER_DETAIL_PAGE;
+    if (!__pmCanEditOrders()) {
+      if (!silent) window.showToast(__pmOrderReadOnlyMessage(), "error");
+      return false;
+    }
     const locked = __pmIsLockedOrder();
     if (locked) {
       if (!silent) window.showToast("La cotización aprobada está bloqueada para edición.", "error");
@@ -9052,6 +9154,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
   };
 
   window.executeApprovalTransaction = async function (formData) {
+    if (!__pmCanEditOrders()) return window.showToast(__pmOrderReadOnlyMessage(), "error");
     const btn = document.getElementById("btn-download-preview");
     if (btn) { btn.disabled = true; btn.innerText = "Generando Snapshot..."; }
     try {
@@ -9183,10 +9286,12 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     const extraConceptsToggle = document.getElementById("oed-has-extra-concepts");
     if (extraConceptsToggle) extraConceptsToggle.checked = selectedCfg().some((cfg) => regularConcepts(cfg.concepts).length);
 
+    const isReadOnly = !__pmCanEditOrders();
     const isLocked = __pmIsLockedOrder();
+    const editorLocked = isLocked || isReadOnly;
     document.querySelectorAll("#order-edit-modal input, #order-edit-modal select").forEach((i) => {
       if (i.id === "btn-save-progress" || i.id === "btn-save-approve") return;
-      i.disabled = isLocked;
+      i.disabled = editorLocked;
     });
     const saveBtn = document.getElementById("btn-save-progress");
     if (saveBtn) { saveBtn.disabled = isLocked; saveBtn.classList.toggle("opacity-60", isLocked); saveBtn.title = isLocked ? "Cotización aprobada: edición bloqueada" : ""; saveBtn.innerText = "Guardar"; }
@@ -9198,6 +9303,12 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     if (statusSel) {
       statusSel.disabled = isLocked;
       statusSel.onchange = () => { applyStatusVisual(); window.recalcTotal(); };
+    }
+    if (isReadOnly) {
+      if (saveBtn) { saveBtn.disabled = true; saveBtn.classList.add("opacity-60"); saveBtn.title = __pmOrderReadOnlyMessage(); }
+      if (approveBtn) { approveBtn.disabled = true; approveBtn.classList.add("opacity-60"); approveBtn.title = __pmOrderReadOnlyMessage(); }
+      if (quoteName) quoteName.disabled = true;
+      if (statusSel) statusSel.disabled = true;
     }
 
     window.renderConceptsList();

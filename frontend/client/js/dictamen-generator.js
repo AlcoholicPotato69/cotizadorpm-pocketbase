@@ -160,7 +160,7 @@
               <i class="fa-solid fa-cloud-arrow-up"></i> Guardar plantilla
             </button>
             <button data-dg-generate type="button" class="rounded-xl bg-emerald-600 px-4 py-2 text-[11px] font-black uppercase tracking-wide text-white shadow-lg transition hover:bg-emerald-700">
-              <i class="fa-solid fa-file-arrow-down"></i> Snapshot y descarga
+              <i class="fa-solid fa-circle-check"></i> Aprobar
             </button>
             <button data-dg-close type="button" class="rounded-xl bg-white/10 px-3 py-2 text-sm text-white transition hover:bg-white/20">
               <i class="fa-solid fa-xmark"></i>
@@ -173,7 +173,7 @@
           </div>
           <aside data-dg-editor-panel class="min-h-0 overflow-y-auto border-l border-gray-100 bg-white p-4">
             <div data-dg-helper class="mb-4 rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-[11px] font-semibold leading-5 text-red-900">
-              Arrastra los recursos sobre el canvas para moverlos. Usa el punto inferior derecho para redimensionar. El snapshot se guarda solo al descargar el dictamen real.
+              Arrastra los recursos sobre el canvas para moverlos. Usa el punto inferior derecho para redimensionar. Al aprobar se guarda el dictamen en el expediente.
             </div>
             <div class="space-y-4">
               <section class="rounded-2xl border border-gray-100 bg-gray-50 p-3">
@@ -492,7 +492,7 @@
     if (generateButton) {
       generateButton.innerHTML = state.previewOnlySample
         ? '<i class="fa-solid fa-file-arrow-down"></i> Descargar ejemplo'
-        : '<i class="fa-solid fa-file-arrow-down"></i> Snapshot y descarga';
+        : '<i class="fa-solid fa-circle-check"></i> Aprobar';
     }
   }
 
@@ -759,7 +759,9 @@
       syncSampleModeUi(modal, state);
       if (button) {
         button.disabled = true;
-        button.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Generando...';
+        button.innerHTML = isSample
+          ? '<i class="fa-solid fa-circle-notch fa-spin"></i> Generando...'
+          : '<i class="fa-solid fa-circle-notch fa-spin"></i> Aprobando...';
       }
       const activeClient = getActiveClient(state);
       const filename = isSample ? ("EJEMPLO-" + safeString(state.filename || "dictamen.pdf")) : state.filename;
@@ -777,11 +779,11 @@
         try {
           const snapshot = typeof state.buildDocumentSnapshot === "function" ? state.buildDocumentSnapshot(state.client) : [];
           const saved = await state.persistSnapshot(state.client, state.folio, blob, state.filename, snapshot);
-          if (saved && saved.saved) state.showToast("Dictamen guardado en el expediente.", "success");
-          else if (saved && saved.reason === "unchanged") state.showToast("Sin cambios en documentos; no se duplico el historico.", "info");
+          if (saved && saved.saved) state.showToast("Dictamen aprobado y guardado en el expediente.", "success");
+          else if (saved && saved.reason === "unchanged") state.showToast("No hubo cambios en documentos; no se genero un nuevo dictamen.", "info");
         } catch (snapshotError) {
           console.error(snapshotError);
-          state.showToast("El PDF se genero, pero no se pudo guardar el snapshot.", "error");
+          state.showToast("El PDF se genero, pero no se pudo aprobar el dictamen.", "error");
         }
       } else if (isSample) {
         state.showToast("Ejemplo descargado sin guardar snapshot.", "info");

@@ -95,7 +95,7 @@ function deriveClientAccessFromLayout() {
   if (!authCtx?.session?.user) return null;
   const perms = (authCtx.permissions && typeof authCtx.permissions === 'object') ? authCtx.permissions : {};
   const role = normalizeRoleName(authCtx.role || authCtx.profile?.role || '');
-  const verifyEnabled = authCtx.isAdmin === true || role === 'verificador' || perms.clients_verify === true;
+  const verifyEnabled = authCtx.isAdmin === true || role === 'admin' || role === 'verificador';
   return {
     role,
     perms,
@@ -148,8 +148,8 @@ async function fetchClientAccessContext(sessionUser) {
     : (role === 'verificador')
       ? {
           access: true,
-          catalog_view: false,
-          orders_view: false,
+          catalog_view: true,
+          orders_view: true,
           reports_view: false,
           clients_view: true,
           clients_manage: false,
@@ -157,7 +157,7 @@ async function fetchClientAccessContext(sessionUser) {
           clients_all_docs: true
         }
       : { ...rawPerms };
-  const canVerifyResolved = role === 'admin' || role === 'verificador' || perms.clients_verify === true;
+  const canVerifyResolved = role === 'admin' || role === 'verificador';
   const canView = role === 'admin'
     || role === 'verificador'
     || perms.clients_view === true
@@ -201,7 +201,9 @@ function installVerifierTenantNavigation(role) {
   const currentTenant = CLIENT_TENANT_SLUG;
   const allowedTenants = getVerifierAllowedTenants();
   const navLinks = [
-    { file: 'clientes.html', label: 'Clientes', icon: 'fa-users' }
+    { file: 'catalog.html', label: 'Precios', icon: 'fa-tags' },
+    { file: 'clientes.html', label: 'Clientes', icon: 'fa-users' },
+    { file: 'control.html', label: 'Control', icon: 'fa-clipboard-check' }
   ];
 
   const linksHtml = navLinks.map((item) => {
@@ -212,24 +214,26 @@ function installVerifierTenantNavigation(role) {
     return `<a href="${buildClientTenantPageHref(currentTenant, item.file)}" class="${baseClass} px-4 py-1.5 rounded-full text-xs font-bold uppercase whitespace-nowrap flex items-center gap-2"><i class="fa-solid ${item.icon}"></i>${item.label}</a>`;
   }).join('');
 
-  const switchHtml = allowedTenants.map((tenantSlug) => {
-    const isActive = tenantSlug === currentTenant;
-    const label = tenantSlug === 'casa_de_piedra' ? 'Casa de Piedra' : 'Plaza Mayor';
-    const shortLabel = tenantSlug === 'casa_de_piedra' ? 'CP' : 'PM';
-    const classes = isActive
-      ? 'bg-white text-brand-red shadow-md'
-      : 'text-white/85 hover:bg-white/15';
-    const badgeClass = isActive
-      ? 'bg-brand-red text-white'
-      : 'bg-white/15 text-white';
-    return `<a href="${buildClientTenantPageHref(tenantSlug, currentFile)}" class="${classes} rounded-full px-3 py-1.5 text-[11px] font-black uppercase tracking-wider transition whitespace-nowrap flex items-center gap-2"><span class="${badgeClass} inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px]">${shortLabel}</span><span>${label}</span></a>`;
-  }).join('');
+  const switchHtml = allowedTenants.length > 1
+    ? `<div class="ml-auto flex items-center gap-1 rounded-full bg-white/10 p-1 shadow-inner backdrop-blur">
+        ${allowedTenants.map((tenantSlug) => {
+          const isActive = tenantSlug === currentTenant;
+          const label = tenantSlug === 'casa_de_piedra' ? 'Casa de Piedra' : 'Plaza Mayor';
+          const shortLabel = tenantSlug === 'casa_de_piedra' ? 'CP' : 'PM';
+          const classes = isActive
+            ? 'bg-white text-brand-red shadow-md'
+            : 'text-white/85 hover:bg-white/15';
+          const badgeClass = isActive
+            ? 'bg-brand-red text-white'
+            : 'bg-white/15 text-white';
+          return `<a href="${buildClientTenantPageHref(tenantSlug, currentFile)}" class="${classes} rounded-full px-3 py-1.5 text-[11px] font-black uppercase tracking-wider transition whitespace-nowrap flex items-center gap-2"><span class="${badgeClass} inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px]">${shortLabel}</span><span>${label}</span></a>`;
+        }).join('')}
+      </div>`
+    : '<div class="flex-grow"></div>';
 
   navContainer.innerHTML = `
     ${linksHtml}
-    <div class="ml-auto flex items-center gap-1 rounded-full bg-white/10 p-1 shadow-inner backdrop-blur">
-      ${switchHtml}
-    </div>
+    ${switchHtml}
   `;
 }
 
@@ -344,7 +348,7 @@ const CLIENT_DOC_REQUIREMENTS = [
     dateField: 'comprobante_domicilio_emitido_el',
     requirements: [
       'Solo se acepta luz, agua o teléfono.',
-      'La fecha de emisión no puede exceder 90 días.',
+      'Vigente durante el mes de emisión y los 2 meses siguientes; al iniciar el cuarto mes debe renovarse.',
       'Debe verse completo y coincidir con el domicilio.'
     ]
   },
@@ -371,7 +375,7 @@ const CLIENT_DOC_VALIDITY_DAYS = 90;
 const CLIENT_CONSTANCIA_VALIDITY_DAYS = 30;
 const CLIENT_CONSTANCIA_WARNING_DAYS = 7;
 const CLIENT_CONSTANCIA_CRITICAL_DAYS = 3;
-const CLIENT_COMPROBANTE_VALIDITY_DAYS = 90;
+const CLIENT_COMPROBANTE_VALIDITY_DAYS = 'calendar_months:3';
 const CLIENT_COMPROBANTE_WARNING_DAYS = 30;
 const CLIENT_COMPROBANTE_CRITICAL_DAYS = 14;
 
@@ -434,7 +438,41 @@ function hasClientDocumentFile(client, field, documents = safeObject(getClientVa
   return Array.isArray(raw) ? raw.filter(Boolean).length > 0 : !!String(raw || '').trim();
 }
 
+function formatDocumentUtcDate(dateValue) {
+  if (!(dateValue instanceof Date) || Number.isNaN(dateValue.getTime())) return '';
+  return `${dateValue.getUTCFullYear()}-${String(dateValue.getUTCMonth() + 1).padStart(2, '0')}-${String(dateValue.getUTCDate()).padStart(2, '0')}`;
+}
+
+function calcCalendarMonthDocumentValidity(dateValue, validMonths = 3, warningDays = 30, criticalDays = 14) {
+  const normalized = normalizeStoredDate(dateValue);
+  if (!normalized) return { status: 'missing', daysLeft: null, date: '' };
+  const issued = new Date(`${normalized}T00:00:00Z`);
+  if (Number.isNaN(issued.getTime())) return { status: 'missing', daysLeft: null, date: '' };
+  const now = new Date();
+  const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  if (issued.getTime() > todayUtc.getTime()) return { status: 'expired', daysLeft: -1, date: normalized, expiry: '' };
+  const safeMonths = Math.max(1, Number(validMonths) || 3);
+  const expiryBoundary = new Date(Date.UTC(issued.getUTCFullYear(), issued.getUTCMonth() + safeMonths, 1));
+  const lastValidDay = new Date(expiryBoundary.getTime() - 86400000);
+  const daysLeft = Math.floor((expiryBoundary.getTime() - todayUtc.getTime()) / 86400000);
+  const expiryStr = formatDocumentUtcDate(lastValidDay);
+  if (todayUtc.getTime() >= expiryBoundary.getTime()) {
+    const expiredDays = Math.max(1, Math.floor((todayUtc.getTime() - expiryBoundary.getTime()) / 86400000) + 1);
+    return { status: 'expired', daysLeft: -expiredDays, date: normalized, expiry: expiryStr };
+  }
+  const safeWarningDays = Math.max(0, Number(warningDays) || 0);
+  const safeCriticalDays = Math.max(0, Math.min(safeWarningDays || daysLeft, Number(criticalDays) || 0));
+  if (safeCriticalDays > 0 && daysLeft <= safeCriticalDays) return { status: 'critical', daysLeft, date: normalized, expiry: expiryStr };
+  if (safeWarningDays > 0 && daysLeft <= safeWarningDays) return { status: 'warning', daysLeft, date: normalized, expiry: expiryStr };
+  return { status: 'ok', daysLeft, date: normalized, expiry: expiryStr };
+}
+
 function calcDocumentValidity(dateValue, validDays = CLIENT_DOC_VALIDITY_DAYS, warningDays = 30, criticalDays = 14) {
+  const specialMode = String(validDays || '').trim().toLowerCase();
+  if (specialMode.indexOf('calendar_months:') === 0) {
+    const months = Number(specialMode.split(':')[1]) || 3;
+    return calcCalendarMonthDocumentValidity(dateValue, months, warningDays, criticalDays);
+  }
   const normalized = normalizeStoredDate(dateValue);
   if (!normalized) return { status: 'missing', daysLeft: null, date: '' };
   const issued = new Date(`${normalized}T00:00:00Z`);
@@ -459,6 +497,10 @@ function isDocumentOmitted(docState = {}, validationState = {}) {
     || validationState?.omitido === true
     || String(docState?.status || '').trim().toLowerCase() === 'omitido'
     || String(validationState?.estado || '').trim().toLowerCase() === 'omitido';
+}
+
+function canClientDocumentBeOmitted(field = '') {
+  return String(field || '').trim() !== 'doc_constancia_fiscal';
 }
 
 function buildTooltipButtonHtml(text, extraClasses = '', modalTitle = 'Detalle') {
@@ -622,7 +664,7 @@ function summarizeClientDocuments(client) {
     const docState = safeObject(estados[doc.field]);
     const validationState = safeObject(documents[doc.field]);
     const uploaded = hasClientDocumentFile(client, doc.field, documents);
-    const omitted = isDocumentOmitted(docState, validationState);
+    const omitted = canClientDocumentBeOmitted(doc.field) && isDocumentOmitted(docState, validationState);
     const refreshMeta = getDocumentRefreshMeta(docState, validationState);
     const status = String(docState.status || validationState.estado || '').trim().toLowerCase();
     const reason = String(docState.motivo || validationState.motivo || '').trim();
@@ -791,21 +833,19 @@ function getClientStatusMeta(client, summary = summarizeClientDocuments(client))
       badgeClass: 'bg-red-100 text-red-700',
       detail: summary.rejectedDocs[0]?.reason || 'Hay documentos vencidos o rechazados.',
       cardColorClass: 'border-red-400 bg-red-50',
-      tooltip: summary.tooltipLines.join('\n')
+      tooltip: summary.tooltipLines.join('\n'),
+      canQuote: false
     };
   }
 
   if (readyForQuotes && summary.missingDocs.length === 0 && summary.pendingDocs.length === 0) {
-    const contractMissing = getClientContractMissingFields(client);
-    const contractTooltip = contractMissing.length
-      ? `Para generar contrato falta: ${contractMissing.join(', ')}`
-      : '';
     return {
       label: 'Listo para cotizar',
       badgeClass: 'bg-emerald-100 text-emerald-700',
-      detail: contractTooltip ? 'Expediente validado para cotizar. Falta completar contrato.' : 'Expediente validado y completo.',
+      detail: 'Expediente validado y completo para cotizar.',
       cardColorClass: 'border-emerald-400 bg-emerald-50',
-      tooltip: [contractTooltip, (summary.warningDocs.length || summary.omittedDocs.length) ? summary.tooltipLines.join('\n') : ''].filter(Boolean).join('\n')
+      tooltip: (summary.warningDocs.length || summary.omittedDocs.length) ? summary.tooltipLines.join('\n') : '',
+      canQuote: true
     };
   }
 
@@ -822,7 +862,57 @@ function getClientStatusMeta(client, summary = summarizeClientDocuments(client))
                   ? `${summary.coveredCount === summary.totalCount ? 'Documentos aprobados por administración, pero faltan datos del expediente: ' : 'Faltan datos del expediente: '}${missingFieldLabels.join(', ')}.`
                   : 'Pendiente de validación manual.'))),
     cardColorClass: 'border-amber-400 bg-amber-50',
-    tooltip: getClientPendingTooltip(client, summary, missingFieldLabels)
+    tooltip: getClientPendingTooltip(client, summary, missingFieldLabels),
+    canQuote: false
+  };
+}
+
+function getClientContractStatusMeta(client, summary = summarizeClientDocuments(client), quoteStatus = getClientStatusMeta(client, summary)) {
+  const validation = getClientValidation(client);
+  const contractMissing = getClientContractMissingFields(client);
+  const quoteReady = quoteStatus.canQuote === true;
+  const hasDictamen =
+    validation.readyForContracts === true ||
+    validation.dictamenAprobado === true;
+  const canContract = quoteReady && hasDictamen;
+
+  if (canContract) {
+    return {
+      label: 'Listo para contrato',
+      badgeClass: 'bg-emerald-100 text-emerald-700',
+      detail: 'Puede generar contratos con este expediente.',
+      tooltip: 'Expediente validado y dictamen disponible para contrato.',
+      canContract: true
+    };
+  }
+
+  const tooltipLines = [];
+  let detail = '';
+
+  if (contractMissing.length) {
+    detail = `Falta: ${contractMissing.join(', ')}.`;
+    tooltipLines.push(`Falta para contrato: ${contractMissing.join(', ')}`);
+  } else if (!quoteReady) {
+    detail = quoteStatus.detail
+      ? `Bloqueado hasta completar la validacion para cotizar. ${quoteStatus.detail}`
+      : 'Primero debe quedar validado para cotizar.';
+    tooltipLines.push('El expediente del cliente debe estar completo, vigente y aprobado antes de generar contrato.');
+  } else if (validation.dictamenDesactualizado === true) {
+    detail = 'El dictamen ya no corresponde al expediente vigente.';
+    tooltipLines.push('Genera o aprueba un nuevo dictamen con los documentos actuales.');
+  } else {
+    detail = 'Falta guardar o aprobar el dictamen del cliente.';
+    tooltipLines.push('Falta guardar o aprobar el dictamen del cliente.');
+  }
+
+  if (quoteStatus.tooltip) tooltipLines.push(quoteStatus.tooltip);
+
+  return {
+    label: quoteReady ? 'Contrato pendiente' : 'Contrato bloqueado',
+    badgeClass: quoteReady ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-700',
+    detail,
+    tooltip: [...new Set(tooltipLines.filter(Boolean))].join('\n'),
+    canContract: false
   };
 }
 
@@ -846,7 +936,7 @@ function getClientDocumentStateMeta(client, field) {
   const docStates = safeObject(client?.documentos_estado);
   const docState = safeObject(docStates[field]);
   const status = String(docState.status || docValidation.estado || '').trim().toLowerCase();
-  const omitted = isDocumentOmitted(docState, docValidation);
+  const omitted = canClientDocumentBeOmitted(field) && isDocumentOmitted(docState, docValidation);
   const approved = omitted || status === 'aprobado';
   return {
     status,
@@ -1008,6 +1098,7 @@ function renderClients(list) {
     const rfc = escapeHTML(c.rfc || '');
     const documentMeta = getClientDocumentMeta(c);
     const status = getClientStatusMeta(c, documentMeta);
+    const contractStatus = getClientContractStatusMeta(c, documentMeta, status);
     const profileUrl = buildClientPublicProfileUrl(c);
     const additionalPhones = safeArray(c.telefonos_adicionales).map(v => String(v || '').trim()).filter(Boolean);
     const additionalEmails = safeArray(c.correos_adicionales).map(v => String(v || '').trim()).filter(Boolean);
@@ -1017,6 +1108,9 @@ function renderClients(list) {
     const expedienteTooltipContent = status.tooltip || documentMeta.tooltipLines.join('\n');
     const expedienteTooltipHtml = expedienteTooltipContent
       ? buildTooltipButtonHtml(expedienteTooltipContent, 'client-tooltip-btn inline-flex h-7 w-7 items-center justify-center rounded-full border border-current/20 bg-white text-slate-500 transition hover:text-brand-red', 'Expediente pendiente')
+      : '';
+    const contractTooltipHtml = contractStatus.tooltip
+      ? buildTooltipButtonHtml(contractStatus.tooltip, 'client-tooltip-btn inline-flex h-7 w-7 items-center justify-center rounded-full border border-current/20 bg-white text-slate-500 transition hover:text-brand-red', 'Estado para contrato')
       : '';
     const additionalPhonesHtml = additionalPhones.length
       ? `<div class="flex items-start gap-2 text-gray-700">
@@ -1063,9 +1157,11 @@ function renderClients(list) {
         <button class="btn-docs bg-white border border-gray-200 hover:bg-gray-100 text-gray-700 font-bold text-xs px-3 py-2 rounded-xl transition flex items-center gap-2">
           <i class="fa-solid fa-folder-open"></i> Expediente
         </button>
-        <button class="btn-dictamen bg-white border border-gray-200 hover:bg-gray-100 text-gray-700 font-black text-xs px-3 py-2 rounded-xl transition flex items-center gap-2">
-          <i class="fa-solid fa-file-pdf"></i> Dictamen
-        </button>
+        ${(canVerify) ? `
+          <button class="btn-dictamen bg-white border border-gray-200 hover:bg-gray-100 text-gray-700 font-black text-xs px-3 py-2 rounded-xl transition flex items-center gap-2">
+            <i class="fa-solid fa-file-pdf"></i> Dictamen
+          </button>
+        ` : ''}
         <button class="btn-link ${profileUrl ? 'bg-brand-red/10 hover:bg-brand-red/20 text-brand-red' : 'bg-gray-100 text-gray-400'} font-black text-xs px-3 py-2 rounded-xl transition flex items-center gap-2" ${profileUrl ? '' : 'disabled'}>
           <i class="fa-solid fa-link"></i> Abrir expediente
         </button>
@@ -1132,16 +1228,38 @@ function renderClients(list) {
         <div class="flex items-start justify-between gap-3">
           <div>
             <span class="text-[10px] font-black uppercase tracking-wide text-gray-400">Expediente</span>
-            <p class="mt-1 text-[11px] text-gray-500">${escapeHTML(status.detail)}</p>
+            <p class="mt-1 text-[11px] text-gray-500">${documentMeta.coveredCount}/${documentMeta.totalCount} requisitos del expediente cubiertos</p>
           </div>
           <div class="flex items-center gap-2">
             <span class="text-[10px] font-black ${documentMeta.constanciaOmitted ? 'text-sky-700' : (documentMeta.constanciaStatus.status === 'ok' ? 'text-emerald-600' : (documentMeta.constanciaStatus.status === 'expired' ? 'text-red-600' : 'text-amber-600'))}">
               ${constanciaHeadline}
             </span>
-            ${expedienteTooltipHtml}
           </div>
         </div>
-        <p class="text-xs font-semibold text-gray-700">${documentMeta.coveredCount}/${documentMeta.totalCount} requisitos del expediente cubiertos</p>
+        <div class="rounded-xl border border-gray-200 bg-white px-3 py-3">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <span class="text-[10px] font-black uppercase tracking-wide text-gray-400">Puede cotizar</span>
+              <p class="mt-1 text-[11px] text-gray-500">${escapeHTML(status.detail)}</p>
+            </div>
+            <div class="flex items-center gap-2 pl-3">
+              <span class="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wide ${status.badgeClass}">${status.label}</span>
+              ${expedienteTooltipHtml}
+            </div>
+          </div>
+        </div>
+        <div class="rounded-xl border border-gray-200 bg-white px-3 py-3">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <span class="text-[10px] font-black uppercase tracking-wide text-gray-400">Puede generar contrato</span>
+              <p class="mt-1 text-[11px] text-gray-500">${escapeHTML(contractStatus.detail)}</p>
+            </div>
+            <div class="flex items-center gap-2 pl-3">
+              <span class="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wide ${contractStatus.badgeClass}">${contractStatus.label}</span>
+              ${contractTooltipHtml}
+            </div>
+          </div>
+        </div>
         <div class="flex flex-wrap gap-2">
           ${comprobanteBadgeHtml}
           ${constanciaBadgeHtml}
@@ -1906,10 +2024,11 @@ async function openClientProfileDocs(client) {
     return;
   }
   history.forEach((row) => {
-    const createdLabel = formatClientDictamenDateTime(row.created_at || row.created);
+    const createdLabel = formatClientDictamenDateTime(getClientDictamenRecordDate(row));
     const actorLabel = String(row.responsable_nombre || safeObject(row.metadata).generated_by?.name || '').trim();
+    const statusMeta = getClientDictamenStatusMeta(row);
     const label = `${row.folio || 'Dictamen'} · ${createdLabel}${actorLabel ? ` · ${actorLabel}` : ''}`;
-    createQuoteDocButton(list, label, 'fa-solid fa-file-pdf', () => openClientDictamenRecord(row));
+    createQuoteDocButton(list, label, statusMeta.status === 'rechazado' ? 'fa-solid fa-file-circle-xmark' : 'fa-solid fa-file-pdf', () => openClientDictamenRecord(row));
   });
 }
 
@@ -2197,6 +2316,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 let verifCurrentClient = null;
 let verifCurrentDocField = null;
 let verifCurrentDocUploaded = false;
+let verifCurrentDictamenRecord = null;
 
 function getVerificationDocState(client, field, documents = safeObject(getClientValidation(client).documents)) {
   const estados = safeObject(client?.documentos_estado);
@@ -2205,8 +2325,11 @@ function getVerificationDocState(client, field, documents = safeObject(getClient
   const rawFilename = Array.isArray(client?.[field]) ? client[field][0] : client?.[field];
   const fileName = String(rawFilename || validationState.fileName || '').trim();
   const uploaded = !!fileName;
-  const omitted = isDocumentOmitted(docState, validationState);
-  const status = omitted ? 'omitido' : String(docState.status || validationState.estado || (uploaded ? 'pendiente' : 'pendiente')).trim().toLowerCase();
+  const omittedAllowed = canClientDocumentBeOmitted(field);
+  const omitted = omittedAllowed && isDocumentOmitted(docState, validationState);
+  let status = String(docState.status || validationState.estado || 'pendiente').trim().toLowerCase();
+  if (!omittedAllowed && status === 'omitido') status = 'pendiente';
+  if (omitted) status = 'omitido';
   const reason = String(docState.motivo || validationState.motivo || '').trim();
   const refreshMeta = getDocumentRefreshMeta(docState, validationState);
   return { docState, validationState, fileName, uploaded, omitted, status, reason, ...refreshMeta };
@@ -2537,9 +2660,9 @@ async function buildNextClientDictamenFolio(client, year = getClientDictamenYear
   try {
     const { data, error } = await window.tenantPocketBase
       .from(CLIENT_DICTAMEN_COLLECTION)
-      .select('folio,created,created_at')
-      .gte('created', start)
-      .lt('created', end)
+      .select('folio,metadata')
+      .gte('metadata.generated_at', start)
+      .lt('metadata.generated_at', end)
       .limit(500);
     if (error) throw error;
     const rows = Array.isArray(data) ? data : (data ? [data] : []);
@@ -2604,7 +2727,7 @@ async function fetchClientDictamenHistory(clientId, limit = 10) {
       .from(CLIENT_DICTAMEN_COLLECTION)
       .select('id,tenant,cliente,folio,documentos_hash,responsable_nombre,pdf,metadata,created,created_at,updated,updated_at')
       .eq('cliente', safeClientId)
-      .order('created', { ascending: false })
+      .order('metadata.generated_at', { ascending: false })
       .limit(limit);
     if (error) throw error;
     return Array.isArray(data) ? data : (data ? [data] : []);
@@ -2612,6 +2735,66 @@ async function fetchClientDictamenHistory(clientId, limit = 10) {
     console.warn('No se pudo cargar historico de dictamenes:', e);
     return [];
   }
+}
+
+function getClientDictamenMeta(record) {
+  return safeObject(record?.metadata);
+}
+
+function getClientDictamenSource(record) {
+  const meta = getClientDictamenMeta(record);
+  const raw = String(meta.source || (meta.generated_by ? 'generated' : '')).trim().toLowerCase();
+  if (raw === 'manual_upload' || raw === 'manual') return 'manual_upload';
+  if (raw === 'control') return 'control';
+  return 'generated';
+}
+
+function getClientDictamenApprovalStatus(record) {
+  const meta = getClientDictamenMeta(record);
+  const source = getClientDictamenSource(record);
+  const rawStatus = String(meta.approval_status || meta.status || '').trim().toLowerCase();
+  if (meta.approved === true || rawStatus === 'aprobado' || rawStatus === 'auto_aprobado') return 'aprobado';
+  if (rawStatus === 'rechazado' || meta.rejected === true) return 'rechazado';
+  if (source !== 'manual_upload' && !rawStatus) return 'aprobado';
+  return 'pendiente';
+}
+
+function getClientDictamenStatusMeta(record) {
+  const source = getClientDictamenSource(record);
+  const status = getClientDictamenApprovalStatus(record);
+  if (status === 'aprobado') {
+    return {
+      status,
+      icon: 'fa-solid fa-circle-check',
+      badgeClass: 'bg-emerald-100 text-emerald-700',
+      label: source === 'manual_upload' ? 'Manual aprobado' : 'Aprobado',
+      sourceLabel: source === 'manual_upload' ? 'Manual' : 'Plataforma'
+    };
+  }
+  if (status === 'rechazado') {
+    return {
+      status,
+      icon: 'fa-solid fa-circle-xmark',
+      badgeClass: 'bg-red-100 text-red-700',
+      label: 'Rechazado',
+      sourceLabel: source === 'manual_upload' ? 'Manual' : 'Plataforma'
+    };
+  }
+  return {
+    status,
+    icon: 'fa-solid fa-clock',
+    badgeClass: 'bg-amber-100 text-amber-700',
+    label: source === 'manual_upload' ? 'Pendiente de validar' : 'Pendiente',
+    sourceLabel: source === 'manual_upload' ? 'Manual' : 'Plataforma'
+  };
+}
+
+function isVerificationDictamenField(field='') {
+  return String(field || '').startsWith('__dictamen__:');
+}
+
+function getVerificationDictamenId(field='') {
+  return isVerificationDictamenField(field) ? String(field).slice('__dictamen__:'.length).trim() : '';
 }
 
 async function openClientDictamenRecord(record) {
@@ -2719,6 +2902,18 @@ function downloadClientDictamenBlob(blob, filename) {
   }, 1500);
 }
 
+async function forceClientValidationRefresh(client) {
+  const clientId = String(client?.id || '').trim();
+  if (!clientId || !window.tenantPocketBase) return null;
+  const docStates = safeObject(client?.documentos_estado);
+  const { data, error } = await window.tenantPocketBase
+    .from('clientes')
+    .update({ documentos_estado: docStates })
+    .eq('id', clientId);
+  if (error) throw error;
+  return Array.isArray(data) ? (data[0] || null) : (data || null);
+}
+
 async function persistClientDictamenSnapshot(client, folio, blob, filename, documentSnapshot) {
   if (!canVerify || !client?.id || !blob) return { saved: false, reason: 'not_allowed' };
   const documentosHash = await hashClientDictamenSnapshot({
@@ -2730,11 +2925,13 @@ async function persistClientDictamenSnapshot(client, folio, blob, filename, docu
   const latest = history[0] || null;
   const latestMeta = safeObject(latest?.metadata);
   const latestHash = String(latest?.documentos_hash || latestMeta.documentos_hash || '').trim();
-  if (latestHash && latestHash === documentosHash) {
-    return { saved: false, reason: 'unchanged', latest, documentosHash };
+  const latestStatus = latest ? getClientDictamenApprovalStatus(latest) : '';
+  if (latestHash && latestHash === documentosHash && latestStatus === 'aprobado') {
+    return { saved: false, reason: 'unchanged', record: latest, documentosHash };
   }
-
   const actor = getClientDictamenActorMeta();
+  const generatedAt = new Date().toISOString();
+
   const form = new FormData();
   const uploadFile = typeof File !== 'undefined'
     ? new File([blob], filename, { type: 'application/pdf' })
@@ -2745,12 +2942,19 @@ async function persistClientDictamenSnapshot(client, folio, blob, filename, docu
   form.append('documentos_hash', documentosHash);
   form.append('responsable_nombre', actor.name);
   form.append('metadata', JSON.stringify({
-    version: 1,
+    version: 2,
     documentos_hash: documentosHash,
     documentos_snapshot: documentSnapshot,
     cliente_nombre: client?.nombre_completo || '',
+    source: 'generated',
+    approval_status: 'aprobado',
+    approved: true,
     generated_by: actor,
-    generated_at: new Date().toISOString()
+    generated_at: generatedAt,
+    reviewed_by: actor,
+    reviewed_at: generatedAt,
+    approved_by: actor,
+    approved_at: generatedAt
   }));
   form.append('pdf', uploadFile, filename);
 
@@ -2758,6 +2962,7 @@ async function persistClientDictamenSnapshot(client, folio, blob, filename, docu
     .from(CLIENT_DICTAMEN_COLLECTION)
     .insert(form);
   if (error) throw error;
+  try { await forceClientValidationRefresh(client); } catch (_) {}
   return { saved: true, record: data, documentosHash };
 }
 
@@ -2777,7 +2982,7 @@ function pickManualClientDictamenPdf() {
   });
 }
 
-async function uploadManualClientDictamen(client) {
+async function uploadManualClientDictamen(client, options = {}) {
   if (!canVerify || !client?.id) return window.showToast?.('No tienes permisos para subir dictamen.', 'error');
   const file = await pickManualClientDictamenPdf();
   if (!file) return;
@@ -2787,26 +2992,46 @@ async function uploadManualClientDictamen(client) {
   }
   const actor = getClientDictamenActorMeta();
   const folio = `MANUAL-${getClientDictamenTenantCode()}-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(client.id).slice(0, 6).toUpperCase()}`;
+  const documentSnapshot = buildClientDictamenDocumentSnapshot(client);
+  const documentosHash = await hashClientDictamenSnapshot({
+    tenant: CLIENT_TENANT_SLUG,
+    clientId: client.id,
+    documents: documentSnapshot
+  });
   const form = new FormData();
   form.append('tenant', CLIENT_TENANT_SLUG);
   form.append('cliente', client.id);
   form.append('folio', folio);
+  form.append('documentos_hash', documentosHash);
   form.append('responsable_nombre', actor.name);
   form.append('metadata', JSON.stringify({
-    version: 1,
+    version: 2,
+    documentos_hash: documentosHash,
+    documentos_snapshot: documentSnapshot,
     source: 'manual_upload',
-    approved: true,
+    approval_status: 'pendiente',
+    approved: false,
     cliente_nombre: client?.nombre_completo || '',
     uploaded_by: actor,
     uploaded_at: new Date().toISOString()
   }));
   form.append('pdf', file, fileName);
   try {
-    const { error } = await window.tenantPocketBase.from(CLIENT_DICTAMEN_COLLECTION).insert(form);
+    const { data, error } = await window.tenantPocketBase.from(CLIENT_DICTAMEN_COLLECTION).insert(form);
     if (error) throw error;
+    try { await forceClientValidationRefresh(client); } catch (_) {}
     window.showToast?.('Dictamen manual guardado.', 'success');
     await loadClients();
+    const insertedId = String((Array.isArray(data) ? data[0]?.id : data?.id) || '').trim();
     const updated = allClients.find((row) => String(row?.id || '') === String(client.id));
+    const preferVerificationModal = options && options.preferVerificationModal === true;
+    if (updated && preferVerificationModal) {
+      openVerificationModal(updated);
+      const history = await fetchClientDictamenHistory(updated.id, 50);
+      const target = history.find((row) => String(row?.id || '') === insertedId) || history[0] || null;
+      if (target) await loadVerifDictamen(target);
+      return;
+    }
     if (updated) openClientProfileDocs(updated);
   } catch (e) {
     window.showToast?.(`No se pudo guardar el dictamen: ${e?.message || e}`, 'error');
@@ -2820,21 +3045,26 @@ function syncVerificationActionPanel(label, options = {}) {
   const actionLabel = document.getElementById('verif-action-doc-label');
   const omitToggle = document.getElementById('verif-omit-toggle');
   const omitNote = document.getElementById('verif-omit-note');
+  const omitWrap = omitToggle?.closest('label');
   const approveBtn = document.getElementById('btn-verif-approve');
   const rejectBtn = document.getElementById('btn-verif-reject');
   const deleteBtn = document.getElementById('btn-verif-delete-doc');
   const hasFile = options.uploaded === true;
   const omitted = options.omitted === true;
+  const allowOmit = options.allowOmit !== false;
+  const allowDelete = options.allowDelete !== false;
 
   if (actionPanel) actionPanel.classList.remove('hidden');
   if (actionLabel) actionLabel.textContent = `Decisión: ${label || 'Documento'}`;
   if (rejectBox) rejectBox.classList.add('hidden');
   if (rejectReason) rejectReason.value = '';
   if (omitToggle) omitToggle.checked = omitted;
-  if (omitNote) omitNote.classList.toggle('hidden', !omitted);
+  if (omitWrap) omitWrap.classList.toggle('hidden', !allowOmit);
+  if (omitToggle) omitToggle.disabled = !allowOmit;
+  if (omitNote) omitNote.classList.toggle('hidden', !allowOmit || !omitted);
   setVerificationButtonState(approveBtn, hasFile && !omitted);
   setVerificationButtonState(rejectBtn, hasFile && !omitted);
-  setVerificationButtonState(deleteBtn, hasFile);
+  setVerificationButtonState(deleteBtn, hasFile && allowDelete);
 }
 
 function getClientDictamenTenantLabel() {
@@ -2858,6 +3088,18 @@ function formatClientDictamenDateTime(value='') {
     minute: '2-digit',
     second: '2-digit'
   });
+}
+
+function getClientDictamenRecordDate(record = {}) {
+  const meta = safeObject(record?.metadata);
+  return String(
+    meta.generated_at
+    || record?.created_at
+    || record?.created
+    || record?.updated_at
+    || record?.updated
+    || ''
+  ).trim();
 }
 
 function buildClientDictamenFolio(client, year = getClientDictamenYear()) {
@@ -3094,6 +3336,7 @@ function buildClientVerificationReportHtml(client, folio = buildClientDictamenFo
 }
 
 async function openClientVerificationReport(client) {
+  if (!canVerify) return window.showToast?.('Solo administradores y verificadores pueden generar dictamenes.', 'error');
   if (!client) return window.showToast?.('Selecciona un cliente para generar el dictamen.', 'error');
   try {
     const folio = await buildNextClientDictamenFolio(client);
@@ -3123,7 +3366,20 @@ async function openClientVerificationReport(client) {
       canSaveTemplate: canEditDictamenTemplate,
       saveTemplate: saveClientDictamenPdfStyle,
       showToast: (message, type) => window.showToast?.(message, type),
-      onGenerated: () => loadClients?.()
+      onGenerated: async (generatorState) => {
+        await loadClients?.();
+        const refreshedClient = allClients.find((row) => String(row?.id || '') === String(client?.id || '')) || null;
+        const modal = document.getElementById('client-verification-modal');
+        const verifierModalOpen = !!modal && !modal.classList.contains('hidden');
+        const sameClientOnVerifier = verifierModalOpen && String(verifCurrentClient?.id || '') === String(client?.id || '');
+        if (sameClientOnVerifier && refreshedClient) {
+          openVerificationModal(refreshedClient);
+          const targetFolio = String(generatorState?.folio || '').trim();
+          const history = await fetchClientDictamenHistory(refreshedClient.id, 50);
+          const target = history.find((row) => String(row?.folio || '').trim() === targetFolio) || history[0] || null;
+          if (target) await loadVerifDictamen(target);
+        }
+      }
     });
   } catch (error) {
     console.error(error);
@@ -3133,6 +3389,9 @@ async function openClientVerificationReport(client) {
 
 async function deleteVerificationDocument() {
   if (!canVerify || !verifCurrentClient || !verifCurrentDocField) return;
+  if (isVerificationDictamenField(verifCurrentDocField)) {
+    return window.showToast?.('Los dictamenes se validan desde este panel, pero no se eliminan aqui.', 'error');
+  }
   const docConfig = CLIENT_DOC_REQUIREMENTS.find((item) => item.field === verifCurrentDocField);
   const currentDoc = getVerificationDocState(verifCurrentClient, verifCurrentDocField);
   if (!currentDoc.uploaded) {
@@ -3185,6 +3444,7 @@ function openVerificationModal(client) {
   verifCurrentClient = client;
   verifCurrentDocField = null;
   verifCurrentDocUploaded = false;
+  verifCurrentDictamenRecord = null;
   document.getElementById('verif-client-name').textContent = String(client?.nombre_completo || 'Cliente');
   document.getElementById('verif-doc-name').textContent = 'Selecciona un documento';
   document.getElementById('verif-preview-loading').classList.add('hidden');
@@ -3253,6 +3513,17 @@ function openVerificationModal(client) {
       : (docInfo.omitted
         ? '<p class="mt-2 text-[10px] text-sky-700 font-semibold">Marcado como omitido por administración.</p>'
         : ''));
+    const allowOmit = canClientDocumentBeOmitted(item.field);
+    const omitControlsHtml = allowOmit
+      ? `
+      <div class="flex items-center justify-between gap-3 border-t border-gray-100 px-3 py-2">
+        <span class="text-[10px] font-black uppercase tracking-wide text-gray-400">Omitir requisito</span>
+        <label class="inline-flex items-center gap-2 text-[10px] font-bold text-gray-600">
+          <span>${docInfo.omitted ? 'Activo' : 'Inactivo'}</span>
+          <input type="checkbox" class="verif-card-omit-toggle h-4 w-4 accent-brand-red" data-field="${escapeAttr(item.field)}" data-label="${escapeAttr(item.label)}" ${docInfo.omitted ? 'checked' : ''}>
+        </label>
+      </div>`
+      : '';
 
     const card = document.createElement('div');
     card.className = 'rounded-xl border border-gray-200 bg-white shadow-sm';
@@ -3271,13 +3542,7 @@ function openVerificationModal(client) {
         </div>
         <div class="px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${statusCss}">${statusLabel}</div>
       </button>
-      <div class="flex items-center justify-between gap-3 border-t border-gray-100 px-3 py-2">
-        <span class="text-[10px] font-black uppercase tracking-wide text-gray-400">Omitir requisito</span>
-        <label class="inline-flex items-center gap-2 text-[10px] font-bold text-gray-600">
-          <span>${docInfo.omitted ? 'Activo' : 'Inactivo'}</span>
-          <input type="checkbox" class="verif-card-omit-toggle h-4 w-4 accent-brand-red" data-field="${escapeAttr(item.field)}" data-label="${escapeAttr(item.label)}" ${docInfo.omitted ? 'checked' : ''}>
-        </label>
-      </div>
+      ${omitControlsHtml}
     `;
     card.querySelector('.verif-doc-open')?.addEventListener('click', () => {
       loadVerifDoc(item.field, item.label, docInfo.fileName);
@@ -3294,12 +3559,122 @@ function openVerificationModal(client) {
     listContainer.appendChild(card);
   });
 
+  renderVerificationDictamenCards(client, listContainer);
+
   document.getElementById('client-verification-modal').classList.remove('hidden');
+}
+
+async function renderVerificationDictamenCards(client, listContainer) {
+  if (!client?.id || !listContainer) return;
+  const divider = document.createElement('div');
+  divider.className = 'px-1 pt-4 text-[10px] font-black uppercase text-gray-400';
+  divider.innerText = 'Dictamenes del expediente';
+  listContainer.appendChild(divider);
+
+  const loading = document.createElement('div');
+  loading.className = 'rounded-xl border border-gray-200 bg-gray-50 px-3 py-3 text-xs font-bold text-gray-400';
+  loading.innerText = 'Cargando dictamenes...';
+  listContainer.appendChild(loading);
+
+  const history = await fetchClientDictamenHistory(client.id, 30);
+  if (String(verifCurrentClient?.id || '') !== String(client.id || '')) return;
+  loading.remove();
+
+  if (!history.length) {
+    const empty = document.createElement('div');
+    empty.className = 'rounded-xl border border-dashed border-gray-200 bg-white px-3 py-3 text-xs text-gray-400';
+    empty.innerText = 'Aun no hay dictamenes guardados para este cliente.';
+    listContainer.appendChild(empty);
+    return;
+  }
+
+  history.forEach((row) => {
+    const meta = getClientDictamenStatusMeta(row);
+    const recordMeta = getClientDictamenMeta(row);
+    const reviewedBy = String(recordMeta.approved_by?.name || recordMeta.reviewed_by?.name || '').trim();
+    const reviewedAt = String(recordMeta.approved_at || recordMeta.reviewed_at || '').trim();
+    const reviewedHtml = reviewedBy
+      ? `<p class="mt-2 text-[10px] text-gray-500 font-semibold">${escapeHTML(`${meta.status === 'aprobado' ? 'Aprobo' : 'Reviso'}: ${reviewedBy}${reviewedAt ? ` Â· ${safeDate(reviewedAt)}` : ''}`)}</p>`
+      : '';
+    const reasonHtml = meta.status === 'rechazado' && recordMeta.reason
+      ? `<p class="mt-2 text-[10px] text-red-600 font-semibold">${escapeHTML(recordMeta.reason)}</p>`
+      : '';
+    const card = document.createElement('div');
+    card.className = 'rounded-xl border border-gray-200 bg-white shadow-sm';
+    card.innerHTML = `
+      <button type="button" class="verif-doc-open w-full text-left p-3 hover:bg-gray-50 transition group flex items-start gap-3 rounded-xl">
+        <div class="mt-0.5 ${meta.status === 'aprobado' ? 'text-emerald-500' : (meta.status === 'rechazado' ? 'text-red-500' : 'text-amber-500')}">
+          <i class="${meta.icon}"></i>
+        </div>
+        <div class="flex-1 min-w-0">
+          <p class="text-xs font-bold text-gray-800">${escapeHTML(row.folio || 'Dictamen')}</p>
+          <p class="text-[10px] text-gray-400 truncate mt-0.5">${escapeHTML(meta.sourceLabel)} Â· ${escapeHTML(formatClientDictamenDateTime(getClientDictamenRecordDate(row)))}</p>
+          ${reasonHtml}
+          ${reviewedHtml}
+        </div>
+        <div class="px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${meta.badgeClass}">${escapeHTML(meta.label)}</div>
+      </button>
+    `;
+    card.querySelector('.verif-doc-open')?.addEventListener('click', () => {
+      loadVerifDictamen(row);
+    });
+    listContainer.appendChild(card);
+  });
+}
+
+async function loadVerifDictamen(record) {
+  if (!verifCurrentClient) return;
+  const fileName = getClientDictamenPdfFileName(record);
+  const recordId = String(record?.id || '').trim();
+  if (!recordId || !fileName) return;
+  verifCurrentDocField = `__dictamen__:${recordId}`;
+  verifCurrentDocUploaded = true;
+  verifCurrentDictamenRecord = record;
+
+  document.getElementById('verif-doc-name').textContent = String(record?.folio || 'Dictamen');
+  document.getElementById('verif-preview-loading').classList.remove('hidden');
+  document.getElementById('verif-preview-iframe').classList.add('hidden');
+  document.getElementById('verif-preview-img').classList.add('hidden');
+  document.getElementById('verif-preview-error').classList.add('hidden');
+  document.getElementById('verif-preview-error').classList.remove('flex');
+  document.getElementById('verif-preview-iframe').src = '';
+  document.getElementById('verif-preview-img').src = '';
+
+  syncVerificationActionPanel(record?.folio || 'Dictamen', {
+    uploaded: true,
+    omitted: false,
+    allowOmit: false,
+    allowDelete: false
+  });
+
+  const previewError = document.getElementById('verif-preview-error');
+  const previewErrorText = document.getElementById('verif-preview-error-text');
+  const previewDownload = document.getElementById('verif-preview-download');
+  const url = await getSignedFileUrl(CLIENT_DICTAMEN_COLLECTION, recordId, fileName);
+  if (previewDownload) {
+    previewDownload.href = url || '#';
+    previewDownload.classList.toggle('hidden', !url);
+  }
+  if (!url) {
+    document.getElementById('verif-preview-loading').classList.add('hidden');
+    if (previewErrorText) previewErrorText.textContent = 'No se pudo abrir el dictamen seleccionado.';
+    previewError.classList.remove('hidden');
+    previewError.classList.add('flex');
+    return;
+  }
+  if (previewErrorText) {
+    previewErrorText.innerHTML = 'No se puede previsualizar. <a id="verif-preview-download" href="' + escapeAttr(url) + '" target="_blank" class="text-blue-600 underline">Descargar archivo</a>';
+  }
+  document.getElementById('verif-preview-loading').classList.add('hidden');
+  const ifr = document.getElementById('verif-preview-iframe');
+  ifr.src = url;
+  ifr.classList.remove('hidden');
 }
 
 async function loadVerifDoc(field, label, fileName) {
   if (!verifCurrentClient) return;
   verifCurrentDocField = field;
+  verifCurrentDictamenRecord = null;
   const validation = safeObject(verifCurrentClient?.expediente_validacion);
   const docs = safeObject(validation.documents);
   const docInfo = getVerificationDocState(verifCurrentClient, field, docs);
@@ -3315,7 +3690,8 @@ async function loadVerifDoc(field, label, fileName) {
   document.getElementById('verif-preview-iframe').src = '';
   document.getElementById('verif-preview-img').src = '';
 
-  syncVerificationActionPanel(label, { uploaded: docInfo.uploaded, omitted: docInfo.omitted });
+  const allowOmit = canClientDocumentBeOmitted(field);
+  syncVerificationActionPanel(label, { uploaded: docInfo.uploaded, omitted: docInfo.omitted, allowOmit });
 
   const previewError = document.getElementById('verif-preview-error');
   const previewErrorText = document.getElementById('verif-preview-error-text');
@@ -3323,7 +3699,11 @@ async function loadVerifDoc(field, label, fileName) {
 
   if (!effectiveFileName) {
     document.getElementById('verif-preview-loading').classList.add('hidden');
-    if (previewErrorText) previewErrorText.textContent = 'Este documento no está cargado. Si no aplica para este cliente, puedes marcarlo como omitido.';
+    if (previewErrorText) {
+      previewErrorText.textContent = allowOmit
+        ? 'Este documento no está cargado. Si no aplica para este cliente, puedes marcarlo como omitido.'
+        : 'Este documento es obligatorio y debe cargarse para validar el expediente.';
+    }
     if (previewDownload) {
       previewDownload.href = '#';
       previewDownload.classList.add('hidden');
@@ -3370,7 +3750,7 @@ document.getElementById('btn-verif-report')?.addEventListener('click', () => {
 
 document.getElementById('btn-verif-manual-report')?.addEventListener('click', async () => {
   if (!canVerify || !verifCurrentClient) return;
-  await uploadManualClientDictamen(verifCurrentClient);
+  await uploadManualClientDictamen(verifCurrentClient, { preferVerificationModal: true });
 });
 
 document.getElementById('btn-verif-delete-doc')?.addEventListener('click', async () => {
@@ -3397,9 +3777,62 @@ document.getElementById('verif-omit-toggle')?.addEventListener('change', async (
 async function submitVerifDecision(status, motivo) {
   if (!canVerify || !verifCurrentClient || !verifCurrentDocField) return;
   try {
-    const estados = safeObject(verifCurrentClient.documentos_estado);
     const actor = getClientDictamenActorMeta();
     const reviewedAt = await fetchServerNowIso();
+    if (isVerificationDictamenField(verifCurrentDocField)) {
+      const dictamenId = getVerificationDictamenId(verifCurrentDocField);
+      const currentRecord = verifCurrentDictamenRecord && String(verifCurrentDictamenRecord.id || '') === dictamenId
+        ? verifCurrentDictamenRecord
+        : (await fetchClientDictamenHistory(verifCurrentClient.id, 50)).find((row) => String(row?.id || '') === dictamenId);
+      if (!currentRecord) throw new Error('No se encontro el dictamen seleccionado.');
+      const nextStatus = status === 'aprobado' ? 'aprobado' : (status === 'rechazado' ? 'rechazado' : 'pendiente');
+      const baseMeta = getClientDictamenMeta(currentRecord);
+      const documentSnapshot = buildClientDictamenDocumentSnapshot(verifCurrentClient);
+      const existingSnapshot = Array.isArray(baseMeta.documentos_snapshot) && baseMeta.documentos_snapshot.length ? baseMeta.documentos_snapshot : null;
+      const currentDocumentosHash = await hashClientDictamenSnapshot({
+        tenant: CLIENT_TENANT_SLUG,
+        clientId: verifCurrentClient.id,
+        documents: documentSnapshot
+      });
+      const documentosHash = existingSnapshot
+        ? (String(currentRecord?.documentos_hash || baseMeta.documentos_hash || '').trim() || currentDocumentosHash)
+        : currentDocumentosHash;
+      const nextMeta = {
+        ...baseMeta,
+        documentos_hash: documentosHash,
+        documentos_snapshot: existingSnapshot || documentSnapshot,
+        approval_status: nextStatus,
+        approved: nextStatus === 'aprobado',
+        rejected: nextStatus === 'rechazado',
+        reason: nextStatus === 'rechazado' ? motivo : '',
+        reviewed_by: actor,
+        reviewed_at: reviewedAt,
+        approved_by: nextStatus === 'aprobado' ? actor : {},
+        approved_at: nextStatus === 'aprobado' ? reviewedAt : ''
+      };
+      const { error: dictErr } = await window.tenantPocketBase.from(CLIENT_DICTAMEN_COLLECTION)
+        .update({ documentos_hash: documentosHash, metadata: nextMeta })
+        .eq('id', dictamenId);
+      if (dictErr) throw dictErr;
+      try { await forceClientValidationRefresh(verifCurrentClient); } catch (_) {}
+
+      const verb = nextStatus === 'aprobado' ? 'aprobado' : (nextStatus === 'rechazado' ? 'rechazado' : 'actualizado');
+      window.showToast?.(`Dictamen ${verb} correctamente`, 'success');
+      await loadClients();
+      verifCurrentClient = allClients.find((row) => String(row?.id || '') === String(verifCurrentClient?.id || '')) || verifCurrentClient;
+      openVerificationModal(verifCurrentClient);
+      const refreshedHistory = await fetchClientDictamenHistory(verifCurrentClient?.id, 50);
+      const nextRecord = refreshedHistory.find((row) => String(row?.id || '') === dictamenId);
+      if (nextRecord) await loadVerifDictamen(nextRecord);
+      return;
+    }
+
+    if (status === 'omitido' && !canClientDocumentBeOmitted(verifCurrentDocField)) {
+      window.showToast?.('La constancia de situación fiscal es obligatoria y no se puede omitir.', 'error');
+      return;
+    }
+
+    const estados = safeObject(verifCurrentClient.documentos_estado);
     estados[verifCurrentDocField] = {
       status,
       motivo: status === 'rechazado' ? motivo : '',
@@ -3427,7 +3860,7 @@ async function submitVerifDecision(status, motivo) {
     const nextDoc = getVerificationDocState(verifCurrentClient, verifCurrentDocField);
     openVerificationModal(verifCurrentClient);
     if (docConfig) await loadVerifDoc(verifCurrentDocField, docConfig.label, nextDoc.fileName);
-    loadClients();
+    await loadClients();
   } catch (e) {
     console.error(e);
     window.showToast?.('No se pudo actualizar el estado del documento.', 'error');

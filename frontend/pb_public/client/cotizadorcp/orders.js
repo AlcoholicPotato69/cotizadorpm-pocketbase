@@ -75,17 +75,20 @@ async function loadClientProfilesForOrderModal() {
     if (!sel || !window.tenantPocketBase) return;
 
     try {
-        const { data, error } = await window.tenantPocketBase.from('clientes').select('id,nombre_completo,telefono,correo,rfc,perfil_validado,perfil_estatus').order('nombre_completo', { ascending: true });
+        const { data, error } = await window.tenantPocketBase
+            .from('clientes')
+            .select('id,nombre_completo,telefono,telefonos_adicionales,correo,rfc,perfil_validado,perfil_estatus,documentos_estado,expediente_validacion,constancia_fiscal_emitida_el,comprobante_domicilio_emitido_el,doc_acta_constitutiva,doc_ine,doc_comprobante_domicilio,doc_constancia_fiscal,created_at,created')
+            .order('nombre_completo', { ascending: true });
         if (error) throw error;
         orderClientProfiles = (data || []).slice().sort((a, b) => {
-            const aReady = a?.perfil_validado === true ? 1 : 0;
-            const bReady = b?.perfil_validado === true ? 1 : 0;
+            const aReady = __cpIsOrderClientProfileReady(a) ? 1 : 0;
+            const bReady = __cpIsOrderClientProfileReady(b) ? 1 : 0;
             if (aReady !== bReady) return bReady - aReady;
             return String(a?.nombre_completo || '').localeCompare(String(b?.nombre_completo || ''), 'es');
         });
         orderClientProfilesById = {}; orderClientProfiles.forEach(c => orderClientProfilesById[c.id] = c);
         const current = String(sel.value || hid?.value || '').trim();
-        sel.innerHTML = '<option value="">— Sin perfil —</option>' + orderClientProfiles.map(c => `<option value="${c.id}">${(c.nombre_completo || '').toUpperCase()} • ${c?.perfil_validado === true ? 'LISTO' : 'PENDIENTE'}</option>`).join('');
+        sel.innerHTML = '<option value="">— Sin perfil —</option>' + orderClientProfiles.map(c => `<option value="${c.id}">${(c.nombre_completo || '').toUpperCase()} • ${__cpIsOrderClientProfileReady(c) ? 'LISTO' : 'PENDIENTE'}</option>`).join('');
         if (current) {
             sel.value = current;
             if (hid) hid.value = sel.value || '';
@@ -94,7 +97,7 @@ async function loadClientProfilesForOrderModal() {
         sel.onchange = () => {
             const id = sel.value; if (!id) { if (hid) hid.value = ''; return; }
             const c = orderClientProfilesById[id]; if (!c) return;
-            if (c.perfil_validado !== true) {
+            if (!__cpIsOrderClientProfileReady(c)) {
                 if (hid) hid.value = '';
                 sel.value = '';
                 window.showToast?.('Este perfil aun no tiene expediente validado. Usa captura manual o pide al cliente completar su expediente.', 'info');
@@ -108,7 +111,19 @@ async function loadClientProfilesForOrderModal() {
         };
         const clearAssoc = () => { if (sel.value) sel.value = ''; if (hid) hid.value = ''; };
         ['oed-client', 'oed-phone', 'oed-email', 'fiscal-rfc-re'].forEach(id => { const el = document.getElementById(id); if (el) el.addEventListener('input', clearAssoc); });
+        window.HUB_CLIENT_PROFILE_HOVER?.bindSelect?.(sel, () => {
+            const selectedId = String(sel?.value || hid?.value || '').trim();
+            return selectedId ? (orderClientProfilesById[selectedId] || null) : null;
+        }, { tenant: 'casa_de_piedra' });
     } catch (e) { console.warn("No se pudo cargar clientes", e); }
+}
+
+function __cpIsOrderClientProfileReady(client) {
+    if (!client) return false;
+    if (window.HUB_CLIENT_PROFILE_HOVER?.isQuoteReady) {
+        return window.HUB_CLIENT_PROFILE_HOVER.isQuoteReady(client, 'casa_de_piedra');
+    }
+    return client?.perfil_validado === true;
 }
 
 function __cpOrderNormalizeMatchValue(value) {
@@ -786,6 +801,35 @@ const __ORDER_DATE_PICKER = { target: 'start', month: 0, year: 0, start: '', end
 const __ORDER_MONTAJE_PICKER = { month: 0, year: 0, start: '', end: '', reserved: new Set(), maxDate: '' };
 let __orderEventPickerCal = null;
 let __orderMontajePickerCal = null;
+
+function __orderNormalizeAccessRole(value) {
+    const safe = String(value || '').trim().toLowerCase();
+    if (!safe) return '';
+    if (safe === 'administrador' || safe === 'administrator' || safe === 'superadmin' || safe === 'super_admin') return 'admin';
+    return safe;
+}
+
+function __orderResolveAccess() {
+    const authCtx = window.__HUB_AUTH_CONTEXT || {};
+    const profile = authCtx.profile || window.currentUserProfile || {};
+    const perms = (authCtx.permissions && typeof authCtx.permissions === 'object')
+        ? authCtx.permissions
+        : ((profile.app_metadata?.finanzas?.permissions && typeof profile.app_metadata.finanzas.permissions === 'object') ? profile.app_metadata.finanzas.permissions : {});
+    const role = __orderNormalizeAccessRole(authCtx.role || profile.role || profile.rol || '');
+    return { role, perms, isAdmin: authCtx.isAdmin === true || role === 'admin' };
+}
+
+function __orderCanEditOrders() {
+    const access = __orderResolveAccess();
+    if (access.role === 'verificador') return false;
+    if (access.isAdmin) return true;
+    if (Object.prototype.hasOwnProperty.call(access.perms || {}, 'orders_edit')) return access.perms.orders_edit === true;
+    return true;
+}
+
+function __orderReadOnlyMessage() {
+    return 'Modo solo lectura: el verificador puede revisar cotizaciones, pero no crearlas ni modificarlas.';
+}
 
 function __orderNormalizeTenantSlug(value) {
     const raw = String(value || '').trim().toLowerCase();
@@ -2649,6 +2693,10 @@ window.processSaveOrder = async function (options = {}) {
     const keepOpen = !!opts.keepOpen || IS_ORDER_DETAIL_PAGE;
     const skipReload = !!opts.skipReload || IS_ORDER_DETAIL_PAGE;
     const openApprovalPreview = opts.openApprovalPreview !== false;
+    if (!__orderCanEditOrders()) {
+        if (!silent) window.showToast(__orderReadOnlyMessage(), "error");
+        return false;
+    }
     const currentStatus = String(currentPreviewOrder?.status || '').toLowerCase();
     if (currentStatus === 'aprobada' || currentStatus === 'finalizada') {
         if (!silent) window.showToast("La cotización aprobada está bloqueada para edición.", "error");
@@ -2802,6 +2850,7 @@ window.processSaveOrder = async function (options = {}) {
 
 function __orderScheduleAutoSave() {
     if (!IS_ORDER_DETAIL_PAGE) return;
+    if (!__orderCanEditOrders()) return;
     const locked = ['aprobada', 'finalizada'].includes(String(currentPreviewOrder?.status || '').toLowerCase());
     if (locked) return;
     const nextStatus = String(document.getElementById('oed-status')?.value || '').toLowerCase();
@@ -2816,6 +2865,7 @@ function __orderScheduleAutoSave() {
 
 function __orderFlushAutoSave() {
     if (!IS_ORDER_DETAIL_PAGE || __orderDetailDirty !== true) return;
+    if (!__orderCanEditOrders()) return;
     if (__orderAutoSaveTimer) {
         clearTimeout(__orderAutoSaveTimer);
         __orderAutoSaveTimer = null;
@@ -2825,6 +2875,7 @@ function __orderFlushAutoSave() {
 
 function __orderBindDetailAutoSave() {
     if (!IS_ORDER_DETAIL_PAGE || __orderAutoSaveBound) return;
+    if (!__orderCanEditOrders()) return;
     const locked = ['aprobada', 'finalizada'].includes(String(currentPreviewOrder?.status || '').toLowerCase());
     if (locked) return;
     const root = document.getElementById('order-edit-modal');
@@ -2877,6 +2928,7 @@ window.closeOrderEditorPage = async function () {
 };
 
 window.previewOrderForGeneration = async function (id) {
+    if (!__orderCanEditOrders()) return window.showToast(__orderReadOnlyMessage(), "error");
     await __cpEnsurePdfStyleProfile('order', { forceReload: !__cpIsAdminProfile() });
     const order = allOrders.find(o => o.id === id);
     if (!order) return;
@@ -2901,6 +2953,7 @@ window.previewOrderForGeneration = async function (id) {
 };
 
 window.confirmAndGeneratePurchaseOrder = async function () {
+    if (!__orderCanEditOrders()) return window.showToast(__orderReadOnlyMessage(), "error");
     window.openConfirm("¿Generar Orden de Compra Oficial? Se guardará una copia exacta.", async () => {
         const btn = document.getElementById('btn-download-preview');
         if (btn) { btn.disabled = true; btn.innerText = "Generando OC..."; }
@@ -2981,8 +3034,10 @@ window.openDocsModal = function (id) {
         createLocked('Orden de Compra (No aplica en convenio)', 'fa-solid fa-lock');
     } else if (order.url_orden_compra) {
         createBtn('Ver Orden de Compra', 'fa-solid fa-file-contract', 'purple', `window.openStoredDocument('${order.url_orden_compra}')`);
-    } else if (['aprobada', 'finalizada'].includes(order.status)) {
+    } else if (['aprobada', 'finalizada'].includes(order.status) && __orderCanEditOrders()) {
         createBtn('Generar Orden de Compra', 'fa-solid fa-plus', 'purple', `window.openOrderPreviewTab('${order.id}', 'order', 'generate')`);
+    } else if (['aprobada', 'finalizada'].includes(order.status)) {
+        createLocked('Orden de Compra (Solo lectura)', 'fa-solid fa-lock');
     } else {
         createLocked('Orden de Compra (Pendiente)', 'fa-solid fa-lock');
     }
@@ -6004,7 +6059,7 @@ window.getOrderHTML = function (o, type) {
     const docMeta = __orderGetQuoteDocumentMeta(o);
     const isConvenio = !isOrder && docMeta.isConvenio;
     const isApprovedQuote = !isOrder && ['aprobada', 'finalizada'].includes(quoteStatus);
-    if (!isOrder && isConvenio) docTitle = isApprovedQuote ? 'CARTA CONVENIO' : 'CONVENIO';
+    if (!isOrder && isConvenio) docTitle = 'CARTA CONVENIO';
     const guests = o.personas || 1;
     const clientComponent = isOrder
         ? `<div class="cp-pdf-summary flex flex-row justify-between items-center mb-2 p-2 bg-gray-50 rounded border border-gray-100" data-base-resource="summary"><div class="w-1/2 border-r border-gray-200 pr-2"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Cliente / Empresa</p><p class="font-black ${nameSizeClass} text-gray-800 leading-tight">${clientName}</p></div><div class="w-1/2 pl-2"><p class="font-black text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">Contacto / Fiscal</p><p class="font-mono text-xs text-gray-700 truncate">${o.cliente_email || 'Sin correo'}</p>${clientRfc ? `<p class="font-mono text-xs text-gray-700 mt-0.5">RFC: <strong>${clientRfc}</strong></p>` : ''}<p class="font-mono text-xs text-brand-red font-bold mt-1">Personas: ${guests}</p></div></div>`
@@ -6606,6 +6661,7 @@ let __orderHoraExtraCfg = { mode: 'percent', value: 100, allowCustom: true };
 let __orderQuoteSpaces = [];
 let __orderActiveSpaceId = null;
 let __orderTotals = { subtotalBase: 0, concepts: 0, adjustment: 0, tax: 0, final: 0 };
+const __ORDER_MAX_DISCOUNT_PERCENT = 10;
 
 function __orderSafeArray(v) {
     if (!v) return [];
@@ -7039,8 +7095,13 @@ function __orderSyncActiveSpaceModeUi(cfg) {
     const isPublicidad = __orderIsPublicidadSpace(active);
     const guestsField = document.getElementById('oed-event-guests-field');
     const eventWrap = document.getElementById('oed-event-options-wrap');
+    const horarioField = document.getElementById('oed-horario')?.parentElement;
+    const horarioCustom = document.getElementById('oed-horario-custom');
+    const horarioValue = document.getElementById('oed-horario')?.value || '';
     if (guestsField) guestsField.classList.toggle('hidden', isPublicidad);
     if (eventWrap) eventWrap.classList.toggle('hidden', isPublicidad);
+    if (horarioField) horarioField.classList.toggle('hidden', isPublicidad);
+    if (horarioCustom) horarioCustom.classList.toggle('hidden', isPublicidad || horarioValue !== 'personalizado');
     if (isPublicidad) {
         const guestsEl = document.getElementById('oed-guests');
         const premChk = document.getElementById('oed-chk-premontaje');
@@ -7098,8 +7159,7 @@ function __orderResolveBaseTotal(cfg, space, guests) {
         }
         if (cfg.customPermanence) {
             const days = __orderRangeDays(cfg.startDate, cfg.endDate);
-            if (days === 30) return parseFloat(space.precio_base || 0) || 0;
-            return (parseFloat(space.precio_base || 0) || 0) / Math.max(1, days);
+            return (parseFloat(space.precio_base || 0) || 0) * Math.max(1, days);
         }
         return parseFloat(space.precio_base || 0) || 0;
     }
@@ -7115,6 +7175,47 @@ function __orderFormatSignedMoneyMx(value) {
     const amount = parseFloat(value || 0) || 0;
     if (Math.abs(amount) < 0.005) return __orderFormatMoneyMx(0);
     return `${amount < 0 ? '-' : '+'}${__orderFormatMoneyMx(Math.abs(amount))}`;
+}
+function __orderNormalizeGlobalAdjustment(subtotalRaw = 0, options = {}) {
+    const opts = options && typeof options === 'object' ? options : {};
+    const showToast = opts.showToast === true;
+    const typeEl = document.getElementById('oed-adj-type');
+    const valueEl = document.getElementById('oed-adj-val');
+    const unitEl = document.getElementById('oed-adj-unit');
+    const adjType = String(typeEl?.value || 'ninguno');
+    const isPercent = String(unitEl?.value || 'fixed') === 'percent';
+    const subtotal = Math.max(0, parseFloat(subtotalRaw || 0) || 0);
+    const maxFixedDiscount = parseFloat((subtotal * (__ORDER_MAX_DISCOUNT_PERCENT / 100)).toFixed(2));
+    let adjVal = Math.max(0, parseFloat(valueEl?.value || 0) || 0);
+    let message = '';
+
+    if (adjType === 'descuento') {
+        if (isPercent && adjVal > __ORDER_MAX_DISCOUNT_PERCENT) {
+            adjVal = __ORDER_MAX_DISCOUNT_PERCENT;
+            message = `El descuento maximo permitido es ${__ORDER_MAX_DISCOUNT_PERCENT}%.`;
+        } else if (!isPercent && subtotal <= 0 && adjVal > 0) {
+            adjVal = 0;
+            message = 'No se puede aplicar descuento sobre un subtotal en 0.';
+        } else if (!isPercent && adjVal > maxFixedDiscount) {
+            adjVal = maxFixedDiscount;
+            message = `El descuento maximo permitido para este subtotal es ${__orderFormatMoneyMx(maxFixedDiscount)}.`;
+        }
+    }
+
+    if (valueEl) {
+        const normalizedValue = Number.isInteger(adjVal) ? String(adjVal) : adjVal.toFixed(2);
+        if (String(valueEl.value || '') !== normalizedValue) valueEl.value = normalizedValue;
+    }
+    if (message && showToast && typeof window.showToast === 'function') {
+        window.showToast(message, 'warning');
+    }
+    return {
+        adjType,
+        adjVal,
+        isPercent,
+        maxFixedDiscount,
+        adjustment: adjType === 'ninguno' ? 0 : (isPercent ? subtotal * (adjVal / 100) : adjVal)
+    };
 }
 function __orderBuildPublicityDetailInfo(cfgLike = {}, space = null) {
     const detailInfo = __orderResolveDetailMaterialMeasure({
@@ -7192,6 +7293,58 @@ function __orderDescribePublicityPricingRule(cfgLike = {}, space = null, baseOve
         modeLabel: 'Periodo automático (30 días)',
         detailRows: [{ label: 'Días aplicados', value: '30 día(s)' }],
         explanation: `Periodo automático de 30 día(s) = ${__orderFormatMoneyMx(resultBase)}`
+    };
+}
+function __orderDescribePublicityPricingRule(cfgLike = {}, space = null, baseOverride = undefined) {
+    const catalogBase = Math.max(0, parseFloat(space?.precio_base || 0) || 0);
+    const days = __orderRangeDays(cfgLike?.startDate || '', cfgLike?.endDate || cfgLike?.startDate || '');
+    const manualValue = Math.max(0, parseFloat(cfgLike?.customBasePrice || 0) || 0);
+    const resultBase = Math.max(0, parseFloat(baseOverride ?? __orderResolveDisplayedBase(cfgLike, space || {})) || 0);
+    if (cfgLike?.convenioEnabled) {
+        return {
+            modeLabel: 'Convenio',
+            detailRows: [
+                { label: 'Bloqueo del espacio', value: 'Indefinido' },
+                { label: 'Tratos de convenio', value: `${__orderGetConvenioConcepts(cfgLike).length} registrado(s)` }
+            ],
+            explanation: `El espacio queda bloqueado al precio base del catalogo: ${__orderFormatMoneyMx(resultBase)}.`
+        };
+    }
+    if (cfgLike?.customPriceEnabled) {
+        if (String(cfgLike?.customPriceMode || 'total') === 'per_day') {
+            return {
+                modeLabel: 'Precio personalizado por dia',
+                detailRows: [
+                    { label: 'Precio manual por dia', value: __orderFormatMoneyMx(manualValue) },
+                    { label: 'Dias seleccionados', value: `${days} dia(s)` }
+                ],
+                explanation: `${__orderFormatMoneyMx(manualValue)} x ${days} dia(s) = ${__orderFormatMoneyMx(resultBase)}`
+            };
+        }
+        return {
+            modeLabel: 'Precio personalizado total',
+            detailRows: [
+                { label: 'Total manual capturado', value: __orderFormatMoneyMx(manualValue) },
+                { label: 'Dias seleccionados', value: `${days} dia(s)` }
+            ],
+            explanation: `Total manual capturado = ${__orderFormatMoneyMx(resultBase)}`
+        };
+    }
+    if (cfgLike?.customPermanence) {
+        return {
+            modeLabel: 'Estancia personalizada por dia',
+            detailRows: [
+                { label: 'Precio catalogo por dia', value: __orderFormatMoneyMx(catalogBase) },
+                { label: 'Dias seleccionados', value: `${days} dia(s)` },
+                { label: 'Resultado calculado', value: __orderFormatMoneyMx(resultBase) }
+            ],
+            explanation: `${__orderFormatMoneyMx(catalogBase)} x ${days} dia(s) = ${__orderFormatMoneyMx(resultBase)}`
+        };
+    }
+    return {
+        modeLabel: 'Periodo automatico (30 dias)',
+        detailRows: [{ label: 'Dias aplicados', value: '30 dia(s)' }],
+        explanation: `Periodo automatico de 30 dia(s) = ${__orderFormatMoneyMx(resultBase)}`
     };
 }
 async function __orderLoadConvenioCatalog() {
@@ -8354,6 +8507,7 @@ window.__orderRenderExpedientePanel = async function () {
 }
 
 window.saveCpDraftSnapshot = async function (btnEl = null) {
+    if (!__orderCanEditOrders()) return window.showToast(__orderReadOnlyMessage(), "error");
     const btn = btnEl instanceof HTMLElement ? btnEl : null;
     const original = btn?.innerHTML || '';
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span>Guardando...</span>'; }
@@ -8407,6 +8561,7 @@ window.saveCpDraftSnapshot = async function (btnEl = null) {
 };
 
 window.saveCpPurchaseOrderSnapshot = async function (btnEl = null) {
+    if (!__orderCanEditOrders()) return window.showToast(__orderReadOnlyMessage(), "error");
     const btn = btnEl instanceof HTMLElement ? btnEl : null;
     const original = btn?.innerHTML || '';
     if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span>Guardando...</span>'; }
@@ -8561,6 +8716,18 @@ function __orderUpdateSpaceConfigTitle() {
     if (copy) copy.textContent = 'Controla nombre de la cotización, fechas, asistentes, horario y complementos del espacio activo.';
 }
 
+function __orderUpdateSpaceConfigTitle() {
+    const cfg = __orderGetActiveCfg();
+    const space = __orderGetSpaceById(cfg?.spaceId);
+    const isPublicidad = __orderIsPublicidadSpace(space || cfg);
+    const title = document.getElementById('oed-space-config-title');
+    const copy = document.getElementById('oed-space-config-copy');
+    const baseLabel = __orderFormatMoneyMx(__orderResolveDisplayedBase(cfg, space));
+    if (title) title.textContent = `Configuracion del Espacio - ${space?.nombre || cfg?.spaceId || '--'} - ${baseLabel}`;
+    if (copy) copy.textContent = isPublicidad
+        ? 'Controla nombre de la cotizacion, fechas, material, medidas y configuracion comercial del espacio activo.'
+        : 'Controla nombre de la cotizacion, fechas, asistentes, horario y complementos del espacio activo.';
+}
 function __orderRenderSpaceTabs() {
     const container = document.getElementById('oed-spaces-tabs');
     if (!container) return;
@@ -9880,6 +10047,13 @@ window.updateSummaryUI = function () {
     const quoteName = (document.getElementById('oed-quote-name')?.value || '').trim() || 'Sin nombre';
     const clientName = (document.getElementById('oed-client')?.value || '').trim() || 'Sin cliente';
 
+    const hideOperationalSummary = spaces.length > 0 && nonPublicidadSpaces.length === 0;
+    ['sum-guests', 'sum-schedule', 'sum-montaje', 'sum-hextras'].forEach((id) => {
+        const cell = document.getElementById(id);
+        const row = cell?.closest('.flex') || cell?.parentElement;
+        if (row) row.classList.toggle('hidden', hideOperationalSummary);
+    });
+
     setText('sum-quote-name', quoteName);
     setText('sum-client', clientName);
     setText('sum-dates', globalDates);
@@ -10125,7 +10299,7 @@ window.recalcTotal = function () {
             </div>
             <div class="rounded-xl border border-gray-200 bg-white/80 p-3 space-y-1.5">
                 <div class="flex justify-between text-[10px] text-gray-500"><span>Modo de cálculo</span><span class="text-right font-bold text-gray-700 max-w-[190px]">${ruleMeta.modeLabel}</span></div>
-                <div class="flex justify-between text-[10px] text-gray-500"><span>Precio base catálogo (30 días)</span><span>${__orderFormatMoneyMx(__orderGetSpaceById(sp.spaceId)?.precio_base || 0)}</span></div>
+                <div class="flex justify-between text-[10px] text-gray-500"><span>Precio base catalogo</span><span>${__orderFormatMoneyMx(__orderGetSpaceById(sp.spaceId)?.precio_base || 0)}</span></div>
                 ${detailRows}
                 <div class="flex justify-between gap-3 text-[10px] text-gray-500"><span>Fórmula aplicada</span><span class="text-right max-w-[230px] font-bold text-gray-700">${ruleMeta.explanation}</span></div>
                 <div class="flex justify-between text-[10px] font-bold text-gray-700 border-t border-dashed border-gray-200 pt-1"><span>Base facturable</span><span>${__orderFormatMoneyMx(sp.base || 0)}</span></div>
@@ -10210,15 +10384,14 @@ window.recalcTotal = function () {
     const convenioMode = spacesData.some((sp) => !!sp.convenioEnabled);
     const subtotalRaw = baseAndLogistics + conceptsSum;
     let adjusted = subtotalRaw;
-    const rawAdjType = document.getElementById('oed-adj-type').value;
-    const rawAdjVal = parseFloat(document.getElementById('oed-adj-val').value) || 0;
-    const rawIsPercent = document.getElementById('oed-adj-unit').value === 'percent';
-    const adjType = convenioMode ? 'ninguno' : rawAdjType;
-    const adjVal = convenioMode ? 0 : rawAdjVal;
-    const isPercent = convenioMode ? false : rawIsPercent;
-    let adjustment = 0;
+    const normalizedAdj = convenioMode
+        ? { adjType: 'ninguno', adjVal: 0, isPercent: false, adjustment: 0 }
+        : __orderNormalizeGlobalAdjustment(subtotalRaw, { showToast: true });
+    const adjType = normalizedAdj.adjType;
+    const adjVal = normalizedAdj.adjVal;
+    const isPercent = normalizedAdj.isPercent;
+    let adjustment = normalizedAdj.adjustment || 0;
     if (adjType !== 'ninguno') {
-        adjustment = isPercent ? subtotalRaw * (adjVal / 100) : adjVal;
         if (adjType === 'descuento') adjusted -= adjustment;
         if (adjType === 'aumento') adjusted += adjustment;
     }
@@ -10561,9 +10734,12 @@ window.getFormDataFromModal = function () {
     const finalConcepts = [...b2bConcepts, ...(currentConcepts || [])];
     const hasConvenioOrder = spaces.some((sp) => !!sp.convenioEnabled);
     const taxUnion = Array.from(new Set(spaces.filter((sp) => !sp.convenioEnabled).flatMap(s => s.taxIds || []).map(v => String(v))));
-    const adjType = hasConvenioOrder ? 'ninguno' : document.getElementById('oed-adj-type').value;
-    const adjVal = hasConvenioOrder ? 0 : (parseFloat(document.getElementById('oed-adj-val').value) || 0);
-    const isPercent = hasConvenioOrder ? false : (document.getElementById('oed-adj-unit').value === 'percent');
+    const normalizedAdj = hasConvenioOrder
+        ? { adjType: 'ninguno', adjVal: 0, isPercent: false }
+        : __orderNormalizeGlobalAdjustment(__orderTotals?.subtotal || 0, { showToast: true });
+    const adjType = normalizedAdj.adjType;
+    const adjVal = normalizedAdj.adjVal;
+    const isPercent = normalizedAdj.isPercent;
     const convenioSpaces = spaces
         .filter((sp) => !!sp.convenioEnabled)
         .map((sp) => ({
@@ -10782,15 +10958,23 @@ window.openOrderEditModal = async function (id) {
     const extraConceptsToggle = document.getElementById('oed-has-extra-concepts');
     if (extraConceptsToggle) extraConceptsToggle.checked = (currentConcepts || []).length > 0;
 
+    const isReadOnly = !__orderCanEditOrders();
     const isLocked = ['aprobada', 'finalizada'].includes(order.status);
-    document.querySelectorAll('#order-edit-modal input, #order-edit-modal select').forEach(i => { if (i.id !== 'btn-save-progress') i.disabled = isLocked; });
-    ['oed-quote-name', 'oed-status'].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = isLocked; });
-    document.getElementById('oed-btn-montaje').disabled = isLocked;
+    const editorLocked = isLocked || isReadOnly;
+    document.querySelectorAll('#order-edit-modal input, #order-edit-modal select').forEach(i => { if (i.id !== 'btn-save-progress') i.disabled = editorLocked; });
+    ['oed-quote-name', 'oed-status'].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = editorLocked; });
+    document.getElementById('oed-btn-montaje').disabled = editorLocked;
     const saveBtn = document.getElementById('btn-save-progress');
     if (saveBtn) {
         saveBtn.disabled = isLocked;
         saveBtn.classList.toggle('opacity-60', isLocked);
         saveBtn.title = isLocked ? 'Cotización aprobada: edición bloqueada' : '';
+    }
+
+    if (isReadOnly && saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.classList.add('opacity-60');
+        saveBtn.title = __orderReadOnlyMessage();
     }
 
     window.renderConceptsList();
@@ -10807,6 +10991,7 @@ window.openOrderEditModal = async function (id) {
 };
 
 window.attemptSaveOrder = function () {
+    if (!__orderCanEditOrders()) return window.showToast(__orderReadOnlyMessage(), "error");
     const locked = ['aprobada', 'finalizada'].includes(String(currentPreviewOrder?.status || '').toLowerCase());
     if (locked) return window.showToast("La cotización aprobada está bloqueada para edición.", "error");
     __orderSaveActiveFromForm();

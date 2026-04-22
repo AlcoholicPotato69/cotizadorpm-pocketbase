@@ -4092,6 +4092,18 @@ async function __contractsLoadOrderSpaceRecords(order) {
     });
 }
 
+function __contractsNormalizeSpaceTag(value) {
+    const raw = String(value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .trim();
+    if (!raw) return '';
+    if (raw.includes('publicidad')) return 'publicidad';
+    if (raw.includes('salon') || raw.includes('espacio') || raw.includes('local') || raw.includes('isla')) return 'espacio';
+    return raw;
+}
+
 function __contractsLooksLikePdf(fileName, url = '') {
     return /\.pdf(?:$|\?)/i.test(String(fileName || '')) || /\.pdf(?:$|\?)/i.test(String(url || ''));
 }
@@ -4138,6 +4150,8 @@ async function __contractsBuildPlanAnnexPages(order, spaces) {
     const missing = [];
     for (let index = 0; index < spaces.length; index += 1) {
         const space = spaces[index] || {};
+        const spaceType = __contractsNormalizeSpaceTag(space?.tipo || space?.espacio_tipo || space?.space_type || space?.__detail?.espacio_tipo || '');
+        if (spaceType && spaceType !== 'publicidad') continue;
         const fileName = String(space?.plano_geografico_file || space?.plano_geografico || '').trim();
         const fileUrl = String(space?.plano_geografico_url || '').trim();
         const title = `Plano geográfico - ${space?.nombre || space?.espacio_nombre || `Espacio ${index + 1}`}`;
@@ -4206,7 +4220,7 @@ async function __contractsAttachClientReadiness(orders = []) {
     try {
         const { data, error } = await window.tenantPocketBase
             .from('clientes')
-            .select('id,perfil_validado,perfil_estatus,expediente_validacion')
+            .select('id,perfil_validado,perfil_estatus,expediente_validacion,dictamen')
             .in('id', ids);
         if (error) throw error;
         const byId = {};
@@ -4222,8 +4236,15 @@ function __contractsCanGenerateContract(order) {
     const client = order.__client_profile || null;
     if (!client) return false;
     const validation = __contractsSafeObject(client.expediente_validacion);
+    const dictamen = __contractsSafeObject(client.dictamen);
     const readyForQuotes = __contractsIsTruthyReadyFlag(client.perfil_validado) || __contractsIsTruthyReadyFlag(validation.readyForQuotes) || __contractsIsTruthyReadyFlag(validation.ready) || __contractsIsTruthyReadyFlag(validation.puedeCotizar) || __contractsIsTruthyReadyFlag(validation.quoteApproved) || __contractsIsTruthyReadyFlag(validation.quoteReady) || __contractsIsReadyStatusValue(client.perfil_estatus || validation.status);
-    const hasDictamen = __contractsIsTruthyReadyFlag(validation.readyForContracts) || __contractsIsTruthyReadyFlag(validation.dictamenGuardado) || __contractsIsTruthyReadyFlag(validation.dictamenAprobado);
+    const hasDictamen =
+        __contractsIsTruthyReadyFlag(validation.readyForContracts)
+        || __contractsIsTruthyReadyFlag(validation.dictamenAprobado)
+        || __contractsIsTruthyReadyFlag(validation.dictamenGuardado)
+        || __contractsIsTruthyReadyFlag(validation?.dictamen?.saved)
+        || __contractsIsTruthyReadyFlag(dictamen.saved)
+        || __contractsIsTruthyReadyFlag(dictamen.approved);
     return !!(readyForQuotes && hasDictamen);
 }
 
@@ -4232,9 +4253,17 @@ function __contractsContractBlockReason(order) {
     const client = order.__client_profile || null;
     if (!client) return 'No se pudo validar el perfil del cliente asociado.';
     const validation = __contractsSafeObject(client.expediente_validacion);
+    const dictamen = __contractsSafeObject(client.dictamen);
     const readyForQuotes = __contractsIsTruthyReadyFlag(client.perfil_validado) || __contractsIsTruthyReadyFlag(validation.readyForQuotes) || __contractsIsTruthyReadyFlag(validation.ready) || __contractsIsTruthyReadyFlag(validation.puedeCotizar) || __contractsIsTruthyReadyFlag(validation.quoteApproved) || __contractsIsTruthyReadyFlag(validation.quoteReady) || __contractsIsReadyStatusValue(client.perfil_estatus || validation.status);
     if (!readyForQuotes) return 'El expediente del cliente debe estar completo, vigente y aprobado.';
-    if (!(__contractsIsTruthyReadyFlag(validation.readyForContracts) || __contractsIsTruthyReadyFlag(validation.dictamenGuardado) || __contractsIsTruthyReadyFlag(validation.dictamenAprobado))) return 'Falta guardar o aprobar el dictamen del cliente.';
+    if (!(
+        __contractsIsTruthyReadyFlag(validation.readyForContracts)
+        || __contractsIsTruthyReadyFlag(validation.dictamenAprobado)
+        || __contractsIsTruthyReadyFlag(validation.dictamenGuardado)
+        || __contractsIsTruthyReadyFlag(validation?.dictamen?.saved)
+        || __contractsIsTruthyReadyFlag(dictamen.saved)
+        || __contractsIsTruthyReadyFlag(dictamen.approved)
+    )) return 'Falta guardar o aprobar el dictamen del cliente.';
     return '';
 }
 
@@ -4409,8 +4438,9 @@ window.saveContractNumber = function() {
                 window.loadSelectedTemplate();
             }
 
-        } catch(_) {
-            window.showToast("No se pudo guardar el número de contrato.", "error");
+        } catch(err) {
+            const detail = String(err?.message || err || '').trim();
+            window.showToast(`No se pudo guardar el número de contrato.${detail ? ` ${detail}` : ''}`, "error");
         }
     });
 };

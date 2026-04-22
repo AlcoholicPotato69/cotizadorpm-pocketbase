@@ -129,6 +129,22 @@
         .cp-pill.is-premontaje {
             opacity: 0.92;
         }
+        .cp-hover-card {
+            position: fixed;
+            z-index: 140;
+            width: min(270px, calc(100vw - 24px));
+            padding: 12px 13px;
+            border-radius: 16px;
+            background: rgba(17,24,39,.96);
+            color: #fff;
+            box-shadow: 0 16px 40px rgba(15,23,42,.32);
+            pointer-events: none;
+        }
+        .cp-hover-card.hidden { display: none; }
+        .cp-hover-kicker { display:flex; align-items:center; gap:7px; font-size:10px; font-weight:900; letter-spacing:.08em; text-transform:uppercase; color:rgba(255,255,255,.72); }
+        .cp-hover-dot { width:9px; height:9px; border-radius:999px; display:inline-flex; }
+        .cp-hover-title { margin-top:8px; font-size:13px; font-weight:800; line-height:1.4; }
+        .cp-hover-body { margin-top:6px; font-size:11px; line-height:1.55; color:rgba(255,255,255,.78); }
 
         @media (max-width: 1024px) {
             #calendar-shell { height: calc(100vh - 238px); min-height: 560px; }
@@ -180,10 +196,15 @@
                     <button onclick="window.openColorModal()" class="bg-gray-900 text-white px-4 py-2 rounded-full text-[11px] font-black uppercase tracking-wide hover:bg-black transition"><i class="fa-solid fa-palette mr-1"></i> Colores</button>
                 </div>
             </div>
-            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2">
+            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-2">
                 <input id="cal-search-input" type="text" placeholder="Buscar cliente, folio o cotizacion..." class="xl:col-span-2 bg-gray-50 border border-gray-200 px-3 py-2.5 rounded-full text-xs font-bold outline-none focus:border-blue-500">
                 <select id="cal-space-filter" class="bg-gray-50 border border-gray-200 px-3 py-2.5 rounded-full text-xs font-bold outline-none focus:border-blue-500">
                     <option value="">Todos los espacios</option>
+                </select>
+                <select id="cal-space-type-filter" class="bg-gray-50 border border-gray-200 px-3 py-2.5 rounded-full text-xs font-bold outline-none focus:border-blue-500">
+                    <option value="all">Todos los tipos</option>
+                    <option value="publicidad">Publicidad</option>
+                    <option value="espacio">Salones</option>
                 </select>
                 <select id="cal-kind-filter" class="bg-gray-50 border border-gray-200 px-3 py-2.5 rounded-full text-xs font-bold outline-none focus:border-blue-500">
                     <option value="all">Todo</option>

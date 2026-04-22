@@ -22,7 +22,7 @@ window.ENV = {
                     source[name] = function () {};
                 }
             } catch (_) {}
-        });
+});
         try { window.__HUB_CONSOLE_ORIGINAL = original; } catch (_) {}
         try { window.__HUB_CONSOLE_SHIELDED = true; } catch (_) {}
     }
@@ -61,51 +61,6 @@ window.ENV = {
     window.addEventListener('pagehide', saveScroll);
     window.addEventListener('beforeunload', saveScroll);
 })();
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

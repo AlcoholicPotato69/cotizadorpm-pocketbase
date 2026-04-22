@@ -8,7 +8,7 @@ let clientProfiles = [];
 let clientProfilesById = {};
 const QUOTE_REQUIRED_DOC_FIELDS = ['doc_ine', 'doc_comprobante_domicilio', 'doc_constancia_fiscal'];
 const QUOTE_CONSTANCIA_VALID_DAYS = 30;
-const QUOTE_COMPROBANTE_VALID_DAYS = 90;
+const QUOTE_COMPROBANTE_VALID_DAYS = 'calendar_months:3';
 
 window.finalMontajeDates = [];
 window.tempMontajeDates = [];
@@ -74,8 +74,9 @@ function readQuoteClientDocumentState(client = {}, field) {
 
 function isQuoteClientDocumentOmitted(client = {}, field) {
     const doc = readQuoteClientDocumentInfo(client, field);
-    const state = String(doc?.estado || doc?.status || '').trim().toLowerCase();
-    return doc?.omitido === true || state === 'omitido';
+    const docState = readQuoteClientDocumentState(client, field);
+    const status = String(docState?.status || doc?.estado || doc?.status || '').trim().toLowerCase();
+    return docState?.omitido === true || doc?.omitido === true || status === 'omitido';
 }
 
 function hasQuoteClientDocumentFile(client = {}, field) {
@@ -89,8 +90,9 @@ function hasQuoteClientDocumentFile(client = {}, field) {
 
 function getQuoteClientDocumentStatus(client = {}, field) {
     const doc = readQuoteClientDocumentInfo(client, field);
+    const docState = readQuoteClientDocumentState(client, field);
     if (isQuoteClientDocumentOmitted(client, field)) return 'omitido';
-    const status = String(doc?.estado || doc?.status || '').trim().toLowerCase();
+    const status = String(docState?.status || doc?.estado || doc?.status || '').trim().toLowerCase();
     if (status) return status;
     return hasQuoteClientDocumentFile(client, field) ? 'pendiente' : 'pendiente';
 }
@@ -142,6 +144,13 @@ function evaluateQuoteClientDate(dateValue, maxAgeDays) {
     if (Number.isNaN(target.getTime())) return { valid: false };
     const now = new Date();
     const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const specialMode = String(maxAgeDays || '').trim().toLowerCase();
+    if (specialMode.indexOf('calendar_months:') === 0) {
+        if (target.getTime() > todayUtc.getTime()) return { valid: false };
+        const months = Math.max(1, Number(specialMode.split(':')[1]) || 3);
+        const expiryBoundary = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + months, 1));
+        return { valid: todayUtc.getTime() < expiryBoundary.getTime() };
+    }
     const ageDays = Math.floor((todayUtc.getTime() - target.getTime()) / 86400000);
     return {
         valid: ageDays >= 0 && ageDays <= Math.max(0, Number(maxAgeDays) || 0)
@@ -165,7 +174,7 @@ function isQuoteClientProfileReady(client = {}) {
     const validation = readQuoteClientValidation(client);
     const rawStatus = String(client?.perfil_estatus || validation?.status || '').trim().toLowerCase();
     if (['rechazado', 'rechazada', 'rechazado_expediente', 'rechazada_expediente', 'documentos_rechazados'].includes(rawStatus)) return false;
-    if (
+    const hasBackendReadyFlag =
         isQuoteReadyFlagValue(client?.perfil_completo) ||
         isQuoteReadyFlagValue(validation?.isComplete) ||
         isQuoteReadyFlagValue(validation?.complete) ||
@@ -177,8 +186,16 @@ function isQuoteClientProfileReady(client = {}) {
         isQuoteReadyFlagValue(validation?.quoteApproved) ||
         isQuoteReadyFlagValue(validation?.quoteReady) ||
         isQuoteReadyFlagValue(validation?.readyForContracts) ||
-        isQuoteReadyStatusValue(rawStatus)
-    ) return true;
+        isQuoteReadyStatusValue(rawStatus);
+    if (hasBackendReadyFlag) {
+        const constanciaOmitted = isQuoteClientDocumentOmitted(client, 'doc_constancia_fiscal');
+        const comprobanteOmitted = isQuoteClientDocumentOmitted(client, 'doc_comprobante_domicilio');
+        const constanciaDate = getQuoteClientDocumentReferenceDate(client, 'doc_constancia_fiscal');
+        const comprobanteDate = getQuoteClientDocumentReferenceDate(client, 'doc_comprobante_domicilio');
+        const constanciaValid = constanciaOmitted ? true : evaluateQuoteClientDate(constanciaDate, QUOTE_CONSTANCIA_VALID_DAYS).valid;
+        const comprobanteValid = comprobanteOmitted ? true : evaluateQuoteClientDate(comprobanteDate, QUOTE_COMPROBANTE_VALID_DAYS).valid;
+        if (constanciaValid && comprobanteValid) return true;
+    }
     const hasName = String(client?.nombre_completo || '').trim() !== '';
     const hasEmail = String(client?.correo || '').trim() !== '';
     const hasRfc = String(client?.rfc || '').trim() !== '';
@@ -393,6 +410,10 @@ async function loadClientProfilesForQuoteModal() {
         };
         bindQuoteClientFieldListeners();
         bindQuoteClientModeToggle();
+        window.HUB_CLIENT_PROFILE_HOVER?.bindSelect?.(sel, () => {
+            const selectedId = String(sel?.value || hid?.value || '').trim();
+            return selectedId ? (clientProfilesById[selectedId] || null) : null;
+        }, { tenant: CP_TENANT_SLUG });
         syncQuoteClientEntryMode();
     } catch (e) { console.warn("No se pudo cargar clientes", e); }
 }
@@ -1038,6 +1059,7 @@ window.syncCpManagerTypeFields = function () {
     const digitalToggleField = document.getElementById('mgr-digital-toggle-field');
     const digitalDetailsField = document.getElementById('mgr-digital-media-field');
     const digitalToggle = document.getElementById('mgr-digital-media');
+    const planoField = document.getElementById('mgr-plano-field');
     if (typeEl && typeEl.value !== selectedType) typeEl.value = selectedType;
     const isPublicidad = selectedType === 'publicidad';
     const isDigital = isPublicidad && !!digitalToggle?.checked;
@@ -1047,6 +1069,7 @@ window.syncCpManagerTypeFields = function () {
     if (convenioField) convenioField.classList.toggle('hidden', !isPublicidad);
     if (digitalToggleField) digitalToggleField.classList.toggle('hidden', !isPublicidad);
     if (digitalDetailsField) digitalDetailsField.classList.toggle('hidden', !isDigital);
+    if (planoField) planoField.classList.toggle('hidden', !isPublicidad);
 };
 function escapeCpMaterialOption(value) {
     return String(value || '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
@@ -2404,6 +2427,7 @@ function __cpBuildPublicidadPrice(space, cfg) {
     if (hasCustom && String(cfg?.customPriceMode || 'total') === 'per_day') {
         subtotal *= __cpRangeDays(cfg?.startDate, cfg?.endDate);
     } else if (!hasCustom) {
+        if (cfg?.customPermanence) subtotal *= Math.max(1, __cpRangeDays(cfg?.startDate, cfg?.endDate));
         const adjustmentType = normalizeCpQuoteAdjustmentType(space.ajuste_tipo);
         if (adjustmentType === 'aumento') subtotal += subtotal * ((parseFloat(space.ajuste_porcentaje) || 0) / 100);
         if (adjustmentType === 'descuento') subtotal -= subtotal * (normalizeCpQuoteAdjustmentPercent(adjustmentType, space.ajuste_porcentaje) / 100);

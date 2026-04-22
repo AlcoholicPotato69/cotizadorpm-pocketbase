@@ -50,6 +50,62 @@ function pmCalendarRangesOverlap(startA, endA, startB, endB) {
         && new Date(`${startB}T00:00:00`) <= new Date(`${endA}T00:00:00`);
 }
 
+function pmCalendarFormatDateMX(value) {
+    const raw = String(value || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return '--';
+    const parts = raw.split('-');
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+}
+
+function pmCalendarEnsureHoverCard() {
+    let card = document.getElementById('pm-calendar-hover-card');
+    if (card) return card;
+    card = document.createElement('div');
+    card.id = 'pm-calendar-hover-card';
+    card.className = 'pm-hover-card hidden';
+    document.body.appendChild(card);
+    return card;
+}
+
+function pmCalendarHideHoverCard() {
+    const card = document.getElementById('pm-calendar-hover-card');
+    if (!card) return;
+    card.classList.add('hidden');
+    card.innerHTML = '';
+}
+
+function pmCalendarShowHoverCard(info) {
+    const ext = info?.event?.extendedProps || {};
+    const color = ext.color || '#6b7280';
+    const card = pmCalendarEnsureHoverCard();
+    const status = String(ext.status || 'pendiente').toUpperCase();
+    card.innerHTML = `
+      <div class="pm-hover-kicker"><span class="pm-hover-dot" style="background:${color};"></span>${status}</div>
+      <div class="pm-hover-title">${ext.spaceName || info.event.title || 'Evento'}</div>
+      <div class="pm-hover-body">${ext.clientName || 'Cliente'}<br>${pmCalendarFormatDateMX(ext.sourceStart)} - ${pmCalendarFormatDateMX(ext.sourceEnd)}</div>
+    `;
+    const pageX = Number(info?.jsEvent?.pageX || 0);
+    const pageY = Number(info?.jsEvent?.pageY || 0);
+    card.style.left = `${Math.max(12, pageX + 14)}px`;
+    card.style.top = `${Math.max(12, pageY + 14)}px`;
+    card.classList.remove('hidden');
+}
+
+function pmCalendarRenderEventPill(arg) {
+    const ext = arg.event.extendedProps || {};
+    const status = String(ext.status || 'pendiente').toLowerCase();
+    const baseColor = ext.color || '#6b7280';
+    const pill = document.createElement('div');
+    pill.className = `pm-pill ${status === 'pendiente' ? 'is-pending' : ''} ${status === 'rechazada' ? 'is-rejected' : ''}`;
+    pill.style.setProperty('--pm-pill-color', baseColor);
+    pill.innerHTML = `
+      <span class="pm-pill-dot"></span>
+      <span class="pm-pill-text">${ext.spaceName || arg.event.title || 'Evento'}</span>
+      <span class="pm-pill-tag">${status === 'finalizada' ? 'FINAL' : (status === 'aprobada' ? 'OK' : status === 'rechazada' ? 'X' : 'P')}</span>
+    `;
+    return { domNodes: [pill] };
+}
+
 // --- HELPER PARA FECHAS (CRÍTICO PARA DRAG & DROP) ---
 window.getLocalYMD = function(date) {
     if (!date) return '';
@@ -226,17 +282,22 @@ function initCalendar() {
         initialView: 'dayGridMonth', locale: 'es', 
         buttonText: { today: 'Hoy', month: 'Mes', week: 'Semana', day: 'Día', list: 'Lista' }, 
         editable: true, droppable: true, 
-        dayMaxEvents: true,
+        dayMaxEvents: false,
+        dayMaxEventRows: false,
+        displayEventTime: false,
         headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,listMonth' }, 
         height: '100%', 
         events: getCalendarEventsFromOrders(), 
+        eventContent: pmCalendarRenderEventPill,
         eventClick: function(info) { window.openOrderEditModal(info.event.id); }, 
+        eventMouseEnter: pmCalendarShowHoverCard,
+        eventMouseLeave: pmCalendarHideHoverCard,
         
         // --- AQUÍ ESTÁ EL CAMBIO IMPORTANTE ---
         eventDrop: handleEventDateChange,   // Mover evento completo
         eventResize: handleEventDateChange, // Estirar/Encoger evento (Nuevo)
         
-        eventDidMount: function(info) { info.el.title = `${info.event.title} (${info.event.extendedProps.status})`; } 
+        eventDidMount: function(info) { info.el.title = ''; }
     }); 
     calendarObj.render(); 
 }
@@ -269,8 +330,16 @@ function getCalendarEventsFromOrders(ordersList = null) {
             end: window.getLocalYMD(endObj), 
             backgroundColor: color, 
             borderColor: color, 
-            extendedProps: { status: o.status },
-            className: classNames.join(' ')
+            extendedProps: {
+                status: o.status,
+                color,
+                order: o,
+                clientName: o.cliente_nombre || 'Cliente',
+                spaceName,
+                sourceStart: o.fecha_inicio,
+                sourceEnd: effectiveEnd
+            },
+            classNames: ['pm-cal-pill'].concat(classNames)
         }; 
     }); 
 }

@@ -247,7 +247,14 @@
     record.set("datos_fiscales", datosFiscales);
   }
 
-  function clientHasSavedDictamen(clientId, tenant) {
+  function clientHasSavedDictamen(clientId, tenant, clientRecord) {
+    try {
+      var shared = require(`${__hooks}/client_profile_shared.js`);
+      if (shared && typeof shared.getClientDictamenStatus === "function") {
+        var dictamenStatus = shared.getClientDictamenStatus(clientRecord || clientId, tenant);
+        return dictamenStatus && (dictamenStatus.approved === true || dictamenStatus.saved === true);
+      }
+    } catch (_) { }
     var safeId = sanitizeText(clientId, 64).replace(/[^a-zA-Z0-9]/g, "");
     var safeTenant = sanitizeText(tenant, 40).toLowerCase();
     if (!safeId || (safeTenant !== "plaza_mayor" && safeTenant !== "casa_de_piedra")) return false;
@@ -255,8 +262,8 @@
       var records = $app.findRecordsByFilter(
         "clientes_dictamenes",
         "cliente = '" + safeId + "' && tenant = '" + safeTenant + "'",
-        "-created",
-        1,
+        "-metadata.generated_at",
+        20,
         0
       ) || [];
       for (var i = 0; i < records.length; i += 1) {
@@ -264,6 +271,24 @@
       }
     } catch (_) { }
     return false;
+  }
+
+  function ensureClientReadyForQuote(record) {
+    var clientId = sanitizeText(record.getString("cliente_id"), 64).replace(/[^a-zA-Z0-9]/g, "");
+    if (!clientId) return;
+    var clientRecord = loadClientRecord(clientId);
+    if (!clientRecord) {
+      throw new BadRequestError("No se encontro el perfil de cliente asociado a la cotizacion.");
+    }
+    var tenant = sanitizeText(record.getString("tenant"), 40).toLowerCase();
+    var clientTenant = sanitizeText(clientRecord.getString("tenant"), 40).toLowerCase();
+    if (tenant && clientTenant && tenant !== clientTenant) {
+      throw new BadRequestError("El perfil del cliente no pertenece al tenant de esta cotizacion.");
+    }
+    var readiness = resolveCurrentClientReadiness(clientRecord);
+    if (!readiness.readyForQuotes) {
+      throw new BadRequestError("El expediente del cliente debe estar completo, vigente y aprobado antes de generar cotizaciones.");
+    }
   }
 
   function ensureClientReadyForContract(record) {
@@ -280,21 +305,12 @@
     if (tenant && clientTenant && tenant !== clientTenant) {
       throw new BadRequestError("El perfil del cliente no pertenece al tenant de esta cotización.");
     }
-    var validation = safeObject(clientRecord.get("expediente_validacion"));
-    var readyForQuotes =
-      isTruthyReadyFlag(clientRecord.get("perfil_validado")) ||
-      isTruthyReadyFlag(validation.readyForQuotes) ||
-      isTruthyReadyFlag(validation.ready) ||
-      isTruthyReadyFlag(validation.puedeCotizar) ||
-      isTruthyReadyFlag(validation.quoteApproved) ||
-      isTruthyReadyFlag(validation.quoteReady) ||
-      isTruthyReadyFlag(validation.readyForContracts) ||
-      isReadyStatusValue(clientRecord.getString("perfil_estatus")) ||
-      isReadyStatusValue(validation.status);
+    var readiness = resolveCurrentClientReadiness(clientRecord);
+    var readyForQuotes = readiness.readyForQuotes;
     if (!readyForQuotes) {
       throw new BadRequestError("El expediente del cliente debe estar completo, vigente y aprobado antes de generar contrato.");
     }
-    if (!clientHasSavedDictamen(clientId, clientTenant || tenant)) {
+    if (!clientHasSavedDictamen(clientId, clientTenant || tenant, clientRecord)) {
       throw new BadRequestError("Para generar contrato necesitas un dictamen aprobado o guardado del cliente.");
     }
   }
@@ -341,8 +357,42 @@
       normalized === "aprobada" ||
       normalized === "listo" ||
       normalized === "lista" ||
+      normalized === "listo_para_contrato" ||
+      normalized === "lista_para_contrato" ||
       normalized === "listo_para_cotizar" ||
       normalized === "lista_para_cotizar";
+  }
+
+  function resolveCurrentClientReadiness(clientRecord) {
+    var validation = safeObject(clientRecord ? clientRecord.get("expediente_validacion") : {});
+    var statusValue = clientRecord ? clientRecord.getString("perfil_estatus") : "";
+    var readyFlag = clientRecord ? clientRecord.get("perfil_validado") : false;
+    try {
+      var shared = require(`${__hooks}/client_profile_shared.js`);
+      if (shared && typeof shared.evaluateClientProfileValidation === "function" && clientRecord) {
+        var evaluated = shared.evaluateClientProfileValidation(clientRecord);
+        if (evaluated && typeof evaluated === "object") {
+          if (evaluated.data && typeof evaluated.data === "object") validation = evaluated.data;
+          if (evaluated.status) statusValue = evaluated.status;
+          readyFlag = evaluated.ready === true;
+        }
+      }
+    } catch (_) { }
+    var readyForQuotes =
+      isTruthyReadyFlag(readyFlag) ||
+      isTruthyReadyFlag(validation.readyForQuotes) ||
+      isTruthyReadyFlag(validation.ready) ||
+      isTruthyReadyFlag(validation.puedeCotizar) ||
+      isTruthyReadyFlag(validation.quoteApproved) ||
+      isTruthyReadyFlag(validation.quoteReady) ||
+      isTruthyReadyFlag(validation.readyForContracts) ||
+      isReadyStatusValue(statusValue) ||
+      isReadyStatusValue(validation.status);
+    return {
+      validation: validation,
+      status: statusValue,
+      readyForQuotes: !!readyForQuotes
+    };
   }
 
   function normalizeDiscountType(value) {
@@ -809,7 +859,14 @@
       return sanitizeText(value, 500) !== "";
     }
 
-    function clientHasSavedDictamenLocal(clientId, tenant) {
+    function clientHasSavedDictamenLocal(clientId, tenant, clientRecord) {
+      try {
+        var shared = require(`${__hooks}/client_profile_shared.js`);
+        if (shared && typeof shared.getClientDictamenStatus === "function") {
+          var dictamenStatus = shared.getClientDictamenStatus(clientRecord || clientId, tenant);
+          return dictamenStatus && (dictamenStatus.approved === true || dictamenStatus.saved === true);
+        }
+      } catch (_) { }
       var safeId = sanitizeText(clientId, 64).replace(/[^a-zA-Z0-9]/g, "");
       var safeTenant = sanitizeText(tenant, 40).toLowerCase();
       if (!safeId || (safeTenant !== "plaza_mayor" && safeTenant !== "casa_de_piedra")) return false;
@@ -817,8 +874,8 @@
         var records = $app.findRecordsByFilter(
           "clientes_dictamenes",
           "cliente = '" + safeId + "' && tenant = '" + safeTenant + "'",
-          "-created",
-          1,
+          "-metadata.generated_at",
+          20,
           0
         ) || [];
         for (var i = 0; i < records.length; i += 1) {
@@ -851,8 +908,60 @@
         normalized === "aprobada" ||
         normalized === "listo" ||
         normalized === "lista" ||
+        normalized === "listo_para_contrato" ||
+        normalized === "lista_para_contrato" ||
         normalized === "listo_para_cotizar" ||
         normalized === "lista_para_cotizar";
+    }
+
+    function resolveCurrentClientReadinessLocal(clientRecord) {
+      var validation = safeObject(clientRecord ? clientRecord.get("expediente_validacion") : {});
+      var statusValue = clientRecord ? clientRecord.getString("perfil_estatus") : "";
+      var readyFlag = clientRecord ? clientRecord.get("perfil_validado") : false;
+      try {
+        var shared = require(`${__hooks}/client_profile_shared.js`);
+        if (shared && typeof shared.evaluateClientProfileValidation === "function" && clientRecord) {
+          var evaluated = shared.evaluateClientProfileValidation(clientRecord);
+          if (evaluated && typeof evaluated === "object") {
+            if (evaluated.data && typeof evaluated.data === "object") validation = evaluated.data;
+            if (evaluated.status) statusValue = evaluated.status;
+            readyFlag = evaluated.ready === true;
+          }
+        }
+      } catch (_) { }
+      var readyForQuotes =
+        isTruthyReadyFlagLocal(readyFlag) ||
+        isTruthyReadyFlagLocal(validation.readyForQuotes) ||
+        isTruthyReadyFlagLocal(validation.ready) ||
+        isTruthyReadyFlagLocal(validation.puedeCotizar) ||
+        isTruthyReadyFlagLocal(validation.quoteApproved) ||
+        isTruthyReadyFlagLocal(validation.quoteReady) ||
+        isTruthyReadyFlagLocal(validation.readyForContracts) ||
+        isReadyStatusValueLocal(statusValue) ||
+        isReadyStatusValueLocal(validation.status);
+      return {
+        validation: validation,
+        status: statusValue,
+        readyForQuotes: !!readyForQuotes
+      };
+    }
+
+    function ensureClientReadyForQuoteLocal(record) {
+      var clientId = sanitizeText(record.getString("cliente_id"), 64).replace(/[^a-zA-Z0-9]/g, "");
+      if (!clientId) return;
+      var clientRecord = loadClientRecordLocal(clientId);
+      if (!clientRecord) {
+        throw new BadRequestError("No se encontro el perfil de cliente asociado a la cotizacion.");
+      }
+      var tenant = sanitizeText(record.getString("tenant"), 40).toLowerCase();
+      var clientTenant = sanitizeText(clientRecord.getString("tenant"), 40).toLowerCase();
+      if (tenant && clientTenant && tenant !== clientTenant) {
+        throw new BadRequestError("El perfil del cliente no pertenece al tenant de esta cotizacion.");
+      }
+      var readiness = resolveCurrentClientReadinessLocal(clientRecord);
+      if (!readiness.readyForQuotes) {
+        throw new BadRequestError("El expediente del cliente debe estar completo, vigente y aprobado antes de generar cotizaciones.");
+      }
     }
 
     function ensureClientReadyForContractLocal(record) {
@@ -869,21 +978,12 @@
       if (tenant && clientTenant && tenant !== clientTenant) {
         throw new BadRequestError("El perfil del cliente no pertenece al tenant de esta cotizacion.");
       }
-      var validation = safeObject(clientRecord.get("expediente_validacion"));
-      var readyForQuotes =
-        isTruthyReadyFlagLocal(clientRecord.get("perfil_validado")) ||
-        isTruthyReadyFlagLocal(validation.readyForQuotes) ||
-        isTruthyReadyFlagLocal(validation.ready) ||
-        isTruthyReadyFlagLocal(validation.puedeCotizar) ||
-        isTruthyReadyFlagLocal(validation.quoteApproved) ||
-        isTruthyReadyFlagLocal(validation.quoteReady) ||
-        isTruthyReadyFlagLocal(validation.readyForContracts) ||
-        isReadyStatusValueLocal(clientRecord.getString("perfil_estatus")) ||
-        isReadyStatusValueLocal(validation.status);
+      var readiness = resolveCurrentClientReadinessLocal(clientRecord);
+      var readyForQuotes = readiness.readyForQuotes;
       if (!readyForQuotes) {
         throw new BadRequestError("El expediente del cliente debe estar completo, vigente y aprobado antes de generar contrato.");
       }
-      if (!clientHasSavedDictamenLocal(clientId, clientTenant || tenant)) {
+      if (!clientHasSavedDictamenLocal(clientId, clientTenant || tenant, clientRecord)) {
         throw new BadRequestError("Para generar contrato necesitas un dictamen aprobado o guardado del cliente.");
       }
     }
@@ -903,6 +1003,24 @@
         var field = fields[i];
         if (!hasRecordValueLocal(record.get(field))) continue;
         if (!original || comparableValueLocal(record, field) !== comparableValueLocal(original, field)) return true;
+      }
+      return false;
+    }
+
+    function quoteFinancialFieldsTouchedLocal(record, original) {
+      if (!original) return true;
+      var fields = [
+        "precio_final",
+        "desglose_precios",
+        "desglose_impuestos",
+        "conceptos_adicionales",
+        "tipo_ajuste",
+        "valor_ajuste",
+        "ajuste_es_porcentaje"
+      ];
+      for (var i = 0; i < fields.length; i += 1) {
+        var field = fields[i];
+        if (comparableValueLocal(record, field) !== comparableValueLocal(original, field)) return true;
       }
       return false;
     }
@@ -1086,6 +1204,7 @@
     }
 
     syncQuoteClientSnapshotLocal(e.record);
+    ensureClientReadyForQuoteLocal(e.record);
     ensureQuoteFinancials(e.record);
     enforceQuoteDiscountLimitLocal(e.record);
     if (contractFieldsTouchedLocal(e.record, null)) {
@@ -1221,7 +1340,14 @@
       return sanitizeText(value, 500) !== "";
     }
 
-    function clientHasSavedDictamenLocal(clientId, tenant) {
+    function clientHasSavedDictamenLocal(clientId, tenant, clientRecord) {
+      try {
+        var shared = require(`${__hooks}/client_profile_shared.js`);
+        if (shared && typeof shared.getClientDictamenStatus === "function") {
+          var dictamenStatus = shared.getClientDictamenStatus(clientRecord || clientId, tenant);
+          return dictamenStatus && (dictamenStatus.approved === true || dictamenStatus.saved === true);
+        }
+      } catch (_) { }
       var safeId = sanitizeText(clientId, 64).replace(/[^a-zA-Z0-9]/g, "");
       var safeTenant = sanitizeText(tenant, 40).toLowerCase();
       if (!safeId || (safeTenant !== "plaza_mayor" && safeTenant !== "casa_de_piedra")) return false;
@@ -1229,8 +1355,8 @@
         var records = $app.findRecordsByFilter(
           "clientes_dictamenes",
           "cliente = '" + safeId + "' && tenant = '" + safeTenant + "'",
-          "-created",
-          1,
+          "-metadata.generated_at",
+          20,
           0
         ) || [];
         for (var i = 0; i < records.length; i += 1) {
@@ -1263,8 +1389,42 @@
         normalized === "aprobada" ||
         normalized === "listo" ||
         normalized === "lista" ||
+        normalized === "listo_para_contrato" ||
+        normalized === "lista_para_contrato" ||
         normalized === "listo_para_cotizar" ||
         normalized === "lista_para_cotizar";
+    }
+
+    function resolveCurrentClientReadinessLocal(clientRecord) {
+      var validation = safeObject(clientRecord ? clientRecord.get("expediente_validacion") : {});
+      var statusValue = clientRecord ? clientRecord.getString("perfil_estatus") : "";
+      var readyFlag = clientRecord ? clientRecord.get("perfil_validado") : false;
+      try {
+        var shared = require(`${__hooks}/client_profile_shared.js`);
+        if (shared && typeof shared.evaluateClientProfileValidation === "function" && clientRecord) {
+          var evaluated = shared.evaluateClientProfileValidation(clientRecord);
+          if (evaluated && typeof evaluated === "object") {
+            if (evaluated.data && typeof evaluated.data === "object") validation = evaluated.data;
+            if (evaluated.status) statusValue = evaluated.status;
+            readyFlag = evaluated.ready === true;
+          }
+        }
+      } catch (_) { }
+      var readyForQuotes =
+        isTruthyReadyFlagLocal(readyFlag) ||
+        isTruthyReadyFlagLocal(validation.readyForQuotes) ||
+        isTruthyReadyFlagLocal(validation.ready) ||
+        isTruthyReadyFlagLocal(validation.puedeCotizar) ||
+        isTruthyReadyFlagLocal(validation.quoteApproved) ||
+        isTruthyReadyFlagLocal(validation.quoteReady) ||
+        isTruthyReadyFlagLocal(validation.readyForContracts) ||
+        isReadyStatusValueLocal(statusValue) ||
+        isReadyStatusValueLocal(validation.status);
+      return {
+        validation: validation,
+        status: statusValue,
+        readyForQuotes: !!readyForQuotes
+      };
     }
 
     function ensureClientReadyForContractLocal(record) {
@@ -1281,21 +1441,12 @@
       if (tenant && clientTenant && tenant !== clientTenant) {
         throw new BadRequestError("El perfil del cliente no pertenece al tenant de esta cotizacion.");
       }
-      var validation = safeObject(clientRecord.get("expediente_validacion"));
-      var readyForQuotes =
-        isTruthyReadyFlagLocal(clientRecord.get("perfil_validado")) ||
-        isTruthyReadyFlagLocal(validation.readyForQuotes) ||
-        isTruthyReadyFlagLocal(validation.ready) ||
-        isTruthyReadyFlagLocal(validation.puedeCotizar) ||
-        isTruthyReadyFlagLocal(validation.quoteApproved) ||
-        isTruthyReadyFlagLocal(validation.quoteReady) ||
-        isTruthyReadyFlagLocal(validation.readyForContracts) ||
-        isReadyStatusValueLocal(clientRecord.getString("perfil_estatus")) ||
-        isReadyStatusValueLocal(validation.status);
+      var readiness = resolveCurrentClientReadinessLocal(clientRecord);
+      var readyForQuotes = readiness.readyForQuotes;
       if (!readyForQuotes) {
         throw new BadRequestError("El expediente del cliente debe estar completo, vigente y aprobado antes de generar contrato.");
       }
-      if (!clientHasSavedDictamenLocal(clientId, clientTenant || tenant)) {
+      if (!clientHasSavedDictamenLocal(clientId, clientTenant || tenant, clientRecord)) {
         throw new BadRequestError("Para generar contrato necesitas un dictamen aprobado o guardado del cliente.");
       }
     }
@@ -1315,6 +1466,24 @@
         var field = fields[i];
         if (!hasRecordValueLocal(record.get(field))) continue;
         if (!original || comparableValueLocal(record, field) !== comparableValueLocal(original, field)) return true;
+      }
+      return false;
+    }
+
+    function quoteFinancialFieldsTouchedLocal(record, original) {
+      if (!original) return true;
+      var fields = [
+        "precio_final",
+        "desglose_precios",
+        "desglose_impuestos",
+        "conceptos_adicionales",
+        "tipo_ajuste",
+        "valor_ajuste",
+        "ajuste_es_porcentaje"
+      ];
+      for (var i = 0; i < fields.length; i += 1) {
+        var field = fields[i];
+        if (comparableValueLocal(record, field) !== comparableValueLocal(original, field)) return true;
       }
       return false;
     }
@@ -1387,7 +1556,9 @@
 
     var original = e && e.record && typeof e.record.originalCopy === "function" ? e.record.originalCopy() : null;
     syncQuoteClientSnapshotLocal(e.record);
-    enforceQuoteDiscountLimitLocal(e.record);
+    if (quoteFinancialFieldsTouchedLocal(e.record, original)) {
+      enforceQuoteDiscountLimitLocal(e.record);
+    }
     if (contractFieldsTouchedLocal(e.record, original)) {
       ensureClientReadyForContractLocal(e.record);
     }

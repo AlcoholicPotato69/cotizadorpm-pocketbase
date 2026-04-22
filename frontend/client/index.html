@@ -243,9 +243,9 @@
         }
 
         // --- UTILIDADES UI ---
-        function getTextColorClass(c){ const map={red:'text-brand-red',blue:'text-blue-600',green:'text-green-600',purple:'text-purple-600',cyan:'text-cyan-600',orange:'text-orange-600',pink:'text-pink-600'}; return map[c]||'text-gray-600'; }
-        function getBgColorClass(c){ const map={red:'bg-red-50',blue:'bg-blue-50',green:'bg-green-50',purple:'bg-purple-50',cyan:'bg-cyan-50',orange:'bg-orange-50',pink:'bg-pink-50'}; return map[c]||'bg-gray-50'; }
-        function getBorderColorClass(c){ const map={red:'border-brand-red',blue:'border-blue-600',green:'border-green-600',purple:'border-purple-600',cyan:'border-cyan-600',orange:'border-orange-600',pink:'border-pink-600'}; return map[c]||'border-gray-500'; }
+        function getTextColorClass(c){ const map={red:'text-brand-red',cp:'text-brand-cp',blue:'text-blue-600',green:'text-green-600',purple:'text-purple-600',cyan:'text-cyan-600',orange:'text-orange-600',pink:'text-pink-600'}; return map[c]||'text-gray-600'; }
+        function getBgColorClass(c){ const map={red:'bg-red-50',cp:'bg-yellow-50',blue:'bg-blue-50',green:'bg-green-50',purple:'bg-purple-50',cyan:'bg-cyan-50',orange:'bg-orange-50',pink:'bg-pink-50'}; return map[c]||'bg-gray-50'; }
+        function getBorderColorClass(c){ const map={red:'border-brand-red',cp:'border-brand-cp',blue:'border-blue-600',green:'border-green-600',purple:'border-purple-600',cyan:'border-cyan-600',orange:'border-orange-600',pink:'border-pink-600'}; return map[c]||'border-gray-500'; }
 
         // --- INICIALIZACIÓN SEGURA ---
         document.addEventListener('DOMContentLoaded', async () => {
@@ -392,6 +392,66 @@
                 ? profile.allowed_tenants.map(normalizeDashboardTenant).filter(Boolean)
                 : [];
             return tenants.length === 1 && tenants[0] === 'casa_de_piedra' ? 'cotizadorcp' : 'cotizador';
+        }
+
+        const VERIFIER_DASHBOARD_TENANT_KEY = 'hub_verifier_dashboard_tenant_v1';
+
+        function getVerifierDashboardTenants(profile) {
+            const tenants = Array.isArray(profile?.allowed_tenants)
+                ? profile.allowed_tenants.map(normalizeDashboardTenant).filter((tenant) => tenant === 'plaza_mayor' || tenant === 'casa_de_piedra')
+                : [];
+            const unique = Array.from(new Set(tenants));
+            if (unique.length) return unique;
+            return ['plaza_mayor', 'casa_de_piedra'];
+        }
+
+        function resolveVerifierDashboardTenant(profile) {
+            const allowed = getVerifierDashboardTenants(profile);
+            let stored = '';
+            try { stored = normalizeDashboardTenant(localStorage.getItem(VERIFIER_DASHBOARD_TENANT_KEY) || ''); } catch (_) {}
+            if (stored && allowed.includes(stored)) return stored;
+            const preferred = normalizeDashboardTenant(profile?.tenant_default || profile?.default_tenant || '');
+            if (preferred && allowed.includes(preferred)) return preferred;
+            return allowed.includes('plaza_mayor') ? 'plaza_mayor' : (allowed[0] || 'plaza_mayor');
+        }
+
+        function persistVerifierDashboardTenant(tenant) {
+            const normalized = normalizeDashboardTenant(tenant);
+            if (!normalized) return;
+            try { localStorage.setItem(VERIFIER_DASHBOARD_TENANT_KEY, normalized); } catch (_) {}
+        }
+
+        function buildVerifierDashboardSwitchHtml(profile, currentTenant) {
+            const tenants = getVerifierDashboardTenants(profile);
+            if (tenants.length < 2) return '';
+            return `
+                <div class="col-span-full flex justify-center">
+                    <div class="inline-flex items-center gap-3 rounded-2xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
+                        <span class="text-[10px] font-black uppercase tracking-[0.18em] text-gray-400">Tenant</span>
+                        <div class="inline-flex rounded-full bg-gray-100 p-1 gap-1">
+                            ${tenants.map((tenant) => {
+                                const active = tenant === currentTenant;
+                                const label = tenant === 'casa_de_piedra' ? 'Casa de Piedra' : 'Plaza Mayor';
+                                const classes = active
+                                    ? 'bg-brand-red text-white shadow'
+                                    : 'text-gray-500 hover:bg-white hover:text-brand-red';
+                                return `<button type="button" data-verifier-dashboard-tenant="${tenant}" class="${classes} rounded-full px-4 py-2 text-[11px] font-black uppercase tracking-wide transition">${label}</button>`;
+                            }).join('')}
+                        </div>
+                    </div>
+                </div>`;
+        }
+
+        function bindVerifierDashboardTenantSwitch(grid, rerender) {
+            if (!grid) return;
+            grid.querySelectorAll('[data-verifier-dashboard-tenant]').forEach((button) => {
+                button.addEventListener('click', async () => {
+                    const tenant = normalizeDashboardTenant(button.getAttribute('data-verifier-dashboard-tenant') || '');
+                    if (!tenant) return;
+                    persistVerifierDashboardTenant(tenant);
+                    if (typeof rerender === 'function') await rerender();
+                });
+            });
         }
 
         async function showDashboard(user) {
@@ -563,18 +623,18 @@
                             grid.innerHTML = '';
                             grid.className = defaultGridClass;
                             if (isVerifier) {
-                                grid.className = dualGridClass;
-                                const preferredTenant = String(p.tenant_default || p.default_tenant || '').toLowerCase().trim();
-                                const verifierPrefix = (preferredTenant === 'casa_de_piedra' || (!hasPM && hasCP)) ? 'cotizadorcp' : 'cotizador';
-                                const verifierColor = verifierPrefix === 'cotizadorcp' ? 'cp' : 'red';
+                                const verifierTenant = resolveVerifierDashboardTenant(p);
+                                const verifierPrefix = verifierTenant === 'casa_de_piedra' ? 'cotizadorcp' : 'cotizador';
+                                grid.className = 'grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 md:gap-6 max-w-7xl mx-auto';
                                 const verifierCards = [
-                                    { name: 'Clientes', description: 'Expedientes, validación y dictámenes. Dentro podrás cambiar entre Plaza Mayor y Casa de Piedra desde la barra superior.', icon: 'fa-user-check', url_path: `${verifierPrefix}/clientes.html`, color: verifierColor },
-                                    { name: 'Precios Plaza Mayor', description: 'Catálogo, precios y ajustes autorizados de Plaza Mayor.', icon: 'fa-tags', url_path: 'cotizador/catalog.html', color: 'red', logoUrl: pmLogo },
-                                    { name: 'Precios Casa de Piedra', description: 'Catálogo, precios y ajustes autorizados de Casa de Piedra.', icon: 'fa-gem', url_path: 'cotizadorcp/catalog.html', color: 'cp', logoUrl: cpLogo },
-                                    { name: 'Control', description: 'Bitácora, responsables y reportes en una vista independiente.', icon: 'fa-shield-halved', url_path: `${verifierPrefix}/control.html`, color: verifierColor },
-                                    { name: 'Configuracion', description: 'Conceptos, impuestos, plantillas, reglamentos y ajustes operativos por tenant.', icon: 'fa-gear', url_path: 'system/config.html', color: 'admin' },
+                                    { name: 'Precios', description: 'Catalogo y ajustes autorizados del tenant seleccionado.', icon: 'fa-tags', url_path: `${verifierPrefix}/catalog.html`, color: verifierTenant === 'casa_de_piedra' ? 'cp' : 'red', logoUrl: verifierTenant === 'casa_de_piedra' ? cpLogo : pmLogo },
+                                    { name: 'Clientes', description: 'Revision de expedientes, documentos y dictamenes.', icon: 'fa-users', url_path: `${verifierPrefix}/clientes.html`, color: 'red' },
+                                    { name: 'Control', description: 'Bitacora, responsables y supervision operativa.', icon: 'fa-shield-halved', url_path: `${verifierPrefix}/control.html`, color: 'admin' },
+                                    { name: 'Configuracion', description: 'Configuracion general permitida para verificacion.', icon: 'fa-gear', url_path: `system/config.html?tenant=${verifierTenant === 'casa_de_piedra' ? 'cp' : 'pm'}`, color: 'admin' },
                                 ];
+                                grid.innerHTML = buildVerifierDashboardSwitchHtml(p, verifierTenant);
                                 verifierCards.forEach(app => grid.innerHTML += cardHTML(app));
+                                bindVerifierDashboardTenantSwitch(grid, async () => { await showDashboard(currentUser || user); });
                                 return;
                             }
                             // Admin o perfiles con ambos tenants: muestra tarjetas de cotizadores; solo admin ve Control/Config.
@@ -623,6 +683,43 @@
             const profile = preloadedProfile || user || {};
             const userRole = normalizeDashboardRole(profile?.role || profile?.rol || user?.role || user?.rol || '');
             const userCanOpenControl = canOpenControlFromDashboard(userRole);
+            if (userRole === 'verificador') {
+                const verifierTenant = resolveVerifierDashboardTenant(profile);
+                const verifierPrefix = verifierTenant === 'casa_de_piedra' ? 'cotizadorcp' : 'cotizador';
+                const verifierModules = [
+                    { name: 'Precios', description: 'Catalogo y ajustes autorizados del tenant seleccionado.', icon: 'fa-solid fa-tags', url_path: `${verifierPrefix}/catalog.html`, color: verifierTenant === 'casa_de_piedra' ? 'cp' : 'red' },
+                    { name: 'Clientes', description: 'Revision de expedientes, documentos y dictamenes.', icon: 'fa-solid fa-users', url_path: `${verifierPrefix}/clientes.html`, color: 'red' },
+                    { name: 'Control', description: 'Bitacora, responsables y supervision operativa.', icon: 'fa-solid fa-shield-halved', url_path: `${verifierPrefix}/control.html`, color: 'gray' },
+                    { name: 'Configuracion', description: 'Configuracion general permitida para verificacion.', icon: 'fa-solid fa-gear', url_path: `system/config.html?tenant=${verifierTenant === 'casa_de_piedra' ? 'cp' : 'pm'}`, color: 'gray' },
+                ];
+                grid.className = 'grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 md:gap-6 max-w-7xl mx-auto';
+                grid.innerHTML = buildVerifierDashboardSwitchHtml(profile, verifierTenant);
+                verifierModules.forEach(app => {
+                    const colorKey = app.color || 'gray';
+                    const textColor = getTextColorClass(colorKey);
+                    const bgColor = getBgColorClass(colorKey);
+                    grid.innerHTML += `
+                    <a href="${app.url_path || '#'}" class="module-card bg-white rounded-2xl p-6 relative overflow-hidden group cursor-pointer block">
+                        <div class="absolute -right-6 -bottom-6 w-24 h-24 rounded-full ${bgColor} opacity-50 group-hover:scale-150 transition-transform duration-500 ease-out"></div>
+                        <div class="relative z-10 flex flex-col h-full justify-between">
+                            <div class="flex justify-between items-start mb-6">
+                                <div class="module-icon w-12 h-12 rounded-xl ${bgColor} flex items-center justify-center text-xl ${textColor} transition-all duration-300 shadow-sm">
+                                    <i class="${app.icon || 'fa-solid fa-cube'}"></i>
+                                </div>
+                                <div class="w-8 h-8 rounded-full border border-gray-100 flex items-center justify-center text-gray-300 group-hover:border-brand-red group-hover:text-brand-red transition-colors bg-white">
+                                    <i class="fa-solid fa-arrow-right -rotate-45 group-hover:rotate-0 transition-transform duration-300"></i>
+                                </div>
+                            </div>
+                            <div>
+                                <h3 class="text-xl font-black text-gray-800 mb-2 leading-tight group-hover:text-brand-red transition-colors">${app.name}</h3>
+                                <p class="text-xs text-gray-500 font-medium line-clamp-2 leading-relaxed">${app.description}</p>
+                            </div>
+                        </div>
+                    </a>`;
+                });
+                bindVerifierDashboardTenantSwitch(grid, async () => { await showDashboard(currentUser || user); });
+                return;
+            }
 
             const { data: roleData } = await hubPocketBase.from('roles').select('allowed_modules').eq('name', userRole).single();
             let allowedModulesIds = userRole === 'admin' ? ['*'] : (roleData?.allowed_modules?.map(id => Number(id)) || []); 

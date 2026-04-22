@@ -12,7 +12,7 @@ let clientProfiles = [];
 let clientProfilesById = {};
 const PM_QUOTE_REQUIRED_DOC_FIELDS = ['doc_acta_constitutiva', 'doc_ine', 'doc_comprobante_domicilio', 'doc_constancia_fiscal'];
 const PM_QUOTE_CONSTANCIA_VALID_DAYS = 30;
-const PM_QUOTE_COMPROBANTE_VALID_DAYS = 90;
+const PM_QUOTE_COMPROBANTE_VALID_DAYS = 'calendar_months:3';
 
 function normalizeQuoteDateValue(value) {
     const raw = String(value || '').trim();
@@ -144,6 +144,13 @@ function evaluateQuoteClientDate(dateValue, maxAgeDays) {
     if (Number.isNaN(target.getTime())) return { valid: false };
     const now = new Date();
     const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const specialMode = String(maxAgeDays || '').trim().toLowerCase();
+    if (specialMode.indexOf('calendar_months:') === 0) {
+        if (target.getTime() > todayUtc.getTime()) return { valid: false };
+        const months = Math.max(1, Number(specialMode.split(':')[1]) || 3);
+        const expiryBoundary = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + months, 1));
+        return { valid: todayUtc.getTime() < expiryBoundary.getTime() };
+    }
     const ageDays = Math.floor((todayUtc.getTime() - target.getTime()) / 86400000);
     return {
         valid: ageDays >= 0 && ageDays <= Math.max(0, Number(maxAgeDays) || 0)
@@ -167,7 +174,7 @@ function isQuoteClientProfileReady(client = {}) {
     const validation = readQuoteClientValidation(client);
     const rawStatus = String(client?.perfil_estatus || validation?.status || '').trim().toLowerCase();
     if (['rechazado', 'rechazada', 'rechazado_expediente', 'rechazada_expediente', 'documentos_rechazados'].includes(rawStatus)) return false;
-    if (
+    const hasBackendReadyFlag =
         isQuoteReadyFlagValue(client?.perfil_completo) ||
         isQuoteReadyFlagValue(validation?.isComplete) ||
         isQuoteReadyFlagValue(validation?.complete) ||
@@ -179,8 +186,16 @@ function isQuoteClientProfileReady(client = {}) {
         isQuoteReadyFlagValue(validation?.quoteApproved) ||
         isQuoteReadyFlagValue(validation?.quoteReady) ||
         isQuoteReadyFlagValue(validation?.readyForContracts) ||
-        isQuoteReadyStatusValue(rawStatus)
-    ) return true;
+        isQuoteReadyStatusValue(rawStatus);
+    if (hasBackendReadyFlag) {
+        const constanciaOmitted = isQuoteClientDocumentOmitted(client, 'doc_constancia_fiscal');
+        const comprobanteOmitted = isQuoteClientDocumentOmitted(client, 'doc_comprobante_domicilio');
+        const constanciaDate = getQuoteClientDocumentReferenceDate(client, 'doc_constancia_fiscal');
+        const comprobanteDate = getQuoteClientDocumentReferenceDate(client, 'doc_comprobante_domicilio');
+        const constanciaValid = constanciaOmitted ? true : evaluateQuoteClientDate(constanciaDate, PM_QUOTE_CONSTANCIA_VALID_DAYS).valid;
+        const comprobanteValid = comprobanteOmitted ? true : evaluateQuoteClientDate(comprobanteDate, PM_QUOTE_COMPROBANTE_VALID_DAYS).valid;
+        if (constanciaValid && comprobanteValid) return true;
+    }
     const hasName = String(client?.nombre_completo || '').trim() !== '';
     const hasEmail = String(client?.correo || '').trim() !== '';
     const hasRfc = String(client?.rfc || '').trim() !== '';
@@ -1110,6 +1125,7 @@ function syncManagerTypeFields(selectedType = '') {
     const digitalToggleField = document.getElementById('mgr-digital-toggle-field');
     const digitalDetailsField = document.getElementById('mgr-digital-media-field');
     const digitalToggle = document.getElementById('mgr-digital-media');
+    const planoField = document.getElementById('mgr-plano-field');
     const attributesGrid = document.getElementById('mgr-attributes-grid');
     const showMaterial = isCatalogAdvertisingType(type);
     const showLocation = isCatalogLocalOrIslandType(type);
@@ -1120,6 +1136,7 @@ function syncManagerTypeFields(selectedType = '') {
     if (measuresField) measuresField.classList.toggle('hidden', !showMeasures || isDigital);
     if (digitalToggleField) digitalToggleField.classList.toggle('hidden', !showMaterial);
     if (digitalDetailsField) digitalDetailsField.classList.toggle('hidden', !isDigital);
+    if (planoField) planoField.classList.toggle('hidden', !showMaterial);
     if (attributesGrid) attributesGrid.classList.toggle('hidden', !showMaterial && !showLocation && !showMeasures);
 }
 window.syncManagerTypeFields = syncManagerTypeFields;
@@ -2742,9 +2759,13 @@ window.openManagerModal = async function (id) {
         let allUrls = []; try { if (s.imagen_url && typeof s.imagen_url === 'string' && s.imagen_url.startsWith('[')) allUrls = JSON.parse(s.imagen_url); else if (s.imagen_url) allUrls = [s.imagen_url]; } catch (e) { }
         for (let i = 1; i <= 5; i++) {
             const mgrPrev = document.getElementById(`mgr-preview-${i}`);
+            const imageFieldName = i === 1 ? 'imagen' : `imagen${i}`;
+            const currentImageFile = Array.isArray(s[imageFieldName]) ? String(s[imageFieldName][0] || '').trim() : String(s[imageFieldName] || '').trim();
             if (mgrPrev) {
                 if (allUrls[i - 1]) { mgrPrev.src = allUrls[i - 1]; mgrPrev.classList.remove('hidden'); mgrPrev.removeAttribute('data-modified'); }
                 else { mgrPrev.src = ''; mgrPrev.classList.add('hidden'); mgrPrev.removeAttribute('data-modified'); }
+                if (currentImageFile) mgrPrev.dataset.currentFileName = currentImageFile;
+                else delete mgrPrev.dataset.currentFileName;
             }
         }
         document.getElementById('btn-delete-mgr').classList.remove('hidden');
@@ -2761,7 +2782,7 @@ window.openManagerModal = async function (id) {
         if (convenioToggle) convenioToggle.checked = true;
         setPmDigitalMediaManagerValues(null);
         for (let i = 1; i <= 5; i++) {
-            const mgrPrev = document.getElementById(`mgr-preview-${i}`); if (mgrPrev) { mgrPrev.src = ''; mgrPrev.classList.add('hidden'); mgrPrev.removeAttribute('data-modified'); }
+            const mgrPrev = document.getElementById(`mgr-preview-${i}`); if (mgrPrev) { mgrPrev.src = ''; mgrPrev.classList.add('hidden'); mgrPrev.removeAttribute('data-modified'); delete mgrPrev.dataset.currentFileName; }
             const fi = document.getElementById(`mgr-file-${i}`); if (fi) fi.value = '';
         }
         document.getElementById('btn-delete-mgr').classList.add('hidden');
@@ -2851,18 +2872,20 @@ window.saveSpace = async function () {
             const fi = document.getElementById(`mgr-file-${i}`);
             const preview = document.getElementById(`mgr-preview-${i}`);
             const fieldName = i === 1 ? 'imagen' : `imagen${i}`;
+            const currentFileName = String(preview?.dataset?.currentFileName || '').trim();
             if (fi && fi.files && fi.files.length > 0) {
                 fd.append(fieldName, fi.files[0], fi.files[0].name || `img${i}`);
-            } else if (preview && preview.getAttribute('data-modified') === 'true' && preview.classList.contains('hidden')) {
-                fd.append(fieldName, ''); // Clear existing file
+            } else if (preview && preview.getAttribute('data-modified') === 'true' && preview.classList.contains('hidden') && currentFileName) {
+                fd.append(`${fieldName}-`, currentFileName);
             }
         }
         const planoInput = document.getElementById('mgr-plano-file');
         const clearPlano = String(document.getElementById('mgr-plano-clear')?.value || '0') === '1';
+        const currentPlanoFile = String(document.getElementById('mgr-plano-current')?.dataset?.currentFileName || '').trim();
         if (planoInput && planoInput.files && planoInput.files.length > 0) {
             fd.append('plano_geografico', planoInput.files[0], planoInput.files[0].name || 'plano');
-        } else if (clearPlano) {
-            fd.append('plano_geografico', '');
+        } else if (clearPlano && currentPlanoFile) {
+            fd.append('plano_geografico-', currentPlanoFile);
         }
         return fd;
     };
