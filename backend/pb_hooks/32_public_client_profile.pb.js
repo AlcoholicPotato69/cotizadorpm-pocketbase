@@ -10,16 +10,16 @@ onRecordEnrich(function (e) {
   return require(`${__hooks}/client_profile_shared.js`).handleRecordEnrich(e);
 }, "clientes");
 
-onRecordCreateRequest(function (e) {
-  return require(`${__hooks}/client_profile_shared.js`).handleClientDictamenChanged(e);
+onRecordAfterCreateSuccess(function (e) {
+  return require(`${__hooks}/client_profile_shared.js`).handleClientDictamenCommitted(e);
 }, "clientes_dictamenes");
 
-onRecordUpdateRequest(function (e) {
-  return require(`${__hooks}/client_profile_shared.js`).handleClientDictamenChanged(e);
+onRecordAfterUpdateSuccess(function (e) {
+  return require(`${__hooks}/client_profile_shared.js`).handleClientDictamenCommitted(e);
 }, "clientes_dictamenes");
 
-onRecordDeleteRequest(function (e) {
-  return require(`${__hooks}/client_profile_shared.js`).handleClientDictamenChanged(e);
+onRecordAfterDeleteSuccess(function (e) {
+  return require(`${__hooks}/client_profile_shared.js`).handleClientDictamenCommitted(e);
 }, "clientes_dictamenes");
 
 routerAdd("POST", "/api/cotizador/public-client-verify", function (e) {

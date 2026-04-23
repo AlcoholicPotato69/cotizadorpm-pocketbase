@@ -215,8 +215,79 @@
     }
   }
 
+  function escapeFilterValue(value) {
+    return String(value || "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+  }
+
+  function normalizeClientMatchValue(value, maxLen) {
+    return sanitizeText(value, typeof maxLen === "number" ? maxLen : 255)
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function normalizeClientRfc(value) {
+    return sanitizeText(value, 40).toUpperCase().replace(/\s+/g, "");
+  }
+
+  function findQuoteClientFallbackRecord(record, tenant) {
+    var safeTenant = sanitizeText(tenant, 40).toLowerCase();
+    if (!safeTenant) return null;
+    var targetEmail = normalizeClientMatchValue(record.getString("cliente_email"), 255);
+    var targetRfc = normalizeClientRfc(record.getString("cliente_rfc"));
+    var targetName = normalizeClientMatchValue(record.getString("cliente_nombre"), 255);
+    if (!targetEmail && !targetRfc && !targetName) return null;
+    try {
+      var records = $app.findRecordsByFilter(
+        "clientes",
+        "tenant = '" + escapeFilterValue(safeTenant) + "'",
+        "",
+        500,
+        0
+      ) || [];
+      var i = 0;
+      var candidate = null;
+      if (targetEmail) {
+        for (i = 0; i < records.length; i += 1) {
+          candidate = records[i];
+          if (normalizeClientMatchValue(candidate.getString("correo"), 255) === targetEmail) return candidate;
+        }
+      }
+      if (targetRfc) {
+        for (i = 0; i < records.length; i += 1) {
+          candidate = records[i];
+          if (normalizeClientRfc(candidate.getString("rfc")) === targetRfc) return candidate;
+        }
+      }
+      if (targetName) {
+        for (i = 0; i < records.length; i += 1) {
+          candidate = records[i];
+          if (normalizeClientMatchValue(candidate.getString("nombre_completo"), 255) === targetName) return candidate;
+        }
+      }
+    } catch (_) { }
+    return null;
+  }
+
+  function resolveQuoteClientRecord(record) {
+    var tenant = sanitizeText(record.getString("tenant"), 40).toLowerCase();
+    var clientId = sanitizeText(record.getString("cliente_id"), 64).replace(/[^a-zA-Z0-9]/g, "");
+    var clientRecord = loadClientRecord(clientId);
+    if (clientRecord) {
+      var clientTenant = sanitizeText(clientRecord.getString("tenant"), 40).toLowerCase();
+      if (!tenant || !clientTenant || tenant === clientTenant) return clientRecord;
+    }
+    var fallbackRecord = findQuoteClientFallbackRecord(record, tenant);
+    if (fallbackRecord) {
+      var fallbackId = sanitizeText(fallbackRecord.get("id"), 64).replace(/[^a-zA-Z0-9]/g, "");
+      if (fallbackId && fallbackId !== clientId) record.set("cliente_id", fallbackId);
+      return fallbackRecord;
+    }
+    return clientRecord;
+  }
+
   function syncQuoteClientSnapshot(record) {
-    var clientRecord = loadClientRecord(record.getString("cliente_id"));
+    var clientRecord = resolveQuoteClientRecord(record);
     if (!clientRecord) return;
 
     var tenant = sanitizeText(record.getString("tenant"), 40).toLowerCase();
@@ -274,9 +345,9 @@
   }
 
   function ensureClientReadyForQuote(record) {
-    var clientId = sanitizeText(record.getString("cliente_id"), 64).replace(/[^a-zA-Z0-9]/g, "");
+    var clientRecord = resolveQuoteClientRecord(record);
+    var clientId = sanitizeText(clientRecord ? clientRecord.get("id") : record.getString("cliente_id"), 64).replace(/[^a-zA-Z0-9]/g, "");
     if (!clientId) return;
-    var clientRecord = loadClientRecord(clientId);
     if (!clientRecord) {
       throw new BadRequestError("No se encontro el perfil de cliente asociado a la cotizacion.");
     }
@@ -292,11 +363,11 @@
   }
 
   function ensureClientReadyForContract(record) {
-    var clientId = sanitizeText(record.getString("cliente_id"), 64).replace(/[^a-zA-Z0-9]/g, "");
+    var clientRecord = resolveQuoteClientRecord(record);
+    var clientId = sanitizeText(clientRecord ? clientRecord.get("id") : record.getString("cliente_id"), 64).replace(/[^a-zA-Z0-9]/g, "");
     if (!clientId) {
       throw new BadRequestError("Para generar contrato debes seleccionar un perfil de cliente validado.");
     }
-    var clientRecord = loadClientRecord(clientId);
     if (!clientRecord) {
       throw new BadRequestError("No se encontro el perfil de cliente asociado al contrato.");
     }
@@ -310,7 +381,10 @@
     if (!readyForQuotes) {
       throw new BadRequestError("El expediente del cliente debe estar completo, vigente y aprobado antes de generar contrato.");
     }
-    if (!clientHasSavedDictamen(clientId, clientTenant || tenant, clientRecord)) {
+    if (!readiness.canGenerateContract) {
+      if (readiness.hasContractEligibilityMetadata) {
+        throw new BadRequestError("El perfil del cliente todavia no tiene la etiqueta 'puede_generar_contrato'.");
+      }
       throw new BadRequestError("Para generar contrato necesitas un dictamen aprobado o guardado del cliente.");
     }
   }
@@ -363,6 +437,63 @@
       normalized === "lista_para_cotizar";
   }
 
+  function normalizeContractTag(value) {
+    var normalized = sanitizeText(value, 80).toLowerCase();
+    if (!normalized) return "";
+    if (typeof normalized.normalize === "function") {
+      normalized = normalized.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    }
+    return normalized
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "");
+  }
+
+  function collectContractTags(validation) {
+    var source = safeObject(validation);
+    var out = [];
+    var seen = {};
+    function pushTag(value) {
+      var tag = normalizeContractTag(value);
+      if (!tag || seen[tag]) return;
+      seen[tag] = true;
+      out.push(tag);
+    }
+    ["contractTags", "etiquetasContrato", "etiquetas_contrato"].forEach(function (field) {
+      safeArray(source[field]).forEach(pushTag);
+    });
+    pushTag(source.canGenerateContractTag);
+    pushTag(source.contractTag);
+    return out;
+  }
+
+  function hasContractEligibilityMetadata(validation) {
+    var source = safeObject(validation);
+    return Object.prototype.hasOwnProperty.call(source, "canGenerateContract") ||
+      Object.prototype.hasOwnProperty.call(source, "canGenerateContracts") ||
+      Object.prototype.hasOwnProperty.call(source, "canGenerateContractTag") ||
+      Object.prototype.hasOwnProperty.call(source, "contractTag") ||
+      Object.prototype.hasOwnProperty.call(source, "contractTags") ||
+      Object.prototype.hasOwnProperty.call(source, "etiquetasContrato") ||
+      Object.prototype.hasOwnProperty.call(source, "etiquetas_contrato");
+  }
+
+  function hasLegacyContractAccess(validation) {
+    var source = safeObject(validation);
+    var dictamen = safeObject(source.dictamen);
+    return isTruthyReadyFlag(source.readyForContracts) ||
+      isTruthyReadyFlag(source.dictamenAprobado) ||
+      isTruthyReadyFlag(source.dictamenGuardado) ||
+      isTruthyReadyFlag(dictamen.saved) ||
+      isTruthyReadyFlag(dictamen.approved);
+  }
+
+  function canGenerateContractFromValidation(validation) {
+    var source = safeObject(validation);
+    if (isTruthyReadyFlag(source.canGenerateContract) || isTruthyReadyFlag(source.canGenerateContracts)) return true;
+    if (collectContractTags(source).indexOf("puede_generar_contrato") !== -1) return true;
+    return !hasContractEligibilityMetadata(source) && hasLegacyContractAccess(source);
+  }
+
   function resolveCurrentClientReadiness(clientRecord) {
     var validation = safeObject(clientRecord ? clientRecord.get("expediente_validacion") : {});
     var statusValue = clientRecord ? clientRecord.getString("perfil_estatus") : "";
@@ -388,10 +519,13 @@
       isTruthyReadyFlag(validation.readyForContracts) ||
       isReadyStatusValue(statusValue) ||
       isReadyStatusValue(validation.status);
+    var canGenerateContract = canGenerateContractFromValidation(validation);
     return {
       validation: validation,
       status: statusValue,
-      readyForQuotes: !!readyForQuotes
+      readyForQuotes: !!readyForQuotes,
+      canGenerateContract: !!canGenerateContract,
+      hasContractEligibilityMetadata: hasContractEligibilityMetadata(validation)
     };
   }
 
@@ -821,8 +955,79 @@
       }
     }
 
+    function escapeFilterValueLocal(value) {
+      return String(value || "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    }
+
+    function normalizeClientMatchValueLocal(value, maxLen) {
+      return sanitizeText(value, typeof maxLen === "number" ? maxLen : 255)
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .trim();
+    }
+
+    function normalizeClientRfcLocal(value) {
+      return sanitizeText(value, 40).toUpperCase().replace(/\s+/g, "");
+    }
+
+    function findQuoteClientFallbackRecordLocal(record, tenant) {
+      var safeTenant = sanitizeText(tenant, 40).toLowerCase();
+      if (!safeTenant) return null;
+      var targetEmail = normalizeClientMatchValueLocal(record.getString("cliente_email"), 255);
+      var targetRfc = normalizeClientRfcLocal(record.getString("cliente_rfc"));
+      var targetName = normalizeClientMatchValueLocal(record.getString("cliente_nombre"), 255);
+      if (!targetEmail && !targetRfc && !targetName) return null;
+      try {
+        var records = $app.findRecordsByFilter(
+          "clientes",
+          "tenant = '" + escapeFilterValueLocal(safeTenant) + "'",
+          "",
+          500,
+          0
+        ) || [];
+        var i = 0;
+        var candidate = null;
+        if (targetEmail) {
+          for (i = 0; i < records.length; i += 1) {
+            candidate = records[i];
+            if (normalizeClientMatchValueLocal(candidate.getString("correo"), 255) === targetEmail) return candidate;
+          }
+        }
+        if (targetRfc) {
+          for (i = 0; i < records.length; i += 1) {
+            candidate = records[i];
+            if (normalizeClientRfcLocal(candidate.getString("rfc")) === targetRfc) return candidate;
+          }
+        }
+        if (targetName) {
+          for (i = 0; i < records.length; i += 1) {
+            candidate = records[i];
+            if (normalizeClientMatchValueLocal(candidate.getString("nombre_completo"), 255) === targetName) return candidate;
+          }
+        }
+      } catch (_) { }
+      return null;
+    }
+
+    function resolveQuoteClientRecordLocal(record) {
+      var tenant = sanitizeText(record.getString("tenant"), 40).toLowerCase();
+      var clientId = sanitizeText(record.getString("cliente_id"), 64).replace(/[^a-zA-Z0-9]/g, "");
+      var clientRecord = loadClientRecordLocal(clientId);
+      if (clientRecord) {
+        var clientTenant = sanitizeText(clientRecord.getString("tenant"), 40).toLowerCase();
+        if (!tenant || !clientTenant || tenant === clientTenant) return clientRecord;
+      }
+      var fallbackRecord = findQuoteClientFallbackRecordLocal(record, tenant);
+      if (fallbackRecord) {
+        var fallbackId = sanitizeText(fallbackRecord.get("id"), 64).replace(/[^a-zA-Z0-9]/g, "");
+        if (fallbackId && fallbackId !== clientId) record.set("cliente_id", fallbackId);
+        return fallbackRecord;
+      }
+      return clientRecord;
+    }
+
     function syncQuoteClientSnapshotLocal(record) {
-      var clientRecord = loadClientRecordLocal(record.getString("cliente_id"));
+      var clientRecord = resolveQuoteClientRecordLocal(record);
       if (!clientRecord) return;
 
       var tenant = sanitizeText(record.getString("tenant"), 40).toLowerCase();
@@ -914,6 +1119,63 @@
         normalized === "lista_para_cotizar";
     }
 
+    function normalizeContractTagLocal(value) {
+      var normalized = sanitizeText(value, 80).toLowerCase();
+      if (!normalized) return "";
+      if (typeof normalized.normalize === "function") {
+        normalized = normalized.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      }
+      return normalized
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "");
+    }
+
+    function collectContractTagsLocal(validation) {
+      var source = safeObject(validation);
+      var out = [];
+      var seen = {};
+      function pushTag(value) {
+        var tag = normalizeContractTagLocal(value);
+        if (!tag || seen[tag]) return;
+        seen[tag] = true;
+        out.push(tag);
+      }
+      ["contractTags", "etiquetasContrato", "etiquetas_contrato"].forEach(function (field) {
+        safeArray(source[field]).forEach(pushTag);
+      });
+      pushTag(source.canGenerateContractTag);
+      pushTag(source.contractTag);
+      return out;
+    }
+
+    function hasContractEligibilityMetadataLocal(validation) {
+      var source = safeObject(validation);
+      return Object.prototype.hasOwnProperty.call(source, "canGenerateContract") ||
+        Object.prototype.hasOwnProperty.call(source, "canGenerateContracts") ||
+        Object.prototype.hasOwnProperty.call(source, "canGenerateContractTag") ||
+        Object.prototype.hasOwnProperty.call(source, "contractTag") ||
+        Object.prototype.hasOwnProperty.call(source, "contractTags") ||
+        Object.prototype.hasOwnProperty.call(source, "etiquetasContrato") ||
+        Object.prototype.hasOwnProperty.call(source, "etiquetas_contrato");
+    }
+
+    function hasLegacyContractAccessLocal(validation) {
+      var source = safeObject(validation);
+      var dictamen = safeObject(source.dictamen);
+      return isTruthyReadyFlagLocal(source.readyForContracts) ||
+        isTruthyReadyFlagLocal(source.dictamenAprobado) ||
+        isTruthyReadyFlagLocal(source.dictamenGuardado) ||
+        isTruthyReadyFlagLocal(dictamen.saved) ||
+        isTruthyReadyFlagLocal(dictamen.approved);
+    }
+
+    function canGenerateContractFromValidationLocal(validation) {
+      var source = safeObject(validation);
+      if (isTruthyReadyFlagLocal(source.canGenerateContract) || isTruthyReadyFlagLocal(source.canGenerateContracts)) return true;
+      if (collectContractTagsLocal(source).indexOf("puede_generar_contrato") !== -1) return true;
+      return !hasContractEligibilityMetadataLocal(source) && hasLegacyContractAccessLocal(source);
+    }
+
     function resolveCurrentClientReadinessLocal(clientRecord) {
       var validation = safeObject(clientRecord ? clientRecord.get("expediente_validacion") : {});
       var statusValue = clientRecord ? clientRecord.getString("perfil_estatus") : "";
@@ -939,17 +1201,20 @@
         isTruthyReadyFlagLocal(validation.readyForContracts) ||
         isReadyStatusValueLocal(statusValue) ||
         isReadyStatusValueLocal(validation.status);
+      var canGenerateContract = canGenerateContractFromValidationLocal(validation);
       return {
         validation: validation,
         status: statusValue,
-        readyForQuotes: !!readyForQuotes
+        readyForQuotes: !!readyForQuotes,
+        canGenerateContract: !!canGenerateContract,
+        hasContractEligibilityMetadata: hasContractEligibilityMetadataLocal(validation)
       };
     }
 
     function ensureClientReadyForQuoteLocal(record) {
-      var clientId = sanitizeText(record.getString("cliente_id"), 64).replace(/[^a-zA-Z0-9]/g, "");
+      var clientRecord = resolveQuoteClientRecordLocal(record);
+      var clientId = sanitizeText(clientRecord ? clientRecord.get("id") : record.getString("cliente_id"), 64).replace(/[^a-zA-Z0-9]/g, "");
       if (!clientId) return;
-      var clientRecord = loadClientRecordLocal(clientId);
       if (!clientRecord) {
         throw new BadRequestError("No se encontro el perfil de cliente asociado a la cotizacion.");
       }
@@ -965,11 +1230,11 @@
     }
 
     function ensureClientReadyForContractLocal(record) {
-      var clientId = sanitizeText(record.getString("cliente_id"), 64).replace(/[^a-zA-Z0-9]/g, "");
+      var clientRecord = resolveQuoteClientRecordLocal(record);
+      var clientId = sanitizeText(clientRecord ? clientRecord.get("id") : record.getString("cliente_id"), 64).replace(/[^a-zA-Z0-9]/g, "");
       if (!clientId) {
         throw new BadRequestError("Para generar contrato debes seleccionar un perfil de cliente validado.");
       }
-      var clientRecord = loadClientRecordLocal(clientId);
       if (!clientRecord) {
         throw new BadRequestError("No se encontro el perfil de cliente asociado al contrato.");
       }
@@ -983,7 +1248,10 @@
       if (!readyForQuotes) {
         throw new BadRequestError("El expediente del cliente debe estar completo, vigente y aprobado antes de generar contrato.");
       }
-      if (!clientHasSavedDictamenLocal(clientId, clientTenant || tenant, clientRecord)) {
+      if (!readiness.canGenerateContract) {
+        if (readiness.hasContractEligibilityMetadata) {
+          throw new BadRequestError("El perfil del cliente todavia no tiene la etiqueta 'puede_generar_contrato'.");
+        }
         throw new BadRequestError("Para generar contrato necesitas un dictamen aprobado o guardado del cliente.");
       }
     }
@@ -1302,8 +1570,79 @@
       }
     }
 
+    function escapeFilterValueLocal(value) {
+      return String(value || "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    }
+
+    function normalizeClientMatchValueLocal(value, maxLen) {
+      return sanitizeText(value, typeof maxLen === "number" ? maxLen : 255)
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .trim();
+    }
+
+    function normalizeClientRfcLocal(value) {
+      return sanitizeText(value, 40).toUpperCase().replace(/\s+/g, "");
+    }
+
+    function findQuoteClientFallbackRecordLocal(record, tenant) {
+      var safeTenant = sanitizeText(tenant, 40).toLowerCase();
+      if (!safeTenant) return null;
+      var targetEmail = normalizeClientMatchValueLocal(record.getString("cliente_email"), 255);
+      var targetRfc = normalizeClientRfcLocal(record.getString("cliente_rfc"));
+      var targetName = normalizeClientMatchValueLocal(record.getString("cliente_nombre"), 255);
+      if (!targetEmail && !targetRfc && !targetName) return null;
+      try {
+        var records = $app.findRecordsByFilter(
+          "clientes",
+          "tenant = '" + escapeFilterValueLocal(safeTenant) + "'",
+          "",
+          500,
+          0
+        ) || [];
+        var i = 0;
+        var candidate = null;
+        if (targetEmail) {
+          for (i = 0; i < records.length; i += 1) {
+            candidate = records[i];
+            if (normalizeClientMatchValueLocal(candidate.getString("correo"), 255) === targetEmail) return candidate;
+          }
+        }
+        if (targetRfc) {
+          for (i = 0; i < records.length; i += 1) {
+            candidate = records[i];
+            if (normalizeClientRfcLocal(candidate.getString("rfc")) === targetRfc) return candidate;
+          }
+        }
+        if (targetName) {
+          for (i = 0; i < records.length; i += 1) {
+            candidate = records[i];
+            if (normalizeClientMatchValueLocal(candidate.getString("nombre_completo"), 255) === targetName) return candidate;
+          }
+        }
+      } catch (_) { }
+      return null;
+    }
+
+    function resolveQuoteClientRecordLocal(record) {
+      var tenant = sanitizeText(record.getString("tenant"), 40).toLowerCase();
+      var clientId = sanitizeText(record.getString("cliente_id"), 64).replace(/[^a-zA-Z0-9]/g, "");
+      var clientRecord = loadClientRecordLocal(clientId);
+      if (clientRecord) {
+        var clientTenant = sanitizeText(clientRecord.getString("tenant"), 40).toLowerCase();
+        if (!tenant || !clientTenant || tenant === clientTenant) return clientRecord;
+      }
+      var fallbackRecord = findQuoteClientFallbackRecordLocal(record, tenant);
+      if (fallbackRecord) {
+        var fallbackId = sanitizeText(fallbackRecord.get("id"), 64).replace(/[^a-zA-Z0-9]/g, "");
+        if (fallbackId && fallbackId !== clientId) record.set("cliente_id", fallbackId);
+        return fallbackRecord;
+      }
+      return clientRecord;
+    }
+
     function syncQuoteClientSnapshotLocal(record) {
-      var clientRecord = loadClientRecordLocal(record.getString("cliente_id"));
+      var clientRecord = resolveQuoteClientRecordLocal(record);
       if (!clientRecord) return;
 
       var tenant = sanitizeText(record.getString("tenant"), 40).toLowerCase();
@@ -1395,6 +1734,63 @@
         normalized === "lista_para_cotizar";
     }
 
+    function normalizeContractTagLocal(value) {
+      var normalized = sanitizeText(value, 80).toLowerCase();
+      if (!normalized) return "";
+      if (typeof normalized.normalize === "function") {
+        normalized = normalized.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      }
+      return normalized
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "");
+    }
+
+    function collectContractTagsLocal(validation) {
+      var source = safeObject(validation);
+      var out = [];
+      var seen = {};
+      function pushTag(value) {
+        var tag = normalizeContractTagLocal(value);
+        if (!tag || seen[tag]) return;
+        seen[tag] = true;
+        out.push(tag);
+      }
+      ["contractTags", "etiquetasContrato", "etiquetas_contrato"].forEach(function (field) {
+        safeArray(source[field]).forEach(pushTag);
+      });
+      pushTag(source.canGenerateContractTag);
+      pushTag(source.contractTag);
+      return out;
+    }
+
+    function hasContractEligibilityMetadataLocal(validation) {
+      var source = safeObject(validation);
+      return Object.prototype.hasOwnProperty.call(source, "canGenerateContract") ||
+        Object.prototype.hasOwnProperty.call(source, "canGenerateContracts") ||
+        Object.prototype.hasOwnProperty.call(source, "canGenerateContractTag") ||
+        Object.prototype.hasOwnProperty.call(source, "contractTag") ||
+        Object.prototype.hasOwnProperty.call(source, "contractTags") ||
+        Object.prototype.hasOwnProperty.call(source, "etiquetasContrato") ||
+        Object.prototype.hasOwnProperty.call(source, "etiquetas_contrato");
+    }
+
+    function hasLegacyContractAccessLocal(validation) {
+      var source = safeObject(validation);
+      var dictamen = safeObject(source.dictamen);
+      return isTruthyReadyFlagLocal(source.readyForContracts) ||
+        isTruthyReadyFlagLocal(source.dictamenAprobado) ||
+        isTruthyReadyFlagLocal(source.dictamenGuardado) ||
+        isTruthyReadyFlagLocal(dictamen.saved) ||
+        isTruthyReadyFlagLocal(dictamen.approved);
+    }
+
+    function canGenerateContractFromValidationLocal(validation) {
+      var source = safeObject(validation);
+      if (isTruthyReadyFlagLocal(source.canGenerateContract) || isTruthyReadyFlagLocal(source.canGenerateContracts)) return true;
+      if (collectContractTagsLocal(source).indexOf("puede_generar_contrato") !== -1) return true;
+      return !hasContractEligibilityMetadataLocal(source) && hasLegacyContractAccessLocal(source);
+    }
+
     function resolveCurrentClientReadinessLocal(clientRecord) {
       var validation = safeObject(clientRecord ? clientRecord.get("expediente_validacion") : {});
       var statusValue = clientRecord ? clientRecord.getString("perfil_estatus") : "";
@@ -1420,19 +1816,22 @@
         isTruthyReadyFlagLocal(validation.readyForContracts) ||
         isReadyStatusValueLocal(statusValue) ||
         isReadyStatusValueLocal(validation.status);
+      var canGenerateContract = canGenerateContractFromValidationLocal(validation);
       return {
         validation: validation,
         status: statusValue,
-        readyForQuotes: !!readyForQuotes
+        readyForQuotes: !!readyForQuotes,
+        canGenerateContract: !!canGenerateContract,
+        hasContractEligibilityMetadata: hasContractEligibilityMetadataLocal(validation)
       };
     }
 
     function ensureClientReadyForContractLocal(record) {
-      var clientId = sanitizeText(record.getString("cliente_id"), 64).replace(/[^a-zA-Z0-9]/g, "");
+      var clientRecord = resolveQuoteClientRecordLocal(record);
+      var clientId = sanitizeText(clientRecord ? clientRecord.get("id") : record.getString("cliente_id"), 64).replace(/[^a-zA-Z0-9]/g, "");
       if (!clientId) {
         throw new BadRequestError("Para generar contrato debes seleccionar un perfil de cliente validado.");
       }
-      var clientRecord = loadClientRecordLocal(clientId);
       if (!clientRecord) {
         throw new BadRequestError("No se encontro el perfil de cliente asociado al contrato.");
       }
@@ -1446,7 +1845,10 @@
       if (!readyForQuotes) {
         throw new BadRequestError("El expediente del cliente debe estar completo, vigente y aprobado antes de generar contrato.");
       }
-      if (!clientHasSavedDictamenLocal(clientId, clientTenant || tenant, clientRecord)) {
+      if (!readiness.canGenerateContract) {
+        if (readiness.hasContractEligibilityMetadata) {
+          throw new BadRequestError("El perfil del cliente todavia no tiene la etiqueta 'puede_generar_contrato'.");
+        }
         throw new BadRequestError("Para generar contrato necesitas un dictamen aprobado o guardado del cliente.");
       }
     }

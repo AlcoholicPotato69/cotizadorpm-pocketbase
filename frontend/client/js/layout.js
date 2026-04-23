@@ -1547,6 +1547,53 @@
             return ageDays >= 0 && ageDays <= Math.max(0, Number(maxAgeDays) || 0);
         }
 
+        function normalizeContractProfileTag(value) {
+            const raw = String(value ?? '').trim().toLowerCase();
+            if (!raw) return '';
+            return raw
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .replace(/[^a-z0-9]+/g, '_')
+                .replace(/^_+|_+$/g, '');
+        }
+
+        function collectContractProfileTags(validation) {
+            const source = safeProfileObject(validation);
+            const out = [];
+            const seen = new Set();
+            const pushTag = (value) => {
+                const tag = normalizeContractProfileTag(value);
+                if (!tag || seen.has(tag)) return;
+                seen.add(tag);
+                out.push(tag);
+            };
+            ['contractTags', 'etiquetasContrato', 'etiquetas_contrato'].forEach((field) => {
+                safeProfileArray(source[field]).forEach(pushTag);
+            });
+            pushTag(source.canGenerateContractTag);
+            pushTag(source.contractTag);
+            return out;
+        }
+
+        function profileHasContractTag(validation) {
+            const source = safeProfileObject(validation);
+            if (isTruthyProfileFlag(source.canGenerateContract) || isTruthyProfileFlag(source.canGenerateContracts)) return true;
+            return collectContractProfileTags(source).includes('puede_generar_contrato');
+        }
+
+        function profileHasContractEligibilityMetadata(validation) {
+            const source = safeProfileObject(validation);
+            return [
+                'canGenerateContract',
+                'canGenerateContracts',
+                'canGenerateContractTag',
+                'contractTag',
+                'contractTags',
+                'etiquetasContrato',
+                'etiquetas_contrato'
+            ].some((field) => Object.prototype.hasOwnProperty.call(source, field));
+        }
+
         function getProfileChecks(profile, tenantHint) {
             const tenant = normalizeProfileTenant(profile?.tenant || tenantHint, tenantHint || 'plaza_mayor');
             const docs = REQUIRED_BY_TENANT[tenant] || REQUIRED_BY_TENANT.plaza_mayor;
@@ -1585,6 +1632,7 @@
                 || isTruthyProfileFlag(validation?.dictamen?.saved)
                 || isTruthyProfileFlag(profile?.dictamen?.saved)
                 || isTruthyProfileFlag(profile?.dictamen?.approved);
+            const canContract = canQuote && (profileHasContractTag(validation) || (!profileHasContractEligibilityMetadata(validation) && hasDictamen));
             return {
                 tenant,
                 data: [
@@ -1596,7 +1644,7 @@
                 docs: docChecks,
                 canQuote,
                 hasDictamen,
-                canContract: canQuote && hasDictamen,
+                canContract,
                 status: String(profile?.perfil_estatus || validation.status || '').trim()
             };
         }

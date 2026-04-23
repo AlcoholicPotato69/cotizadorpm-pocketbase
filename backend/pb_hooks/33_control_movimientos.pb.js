@@ -34,6 +34,18 @@ onRecordDeleteRequest(function (e) {
   return require(`${__hooks}/control_movimientos_shared.js`).handleClientDelete(e);
 }, "clientes");
 
+onRecordCreateRequest(function (e) {
+  return require(`${__hooks}/control_movimientos_shared.js`).handleDictamenCreate(e);
+}, "clientes_dictamenes");
+
+onRecordUpdateRequest(function (e) {
+  return require(`${__hooks}/control_movimientos_shared.js`).handleDictamenUpdate(e);
+}, "clientes_dictamenes");
+
+onRecordDeleteRequest(function (e) {
+  return require(`${__hooks}/control_movimientos_shared.js`).handleDictamenDelete(e);
+}, "clientes_dictamenes");
+
 routerAdd("GET", "/api/cotizador/server-time", function (e) {
   return e.json(200, {
     ok: true,

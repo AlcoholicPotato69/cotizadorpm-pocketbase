@@ -193,7 +193,7 @@
     const cutoff = cutoffDate.toISOString();
     try {
       while (true) {
-        const records = $app.findRecordsByFilter(MOVEMENTS_COLLECTION, `created < "${cutoff}"`, "-created", 100, 0) || [];
+        const records = $app.findRecordsByFilter(MOVEMENTS_COLLECTION, `created_at < "${cutoff}"`, "-created_at", 100, 0) || [];
         if (!records.length) break;
         let deleted = 0;
         for (let i = 0; i < records.length; i += 1) {
@@ -240,6 +240,8 @@
       record.set("actor_role", trim(source.actor_role));
       record.set("resumen", trim(source.resumen));
       record.set("metadata", source.metadata && typeof source.metadata === "object" ? source.metadata : {});
+      record.set("created_at", nowIso);
+      record.set("updated_at", nowIso);
       $app.save(record);
       purgeOldMovements();
     } catch (err) {
@@ -468,6 +470,83 @@
       emails: normalizeEmails(getJsonArray(record, "correos_adicionales")),
       docs
     };
+  }
+
+  function getDictamenFileName(record) {
+    const raw = record ? record.get("pdf") : null;
+    if (Array.isArray(raw)) return trim(raw[0]);
+    return trim(raw);
+  }
+
+  function resolveClientName(clientId, fallback) {
+    const direct = trim(fallback);
+    if (direct) return direct;
+    const id = trim(clientId);
+    if (!id) return "";
+    try {
+      const client = $app.findRecordById("clientes", id);
+      return trim(client.get("nombre_completo")) || trim(client.get("correo")) || "";
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function dictamenStatus(meta) {
+    const source = safeObject(meta);
+    const raw = normalizeStatus(source.approval_status || source.status || "");
+    if (source.approved === true || raw === "aprobado" || raw === "auto_aprobado") return "aprobado";
+    if (source.rejected === true || raw === "rechazado") return "rechazado";
+    return raw || "pendiente";
+  }
+
+  function snapshotDictamen(record) {
+    if (!record) return null;
+    const meta = getJsonObject(record, "metadata");
+    const clientId = trim(record.get("cliente"));
+    const folio = trim(record.get("folio")) || trim(record.get("id")).slice(0, 8) || "Dictamen";
+    return {
+      id: trim(record.get("id")),
+      tenant: normalizeTenant(record.get("tenant")),
+      folio,
+      clientId,
+      clientName: resolveClientName(clientId, meta.cliente_nombre),
+      file: getDictamenFileName(record),
+      status: dictamenStatus(meta),
+      source: trim(meta.source || (meta.generated_by ? "generated" : "")) || "generated",
+      generatedAt: trim(meta.generated_at),
+      reviewedAt: trim(meta.reviewed_at),
+      approvedAt: trim(meta.approved_at)
+    };
+  }
+
+  function summarizeDictamenChange(before, after) {
+    const current = after || before || {};
+    const folio = current.folio || "Dictamen";
+    const client = current.clientName || "cliente";
+    if (!before && after) return "Dictamen " + folio + " creado para " + client;
+    if (before && !after) return "Dictamen " + folio + " eliminado de " + client;
+    if (before && after && before.status !== after.status) return "Dictamen " + folio + " cambio a " + (after.status || "pendiente");
+    return "Dictamen " + folio + " actualizado para " + client;
+  }
+
+  function saveDictamenMovement(type, snapshot, actor, summary, metadata) {
+    if (!snapshot || !snapshot.tenant) return;
+    saveMovement({
+      tenant: snapshot.tenant,
+      tipo_movimiento: type,
+      entidad_tipo: "dictamen",
+      entidad_id: snapshot.id,
+      entidad_nombre: snapshot.folio,
+      cliente_id: snapshot.clientId,
+      cliente_nombre: snapshot.clientName,
+      documento_campo: "dictamen",
+      documento_nombre: "Dictamen",
+      actor_id: actor.id,
+      actor_nombre: actor.name,
+      actor_role: actor.role,
+      resumen: summary,
+      metadata: metadata || {}
+    });
   }
 
   function docTransitionType(previousDoc, nextDoc) {
@@ -867,6 +946,33 @@
     });
   }
 
+  function handleDictamenCreate(e) {
+    const actor = buildActor(e, trim(e && e.record ? e.record.get("responsable_nombre") : "") || "Sistema", "verificador");
+    e.next();
+
+    const after = snapshotDictamen(e.record);
+    saveDictamenMovement("dictamen_creado", after, actor, summarizeDictamenChange(null, after), { despues: after });
+  }
+
+  function handleDictamenUpdate(e) {
+    const original = e && e.record && typeof e.record.originalCopy === "function" ? e.record.originalCopy() : null;
+    const before = snapshotDictamen(original) || snapshotExistingRecord("clientes_dictamenes", e ? e.record : null, snapshotDictamen);
+    const actor = buildActor(e, trim(e && e.record ? e.record.get("responsable_nombre") : "") || "Sistema", "verificador");
+    e.next();
+
+    const after = snapshotDictamen(e.record);
+    if (before && after && JSON.stringify(before) === JSON.stringify(after)) return;
+    saveDictamenMovement("dictamen_actualizado", after, actor, summarizeDictamenChange(before, after), { antes: before, despues: after });
+  }
+
+  function handleDictamenDelete(e) {
+    const before = snapshotDictamen(e.record);
+    const actor = buildActor(e, before ? before.clientName : "Sistema", "verificador");
+    e.next();
+
+    saveDictamenMovement("dictamen_eliminado", before, actor, summarizeDictamenChange(before, null), { snapshot: before });
+  }
+
   module.exports = {
     handleQuoteCreate,
     handleQuoteUpdate,
@@ -876,6 +982,9 @@
     handleSpaceDelete,
     handleClientCreate,
     handleClientUpdate,
-    handleClientDelete
+    handleClientDelete,
+    handleDictamenCreate,
+    handleDictamenUpdate,
+    handleDictamenDelete
   };
 })();

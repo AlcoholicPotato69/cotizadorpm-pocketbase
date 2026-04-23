@@ -56,9 +56,115 @@
   const MAX_COMPROBANTE_VALID_DAYS = null;
   const MAX_COMPROBANTE_VALID_MONTHS = 3;
   const CLIENT_DOCUMENT_MIRROR_TYPE = "otro";
+  const CLIENT_DOCUMENT_REQUIREMENTS_CONFIG_KEY = "client_document_requirements";
+  const CUSTOM_DOC_UPLOAD_PREFIX = "extra_doc__";
   const CLIENT_PROFILE_LINK_DURATION_SECONDS = 48 * 60 * 60;
   const CLIENT_PROFILE_LINK_SECRET_ENV = "PB_CLIENT_PROFILE_LINK_SECRET";
   const CLIENT_PROFILE_LINK_PURPOSE = "public_client_profile";
+  const CONTRACT_GENERATION_TAG = "puede_generar_contrato";
+  const CONTRACT_GENERATION_LABEL = "Puede generar contrato";
+  const DEFAULT_DOCUMENT_DEFINITIONS = {
+    plaza_mayor: [
+      {
+        field: "doc_acta_constitutiva",
+        label: "Acta constitutiva",
+        description: "PDF completo y legible.",
+        icon: "fa-building-circle-check",
+        requiredForProfile: true,
+        requiredForContract: true,
+        requiresDate: false,
+        allowOmit: true,
+        builtIn: true,
+        accept: ".pdf"
+      },
+      {
+        field: "doc_ine",
+        label: "INE o identificación",
+        description: "Identificación oficial vigente.",
+        icon: "fa-id-card",
+        requiredForProfile: true,
+        requiredForContract: true,
+        requiresDate: false,
+        allowOmit: true,
+        builtIn: true,
+        accept: ".pdf,.jpg,.jpeg,.png,.webp"
+      },
+      {
+        field: "doc_comprobante_domicilio",
+        label: "Comprobante de domicilio",
+        description: "Recibo de luz, agua o teléfono vigente.",
+        icon: "fa-home",
+        requiredForProfile: true,
+        requiredForContract: true,
+        requiresDate: true,
+        dateField: "comprobante_domicilio_emitido_el",
+        validityMode: "calendar_months",
+        validityMonths: MAX_COMPROBANTE_VALID_MONTHS,
+        allowOmit: true,
+        builtIn: true,
+        accept: ".pdf,.jpg,.jpeg,.png,.webp"
+      },
+      {
+        field: "doc_constancia_fiscal",
+        label: "Constancia de situacion fiscal",
+        description: "PDF oficial del SAT.",
+        icon: "fa-file-invoice",
+        requiredForProfile: true,
+        requiredForContract: true,
+        requiresDate: true,
+        dateField: "constancia_fiscal_emitida_el",
+        validityMode: "days",
+        validityDays: MAX_CONSTANCIA_VALID_DAYS,
+        allowOmit: false,
+        builtIn: true,
+        accept: ".pdf"
+      }
+    ],
+    casa_de_piedra: [
+      {
+        field: "doc_ine",
+        label: "INE o Pasaporte",
+        description: "Identificación oficial vigente.",
+        icon: "fa-id-card",
+        requiredForProfile: true,
+        requiredForContract: true,
+        requiresDate: false,
+        allowOmit: true,
+        builtIn: true,
+        accept: ".pdf,.jpg,.jpeg,.png,.webp"
+      },
+      {
+        field: "doc_comprobante_domicilio",
+        label: "Comprobante de domicilio",
+        description: "Recibo de luz, agua o teléfono vigente.",
+        icon: "fa-home",
+        requiredForProfile: true,
+        requiredForContract: true,
+        requiresDate: true,
+        dateField: "comprobante_domicilio_emitido_el",
+        validityMode: "calendar_months",
+        validityMonths: MAX_COMPROBANTE_VALID_MONTHS,
+        allowOmit: true,
+        builtIn: true,
+        accept: ".pdf,.jpg,.jpeg,.png,.webp"
+      },
+      {
+        field: "doc_constancia_fiscal",
+        label: "Constancia de situacion fiscal",
+        description: "PDF oficial del SAT.",
+        icon: "fa-file-invoice",
+        requiredForProfile: true,
+        requiredForContract: true,
+        requiresDate: true,
+        dateField: "constancia_fiscal_emitida_el",
+        validityMode: "days",
+        validityDays: MAX_CONSTANCIA_VALID_DAYS,
+        allowOmit: false,
+        builtIn: true,
+        accept: ".pdf"
+      }
+    ]
+  };
   let notificationsApi = null;
   const TENANT_THEME = {
     plaza_mayor: {
@@ -126,8 +232,157 @@
     return (tenant === "plaza_mayor" || tenant === "casa_de_piedra") ? tenant : "";
   }
 
+  function normalizeDocumentFieldKey(value) {
+    const raw = trim(value).toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9_]+/g, "_")
+      .replace(/^_+|_+$/g, "");
+    if (!raw) return "";
+    const withPrefix = raw.indexOf("doc_") === 0 ? raw : "doc_custom_" + raw;
+    return withPrefix.replace(/_+/g, "_").slice(0, 80);
+  }
+
+  function isBuiltInDocumentField(field) {
+    return DOC_FIELDS.indexOf(trim(field)) !== -1;
+  }
+
+  function cloneJson(value) {
+    try {
+      return JSON.parse(JSON.stringify(value || null));
+    } catch (_) {
+      return value;
+    }
+  }
+
+  function normalizeDocumentDefinition(input, tenant, orderIndex) {
+    const source = input && typeof input === "object" ? input : {};
+    const field = normalizeDocumentFieldKey(source.field || source.key || source.id || source.name);
+    if (!field || !/^doc_[a-z0-9_]{1,76}$/.test(field)) return null;
+    const builtIn = isBuiltInDocumentField(field);
+    const label = sanitizeText(source.label || source.nombre || DOC_LABELS[field] || field.replace(/^doc_/, "").replace(/_/g, " "), 120);
+    const dateField = trim(source.dateField || source.date_field);
+    const requiresDate = source.requiresDate === true || source.requires_date === true || source.pideFecha === true || source.pide_fecha === true;
+    const validityMode = trim(source.validityMode || source.validity_mode).toLowerCase();
+    const requiredForProfile = source.requiredForProfile !== false && source.required_for_profile !== false && source.profile !== false;
+    const requiredForContract = source.requiredForContract !== false && source.required_for_contract !== false && source.contract !== false;
+    const allowOmit = field === "doc_constancia_fiscal" ? false : source.allowOmit !== false && source.allow_omit !== false;
+    return {
+      field,
+      key: field,
+      label: label || field,
+      description: sanitizeText(source.description || source.desc || "", 240),
+      icon: sanitizeText(source.icon || "fa-file-lines", 50),
+      requiredForProfile,
+      requiredForContract,
+      requiresDate,
+      dateField: builtIn ? dateField : "",
+      validityMode,
+      validityDays: Math.max(0, Number(source.validityDays || source.validity_days || 0) || 0),
+      validityMonths: Math.max(0, Number(source.validityMonths || source.validity_months || 0) || 0),
+      allowOmit,
+      builtIn,
+      custom: !builtIn,
+      uploadField: builtIn ? field : CUSTOM_DOC_UPLOAD_PREFIX + field,
+      accept: sanitizeText(source.accept || ".pdf,.jpg,.jpeg,.png,.webp", 120),
+      requirements: safeArray(source.requirements || source.requisitos).map(function (line) {
+        return sanitizeText(line, 180);
+      }).filter(Boolean).slice(0, 8),
+      order: Number.isFinite(Number(source.order)) ? Number(source.order) : orderIndex
+    };
+  }
+
+  function mergeDocumentDefinitions(defaults, configured, tenant) {
+    const byField = {};
+    const order = [];
+    function upsert(def, index) {
+      const normalized = normalizeDocumentDefinition(def, tenant, index);
+      if (!normalized) return;
+      const existing = byField[normalized.field] || {};
+      byField[normalized.field] = Object.assign({}, existing, normalized, {
+        dateField: normalized.dateField || existing.dateField || "",
+        validityMode: normalized.validityMode || existing.validityMode || "",
+        validityDays: normalized.validityDays > 0 ? normalized.validityDays : (existing.validityDays || 0),
+        validityMonths: normalized.validityMonths > 0 ? normalized.validityMonths : (existing.validityMonths || 0),
+        builtIn: existing.builtIn === true || normalized.builtIn === true,
+        custom: !(existing.builtIn === true || normalized.builtIn === true)
+      });
+      if (order.indexOf(normalized.field) === -1) order.push(normalized.field);
+    }
+    (defaults || []).forEach(upsert);
+    (configured || []).forEach(function (item, idx) {
+      if (item && item.enabled === false) return;
+      upsert(item, (defaults || []).length + idx);
+    });
+    return order
+      .map(function (field) { return byField[field]; })
+      .filter(function (def) { return def && (def.requiredForProfile || def.requiredForContract); });
+  }
+
+  function getDocumentRequirementsConfig(tenant) {
+    const safeTenant = normalizeTenant(tenant) || "plaza_mayor";
+    try {
+      const rows = $app.findRecordsByFilter(
+        "configuracion",
+        "tenant = '" + safeTenant + "' && clave = '" + CLIENT_DOCUMENT_REQUIREMENTS_CONFIG_KEY + "'",
+        "-updated_at",
+        1,
+        0
+      ) || [];
+      const row = rows[0] || null;
+      if (!row) return {};
+      let exported = {};
+      try {
+        exported = row.withCustomData(true).publicExport() || {};
+      } catch (_) {
+        exported = {};
+      }
+      const rawConfigString = trim(row.getString ? row.getString("valor_json") : "");
+      if (rawConfigString) return parseJsonObject(rawConfigString);
+      const rawConfig = Object.prototype.hasOwnProperty.call(exported, "valor_json")
+        ? exported.valor_json
+        : row.get("valor_json");
+      return parseJsonObject(rawConfig);
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function getDocumentDefinitionsForTenant(tenant) {
+    const safeTenant = normalizeTenant(tenant) || "plaza_mayor";
+    const defaults = cloneJson(DEFAULT_DOCUMENT_DEFINITIONS[safeTenant] || DEFAULT_DOCUMENT_DEFINITIONS.plaza_mayor) || [];
+    const config = getDocumentRequirementsConfig(safeTenant);
+    const configured = Array.isArray(config) ? config : safeArray(config.documents || config.requisitos || config.items);
+    return mergeDocumentDefinitions(defaults, configured, safeTenant);
+  }
+
+  function getDocumentDefinitionByField(tenant, field) {
+    const target = normalizeDocumentFieldKey(field);
+    const defs = getDocumentDefinitionsForTenant(tenant);
+    for (let i = 0; i < defs.length; i += 1) {
+      if (defs[i].field === target) return defs[i];
+    }
+    return null;
+  }
+
   function parseJsonObject(value) {
-    if (value && typeof value === "object" && !Array.isArray(value)) return value;
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      try {
+        const rawObjectString = trim(String(value));
+        if (rawObjectString && rawObjectString !== "[object Object]" && rawObjectString.charAt(0) === "{") {
+          const parsedFromString = JSON.parse(rawObjectString);
+          return parsedFromString && typeof parsedFromString === "object" && !Array.isArray(parsedFromString) ? parsedFromString : {};
+        }
+      } catch (_) { }
+    }
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      try {
+        const parsed = JSON.parse(JSON.stringify(value));
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+      } catch (_) {
+        return value;
+      }
+    }
     if (typeof value === "string") {
       const raw = value.trim();
       if (!raw) return {};
@@ -194,13 +449,16 @@
     if (!record) return [];
     const validation = parseJsonObject(record.get("expediente_validacion"));
     const validationDocs = parseJsonObject(validation.documents);
-    const states = normalizeDocStateMap(record.get("documentos_estado"));
+    const states = getRecordDocStateMap(record);
     const snapshot = [];
-    for (let i = 0; i < DOC_FIELDS.length; i += 1) {
-      const field = DOC_FIELDS[i];
+    const definitions = getDocumentDefinitionsForTenant(record.get("tenant"));
+    for (let i = 0; i < definitions.length; i += 1) {
+      const definition = definitions[i];
+      const field = definition.field;
       const state = states[field] && typeof states[field] === "object" ? states[field] : {};
       const validationDoc = validationDocs[field] && typeof validationDocs[field] === "object" ? validationDocs[field] : {};
-      const uploaded = hasValue(record.get(field)) || validationDoc.uploaded === true;
+      const fileInfo = getClientDocumentFileInfo(record, definition, validationDoc);
+      const uploaded = fileInfo.uploaded === true;
       const omitted = isDocStateOmitted(state) || validationDoc.omitido === true || validationDoc.omitted === true;
       let status = trim(validationDoc.estado || validationDoc.status || state.status);
       if (omitted) status = "omitido";
@@ -208,15 +466,13 @@
       else if (!status) status = "pendiente";
       snapshot.push({
         field,
-        label: DOC_LABELS[field] || field,
-        fileName: getRecordFileName(record, field) || trim(validationDoc.fileName),
+        label: definition.label || DOC_LABELS[field] || field,
+        fileName: fileInfo.fileName || trim(validationDoc.fileName),
         uploaded,
         status,
         omitted,
         reason: trim(validationDoc.motivo || validationDoc.reason || state.motivo),
-        validityDate: (field === "doc_constancia_fiscal" || field === "doc_comprobante_domicilio")
-          ? getClientDocumentValidityReferenceDate(record, field, state, validationDoc)
-          : "",
+        validityDate: definition.requiresDate ? getClientDocumentDateValue(record, definition, state, validationDoc) : "",
         reviewedByName: trim(validationDoc.revisadoPorNombre || validationDoc.reviewedByName || state.revisado_por_nombre),
         reviewedAt: normalizeDate(validationDoc.revisadoAt || validationDoc.reviewedAt || state.revisado_at),
         updatedAt: trim(state.actualizado_at || validationDoc.actualizadoAt || validationDoc.updatedAt),
@@ -426,7 +682,71 @@
   }
 
   function safeArray(value) {
-    if (Array.isArray(value)) return value;
+    if (Array.isArray(value)) {
+      try {
+        if (typeof toString === "function") {
+          const rawNativeArrayString = trim(toString(value));
+          if (rawNativeArrayString && rawNativeArrayString.charAt(0) === "[") {
+            const parsedNativeArray = JSON.parse(rawNativeArrayString);
+            if (Array.isArray(parsedNativeArray)) return parsedNativeArray;
+          }
+        }
+      } catch (_) { }
+      return value;
+    }
+    if (value && typeof value === "object") {
+      try {
+        if (typeof toString === "function") {
+          const rawNativeString = trim(toString(value));
+          if (rawNativeString && rawNativeString !== "[object Object]") {
+            try {
+              const parsedNative = JSON.parse(rawNativeString);
+              if (Array.isArray(parsedNative)) return parsedNative;
+              if (parsedNative && typeof parsedNative === "object") {
+                if (Array.isArray(parsedNative.items)) return parsedNative.items;
+                if (Array.isArray(parsedNative.documents)) return parsedNative.documents;
+              }
+            } catch (_) {
+              return rawNativeString.split(/[\n,;]+/);
+            }
+          }
+        }
+      } catch (_) { }
+      try {
+        const rawObjectString = trim(String(value));
+        if (rawObjectString && rawObjectString !== "[object Object]") {
+          const parsedFromString = JSON.parse(rawObjectString);
+          if (Array.isArray(parsedFromString)) return parsedFromString;
+          if (parsedFromString && typeof parsedFromString === "object") {
+            if (Array.isArray(parsedFromString.items)) return parsedFromString.items;
+            if (Array.isArray(parsedFromString.documents)) return parsedFromString.documents;
+          }
+        }
+      } catch (_) { }
+      try {
+        if (typeof value.length === "number" && value.length >= 0) {
+          const direct = [];
+          for (let i = 0; i < value.length; i += 1) direct.push(value[i]);
+          return direct;
+        }
+      } catch (_) { }
+      try {
+        const cloned = JSON.parse(JSON.stringify(value));
+        if (Array.isArray(cloned)) return cloned;
+        if (cloned && typeof cloned === "object") {
+          if (Array.isArray(cloned.items)) return cloned.items;
+          const numericKeys = Object.keys(cloned).filter(function (key) { return /^\d+$/.test(key); });
+          if (numericKeys.length) {
+            return numericKeys
+              .sort(function (a, b) { return Number(a) - Number(b); })
+              .map(function (key) { return cloned[key]; });
+          }
+        }
+      } catch (_) { }
+      try {
+        return Array.from(value);
+      } catch (_) { }
+    }
     if (typeof value === "string") {
       const raw = value.trim();
       if (!raw) return [];
@@ -438,6 +758,27 @@
       }
     }
     return [];
+  }
+
+  function buildContractEligibilityMetadata(options) {
+    const opts = options && typeof options === "object" ? options : {};
+    const enabled = opts.readyForContracts === true;
+    const tag = enabled ? CONTRACT_GENERATION_TAG : "";
+    const label = enabled ? CONTRACT_GENERATION_LABEL : "";
+    const tags = tag ? [tag] : [];
+    const labels = label ? [label] : [];
+    return {
+      canGenerateContract: enabled,
+      canGenerateContracts: enabled,
+      canGenerateContractTag: tag,
+      canGenerateContractLabel: label,
+      contractTag: tag,
+      contractLabel: label,
+      contractTags: tags,
+      contractLabels: labels,
+      etiquetasContrato: tags,
+      etiquetas_contrato: tags
+    };
   }
 
   function sanitizePhones(value) {
@@ -464,6 +805,19 @@
       seen[email] = true;
       out.push(email);
       if (out.length >= 5) break;
+    }
+    return out;
+  }
+
+  function uniqueStringList(items) {
+    const source = Array.isArray(items) ? items : [];
+    const seen = {};
+    const out = [];
+    for (let i = 0; i < source.length; i += 1) {
+      const value = trim(source[i]);
+      if (!value || seen[value]) continue;
+      seen[value] = true;
+      out.push(value);
     }
     return out;
   }
@@ -685,8 +1039,9 @@
     return false;
   }
 
-  function validateUploadedFile(field, file) {
-    const label = DOC_LABELS[field] || "Documento";
+  function validateUploadedFile(field, file, definition) {
+    const def = definition && typeof definition === "object" ? definition : {};
+    const label = def.label || DOC_LABELS[field] || "Documento";
     if (!file) {
       throw new BadRequestError("No se encontro el archivo de " + label + ".");
     }
@@ -715,6 +1070,9 @@
         "El archivo de " + label + " debe ser un PDF, JPG, PNG o WEBP valido y coincidir con su extension."
       );
     }
+    if (def.custom === true && def.requiresDate === true && detectedMime !== "application/pdf") {
+      throw new BadRequestError("El archivo de " + label + " debe ser un PDF para poder extraer la fecha automaticamente.");
+    }
 
     const fileSize = Math.max(0, Number(file.size || 0) || 0);
     if (!fileSize) {
@@ -732,13 +1090,16 @@
     };
   }
 
-  function validateUploadedFilesForRequest(e) {
+  function validateUploadedFilesForRequest(e, tenant) {
     const uploaded = {};
-    for (let i = 0; i < DOC_FIELDS.length; i += 1) {
-      const field = DOC_FIELDS[i];
+    const definitions = getDocumentDefinitionsForTenant(tenant || (e && e.record ? e.record.get("tenant") : ""));
+    for (let i = 0; i < definitions.length; i += 1) {
+      const definition = definitions[i];
+      const field = definition.field;
+      const uploadField = definition.uploadField || field;
       let files = [];
       try {
-        files = e.findUploadedFiles(field) || [];
+        files = e.findUploadedFiles(uploadField) || [];
       } catch (_) {
         files = [];
       }
@@ -746,8 +1107,11 @@
         throw new BadRequestError("Solo puedes subir un archivo por documento.");
       }
       if (files.length === 1) {
-        validateUploadedFile(field, files[0]);
-        uploaded[field] = files[0];
+        validateUploadedFile(field, files[0], definition);
+        uploaded[field] = {
+          file: files[0],
+          definition
+        };
       }
     }
     return uploaded;
@@ -763,12 +1127,83 @@
     return trim(value);
   }
 
-  function getRequiredDocFieldsForTenant(tenant) {
-    const normalizedTenant = normalizeTenant(tenant);
-    return REQUIRED_DOC_FIELDS_BY_TENANT[normalizedTenant] || REQUIRED_DOC_FIELDS_BY_TENANT.plaza_mayor;
+  function getLatestClientDocumentRecord(tenant, clientId, field) {
+    const safeTenant = normalizeTenant(tenant);
+    const safeClientId = sanitizeId(clientId);
+    const safeField = normalizeDocumentFieldKey(field);
+    if (!safeTenant || !safeClientId || !safeField) return null;
+    try {
+      const rows = $app.findRecordsByFilter(
+        "documentos",
+        "tenant = '" + safeTenant + "' && cliente = '" + safeClientId + "' && documento_campo = '" + safeField + "' && vigente = true",
+        "-updated_at",
+        1,
+        0
+      ) || [];
+      if (rows[0]) return rows[0];
+    } catch (_) { }
+    try {
+      const rows = $app.findRecordsByFilter(
+        "documentos",
+        "tenant = '" + safeTenant + "' && cliente = '" + safeClientId + "' && documento_campo = '" + safeField + "'",
+        "-updated_at",
+        1,
+        0
+      ) || [];
+      return rows[0] || null;
+    } catch (_) {
+      return null;
+    }
   }
 
-  function canDocumentBeOmitted(field) {
+  function getClientDocumentFileInfo(record, definition, validationDoc) {
+    const def = definition && typeof definition === "object" ? definition : {};
+    const field = trim(def.field);
+    const validation = validationDoc && typeof validationDoc === "object" ? validationDoc : {};
+    if (!record || !field) return { uploaded: false, fileName: "", recordId: "", collection: "" };
+    if (def.builtIn !== false && isBuiltInDocumentField(field)) {
+      const fileName = getRecordFileName(record, field) || trim(validation.fileName);
+      return {
+        uploaded: !!fileName || validation.uploaded === true,
+        fileName,
+        recordId: getRecordId(record),
+        collection: "clientes"
+      };
+    }
+    const docRecord = getLatestClientDocumentRecord(record.get("tenant"), getRecordId(record), field);
+    const fileName = docRecord ? (getRecordFileName(docRecord, "archivo") || trim(docRecord.get("nombre_original"))) : trim(validation.fileName);
+    return {
+      uploaded: !!fileName || validation.uploaded === true,
+      fileName,
+      recordId: docRecord ? trim(docRecord.get("id")) : trim(validation.fileRecordId),
+      collection: "documentos",
+      ruta: docRecord ? trim(docRecord.get("ruta")) : trim(validation.ruta)
+    };
+  }
+
+  function getClientDocumentDateValue(record, definition, stateInfo, validationDoc) {
+    const def = definition && typeof definition === "object" ? definition : {};
+    const state = stateInfo && typeof stateInfo === "object" ? stateInfo : {};
+    const doc = validationDoc && typeof validationDoc === "object" ? validationDoc : {};
+    if (def.field === "doc_constancia_fiscal" || def.field === "doc_comprobante_domicilio") {
+      return getClientDocumentValidityReferenceDate(record, def.field, state, doc);
+    }
+    return normalizeDate(state.fecha_documento)
+      || normalizeDate(state.fecha)
+      || normalizeDate(doc.fechaDocumento)
+      || normalizeDate(doc.fecha_documento)
+      || normalizeDate(doc.validityDate);
+  }
+
+  function getRequiredDocFieldsForTenant(tenant) {
+    return getDocumentDefinitionsForTenant(tenant)
+      .filter(function (def) { return def.requiredForProfile === true; })
+      .map(function (def) { return def.field; });
+  }
+
+  function canDocumentBeOmitted(field, tenant) {
+    const definition = getDocumentDefinitionByField(tenant || "plaza_mayor", field);
+    if (definition) return definition.allowOmit !== false;
     return trim(field) !== "doc_constancia_fiscal";
   }
 
@@ -789,7 +1224,14 @@
 
   function normalizeDocStateMap(value) {
     if (!value) return {};
-    if (value && typeof value === "object" && !Array.isArray(value)) return value;
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      try {
+        const parsed = JSON.parse(JSON.stringify(value));
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+      } catch (_) {
+        return value;
+      }
+    }
     if (typeof value === "string" && value.trim().startsWith("{")) {
       try {
         const parsed = JSON.parse(value);
@@ -797,6 +1239,19 @@
       } catch (_) { }
     }
     return {};
+  }
+
+  function getRecordDocStateMap(record) {
+    if (!record) return {};
+    try {
+      const fromString = normalizeDocStateMap(record.getString ? record.getString("documentos_estado") : "");
+      if (Object.keys(fromString).length) return fromString;
+    } catch (_) { }
+    try {
+      return normalizeDocStateMap(record.get ? record.get("documentos_estado") : {});
+    } catch (_) {
+      return {};
+    }
   }
 
   function normalizeDocDecisionStatus(state) {
@@ -839,10 +1294,12 @@
 
   function buildValidation(record) {
     const tenant = normalizeTenant(record.get("tenant"));
-    const requiredDocFields = getRequiredDocFieldsForTenant(tenant);
+    const documentDefinitions = getDocumentDefinitionsForTenant(tenant);
+    const profileDefinitions = documentDefinitions.filter(function (def) { return def.requiredForProfile === true; });
+    const contractDefinitions = documentDefinitions.filter(function (def) { return def.requiredForContract === true; });
     const additionalPhones = sanitizePhones(record.get("telefonos_adicionales"));
     const mainPhone = normalizePhone(record.get("telefono"));
-    const docEstados = normalizeDocStateMap(record.get("documentos_estado"));
+    const docEstados = getRecordDocStateMap(record);
     const constanciaState = docEstados.doc_constancia_fiscal && typeof docEstados.doc_constancia_fiscal === "object"
       ? docEstados.doc_constancia_fiscal
       : {};
@@ -859,6 +1316,8 @@
     const comprobanteInfo = evaluateDocumentCalendarMonths(comprobanteEffectiveDate, MAX_COMPROBANTE_VALID_MONTHS);
     const missingFields = [];
     const missingDocuments = [];
+    const contractMissingFields = [];
+    const contractMissingDocuments = [];
     const documents = {};
 
     if (!trim(record.get("nombre_completo"))) missingFields.push("nombre_completo");
@@ -866,18 +1325,40 @@
     if (!trim(record.get("rfc"))) missingFields.push("rfc");
     if (!mainPhone && additionalPhones.length === 0) missingFields.push("telefono");
 
-    const constanciaOmitted = canDocumentBeOmitted("doc_constancia_fiscal") && isDocStateOmitted(docEstados.doc_constancia_fiscal);
-    const comprobanteOmitted = canDocumentBeOmitted("doc_comprobante_domicilio") && isDocStateOmitted(docEstados.doc_comprobante_domicilio);
-    let allDocsApproved = true;
-    let anyDocRejected = false;
+    const constanciaOmitted = canDocumentBeOmitted("doc_constancia_fiscal", tenant) && isDocStateOmitted(docEstados.doc_constancia_fiscal);
+    const comprobanteOmitted = canDocumentBeOmitted("doc_comprobante_domicilio", tenant) && isDocStateOmitted(docEstados.doc_comprobante_domicilio);
+    let profileDocsApproved = true;
+    let contractDocsApproved = true;
+    let profileDocRejected = false;
+    let contractDocRejected = false;
     let someDocPending = false;
 
-    for (let i = 0; i < requiredDocFields.length; i += 1) {
-      const field = requiredDocFields[i];
+    function evaluateConfiguredDate(def, dateValue, omitted) {
+      if (!def.requiresDate || omitted) return { valid: true, reason: "not_required" };
+      const normalized = normalizeDate(dateValue);
+      if (!normalized) return { valid: false, reason: "missing" };
+      if (def.field === "doc_constancia_fiscal") return constanciaInfo;
+      if (def.field === "doc_comprobante_domicilio") return comprobanteInfo;
+      const futureCheck = evaluateDocumentDate(normalized, 3650);
+      if (futureCheck.reason === "future") return futureCheck;
+      if (def.validityMode === "calendar_months" || def.validityMonths > 0) {
+        return evaluateDocumentCalendarMonths(normalized, def.validityMonths || MAX_COMPROBANTE_VALID_MONTHS);
+      }
+      if (def.validityDays > 0) return evaluateDocumentDate(normalized, def.validityDays);
+      return { valid: true, reason: "ok", ageDays: futureCheck.ageDays, thresholdDate: futureCheck.thresholdDate || "" };
+    }
+
+    for (let i = 0; i < documentDefinitions.length; i += 1) {
+      const definition = documentDefinitions[i];
+      const field = definition.field;
       const stateInfo = docEstados[field] && typeof docEstados[field] === "object" ? docEstados[field] : {};
-      const omitted = canDocumentBeOmitted(field) && isDocStateOmitted(stateInfo);
-      const uploaded = hasValue(record.get(field));
-      const fileName = getRecordFileName(record, field);
+      const omitted = canDocumentBeOmitted(field, tenant) && isDocStateOmitted(stateInfo);
+      const validationDoc = {};
+      const fileInfo = getClientDocumentFileInfo(record, definition, validationDoc);
+      const uploaded = fileInfo.uploaded === true;
+      const fileName = fileInfo.fileName || "";
+      const documentDate = getClientDocumentDateValue(record, definition, stateInfo, validationDoc);
+      const dateInfo = evaluateConfiguredDate(definition, documentDate, omitted);
 
       let dStat = stateInfo.status ? stateInfo.status : "pendiente";
       let dReason = stateInfo.motivo ? stateInfo.motivo : "";
@@ -889,19 +1370,42 @@
         dStat = "pendiente";
         dReason = "";
       } else {
-        if (dStat === "rechazado") anyDocRejected = true;
-        else if (dStat === "pendiente") someDocPending = true;
+        if (dStat === "rechazado") {
+          if (definition.requiredForProfile) profileDocRejected = true;
+          if (definition.requiredForContract) contractDocRejected = true;
+        } else if (dStat === "pendiente" && definition.requiredForProfile) {
+          someDocPending = true;
+        }
       }
-      if (dStat !== "aprobado" && dStat !== "omitido") allDocsApproved = false;
+      const docReady = uploaded && dStat === "aprobado" && dateInfo.valid !== false;
+      const covered = omitted || docReady;
+      if (definition.requiredForProfile && !covered) profileDocsApproved = false;
+      if (definition.requiredForContract && !covered) contractDocsApproved = false;
 
       documents[field] = {
         field,
-        label: DOC_LABELS[field],
+        key: field,
+        label: definition.label || DOC_LABELS[field] || field,
+        description: definition.description || "",
+        icon: definition.icon || "",
+        requiredForProfile: definition.requiredForProfile === true,
+        requiredForContract: definition.requiredForContract === true,
+        requiresDate: definition.requiresDate === true,
+        allowOmit: definition.allowOmit !== false,
+        builtIn: definition.builtIn === true,
+        custom: definition.custom === true,
+        uploadField: definition.uploadField || field,
         uploaded,
         fileName: fileName || "",
+        fileRecordId: fileInfo.recordId || "",
+        fileCollection: fileInfo.collection || (definition.builtIn ? "clientes" : "documentos"),
+        ruta: fileInfo.ruta || "",
         estado: dStat,
         motivo: dReason,
         omitido: omitted,
+        fechaDocumento: documentDate || "",
+        dateValid: dateInfo.valid !== false,
+        dateReason: dateInfo.reason || "",
         subidoAt: trim(stateInfo.subido_at),
         actualizadoAt: trim(stateInfo.actualizado_at),
         actualizadoDesdeRechazo: stateInfo.actualizado_desde_rechazo === true,
@@ -912,21 +1416,35 @@
         aprobadoPorNombre: trim(stateInfo.aprobado_por_nombre),
         aprobadoAt: trim(stateInfo.aprobado_at)
       };
-      if (!uploaded && !omitted) missingDocuments.push(field);
+      if (definition.requiredForProfile) {
+        if (!uploaded && !omitted) missingDocuments.push(field);
+        if (definition.requiresDate && !omitted && !documentDate) missingFields.push(field + "_fecha_documento");
+      }
+      if (definition.requiredForContract) {
+        if (!uploaded && !omitted) contractMissingDocuments.push(field);
+        if (definition.requiresDate && !omitted && !documentDate) contractMissingFields.push(field + "_fecha_documento");
+        if (uploaded && dStat !== "aprobado" && !omitted) contractMissingFields.push(field + "_aprobado");
+      }
     }
 
     if (!constanciaOmitted && !constanciaUploadDate) missingFields.push("constancia_fiscal_emitida_el");
     if (!comprobanteOmitted && !comprobanteEffectiveDate) missingFields.push("comprobante_domicilio_emitido_el");
 
-    const complete = missingFields.length === 0 && missingDocuments.length === 0;
+    const uniqueMissingFields = uniqueStringList(missingFields);
+    const uniqueMissingDocuments = uniqueStringList(missingDocuments);
+    const uniqueContractMissingFields = uniqueStringList(contractMissingFields);
+    const uniqueContractMissingDocuments = uniqueStringList(contractMissingDocuments);
+    const complete = uniqueMissingFields.length === 0 && uniqueMissingDocuments.length === 0;
     const constanciaValid = constanciaOmitted ? true : constanciaInfo.valid;
     const comprobanteValid = comprobanteOmitted ? true : comprobanteInfo.valid;
-    const ready = complete && constanciaValid && comprobanteValid && allDocsApproved && !anyDocRejected;
+    const ready = complete && constanciaValid && comprobanteValid && profileDocsApproved && !profileDocRejected;
     const dictamenStatus = getClientDictamenStatus(record, tenant);
     const dictamenGuardado = dictamenStatus.saved === true;
     const dictamenAprobado = dictamenStatus.approved === true;
-    const readyForContracts = ready && (dictamenAprobado || dictamenGuardado);
-    const contractMissingFields = readyForContracts ? [] : missingFields.slice();
+    const contractDocsReady = uniqueContractMissingDocuments.length === 0 && uniqueContractMissingFields.length === 0 && contractDocsApproved && !contractDocRejected;
+    const readyForContracts = ready && contractDocsReady && (dictamenAprobado || dictamenGuardado);
+    const contractEligibility = buildContractEligibilityMetadata({ readyForContracts });
+    const allContractMissingFields = readyForContracts ? [] : uniqueStringList(uniqueMissingFields.concat(uniqueContractMissingFields));
     if (ready && !(dictamenAprobado || dictamenGuardado)) contractMissingFields.push("dictamen_aprobado");
 
     let status = "pendiente_expediente";
@@ -934,7 +1452,7 @@
       status = "listo_para_contrato";
     } else if (ready) {
       status = "validado";
-    } else if (anyDocRejected) {
+    } else if (profileDocRejected) {
       status = "rechazado_parcial";
     } else if (complete && constanciaValid && comprobanteValid && someDocPending) {
       status = "pendiente_revision";
@@ -954,6 +1472,7 @@
         checkedAt: new Date().toISOString(),
         readyForQuotes: ready,
         readyForContracts,
+        ...contractEligibility,
         isComplete: complete,
         dictamenGuardado,
         dictamenAprobado,
@@ -986,7 +1505,9 @@
           currentApprovedAt: dictamenStatus.currentApprovedAt || "",
           historial: Array.isArray(dictamenStatus.history) ? dictamenStatus.history : []
         },
-        contractMissingFields,
+        documentRequirements: documentDefinitions,
+        contractMissingFields: readyForContracts ? [] : uniqueStringList(allContractMissingFields.concat(ready && !(dictamenAprobado || dictamenGuardado) ? ["dictamen_aprobado"] : [])),
+        contractMissingDocuments: uniqueContractMissingDocuments,
         maxConstanciaAgeDays: MAX_CONSTANCIA_VALID_DAYS,
         maxComprobanteAgeDays: MAX_COMPROBANTE_VALID_DAYS,
         maxComprobanteAgeMonths: MAX_COMPROBANTE_VALID_MONTHS,
@@ -1005,8 +1526,8 @@
         comprobanteDomicilioExpiraEl: comprobanteInfo.expiresAt || "",
         comprobanteDomicilioDiasAntiguedad: comprobanteInfo.ageDays,
         serverDate: formatUtcDate(currentUtcDay()),
-        missingFields,
-        missingDocuments,
+        missingFields: uniqueMissingFields,
+        missingDocuments: uniqueMissingDocuments,
         additionalPhoneCount: additionalPhones.length,
         documents
       }
@@ -1049,6 +1570,29 @@
     const additionalPhones = sanitizePhones(record.get("telefonos_adicionales"));
     const additionalEmails = sanitizeEmails(record.get("correos_adicionales"));
     const meta = accessMeta && typeof accessMeta === "object" ? accessMeta : {};
+    const publicValidation = Object.assign({}, validation.data, {
+      status: validation.status,
+      ready: validation.ready,
+      complete: validation.complete
+    });
+    [
+      "dictamen",
+      "dictamenGuardado",
+      "dictamenAprobado",
+      "dictamenPendiente",
+      "dictamenDesactualizado",
+      "readyForContracts",
+      "canGenerateContract",
+      "canGenerateContracts",
+      "canGenerateContractTag",
+      "contractTag",
+      "contractTags",
+      "etiquetasContrato",
+      "etiquetas_contrato",
+      "contractMissingFields"
+    ].forEach(function (field) {
+      delete publicValidation[field];
+    });
     return {
       id: trim(record.get("id")),
       tenant: trim(record.get("tenant")),
@@ -1061,15 +1605,10 @@
       telefonosAdicionales: additionalPhones,
       constanciaFiscalEmitidaEl: normalizeDate(record.get("constancia_fiscal_emitida_el")),
       comprobanteDomicilioEmitidoEl: normalizeDate(record.get("comprobante_domicilio_emitido_el")),
-      validation: Object.assign({}, validation.data, {
-        status: validation.status,
-        ready: validation.ready,
-        complete: validation.complete
-      }),
+      validation: publicValidation,
       quotes: buildPublicClientQuoteSummaries(record),
       profileStatus: validation.status,
       readyForQuotes: validation.ready,
-      readyForContracts: validation.data.readyForContracts === true,
       serverDate: validation.data.serverDate,
       accessExpiresAt: trim(meta.expiresAt),
       theme
@@ -1108,7 +1647,7 @@
         append($app.findRecordsByFilter(
           "cotizaciones",
           "tenant = '" + tenant + "' && cliente_id = '" + clientId + "'",
-          "-created",
+          "-created_at",
           100,
           0
         ) || []);
@@ -1117,7 +1656,7 @@
         append($app.findRecordsByFilter(
           "cotizaciones",
           "tenant = '" + tenant + "' && cliente_email = '" + clientEmail + "'",
-          "-created",
+          "-created_at",
           100,
           0
         ) || []);
@@ -1127,8 +1666,8 @@
     return Object.keys(merged)
       .map(function (id) { return merged[id]; })
       .sort(function (a, b) {
-        const aTs = Date.parse(trim(a.get("updated")) || trim(a.get("created")) || "") || 0;
-        const bTs = Date.parse(trim(b.get("updated")) || trim(b.get("created")) || "") || 0;
+        const aTs = Date.parse(trim(a.get("updated_at")) || trim(a.get("created_at")) || "") || 0;
+        const bTs = Date.parse(trim(b.get("updated_at")) || trim(b.get("created_at")) || "") || 0;
         return bTs - aTs;
       })
       .map(function (row) {
@@ -1144,12 +1683,11 @@
           fechaInicio: normalizeDate(row.get("fecha_inicio")),
           fechaFin: normalizeDate(row.get("fecha_fin")),
           status: trim(row.get("status")).toLowerCase(),
-          flujoEstado: trim(row.get("flujo_estado")).toLowerCase(),
+          flujoEstado: normalizePublicQuoteFlow(row.get("flujo_estado")),
           precioFinal: Number(row.get("precio_final") || 0) || 0,
           numeroContrato: trim(row.get("numero_contrato")),
           documents: {
             cotizacion: !!(getRecordFileName(row, "cotizacion_final_file") || trim(row.get("url_cotizacion_final"))),
-            ordenCompra: !!(getRecordFileName(row, "orden_compra_file") || trim(row.get("url_orden_compra"))),
             contrato: !!(getRecordFileName(row, "contrato_file") || trim(row.get("contrato_url"))),
             facturaPdf: !!(getRecordFileName(row, "factura_pdf_file") || trim(row.get("factura_pdf_url"))),
             facturaXml: !!(getRecordFileName(row, "factura_xml_file") || trim(row.get("factura_xml_url"))),
@@ -1159,10 +1697,15 @@
       });
   }
 
+  function normalizePublicQuoteFlow(value) {
+    const raw = trim(value).toLowerCase();
+    if (raw === "orden_compra" || raw === "orden") return "aprobada";
+    return raw;
+  }
+
   function normalizePublicAssetKind(value) {
     const raw = trim(value).toLowerCase();
     if (raw === "cotizacion" || raw === "cotizacion_final") return "cotizacion";
-    if (raw === "orden" || raw === "orden_compra") return "orden_compra";
     if (raw === "contrato" || raw === "contract") return "contrato";
     if (raw === "factura_pdf" || raw === "factura") return "factura_pdf";
     if (raw === "factura_xml" || raw === "xml") return "factura_xml";
@@ -1217,7 +1760,7 @@
       const rows = $app.findRecordsByFilter(
         "documentos",
         "tenant = '" + safeTenant + "' && ruta = '" + safePath + "'",
-        "-created",
+        "-created_at",
         1,
         0
       ) || [];
@@ -1265,7 +1808,7 @@
       return $app.findRecordsByFilter(
         "documentos",
         "tenant = '" + safeTenant + "' && cliente = '" + safeClientId + "' && documento_campo = '" + safeField + "'",
-        "-updated",
+        "-updated_at",
         100,
         0
       ) || [];
@@ -1396,11 +1939,68 @@
     });
   }
 
+  function upsertClientCustomDocumentRecord(record, definition, uploadedFile, stateInfo) {
+    if (!record || !definition || definition.builtIn === true || !uploadedFile) return null;
+    const tenant = normalizeTenant(record.get("tenant"));
+    const clientId = getRecordId(record);
+    const field = normalizeDocumentFieldKey(definition.field);
+    if (!tenant || !clientId || !field) return null;
+    const collection = getCollectionByName("documentos");
+    if (!collection) throw new BadRequestError("No se encontro el almacen de documentos.");
+    const originalName = sanitizeUploadName(uploadedFile.originalName || uploadedFile.name || definition.label || "documento.pdf");
+    const existing = findClientDocumentMirrorRecords(tenant, clientId, field);
+    const ruta = buildClientDocumentMirrorPath(tenant, clientId, field, originalName);
+    const target = existing.find(function (row) {
+      return trim(row.get("ruta")) === ruta;
+    }) || findDocumentoByPath(tenant, ruta) || new Record(collection);
+    const state = stateInfo && typeof stateInfo === "object" ? stateInfo : {};
+    const metadata = {
+      source: "cliente_expediente",
+      tenant: tenant,
+      cliente_id: clientId,
+      cliente_nombre: trim(record.get("nombre_completo")),
+      documento_campo: field,
+      documento_nombre: definition.label || field,
+      estado: trim(state.status) || "pendiente",
+      omitido: state.omitido === true,
+      vigente: true,
+      historico: false,
+      file_name: originalName,
+      emitted_at: normalizeDate(state.fecha_documento || state.fecha),
+      updated_at: trim(state.actualizado_at),
+      updated_from_rejection: state.actualizado_desde_rechazo === true,
+      reason: trim(state.motivo)
+    };
+    const form = new RecordUpsertForm($app, target);
+    form.grantSuperuserAccess();
+    form.load({
+      tenant: tenant,
+      tipo: CLIENT_DOCUMENT_MIRROR_TYPE,
+      nombre_original: originalName,
+      ruta: ruta,
+      cotizacion_id: "",
+      cliente: clientId,
+      documento_campo: field,
+      estado: metadata.estado,
+      omitido: false,
+      vigente: true,
+      metadata: metadata,
+      archivo: $filesystem.fileFromBytes(toBytes(uploadedFile), originalName),
+      updated_at: new Date().toISOString()
+    });
+    form.submit();
+    archiveClientDocumentMirrorRecords(existing, trim(target.get("id")), {
+      reason: "reemplazado",
+      replacedByFileName: originalName
+    });
+    return target;
+  }
+
   function syncClientDocumentMirrors(record) {
     if (!record) return;
     const validation = parseJsonObject(record.get("expediente_validacion"));
     const validationDocs = parseJsonObject(validation.documents);
-    const docStates = normalizeDocStateMap(record.get("documentos_estado"));
+    const docStates = getRecordDocStateMap(record);
     for (let i = 0; i < DOC_FIELDS.length; i += 1) {
       syncClientDocumentMirrorField(record, DOC_FIELDS[i], docStates, validationDocs);
     }
@@ -1409,7 +2009,6 @@
   function buildPublicQuoteDownloadName(quoteRecord, kind, originalName) {
     const labels = {
       cotizacion: "Cotizacion",
-      orden_compra: "OrdenCompra",
       contrato: "Contrato",
       factura_pdf: "Factura",
       factura_xml: "FacturaXML",
@@ -1455,7 +2054,6 @@
 
     const fieldMap = {
       cotizacion: { fileField: "cotizacion_final_file", pathField: "url_cotizacion_final" },
-      orden_compra: { fileField: "orden_compra_file", pathField: "url_orden_compra" },
       contrato: { fileField: "contrato_file", pathField: "contrato_url" },
       factura_pdf: { fileField: "factura_pdf_file", pathField: "factura_pdf_url" },
       factura_xml: { fileField: "factura_xml_file", pathField: "factura_xml_url" }
@@ -1644,12 +2242,25 @@
     return toPocketBaseDateTime(normalized);
   }
 
+  function assertValidGenericDocumentDate(dateString, label) {
+    const normalized = normalizeDate(dateString);
+    if (!normalized) {
+      throw new BadRequestError("Debes capturar la fecha del documento " + (label || "") + ".");
+    }
+    if (evaluateDocumentDate(normalized, 3650).reason === "future") {
+      throw new BadRequestError("La fecha del documento " + (label || "") + " no puede estar en el futuro.");
+    }
+    return normalized;
+  }
+
   function handleRecordCreateRequest(e) {
     if (!e || !e.record) return e.next();
     e.record.set("nombre_completo", sanitizeText(e.record.get("nombre_completo"), 255));
     e.record.set("correo", sanitizeText(e.record.get("correo"), 255).toLowerCase());
     e.record.set("telefono", normalizePhone(e.record.get("telefono")));
     e.record.set("rfc", sanitizeText(e.record.get("rfc"), 40).toUpperCase());
+    e.record.set("telefonos_adicionales", sanitizePhones(e.record.get("telefonos_adicionales")));
+    e.record.set("correos_adicionales", sanitizeEmails(e.record.get("correos_adicionales")));
     const profileOrigin = sanitizeText(e.record.get("perfil_origen"), 40).toLowerCase();
     e.record.set("perfil_origen", profileOrigin === "cotizacion_rapida" ? "cotizacion_rapida" : "manual");
     validateUploadedFilesForRequest(e);
@@ -1667,8 +2278,8 @@
   function handleRecordUpdateRequest(e) {
     if (!e || !e.record) return e.next();
     const original = typeof e.record.originalCopy === "function" ? e.record.originalCopy() : null;
-    const originalDocEstados = normalizeDocStateMap(original ? original.get("documentos_estado") : {});
-    const incomingDocEstados = normalizeDocStateMap(e.record.get("documentos_estado"));
+    const originalDocEstados = getRecordDocStateMap(original);
+    const incomingDocEstados = getRecordDocStateMap(e.record);
     const incomingDocStateChanged = JSON.stringify(incomingDocEstados) !== JSON.stringify(originalDocEstados);
     if (incomingDocStateChanged) {
       const isSuperuser = !!(e.hasSuperuserAuth && e.hasSuperuserAuth());
@@ -1676,6 +2287,7 @@
       if (!isSuperuser && !canVerifyClientDocuments(authRecord)) {
         throw new ForbiddenError("Solo un usuario con rango Verificador puede validar documentos.");
       }
+      const tenant = normalizeTenant(e.record.get("tenant"));
       const incomingConstanciaState = incomingDocEstados.doc_constancia_fiscal && typeof incomingDocEstados.doc_constancia_fiscal === "object"
         ? incomingDocEstados.doc_constancia_fiscal
         : {};
@@ -1687,9 +2299,16 @@
       }
       const actor = buildAuthActorMeta(authRecord);
       const reviewedAt = new Date().toISOString();
-      for (let i = 0; i < DOC_FIELDS.length; i += 1) {
-        const field = DOC_FIELDS[i];
+      const reviewFields = [];
+      DOC_FIELDS.forEach(function (field) { if (reviewFields.indexOf(field) === -1) reviewFields.push(field); });
+      Object.keys(incomingDocEstados || {}).forEach(function (field) {
+        const normalized = normalizeDocumentFieldKey(field);
+        if (normalized && reviewFields.indexOf(normalized) === -1) reviewFields.push(normalized);
+      });
+      for (let i = 0; i < reviewFields.length; i += 1) {
+        const field = reviewFields[i];
         if (!Object.prototype.hasOwnProperty.call(incomingDocEstados, field)) continue;
+        if (!getDocumentDefinitionByField(tenant, field) && !isBuiltInDocumentField(field)) continue;
         const nextState = incomingDocEstados[field] && typeof incomingDocEstados[field] === "object"
           ? incomingDocEstados[field]
           : {};
@@ -1698,8 +2317,8 @@
           : {};
         const nextOmitted = normalizeDocDecisionOmitted(nextState);
         const prevOmitted = normalizeDocDecisionOmitted(prevState);
-        if (field === "doc_constancia_fiscal" && nextOmitted && !prevOmitted) {
-          throw new BadRequestError("La constancia de situacion fiscal no puede marcarse como omitida.");
+        if (!canDocumentBeOmitted(field, tenant) && nextOmitted && !prevOmitted) {
+          throw new BadRequestError("Este documento no puede marcarse como omitido.");
         }
         const changed = (
           normalizeDocDecisionStatus(nextState) !== normalizeDocDecisionStatus(prevState) ||
@@ -1730,6 +2349,7 @@
       e.record.set("correo", sanitizeText(e.record.get("correo"), 255).toLowerCase());
       e.record.set("telefono", normalizePhone(e.record.get("telefono")));
       e.record.set("rfc", sanitizeText(e.record.get("rfc"), 40).toUpperCase());
+      e.record.set("telefonos_adicionales", sanitizePhones(e.record.get("telefonos_adicionales")));
       e.record.set("correos_adicionales", sanitizeEmails(e.record.get("correos_adicionales")));
       e.record.set(
         "comprobante_domicilio_emitido_el",
@@ -1760,13 +2380,7 @@
     // Si se subieron nuevos documentos o cambió la fecha de constancia, revocamos la validación
     // Si se subieron nuevos documentos, chequeamos bloqueos y reseteamos el estado a pendiente
     try {
-      let docEstadosStr = e.record.get("documentos_estado");
-      let docEstados = {};
-      if (typeof docEstadosStr === "string" && docEstadosStr.startsWith("{")) {
-        try { docEstados = JSON.parse(docEstadosStr); } catch (_) { }
-      } else if (docEstadosStr && typeof docEstadosStr === "object") {
-        docEstados = docEstadosStr;
-      }
+      let docEstados = getRecordDocStateMap(e.record);
 
       const uploaded = validateUploadedFilesForRequest(e);
       let changed = false;
@@ -1774,6 +2388,7 @@
       for (let i = 0; i < DOC_FIELDS.length; i += 1) {
         const field = DOC_FIELDS[i];
         if (uploaded[field]) {
+          const uploadedFile = uploaded[field].file || uploaded[field];
           const dStat = docEstados[field] && docEstados[field].status ? docEstados[field].status : "";
           // Block if the user is not an admin and the file is locked
           const admin = e.httpContext ? e.httpContext.get("admin") : null;
@@ -1854,13 +2469,15 @@
     const isSuperuser = !!(e.hasSuperuserAuth && e.hasSuperuserAuth());
     applyValidationToRecord(e.record, { touchPublicUpdateAt: false });
     if (!authRecord || isSuperuser || canVerifyClientDocuments(authRecord)) return e.next();
-    const docEstados = normalizeDocStateMap(e.record.get("documentos_estado"));
+    const docEstados = getRecordDocStateMap(e.record);
     const filteredStates = {};
-    for (let i = 0; i < DOC_FIELDS.length; i += 1) {
-      const field = DOC_FIELDS[i];
+    const tenant = normalizeTenant(e.record.get("tenant"));
+    const definitions = getDocumentDefinitionsForTenant(tenant);
+    for (let i = 0; i < definitions.length; i += 1) {
+      const field = definitions[i].field;
       const state = docEstados[field] && typeof docEstados[field] === "object" ? docEstados[field] : {};
-      const approved = normalizeDocDecisionStatus(state) === "aprobado" || (canDocumentBeOmitted(field) && normalizeDocDecisionOmitted(state));
-      if (!approved) {
+      const approved = normalizeDocDecisionStatus(state) === "aprobado" || (canDocumentBeOmitted(field, tenant) && normalizeDocDecisionOmitted(state));
+      if (!approved && isBuiltInDocumentField(field)) {
         e.record.hide(field);
         continue;
       }
@@ -2122,6 +2739,10 @@
     const payload = new DynamicModel({
       access: "",
       accessToken: "",
+      telefono: "",
+      phone: "",
+      telefonoPrincipal: "",
+      telefono_principal: "",
       additionalPhones: "",
       telefonosAdicionales: "",
       telefonos_adicionales: "",
@@ -2131,6 +2752,9 @@
       correo: "",
       email: "",
       rfc: "",
+      documentos_fechas: "",
+      documentDates: "",
+      document_dates: "",
       comprobanteDomicilioEmitidoEl: "",
       comprobante_domicilio_emitido_el: "",
       constanciaFiscalEmitidaEl: "",
@@ -2139,51 +2763,126 @@
     });
     e.bindBody(payload);
 
-    const access = resolveAuthorizedAccess(payload.access || payload.accessToken);
+    let requestBody = {};
+    try {
+      const info = typeof e.requestInfo === "function" ? e.requestInfo() : null;
+      requestBody = info && info.body && typeof info.body === "object" ? info.body : {};
+    } catch (_) {
+      requestBody = {};
+    }
+    const formValue = function (key) {
+      const fromBody = requestBody && Object.prototype.hasOwnProperty.call(requestBody, key) ? requestBody[key] : "";
+      if (Array.isArray(fromBody)) return fromBody.length ? fromBody[0] : "";
+      if (fromBody !== null && fromBody !== undefined && trim(fromBody)) return fromBody;
+      if (typeof e.formValue === "function") return e.formValue(key);
+      if (e.request && typeof e.request.formValue === "function") return e.request.formValue(key);
+      return "";
+    };
+    const submittedValue = function () {
+      for (let i = 0; i < arguments.length; i += 1) {
+        const value = arguments[i];
+        if (value === null || value === undefined) continue;
+        if (Array.isArray(value)) {
+          if (value.length) return value;
+          continue;
+        }
+        if (typeof value === "object") {
+          const rawObjectString = trim(String(value));
+          if (rawObjectString && rawObjectString !== "[object Object]") return value;
+          continue;
+        }
+        if (trim(value)) return value;
+      }
+      return "";
+    };
+
+    const access = resolveAuthorizedAccess(submittedValue(payload.access, payload.accessToken, formValue("access"), formValue("accessToken")));
     const record = access.record;
-    const uploadedFiles = validateUploadedFilesForRequest(e);
-    const additionalPhones = sanitizePhones(
-      payload.additionalPhones || payload.telefonosAdicionales || payload.telefonos_adicionales
+    const uploadedFiles = validateUploadedFilesForRequest(e, record.get("tenant"));
+    const requestedPhoneRaw = trim(submittedValue(
+      payload.telefono,
+      payload.phone,
+      payload.telefonoPrincipal,
+      payload.telefono_principal,
+      formValue("telefono"),
+      formValue("phone"),
+      formValue("telefonoPrincipal"),
+      formValue("telefono_principal")
+    ));
+    const requestedPhone = normalizePhone(requestedPhoneRaw);
+    const additionalPhones = sanitizePhones(submittedValue(
+      payload.additionalPhones,
+      payload.telefonosAdicionales,
+      payload.telefonos_adicionales,
+      formValue("additionalPhones"),
+      formValue("telefonosAdicionales"),
+      formValue("telefonos_adicionales")
+    )).slice(0, 2);
+    const additionalEmails = sanitizeEmails(submittedValue(
+      payload.additionalEmails,
+      payload.correosAdicionales,
+      payload.correos_adicionales,
+      formValue("additionalEmails"),
+      formValue("correosAdicionales"),
+      formValue("correos_adicionales")
+    )).slice(0, 2);
+    const requestedEmail = normalizeEmail(submittedValue(payload.correo, payload.email, formValue("correo"), formValue("email")));
+    const requestedRfc = sanitizeText(submittedValue(payload.rfc, formValue("rfc")), 40).toUpperCase();
+    const submittedDocumentDates = parseJsonObject(
+      submittedValue(
+        payload.documentos_fechas,
+        payload.documentDates,
+        payload.document_dates,
+        formValue("documentos_fechas"),
+        formValue("documentDates"),
+        formValue("document_dates")
+      )
     );
-    const additionalEmails = sanitizeEmails(
-      payload.additionalEmails || payload.correosAdicionales || payload.correos_adicionales
-    );
-    const requestedEmail = normalizeEmail(payload.correo || payload.email);
-    const requestedRfc = sanitizeText(payload.rfc, 40).toUpperCase();
-    const docEstados = normalizeDocStateMap(record.get("documentos_estado"));
-    const rawConstanciaDate = trim(
-      payload.constanciaFiscalEmitidaEl || payload.constanciaIssuedAt || payload.constancia_fiscal_emitida_el
-    );
-    const rawComprobanteDate = trim(
-      payload.comprobanteDomicilioEmitidoEl || payload.comprobante_domicilio_emitido_el
-    );
+    const docEstados = getRecordDocStateMap(record);
+    const rawConstanciaDate = trim(submittedValue(
+      payload.constanciaFiscalEmitidaEl,
+      payload.constanciaIssuedAt,
+      payload.constancia_fiscal_emitida_el,
+      formValue("constanciaFiscalEmitidaEl"),
+      formValue("constanciaIssuedAt"),
+      formValue("constancia_fiscal_emitida_el")
+    ));
+    const rawComprobanteDate = trim(submittedValue(
+      payload.comprobanteDomicilioEmitidoEl,
+      payload.comprobante_domicilio_emitido_el,
+      formValue("comprobanteDomicilioEmitidoEl"),
+      formValue("comprobante_domicilio_emitido_el")
+    ));
     const hasConstanciaUpload = !!uploadedFiles.doc_constancia_fiscal;
     const hasComprobanteUpload = !!uploadedFiles.doc_comprobante_domicilio;
-    const constanciaLockedByAdmin = isDocStateApproved(docEstados.doc_constancia_fiscal);
-    const comprobanteLockedByAdmin = isDocStateApprovedOrOmitted(docEstados.doc_comprobante_domicilio);
     let constanciaDate = null;
     let comprobanteDate = null;
 
     if (rawConstanciaDate || hasConstanciaUpload) {
       constanciaDate = assertValidConstanciaForSubmission(rawConstanciaDate);
-    } else if (!constanciaLockedByAdmin && !normalizeDate(record.get("constancia_fiscal_emitida_el"))) {
-      constanciaDate = assertValidConstanciaForSubmission(rawConstanciaDate);
     }
 
     if (rawComprobanteDate || hasComprobanteUpload) {
       comprobanteDate = assertValidComprobanteForSubmission(rawComprobanteDate);
-    } else if (!comprobanteLockedByAdmin && !normalizeDate(record.get("comprobante_domicilio_emitido_el"))) {
-      comprobanteDate = assertValidComprobanteForSubmission(rawComprobanteDate);
     }
 
-    if (trim(payload.correo || payload.email) && !requestedEmail) {
+    if (trim(submittedValue(payload.correo, payload.email, formValue("correo"), formValue("email"))) && !requestedEmail) {
       throw new BadRequestError("El correo proporcionado no es valido.");
     }
+    if (requestedPhoneRaw && !requestedPhone) {
+      throw new BadRequestError("El telefono principal proporcionado no es valido.");
+    }
 
-    record.set("telefonos_adicionales", additionalPhones);
+    const effectiveMainPhone = requestedPhone || normalizePhone(record.get("telefono"));
+    const filteredAdditionalPhones = additionalPhones.filter(function (phone) {
+      return phone && phone !== effectiveMainPhone;
+    });
+
+    record.set("telefonos_adicionales", filteredAdditionalPhones);
     record.set("correos_adicionales", additionalEmails);
+    if (requestedPhone) record.set("telefono", requestedPhone);
     if (requestedEmail) record.set("correo", requestedEmail);
-    if (requestedRfc) record.set("rfc", requestedRfc);
+    if (requestedRfc && !trim(record.get("rfc")) && hasConstanciaUpload) record.set("rfc", requestedRfc);
     if (constanciaDate !== null) record.set("constancia_fiscal_emitida_el", constanciaDate);
     if (comprobanteDate !== null) record.set("comprobante_domicilio_emitido_el", comprobanteDate);
 
@@ -2192,6 +2891,8 @@
     for (let i = 0; i < DOC_FIELDS.length; i += 1) {
       const field = DOC_FIELDS[i];
       if (uploadedFiles[field]) {
+        const uploadInfo = uploadedFiles[field];
+        const uploadFile = uploadInfo.file || uploadInfo;
         const currentState = docEstados[field] && typeof docEstados[field] === "object" ? docEstados[field] : {};
         const currentStatus = normalizeDocDecisionStatus(currentState);
         const existingFilePresent = hasValue(record.get(field));
@@ -2201,7 +2902,7 @@
         ) {
           throw new BadRequestError("El documento " + (DOC_LABELS[field] || field) + " ya fue aprobado o esta en revision.");
         }
-        record.set(field, uploadedFiles[field]);
+        record.set(field, uploadFile);
         docEstados[field] = {
           status: "pendiente",
           motivo: "",
@@ -2216,6 +2917,61 @@
           label: DOC_LABELS[field] || field,
           type: "documento_subido"
         });
+      }
+    }
+    const customDefinitions = getDocumentDefinitionsForTenant(record.get("tenant")).filter(function (def) {
+      return def.custom === true;
+    });
+    for (let i = 0; i < customDefinitions.length; i += 1) {
+      const definition = customDefinitions[i];
+      const field = definition.field;
+      const uploadInfo = uploadedFiles[field];
+      if (!uploadInfo) continue;
+      try {
+        const uploadFile = uploadInfo.file || uploadInfo;
+        const currentState = docEstados[field] && typeof docEstados[field] === "object" ? docEstados[field] : {};
+        const currentStatus = normalizeDocDecisionStatus(currentState);
+        const existingDoc = getLatestClientDocumentRecord(record.get("tenant"), getRecordId(record), field);
+        const existingFilePresent = !!(existingDoc && getRecordFileName(existingDoc, "archivo"));
+        if ((existingFilePresent && currentStatus !== "rechazado") || isDocStateOmitted(currentState)) {
+          throw new BadRequestError("El documento " + (definition.label || field) + " ya fue aprobado o esta en revision.");
+        }
+        const dateValue = trim(
+          submittedDocumentDates[field] ||
+          submittedDocumentDates[definition.uploadField] ||
+          payload[definition.uploadField + "_date"] ||
+          payload[definition.uploadField + "_fecha"] ||
+          payload[field + "_fecha_documento"] ||
+          payload[field + "_date"] ||
+          formValue(definition.uploadField + "_date") ||
+          formValue(definition.uploadField + "_fecha") ||
+          formValue(field + "_fecha_documento") ||
+          formValue(field + "_date")
+        );
+        const nextState = {
+          status: "pendiente",
+          motivo: "",
+          omitido: false,
+          subido_at: new Date().toISOString(),
+          actualizado_at: new Date().toISOString(),
+          actualizado_desde_rechazo: currentStatus === "rechazado"
+        };
+        if (definition.requiresDate === true || dateValue) {
+          nextState.fecha_documento = assertValidGenericDocumentDate(dateValue, definition.label);
+        }
+        docEstados[field] = nextState;
+        upsertClientCustomDocumentRecord(record, definition, uploadFile, nextState);
+        docEstadosChanged = true;
+        uploadedDocNotifications.push({
+          field,
+          label: definition.label || field,
+          type: "documento_subido"
+        });
+      } catch (customDocErr) {
+        console.log("[clientes public complete] Error processing custom document", field, String(customDocErr));
+        throw customDocErr && customDocErr.name === "BadRequestError"
+          ? customDocErr
+          : new BadRequestError("No se pudo guardar el documento " + (definition.label || field) + ".");
       }
     }
     if (docEstadosChanged) {
@@ -2269,10 +3025,12 @@
     applyValidationToRecord(record, { touchPublicUpdateAt: true });
     try {
       $app.save(record);
-    } catch (_) { }
+    } catch (err) {
+      console.log("[client_profile] Error refreshing client validation:", String(err));
+    }
   }
 
-  function handleClientDictamenChanged(e) {
+  function resolveClientIdFromDictamenEvent(e) {
     let clientId = "";
     let dictamenId = "";
     try {
@@ -2281,15 +3039,24 @@
         dictamenId = sanitizeId(e.record.get("id"));
       }
     } catch (_) { }
-
-    e.next();
-
-    if (!clientId && dictamenId) {
-      try {
-        const persisted = $app.findRecordById("clientes_dictamenes", dictamenId);
-        clientId = trim(persisted.get("cliente"));
-      } catch (_) { }
+    if (clientId) return clientId;
+    if (!dictamenId) return "";
+    try {
+      const persisted = $app.findRecordById("clientes_dictamenes", dictamenId);
+      return trim(persisted.get("cliente"));
+    } catch (_) {
+      return "";
     }
+  }
+
+  function handleClientDictamenChanged(e) {
+    const clientId = resolveClientIdFromDictamenEvent(e);
+    e.next();
+    refreshClientValidationById(clientId);
+  }
+
+  function handleClientDictamenCommitted(e) {
+    const clientId = resolveClientIdFromDictamenEvent(e);
     refreshClientValidationById(clientId);
   }
 
@@ -2304,6 +3071,7 @@
     handlePublicClientFile,
     handlePublicClientProfileComplete,
     handleClientDictamenChanged,
+    handleClientDictamenCommitted,
     evaluateClientProfileValidation: buildValidation,
     getClientDictamenStatus
   };

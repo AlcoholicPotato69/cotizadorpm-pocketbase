@@ -4569,19 +4569,301 @@ function __contractsSafeObject(value) {
     return {};
 }
 
+function __contractsSafeArray(value) {
+    if (Array.isArray(value)) return value;
+    if (typeof value === 'string') {
+        try {
+            const parsed = JSON.parse(value);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (_) {
+            return [];
+        }
+    }
+    return [];
+}
+
+function __contractsNormalizeClientMatchValue(value) {
+    return String(value ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function __contractsNormalizeClientRfc(value) {
+    return __contractsNormalizeClientMatchValue(value).replace(/\s+/g, '');
+}
+
+function __contractsRegisterMatchedClient(client, maps) {
+    const source = client && typeof client === 'object' ? client : null;
+    const registry = maps && typeof maps === 'object' ? maps : null;
+    const clientId = String(source?.id || '').trim();
+    if (!source || !registry || !clientId) return;
+    registry.byId[clientId] = source;
+    const email = __contractsNormalizeClientMatchValue(source.correo);
+    const rfc = __contractsNormalizeClientRfc(source.rfc);
+    const name = __contractsNormalizeClientMatchValue(source.nombre_completo);
+    if (email && !registry.byEmail[email]) registry.byEmail[email] = source;
+    if (rfc && !registry.byRfc[rfc]) registry.byRfc[rfc] = source;
+    if (name && !registry.byName[name]) registry.byName[name] = source;
+}
+
+function __contractsResolveOrderClientProfile(order, maps) {
+    const registry = maps && typeof maps === 'object' ? maps : null;
+    if (!registry) return null;
+    const requestedId = String(order?.cliente_id || '').trim();
+    if (requestedId && registry.byId[requestedId]) return registry.byId[requestedId];
+    const targetEmail = __contractsNormalizeClientMatchValue(order?.cliente_email);
+    if (targetEmail && registry.byEmail[targetEmail]) return registry.byEmail[targetEmail];
+    const targetRfc = __contractsNormalizeClientRfc(order?.cliente_rfc);
+    if (targetRfc && registry.byRfc[targetRfc]) return registry.byRfc[targetRfc];
+    const targetName = __contractsNormalizeClientMatchValue(order?.cliente_nombre);
+    if (targetName && registry.byName[targetName]) return registry.byName[targetName];
+    return null;
+}
+
+function __contractsIsTruthyReadyFlag(value) {
+    if (value === true) return true;
+    if (typeof value === 'number') return value === 1;
+    const normalized = String(value ?? '').trim().toLowerCase();
+    return ['1', 'true', 'si', 'sí', 'yes', 'aprobado', 'aprobada', 'validado', 'validada', 'listo', 'lista', 'activo', 'activa'].includes(normalized);
+}
+
+function __contractsIsReadyStatusValue(value) {
+    const normalized = String(value ?? '').trim().toLowerCase();
+    return ['validado', 'validada', 'aprobado', 'aprobada', 'listo', 'lista', 'listo_para_cotizar', 'lista_para_cotizar', 'activo', 'activa'].includes(normalized);
+}
+
+const __CP_CONTRACT_READY_PROFILE_TAG = 'puede_generar_contrato';
+
+function __contractsNormalizeProfileTag(value) {
+    const raw = String(value ?? '').trim().toLowerCase();
+    if (!raw) return '';
+    return raw
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '');
+}
+
+function __contractsCollectContractProfileTags(validation) {
+    const source = __contractsSafeObject(validation);
+    const out = [];
+    const seen = new Set();
+    const pushTag = (value) => {
+        const tag = __contractsNormalizeProfileTag(value);
+        if (!tag || seen.has(tag)) return;
+        seen.add(tag);
+        out.push(tag);
+    };
+    ['contractTags', 'etiquetasContrato', 'etiquetas_contrato'].forEach((field) => {
+        __contractsSafeArray(source[field]).forEach(pushTag);
+    });
+    pushTag(source.canGenerateContractTag);
+    pushTag(source.contractTag);
+    return out;
+}
+
+function __contractsHasContractEligibilityMetadata(validation) {
+    const source = __contractsSafeObject(validation);
+    return [
+        'canGenerateContract',
+        'canGenerateContracts',
+        'canGenerateContractTag',
+        'contractTag',
+        'contractTags',
+        'etiquetasContrato',
+        'etiquetas_contrato'
+    ].some((field) => Object.prototype.hasOwnProperty.call(source, field));
+}
+
+function __contractsClientReadyForQuotes(client) {
+    const validation = __contractsSafeObject(client?.expediente_validacion);
+    return __contractsIsTruthyReadyFlag(client?.perfil_validado)
+        || __contractsIsTruthyReadyFlag(validation.readyForQuotes)
+        || __contractsIsTruthyReadyFlag(validation.ready)
+        || __contractsIsTruthyReadyFlag(validation.puedeCotizar)
+        || __contractsIsTruthyReadyFlag(validation.quoteApproved)
+        || __contractsIsTruthyReadyFlag(validation.quoteReady)
+        || __contractsIsReadyStatusValue(client?.perfil_estatus || validation.status);
+}
+
+function __contractsHasLegacyContractAccess(validation, dictamen = {}) {
+    const safeValidation = __contractsSafeObject(validation);
+    const safeDictamen = __contractsSafeObject(dictamen);
+    const nestedDictamen = __contractsSafeObject(safeValidation.dictamen);
+    return __contractsIsTruthyReadyFlag(safeValidation.readyForContracts)
+        || __contractsIsTruthyReadyFlag(safeValidation.dictamenAprobado)
+        || __contractsIsTruthyReadyFlag(safeValidation.dictamenGuardado)
+        || __contractsIsTruthyReadyFlag(nestedDictamen.saved)
+        || __contractsIsTruthyReadyFlag(nestedDictamen.approved)
+        || __contractsIsTruthyReadyFlag(safeDictamen.saved)
+        || __contractsIsTruthyReadyFlag(safeDictamen.approved);
+}
+
+function __contractsHasContractGenerationTag(validation) {
+    const safeValidation = __contractsSafeObject(validation);
+    if (__contractsIsTruthyReadyFlag(safeValidation.canGenerateContract) || __contractsIsTruthyReadyFlag(safeValidation.canGenerateContracts)) return true;
+    return __contractsCollectContractProfileTags(safeValidation).includes(__CP_CONTRACT_READY_PROFILE_TAG);
+}
+
+function __contractsGetDictamenFileName(record) {
+    const raw = record?.pdf;
+    return Array.isArray(raw) ? String(raw[0] || '').trim() : String(raw || '').trim();
+}
+
+function __contractsGetDictamenApprovalStatus(record) {
+    const meta = __contractsSafeObject(record?.metadata);
+    const source = String(meta.source || (meta.generated_by ? 'generated' : '')).trim().toLowerCase();
+    const rawStatus = String(meta.approval_status || meta.status || '').trim().toLowerCase();
+    if (meta.approved === true || rawStatus === 'aprobado' || rawStatus === 'auto_aprobado') return 'aprobado';
+    if (rawStatus === 'rechazado' || meta.rejected === true) return 'rechazado';
+    if (source !== 'manual_upload' && !rawStatus) return 'aprobado';
+    return 'pendiente';
+}
+
+function __contractsBuildLiveDictamenStatus(records = []) {
+    const rows = Array.isArray(records) ? records : [];
+    const summary = {
+        saved: false,
+        approved: false,
+        pending: false,
+        rejected: false,
+        total: 0,
+        latestStatus: '',
+        latestId: ''
+    };
+    let latestTs = 0;
+    rows.forEach((record) => {
+        if (!__contractsGetDictamenFileName(record)) return;
+        const meta = __contractsSafeObject(record?.metadata);
+        const status = __contractsGetDictamenApprovalStatus(record);
+        const ts = [
+            meta.generated_at,
+            meta.approved_at,
+            meta.reviewed_at,
+            record?.updated_at,
+            record?.updated,
+            record?.created_at,
+            record?.created
+        ].reduce((max, value) => {
+            const parsed = Date.parse(String(value || '').trim());
+            return Number.isNaN(parsed) ? max : Math.max(max, parsed);
+        }, 0);
+        summary.saved = true;
+        summary.total += 1;
+        if (status === 'aprobado') summary.approved = true;
+        else if (status === 'rechazado') summary.rejected = true;
+        else summary.pending = true;
+        if (!summary.latestId || ts >= latestTs) {
+            latestTs = ts;
+            summary.latestId = String(record?.id || '').trim();
+            summary.latestStatus = status;
+        }
+    });
+    return summary;
+}
+
+function __contractsResolveClientDictamenStatus(client) {
+    const validation = __contractsSafeObject(client?.expediente_validacion);
+    const validationDictamen = __contractsSafeObject(validation.dictamen);
+    const clientDictamen = __contractsSafeObject(client?.dictamen);
+    const liveDictamen = __contractsSafeObject(client?.__dictamen_status_live);
+    return {
+        saved:
+            __contractsIsTruthyReadyFlag(validationDictamen.saved) ||
+            __contractsIsTruthyReadyFlag(clientDictamen.saved) ||
+            __contractsIsTruthyReadyFlag(liveDictamen.saved),
+        approved:
+            __contractsIsTruthyReadyFlag(validationDictamen.approved) ||
+            __contractsIsTruthyReadyFlag(clientDictamen.approved) ||
+            __contractsIsTruthyReadyFlag(liveDictamen.approved),
+        pending:
+            __contractsIsTruthyReadyFlag(validationDictamen.pending) ||
+            __contractsIsTruthyReadyFlag(clientDictamen.pending) ||
+            __contractsIsTruthyReadyFlag(liveDictamen.pending),
+        rejected:
+            __contractsIsTruthyReadyFlag(validationDictamen.rejected) ||
+            __contractsIsTruthyReadyFlag(clientDictamen.rejected) ||
+            __contractsIsTruthyReadyFlag(liveDictamen.rejected)
+    };
+}
+
+function __contractsClientCanGenerateContract(client) {
+    const validation = __contractsSafeObject(client?.expediente_validacion);
+    const dictamen = __contractsResolveClientDictamenStatus(client);
+    if (!__contractsClientReadyForQuotes(client)) return false;
+    if (__contractsHasContractGenerationTag(validation)) return true;
+    return __contractsHasLegacyContractAccess(validation, dictamen);
+}
+
+function __contractsHumanizeContractMissingFields(validation) {
+    const source = __contractsSafeObject(validation);
+    const raw = Array.isArray(source.contractMissingFields)
+        ? source.contractMissingFields
+        : (Array.isArray(source.contract_missing_fields) ? source.contract_missing_fields : []);
+    return raw
+        .map((field) => String(field || '').trim().replace(/_/g, ' '))
+        .filter(Boolean);
+}
+
 async function __contractsAttachClientReadiness(orders = []) {
     const rows = Array.isArray(orders) ? orders : [];
-    const ids = Array.from(new Set(rows.map((order) => String(order?.cliente_id || '').trim()).filter(Boolean)));
-    if (!ids.length) return rows.map((order) => ({ ...order, __client_profile: null }));
+    if (!rows.length) return [];
+    const clientSelectFields = 'id,nombre_completo,correo,rfc,perfil_validado,perfil_estatus,expediente_validacion,dictamen';
+    const matchMaps = { byId: {}, byEmail: {}, byRfc: {}, byName: {} };
     try {
-        const { data, error } = await window.tenantPocketBase
+        const { data: clientRows, error: clientError } = await window.tenantPocketBase
             .from('clientes')
-            .select('id,perfil_validado,perfil_estatus,expediente_validacion')
-            .in('id', ids);
-        if (error) throw error;
-        const byId = {};
-        (data || []).forEach((client) => { byId[String(client.id || '')] = client; });
-        return rows.map((order) => ({ ...order, __client_profile: byId[String(order?.cliente_id || '')] || null }));
+            .select(clientSelectFields)
+            .limit(1000);
+        if (clientError) throw clientError;
+        (Array.isArray(clientRows) ? clientRows : []).forEach((client) => {
+            __contractsRegisterMatchedClient(client, matchMaps);
+        });
+
+        const liveDictamenByClient = {};
+        const resolvedClientIds = Array.from(new Set(rows
+            .map((order) => __contractsResolveOrderClientProfile(order, matchMaps))
+            .map((client) => String(client?.id || '').trim())
+            .filter(Boolean)));
+        try {
+            for (let index = 0; index < resolvedClientIds.length; index += 40) {
+                const chunk = resolvedClientIds.slice(index, index + 40);
+                const { data: dictamenRows, error: dictamenError } = await window.tenantPocketBase
+                    .from('clientes_dictamenes')
+                    .select('id,cliente,pdf,metadata,created,updated')
+                    .in('cliente', chunk)
+                    .order('updated', { ascending: false })
+                    .limit(Math.max(400, chunk.length * 20));
+                if (dictamenError) throw dictamenError;
+                const grouped = {};
+                (Array.isArray(dictamenRows) ? dictamenRows : []).forEach((record) => {
+                    const clientId = String(record?.cliente || '').trim();
+                    if (!clientId) return;
+                    if (!grouped[clientId]) grouped[clientId] = [];
+                    grouped[clientId].push(record);
+                });
+                Object.keys(grouped).forEach((clientId) => {
+                    liveDictamenByClient[clientId] = __contractsBuildLiveDictamenStatus(grouped[clientId]);
+                });
+            }
+        } catch (dictamenError) {
+            if (typeof console !== 'undefined' && console.warn) {
+                console.warn('[contracts] No se pudieron validar dictamenes en vivo; se usara el expediente del perfil.', dictamenError);
+            }
+        }
+        return rows.map((order) => {
+            const client = __contractsResolveOrderClientProfile(order, matchMaps);
+            const resolvedClientId = String(client?.id || '').trim();
+            return {
+                ...order,
+                cliente_id: String(order?.cliente_id || '').trim() || resolvedClientId,
+                __resolved_client_id: resolvedClientId,
+                __client_profile: client
+                    ? {
+                        ...client,
+                        __dictamen_status_live: liveDictamenByClient[resolvedClientId] || null
+                    }
+                    : null
+            };
+        });
     } catch (_) {
         return rows.map((order) => ({ ...order, __client_profile: null }));
     }
@@ -4591,10 +4873,7 @@ function __contractsCanGenerateContract(order) {
     if (!order || !String(order.cliente_id || '').trim()) return false;
     const client = order.__client_profile || null;
     if (!client) return false;
-    const validation = __contractsSafeObject(client.expediente_validacion);
-    const readyForQuotes = client.perfil_validado === true || validation.readyForQuotes === true || validation.ready === true || String(client.perfil_estatus || validation.status || '').toLowerCase() === 'validado';
-    const hasDictamen = validation.readyForContracts === true || validation.dictamenAprobado === true;
-    return !!(readyForQuotes && hasDictamen);
+    return __contractsClientCanGenerateContract(client);
 }
 
 function __contractsContractBlockReason(order) {
@@ -4602,9 +4881,17 @@ function __contractsContractBlockReason(order) {
     const client = order.__client_profile || null;
     if (!client) return 'No se pudo validar el perfil del cliente asociado.';
     const validation = __contractsSafeObject(client.expediente_validacion);
-    const readyForQuotes = client.perfil_validado === true || validation.readyForQuotes === true || validation.ready === true || String(client.perfil_estatus || validation.status || '').toLowerCase() === 'validado';
-    if (!readyForQuotes) return 'El expediente del cliente debe estar completo, vigente y aprobado.';
-    if (!(validation.readyForContracts === true || validation.dictamenAprobado === true)) return 'Falta guardar o aprobar el dictamen del cliente.';
+    const dictamen = __contractsResolveClientDictamenStatus(client);
+    if (!__contractsClientReadyForQuotes(client)) return 'El expediente del cliente debe estar completo, vigente y aprobado.';
+    if (__contractsHasContractGenerationTag(validation)) return '';
+    if (__contractsHasLegacyContractAccess(validation, dictamen)) return '';
+    if (__contractsHasContractEligibilityMetadata(validation)) {
+        const missing = __contractsHumanizeContractMissingFields(validation);
+        if (missing.length) return `El perfil del cliente aun no tiene la etiqueta para generar contratos. Falta: ${missing.join(', ')}.`;
+        if (__contractsIsTruthyReadyFlag(validation.dictamenDesactualizado)) return 'El perfil del cliente aun no tiene la etiqueta para generar contratos porque el dictamen ya no corresponde al expediente vigente.';
+        return 'El perfil del cliente aun no tiene la etiqueta que habilita generar contratos.';
+    }
+    if (!__contractsHasLegacyContractAccess(validation)) return 'Falta guardar o aprobar el dictamen del cliente.';
     return '';
 }
 

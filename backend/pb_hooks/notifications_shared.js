@@ -79,7 +79,7 @@
         const batch = $app.findRecordsByFilter(
           AUTH_COLLECTION,
           '(role = "admin" || role = "plaza_mayor" || role = "casa_de_piedra" || role = "verificador")',
-          "created",
+          "created_at",
           500,
           offset
         ) || [];

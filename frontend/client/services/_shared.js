@@ -23,24 +23,55 @@
     }
   }
 
-  function normalizeDateString(value) {
+  const DATE_ONLY_FIELDS = new Set([
+    "fecha",
+    "fecha_inicio",
+    "fecha_fin",
+    "fecha_orden_compra",
+    "fecha_contrato",
+    "fecha_evento",
+    "fecha_documento",
+    "fecha_acto",
+    "fecha_inscripcion",
+    "fecha_poder",
+    "constancia_fiscal_emitida_el",
+    "comprobante_domicilio_emitido_el",
+    "constanciaFiscalEmitidaEl",
+    "comprobanteDomicilioEmitidoEl",
+    "validityDate",
+    "validity_date",
+    "expiryDate",
+    "expiry_date"
+  ]);
+
+  function shouldNormalizeDateOnly(key) {
+    const raw = String(key || "").trim();
+    if (!raw) return false;
+    if (DATE_ONLY_FIELDS.has(raw)) return true;
+    const snake = raw.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
+    if (DATE_ONLY_FIELDS.has(snake)) return true;
+    return /^fecha_/.test(snake) || /_fecha$/.test(snake);
+  }
+
+  function normalizeDateString(value, key) {
     const str = String(value || "").trim();
     if (!str) return str;
+    if (!shouldNormalizeDateOnly(key)) return str;
     if (/^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?)$/.test(str)) return str.slice(0, 10);
     if (/^\d{4}-\d{2}-\d{2}T/.test(str)) return str.slice(0, 10);
     return str;
   }
 
-  function normalizeDeepDates(value) {
-    if (Array.isArray(value)) return value.map(normalizeDeepDates);
+  function normalizeDeepDates(value, key) {
+    if (Array.isArray(value)) return value.map(function (item) { return normalizeDeepDates(item, key); });
     if (value && typeof value === "object") {
       const out = {};
       Object.keys(value).forEach(function (key) {
-        out[key] = normalizeDeepDates(value[key]);
+        out[key] = normalizeDeepDates(value[key], key);
       });
       return out;
     }
-    if (typeof value === "string") return normalizeDateString(value);
+    if (typeof value === "string") return normalizeDateString(value, key);
     return value;
   }
 

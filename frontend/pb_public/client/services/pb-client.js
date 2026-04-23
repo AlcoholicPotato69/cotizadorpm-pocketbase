@@ -29,21 +29,50 @@
     try { sessionStorage.removeItem(key); } catch (_) { }
     try { localStorage.removeItem(key); } catch (_) { }
   }
-  function normalizeDateString(v) {
+  const DATE_ONLY_FIELDS = new Set([
+    'fecha',
+    'fecha_inicio',
+    'fecha_fin',
+    'fecha_orden_compra',
+    'fecha_contrato',
+    'fecha_evento',
+    'fecha_documento',
+    'fecha_acto',
+    'fecha_inscripcion',
+    'fecha_poder',
+    'constancia_fiscal_emitida_el',
+    'comprobante_domicilio_emitido_el',
+    'constanciaFiscalEmitidaEl',
+    'comprobanteDomicilioEmitidoEl',
+    'validityDate',
+    'validity_date',
+    'expiryDate',
+    'expiry_date'
+  ]);
+  function shouldNormalizeDateOnly(key) {
+    const raw = String(key || '').trim();
+    if (!raw) return false;
+    if (DATE_ONLY_FIELDS.has(raw)) return true;
+    const snake = raw.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
+    if (DATE_ONLY_FIELDS.has(snake)) return true;
+    return /^fecha_/.test(snake) || /_fecha$/.test(snake);
+  }
+  function normalizeDateString(v, key) {
     const s = String(v || '').trim();
     if (!s) return s;
+    if (!shouldNormalizeDateOnly(key)) return s;
     if (/^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?)$/.test(s)) return s.slice(0, 10);
     if (/^\d{4}-\d{2}-\d{2}T/.test(s)) return s.slice(0, 10);
     return s;
   }
-  function normalizeDeepDates(value) {
-    if (Array.isArray(value)) return value.map(normalizeDeepDates);
+  function normalizeDeepDates(value, key) {
+    if (Array.isArray(value)) return value.map(function (item) { return normalizeDeepDates(item, key); });
     if (value && typeof value === 'object') {
       const out = {};
-      Object.keys(value).forEach(function (k) { out[k] = normalizeDeepDates(value[k]); });
+      Object.keys(value).forEach(function (k) { out[k] = normalizeDeepDates(value[k], k); });
       return out;
     }
-    if (typeof value === 'string') return normalizeDateString(value);
+    if (typeof value === 'string') return normalizeDateString(value, key);
     return value;
   }
   function recordFileName(record, field) {
@@ -418,14 +447,6 @@
     }
     async _findMatchingRecords() {
       const filter = this._buildFilter();
-      if (this.collection === 'app_users' && this.singleMode && this.filters.length === 1 && this.filters[0].op === 'eq' && this.filters[0].field === 'id') {
-        try {
-          return [await fetchOne(this.client.baseUrl, 'app_users', this.filters[0].value)];
-        } catch (e) {
-          if (this.singleMode === 'maybeSingle') return [];
-          throw e;
-        }
-      }
       const list = await fetchRecords(this.client.baseUrl, this.collection, { perPage: this.limitNum || 500, sort: this.sort, filter: filter });
       let items = list.items || [];
       if (this.limitNum) items = items.slice(0, this.limitNum);
