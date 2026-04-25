@@ -14,6 +14,7 @@ const FIN_SCHEMA = (window.HUB_CONFIG && window.HUB_CONFIG.finanzasSchema) || 'f
 
 let allClients = [];
 let canManage = false;
+let canCreateClient = false;
 let canVerify = false;
 let canSeeAllDocuments = false;
 let currentClientRole = '';
@@ -34,6 +35,38 @@ const CLIENT_MISSING_FIELD_LABELS = {
   comprobante_domicilio_emitido_el: 'Fecha de comprobante de domicilio',
   dictamen_aprobado: 'Dictamen aprobado/guardado'
 };
+
+function humanizeClientDocumentField(field = '') {
+  return String(field || '')
+    .trim()
+    .replace(/^doc_custom_/, '')
+    .replace(/^doc_/, '')
+    .replace(/_+/g, ' ')
+    .replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
+}
+
+function resolveClientMissingFieldLabel(client, field) {
+  const key = String(field || '').trim();
+  if (!key) return '';
+  if (CLIENT_MISSING_FIELD_LABELS[key]) return CLIENT_MISSING_FIELD_LABELS[key];
+  if (/_fecha_documento$/.test(key)) {
+    const baseField = key.replace(/_fecha_documento$/, '');
+    const requirement = findClientDocumentRequirement(client, baseField);
+    const label = requirement?.label || humanizeClientDocumentField(baseField);
+    return `Fecha del documento: ${label}`;
+  }
+  if (/_aprobado$/.test(key)) {
+    const baseField = key.replace(/_aprobado$/, '');
+    const requirement = findClientDocumentRequirement(client, baseField);
+    const label = requirement?.label || humanizeClientDocumentField(baseField);
+    return `Aprobación administrativa: ${label}`;
+  }
+  if (/^doc_/.test(key)) {
+    const requirement = findClientDocumentRequirement(client, key);
+    return requirement?.label || humanizeClientDocumentField(key);
+  }
+  return key.replace(/_/g, ' ');
+}
 
 function pmClientsViewStateApi() {
   return window.__HUB_VIEW_STATE || null;
@@ -76,7 +109,7 @@ function pmClientsRestoreViewStateAfterRender(state = pmClientsReadViewState()) 
   }, 90);
 }
 
-function normalizeRoleName(value='') {
+function normalizeRoleName(value = '') {
   const raw = String(value || '').trim().toLowerCase();
   if (!raw) return '';
   if (raw === 'administrador' || raw === 'superadmin' || raw === 'super_admin') return 'admin';
@@ -108,7 +141,7 @@ async function fetchClientAccessContext(sessionUser) {
     try {
       const { data, error } = await window.globalPocketBase.from(table).select('*').eq(field, value).maybeSingle();
       if (!error && data) return data;
-    } catch (_) {}
+    } catch (_) { }
     return null;
   };
 
@@ -129,26 +162,26 @@ async function fetchClientAccessContext(sessionUser) {
       : {};
   const perms = (role === 'admin')
     ? {
+      access: true,
+      catalog_view: true,
+      orders_view: true,
+      reports_view: true,
+      clients_view: true,
+      clients_manage: true,
+      clients_verify: true,
+      clients_all_docs: true
+    }
+    : (role === 'verificador')
+      ? {
         access: true,
         catalog_view: true,
         orders_view: true,
-        reports_view: true,
+        reports_view: false,
         clients_view: true,
-        clients_manage: true,
+        clients_manage: false,
         clients_verify: true,
         clients_all_docs: true
       }
-    : (role === 'verificador')
-      ? {
-          access: true,
-          catalog_view: true,
-          orders_view: true,
-          reports_view: false,
-          clients_view: true,
-          clients_manage: false,
-          clients_verify: true,
-          clients_all_docs: true
-        }
       : { ...rawPerms };
   const canVerifyResolved = role === 'admin' || role === 'verificador';
   const canView = role === 'admin'
@@ -188,6 +221,7 @@ function installVerifierTenantNavigation(role) {
   if (normalizeRoleName(role || '') !== 'verificador') return;
   const navContainer = document.querySelector('nav .container');
   if (!navContainer) return;
+  if (navContainer.querySelector('[data-verifier-tenant-switch]')) return;
   navContainer.dataset.verifierTenantNav = 'true';
 
   const currentFile = currentClientPageFile();
@@ -210,17 +244,17 @@ function installVerifierTenantNavigation(role) {
   const switchHtml = allowedTenants.length > 1
     ? `<div class="ml-auto flex items-center gap-1 rounded-full bg-white/10 p-1 shadow-inner backdrop-blur">
         ${allowedTenants.map((tenantSlug) => {
-          const isActive = tenantSlug === currentTenant;
-          const label = tenantSlug === 'casa_de_piedra' ? 'Casa de Piedra' : 'Plaza Mayor';
-          const shortLabel = tenantSlug === 'casa_de_piedra' ? 'CP' : 'PM';
-          const classes = isActive
-            ? 'bg-white text-brand-red shadow-md'
-            : 'text-white/85 hover:bg-white/15';
-          const badgeClass = isActive
-            ? 'bg-brand-red text-white'
-            : 'bg-white/15 text-white';
-          return `<a href="${buildClientTenantPageHref(tenantSlug, currentFile)}" class="${classes} rounded-full px-3 py-1.5 text-[11px] font-black uppercase tracking-wider transition whitespace-nowrap flex items-center gap-2"><span class="${badgeClass} inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px]">${shortLabel}</span><span>${label}</span></a>`;
-        }).join('')}
+      const isActive = tenantSlug === currentTenant;
+      const label = tenantSlug === 'casa_de_piedra' ? 'Casa de Piedra' : 'Plaza Mayor';
+      const shortLabel = tenantSlug === 'casa_de_piedra' ? 'CP' : 'PM';
+      const classes = isActive
+        ? 'bg-white text-brand-red shadow-md'
+        : 'text-white/85 hover:bg-white/15';
+      const badgeClass = isActive
+        ? 'bg-brand-red text-white'
+        : 'bg-white/15 text-white';
+      return `<a href="${buildClientTenantPageHref(tenantSlug, currentFile)}" class="${classes} rounded-full px-3 py-1.5 text-[11px] font-black uppercase tracking-wider transition whitespace-nowrap flex items-center gap-2"><span class="${badgeClass} inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px]">${shortLabel}</span><span>${label}</span></a>`;
+    }).join('')}
       </div>`
     : '<div class="flex-grow"></div>';
 
@@ -243,7 +277,7 @@ function setAdminVerifierMode(enabled) {
   adminVerifierMode = false;
   try {
     localStorage.removeItem(ADMIN_VERIFIER_MODE_STORAGE_KEY);
-  } catch (_) {}
+  } catch (_) { }
 }
 
 function isAdminVerifierModeActive() {
@@ -257,10 +291,10 @@ function renderAdminVerifierModeBox() {
   if (box) box.remove();
 }
 
-function escapeHTML(str='') {
-  return String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+function escapeHTML(str = '') {
+  return String(str).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
 }
-function escapeAttr(str='') {
+function escapeAttr(str = '') {
   return String(str)
     .replace(/&/g, '&amp;')
     .replace(/"/g, '&quot;')
@@ -269,31 +303,31 @@ function escapeAttr(str='') {
     .replace(/\n/g, '&#10;');
 }
 
-function normalize(str='') { return String(str).toLowerCase().trim(); }
-function formatMoney(v){ return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(parseFloat(v || 0) || 0); }
-function safeArray(v){
+function normalize(str = '') { return String(str).toLowerCase().trim(); }
+function formatMoney(v) { return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(parseFloat(v || 0) || 0); }
+function safeArray(v) {
   if (!v) return [];
   if (Array.isArray(v)) return v;
   if (typeof v === 'string') {
-    try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch(e){ return []; }
+    try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch (e) { return []; }
   }
   return [];
 }
-function safeObject(v){
+function safeObject(v) {
   if (!v) return {};
   if (v && typeof v === 'object' && !Array.isArray(v)) return v;
   if (typeof v === 'string') {
     try {
       const p = JSON.parse(v);
       return p && typeof p === 'object' && !Array.isArray(p) ? p : {};
-    } catch(e){ return {}; }
+    } catch (e) { return {}; }
   }
   return {};
 }
 
 const CLIENT_CONTRACT_READY_TAG = 'puede_generar_contrato';
 
-function normalizeClientContractTag(value='') {
+function normalizeClientContractTag(value = '') {
   const raw = String(value || '').trim().toLowerCase();
   if (!raw) return '';
   return raw
@@ -364,7 +398,7 @@ function getClientResolvedDictamenStatus(client) {
     latestStatus: String(validationDictamen.latestStatus || clientDictamen.latestStatus || '').trim()
   };
 }
-function safeDate(v){
+function safeDate(v) {
   const s = normalizeStoredDate(v);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return '--';
   const p = s.split('-');
@@ -433,7 +467,7 @@ const CLIENT_DOC_REQUIREMENTS = [
     dateField: 'constancia_fiscal_emitida_el',
     requirements: [
       'Debe ser PDF oficial del SAT.',
-      'Se puede usar para cotizar durante 30 días a partir de la carga del archivo.',
+      'Se puede usar para cotizar durante 30 días a partir de la fecha de emisión detectada en el documento.',
       'RFC y razón social deben verse completos y legibles.'
     ]
   }
@@ -451,7 +485,7 @@ function normalizeClientDocumentRequirement(item) {
   return {
     field,
     key: field,
-    label: String(source.label || field).trim(),
+    label: String(source.label || humanizeClientDocumentField(field)).trim(),
     dateField: String(dateField || '').trim(),
     requirements: Array.isArray(source.requirements) ? source.requirements : [],
     requiredForProfile: source.requiredForProfile !== false,
@@ -599,28 +633,14 @@ function getClientDocumentValidityReferenceDate(client, field) {
   const validation = safeObject(client?.expediente_validacion);
   const documents = safeObject(validation.documents);
   const currentDoc = safeObject(documents[field]);
-  const states = safeObject(client?.documentos_estado);
-  const currentState = safeObject(states[field]);
-  const activityDate = normalizeStoredDate(
-    currentState.subido_at
-    || currentDoc.subidoAt
-    || currentDoc.subido_at
-    || currentState.aprobado_at
-    || currentDoc.aprobadoAt
-    || currentState.revisado_at
-    || currentDoc.revisadoAt
-    || client?.created_at
-    || client?.created
-  );
+  const validationDate = normalizeStoredDate(currentDoc.fechaDocumento || currentDoc.fecha_documento || currentDoc.validityDate);
   if (field === 'doc_constancia_fiscal') {
-    return activityDate || getClientValidationDate(client, 'constancia_fiscal_emitida_el');
+    return getClientValidationDate(client, 'constancia_fiscal_emitida_el') || validationDate;
   }
   if (field === 'doc_comprobante_domicilio') {
-    return getClientValidationDate(client, 'comprobante_domicilio_emitido_el') || activityDate;
+    return getClientValidationDate(client, 'comprobante_domicilio_emitido_el') || validationDate;
   }
-  const validationDate = normalizeStoredDate(currentDoc.fechaDocumento || currentDoc.fecha_documento || currentDoc.validityDate);
-  if (validationDate) return validationDate;
-  return activityDate;
+  return validationDate;
 }
 
 function hasClientDocumentFile(client, field, documents = safeObject(getClientValidation(client).documents)) {
@@ -813,8 +833,8 @@ function bindClientInfoModal() {
 
 function getDocumentTrafficMeta(label, dateValue, validDays = CLIENT_DOC_VALIDITY_DAYS, warningDays = 30, criticalDays = 14) {
   const traffic = calcDocumentValidity(dateValue, validDays, warningDays, criticalDays);
-  const base = { status: traffic.status, text: `${label}: sin fecha detectada`, title: `${label}: sin fecha detectada`, classes: 'bg-slate-100 text-slate-600', icon: 'fa-calendar-xmark' };
-  if (traffic.status === 'expired' && traffic.mode === 'date_only') return { ...base, text: `${label}: fecha invalida`, title: `${label}: la fecha detectada es futura o invalida.`, classes: 'bg-red-100 text-red-700', icon: 'fa-triangle-exclamation' };
+  const base = { status: traffic.status, text: `${label}: fecha pendiente`, title: `${label}: falta una fecha legible para calcular vigencia.`, classes: 'bg-slate-100 text-slate-600', icon: 'fa-calendar-xmark' };
+  if (traffic.status === 'expired' && traffic.mode === 'date_only') return { ...base, text: `${label}: fecha inválida`, title: `${label}: la fecha detectada es futura o inválida.`, classes: 'bg-red-100 text-red-700', icon: 'fa-triangle-exclamation' };
   if (traffic.status === 'expired') return { ...base, text: `${label}: vencido hace ${Math.abs(traffic.daysLeft)} día(s)`, title: `${label} emitido el ${safeDate(traffic.date)}. Vencido hace ${Math.abs(traffic.daysLeft)} día(s).`, classes: 'bg-red-100 text-red-700', icon: 'fa-circle-xmark' };
   if (traffic.status === 'critical') return { ...base, text: `${label}: vence en ${traffic.daysLeft} día(s)`, title: `${label} emitido el ${safeDate(traffic.date)}. Vence en ${traffic.daysLeft} día(s).`, classes: 'bg-orange-100 text-orange-700', icon: 'fa-triangle-exclamation' };
   if (traffic.status === 'warning') return { ...base, text: `${label}: vence en ${traffic.daysLeft} día(s)`, title: `${label} emitido el ${safeDate(traffic.date)}. Vence en ${traffic.daysLeft} día(s).`, classes: 'bg-amber-100 text-amber-700', icon: 'fa-clock' };
@@ -876,14 +896,14 @@ function summarizeClientDocuments(client) {
     const reason = String(docState.motivo || validationState.motivo || '').trim();
     const traffic = (doc.dateField || doc.requiresDate)
       ? (() => {
-          const validity = getClientDocumentValidityConfig(doc.field, client);
-          return calcDocumentValidity(
-            getClientDocumentValidityReferenceDate(client, doc.field),
-            validity.validDays,
-            validity.warningDays,
-            validity.criticalDays
-          );
-        })()
+        const validity = getClientDocumentValidityConfig(doc.field, client);
+        return calcDocumentValidity(
+          getClientDocumentValidityReferenceDate(client, doc.field),
+          validity.validDays,
+          validity.warningDays,
+          validity.criticalDays
+        );
+      })()
       : null;
 
     if (uploaded || omitted) summary.coveredCount += 1;
@@ -965,7 +985,7 @@ function getClientValidationMissingFields(client) {
     ? validation.missingFields
     : (Array.isArray(validation.missing_fields) ? validation.missing_fields : []);
   return raw
-    .map((field) => CLIENT_MISSING_FIELD_LABELS[String(field || '').trim()] || String(field || '').trim().replace(/_/g, ' '))
+    .map((field) => resolveClientMissingFieldLabel(client, field))
     .filter(Boolean);
 }
 
@@ -975,7 +995,7 @@ function getClientContractMissingFields(client) {
     ? validation.contractMissingFields
     : (Array.isArray(validation.contract_missing_fields) ? validation.contract_missing_fields : []);
   return raw
-    .map((field) => CLIENT_MISSING_FIELD_LABELS[String(field || '').trim()] || String(field || '').trim().replace(/_/g, ' '))
+    .map((field) => resolveClientMissingFieldLabel(client, field))
     .filter(Boolean);
 }
 
@@ -1057,10 +1077,10 @@ function getClientStatusMeta(client, summary = summarizeClientDocuments(client))
     detail: summary.pendingDocs.length
       ? `Hay ${summary.pendingDocs.length} documento(s) en revisión por administración.`
       : (summary.missingDocs.length
-          ? `Faltan ${summary.missingDocs.length} documento(s) por revisar o cargar.`
-          : (missingFieldLabels.length
-              ? `${summary.coveredCount === summary.totalCount ? 'Documentos aprobados por administración, pero faltan datos del expediente: ' : 'Faltan datos del expediente: '}${missingFieldLabels.join(', ')}.`
-              : 'Pendiente de validación manual.')),
+        ? `Faltan ${summary.missingDocs.length} documento(s) por revisar o cargar.`
+        : (missingFieldLabels.length
+          ? `${summary.coveredCount === summary.totalCount ? 'Documentos aprobados por administración, pero faltan datos del expediente: ' : 'Faltan datos del expediente: '}${missingFieldLabels.join(', ')}.`
+          : 'Pendiente de validación manual.')),
     cardColorClass: 'border-amber-400 bg-amber-50',
     tooltip: getClientPendingTooltip(client, summary, missingFieldLabels),
     canQuote: false
@@ -1139,7 +1159,7 @@ function buildClientRecordFileUrl(client, field) {
   const filename = Array.isArray(value) ? value[0] : value;
   const id = String(client?.id || '').trim();
   if (!id || !filename) return '';
-  return `${String(PB_URL || '').replace(/\/+$/, '')}/api/files/clientes/${encodeURIComponent(id)}/${encodeURIComponent(String(filename))}` ;
+  return `${String(PB_URL || '').replace(/\/+$/, '')}/api/files/clientes/${encodeURIComponent(id)}/${encodeURIComponent(String(filename))}`;
 }
 
 function getClientDocumentStateMeta(client, field) {
@@ -1172,7 +1192,7 @@ function getAuthToken() {
       const parsed = JSON.parse(raw);
       const token = String(parsed?.token || parsed?.access_token || '').trim();
       if (token) return token;
-    } catch (_) {}
+    } catch (_) { }
   }
   return '';
 }
@@ -1187,7 +1207,7 @@ async function fetchServerNowIso() {
     const data = await resp.json();
     const now = String(data?.now || '').trim();
     if (now && !Number.isNaN(new Date(now).getTime())) return now;
-  } catch (_) {}
+  } catch (_) { }
   return new Date().toISOString();
 }
 
@@ -1213,7 +1233,7 @@ async function getSignedFileUrl(collection, recordId, filename) {
   }
 }
 
-async function openClientProfileFile(client, field, label='documento') {
+async function openClientProfileFile(client, field, label = 'documento') {
   if (!canAccessClientDocumentFile(client, field)) {
     return window.showToast?.('Solo un verificador puede abrir documentos pendientes o en revisión.', 'error');
   }
@@ -1255,7 +1275,7 @@ function buildClientQuoteFolio(row) {
   return rawId ? `PM-${rawId.slice(0, 6)}` : 'PM-PEND';
 }
 
-function normalizePdfNoteDocType(value='') {
+function normalizePdfNoteDocType(value = '') {
   const raw = normalize(value);
   if (['cotizacion', 'cotización', 'quote', 'borrador', 'draft_quote'].includes(raw)) return 'cotizacion';
   if (['orden', 'order', 'orden_compra', 'purchase_order', 'orden de compra'].includes(raw)) return 'orden';
@@ -1269,7 +1289,7 @@ function getQuotePdfNotes(row, docType) {
   return [];
 }
 
-function formatPdfNoteDate(value='') {
+function formatPdfNoteDate(value = '') {
   const stamp = String(value || '').trim();
   if (!stamp) return 'Sin fecha registrada';
   const parsed = new Date(stamp);
@@ -1344,21 +1364,21 @@ function renderClients(list) {
     const constanciaBadgeHtml = documentMeta.constanciaOmitted
       ? buildOmittedBadgeHtml('Constancia')
       : buildTrafficBadgeHtml(
-          'Constancia',
-          getClientDocumentValidityReferenceDate(c, 'doc_constancia_fiscal'),
-          constanciaValidity.validDays,
-          constanciaValidity.warningDays,
-          constanciaValidity.criticalDays
-        );
+        'Constancia',
+        getClientDocumentValidityReferenceDate(c, 'doc_constancia_fiscal'),
+        constanciaValidity.validDays,
+        constanciaValidity.warningDays,
+        constanciaValidity.criticalDays
+      );
     const comprobanteBadgeHtml = documentMeta.comprobanteOmitted
       ? buildOmittedBadgeHtml('Comprobante')
       : buildTrafficBadgeHtml(
-          'Comprobante',
-          getClientDocumentValidityReferenceDate(c, 'doc_comprobante_domicilio'),
-          comprobanteValidity.validDays,
-          comprobanteValidity.warningDays,
-          comprobanteValidity.criticalDays
-        );
+        'Comprobante',
+        getClientDocumentValidityReferenceDate(c, 'doc_comprobante_domicilio'),
+        comprobanteValidity.validDays,
+        comprobanteValidity.warningDays,
+        comprobanteValidity.criticalDays
+      );
     const constanciaHeadline = documentMeta.constanciaOmitted
       ? 'Constancia omitida'
       : (documentMeta.constanciaStatus.status === 'expired'
@@ -1489,10 +1509,10 @@ function renderClients(list) {
     // Para verificadores la tarjeta abre revisión directa; para el resto conserva el historial.
     card.addEventListener('click', (ev) => {
       if (ev.target.closest('.client-id-badge')) {
-          navigator.clipboard.writeText(c.id).then(() => {
-              window.showToast?.('ID copiado al portapapeles', 'success');
-          });
-          return;
+        navigator.clipboard.writeText(c.id).then(() => {
+          window.showToast?.('ID copiado al portapapeles', 'success');
+        });
+        return;
       }
       if (ev.target.closest('.client-tooltip-btn')) return;
       if (currentClientRole === 'verificador') {
@@ -1554,7 +1574,7 @@ function clearQueuedVerificationClient() {
     url.searchParams.delete('verify');
     const nextUrl = `${url.pathname}${url.search}${url.hash}`;
     window.history.replaceState(window.history.state, '', nextUrl);
-  } catch (_) {}
+  } catch (_) { }
 }
 
 function maybeOpenQueuedVerificationClient() {
@@ -1589,8 +1609,14 @@ function applySearch(options = {}) {
   if (!pmClientsRestoringViewState && options.skipSave !== true) pmClientsSaveViewState();
 }
 
-function openClientModal(client=null) {
-  if (!canManage) return window.showToast?.("No tienes permisos para administrar clientes.", "error");
+function openClientModal(client = null) {
+  const isEditing = !!String(client?.id || '').trim();
+  if (isEditing ? !canManage : !canCreateClient) {
+    return window.showToast?.(
+      isEditing ? "No tienes permisos para administrar clientes." : "No tienes permisos para crear clientes.",
+      "error"
+    );
+  }
   pmClientsSaveViewState({ selectedClientId: String(client?.id || '').trim() });
 
   const idEl = document.getElementById('client-id');
@@ -1615,34 +1641,34 @@ function openClientModal(client=null) {
     const el = document.getElementById(id);
     const statusEl = document.getElementById(`${id}-status`);
     if (el) {
-        el.value = '';
-        el.disabled = false;
-        el.classList.remove('opacity-50', 'cursor-not-allowed');
+      el.value = '';
+      el.disabled = false;
+      el.classList.remove('opacity-50', 'cursor-not-allowed');
     }
     if (statusEl) statusEl.classList.add('hidden');
 
     if (client) {
-        let fieldName = '';
-        if (id === 'doc-acta') fieldName = 'doc_acta_constitutiva';
-        if (id === 'doc-ine') fieldName = 'doc_ine';
-        if (id === 'doc-domicilio') fieldName = 'doc_comprobante_domicilio';
-        if (id === 'doc-constancia') fieldName = 'doc_constancia_fiscal';
+      let fieldName = '';
+      if (id === 'doc-acta') fieldName = 'doc_acta_constitutiva';
+      if (id === 'doc-ine') fieldName = 'doc_ine';
+      if (id === 'doc-domicilio') fieldName = 'doc_comprobante_domicilio';
+      if (id === 'doc-constancia') fieldName = 'doc_constancia_fiscal';
 
-        const rawFilename = Array.isArray(client[fieldName]) ? client[fieldName][0] : client[fieldName];
-        if (rawFilename) {
-            const rawStatus = (estados[fieldName] && estados[fieldName].status) ? estados[fieldName].status : 'pendiente';
-            if (rawStatus === 'aprobado' || rawStatus === 'pendiente') {
-                if (el) {
-                    el.disabled = true;
-                    el.classList.add('opacity-50', 'cursor-not-allowed');
-                }
-                if (statusEl) {
-                    statusEl.classList.remove('hidden');
-                    statusEl.innerHTML = rawStatus === 'aprobado' ? '<i class="fa-solid fa-lock"></i> Bloqueado (Validado)' : '<i class="fa-solid fa-clock"></i> Bloqueado (En revisión)';
-                    statusEl.className = rawStatus === 'aprobado' ? 'text-[10px] text-emerald-600 font-bold mt-1' : 'text-[10px] text-orange-600 font-bold mt-1';
-                }
-            }
+      const rawFilename = Array.isArray(client[fieldName]) ? client[fieldName][0] : client[fieldName];
+      if (rawFilename) {
+        const rawStatus = (estados[fieldName] && estados[fieldName].status) ? estados[fieldName].status : 'pendiente';
+        if (rawStatus === 'aprobado' || rawStatus === 'pendiente') {
+          if (el) {
+            el.disabled = true;
+            el.classList.add('opacity-50', 'cursor-not-allowed');
+          }
+          if (statusEl) {
+            statusEl.classList.remove('hidden');
+            statusEl.innerHTML = rawStatus === 'aprobado' ? '<i class="fa-solid fa-lock"></i> Bloqueado (Validado)' : '<i class="fa-solid fa-clock"></i> Bloqueado (En revisión)';
+            statusEl.className = rawStatus === 'aprobado' ? 'text-[10px] text-emerald-600 font-bold mt-1' : 'text-[10px] text-orange-600 font-bold mt-1';
+          }
         }
+      }
     }
   });
   const docsSection = document.getElementById('client-docs-section');
@@ -1916,7 +1942,7 @@ function downloadClientBlob(blob, filename) {
   link.click();
   link.remove();
   setTimeout(() => {
-    try { URL.revokeObjectURL(url); } catch (_) {}
+    try { URL.revokeObjectURL(url); } catch (_) { }
   }, 1500);
 }
 
@@ -2139,7 +2165,7 @@ function renderClientHistoryRows(rows) {
   });
 }
 
-function createQuoteDocButton(container, label, icon, action, muted=false) {
+function createQuoteDocButton(container, label, icon, action, muted = false) {
   const wrapper = document.createElement('div');
   wrapper.className = 'flex items-stretch gap-2';
   const btn = document.createElement('button');
@@ -2168,11 +2194,11 @@ async function openClientProfileDocs(client) {
   const profileDocsClientId = String(client.id || '');
   list.dataset.clientDocsClientId = profileDocsClientId;
 
-  createQuoteDocButton(list, `ID del perfil: ${client.id || '--'}`, 'fa-solid fa-fingerprint', () => {}, true);
+  createQuoteDocButton(list, `ID del perfil: ${client.id || '--'}`, 'fa-solid fa-fingerprint', () => { }, true);
   if (buildClientPublicProfileUrl(client)) {
     createQuoteDocButton(list, 'Abrir expediente seguro', 'fa-solid fa-link', () => openClientPublicProfile(client));
   } else {
-    createQuoteDocButton(list, 'Enlace publico no disponible', 'fa-solid fa-link', () => {}, true);
+    createQuoteDocButton(list, 'Enlace publico no disponible', 'fa-solid fa-link', () => { }, true);
   }
 
   const zipPanel = document.createElement('div');
@@ -2217,10 +2243,10 @@ async function openClientProfileDocs(client) {
       return;
     }
     if (clientHasFile(field) && !canAccessClientDocumentFile(client, field)) {
-      createQuoteDocButton(list, `${readyLabel} · visible hasta aprobación`, icon, () => {}, true);
+      createQuoteDocButton(list, `${readyLabel} · visible hasta aprobación`, icon, () => { }, true);
       return;
     }
-    createQuoteDocButton(list, missingLabel, icon, () => {}, true);
+    createQuoteDocButton(list, missingLabel, icon, () => { }, true);
   }
 
   getClientDocumentRequirements(client).forEach((doc) => {
@@ -2238,8 +2264,8 @@ async function openClientProfileDocs(client) {
   divider.className = 'text-[10px] font-black uppercase text-gray-400 px-1 pt-2';
   divider.innerText = 'Validaci\u00f3n';
   list.appendChild(divider);
-  createQuoteDocButton(list, constanciaValidationLabel, 'fa-solid fa-calendar-check', () => {}, true);
-  createQuoteDocButton(list, phones.length ? `Tel\u00e9fonos adicionales: ${phones.join(', ')}` : 'Sin tel\u00e9fonos adicionales registrados', 'fa-solid fa-phone-volume', () => {}, true);
+  createQuoteDocButton(list, constanciaValidationLabel, 'fa-solid fa-calendar-check', () => { }, true);
+  createQuoteDocButton(list, phones.length ? `Tel\u00e9fonos adicionales: ${phones.join(', ')}` : 'Sin tel\u00e9fonos adicionales registrados', 'fa-solid fa-phone-volume', () => { }, true);
 
   window.openModal?.('client-quote-docs-modal');
 
@@ -2261,7 +2287,7 @@ async function openClientProfileDocs(client) {
   if (list.dataset.clientDocsClientId !== profileDocsClientId) return;
   loadingRow.remove();
   if (!history.length) {
-    createQuoteDocButton(list, 'Sin dict\u00e1menes guardados', 'fa-regular fa-clock', () => {}, true);
+    createQuoteDocButton(list, 'Sin dict\u00e1menes guardados', 'fa-regular fa-clock', () => { }, true);
     return;
   }
   history.forEach((row) => {
@@ -2284,7 +2310,7 @@ async function fetchLatestClientQuoteRow(quoteId) {
   try {
     const { data, error } = await window.tenantPocketBase.from('cotizaciones').select(cols).eq('id', quoteId).maybeSingle();
     if (!error && data) return data;
-  } catch (_) {}
+  } catch (_) { }
   return clientHistoryRows.find(x => x.id === quoteId) || null;
 }
 
@@ -2302,16 +2328,16 @@ async function openClientQuoteDocs(quoteId) {
   list.innerHTML = '';
 
   if (row.url_cotizacion_final) createQuoteDocButton(list, 'Ver Cotización Aprobada', 'fa-solid fa-file-circle-check', () => openClientStoredDocument(row.url_cotizacion_final));
-  else createQuoteDocButton(list, 'Cotización aprobada no disponible', 'fa-solid fa-file-pen', () => {}, true);
+  else createQuoteDocButton(list, 'Cotización aprobada no disponible', 'fa-solid fa-file-pen', () => { }, true);
 
   if (row.url_orden_compra) createQuoteDocButton(list, 'Ver Orden de Compra', 'fa-solid fa-file-contract', () => openClientStoredDocument(row.url_orden_compra));
-  else createQuoteDocButton(list, 'Orden de compra no disponible', 'fa-solid fa-file-contract', () => {}, true);
+  else createQuoteDocButton(list, 'Orden de compra no disponible', 'fa-solid fa-file-contract', () => { }, true);
 
   if (row.contrato_url) createQuoteDocButton(list, 'Ver Contrato', 'fa-solid fa-file-signature', () => openClientStoredDocument(row.contrato_url));
-  else createQuoteDocButton(list, 'Contrato no disponible', 'fa-solid fa-signature', () => {}, true);
+  else createQuoteDocButton(list, 'Contrato no disponible', 'fa-solid fa-signature', () => { }, true);
 
   if (row.factura_pdf_url) createQuoteDocButton(list, 'Ver Factura PDF', 'fa-solid fa-file-pdf', () => openClientStoredDocument(row.factura_pdf_url));
-  else createQuoteDocButton(list, 'Factura PDF no disponible', 'fa-solid fa-file-invoice-dollar', () => {}, true);
+  else createQuoteDocButton(list, 'Factura PDF no disponible', 'fa-solid fa-file-invoice-dollar', () => { }, true);
 
   if (row.factura_xml_url) createQuoteDocButton(list, 'Descargar XML', 'fa-solid fa-file-code', () => openClientStoredDocument(row.factura_xml_url));
 
@@ -2320,13 +2346,13 @@ async function openClientQuoteDocs(quoteId) {
     const divider = document.createElement('div');
     divider.className = 'text-[10px] font-black uppercase text-gray-400 px-1 pt-2';
     divider.innerText = 'Recibos';
-      list.appendChild(divider);
-      pagos.forEach((p, i) => {
-        const pth = p?.file_path || p?.path || '';
+    list.appendChild(divider);
+    pagos.forEach((p, i) => {
+      const pth = p?.file_path || p?.path || '';
       if (pth) createQuoteDocButton(list, `Recibo #${i + 1}`, 'fa-solid fa-receipt', () => openClientStoredDocument(pth));
     });
   } else {
-    createQuoteDocButton(list, 'Recibos no disponibles', 'fa-solid fa-receipt', () => {}, true);
+    createQuoteDocButton(list, 'Recibos no disponibles', 'fa-solid fa-receipt', () => { }, true);
   }
 
   createQuoteDocButton(list, 'Abrir en módulo de cotizaciones', 'fa-solid fa-arrow-up-right-from-square', () => {
@@ -2352,7 +2378,7 @@ async function openClientHistory(client) {
 
   const cols = CLIENT_QUOTE_DOC_SELECT_FIELDS;
   const merged = new Map();
-  const mergeRows = (arr=[]) => arr.forEach(r => { if (r?.id) merged.set(r.id, r); });
+  const mergeRows = (arr = []) => arr.forEach(r => { if (r?.id) merged.set(r.id, r); });
   try {
     const qById = await window.tenantPocketBase.from('cotizaciones').select(cols).eq('cliente_id', client.id).order('created_at', { ascending: false }).limit(20);
     if (!qById.error) mergeRows(qById.data || []);
@@ -2364,7 +2390,7 @@ async function openClientHistory(client) {
       const qByName = await window.tenantPocketBase.from('cotizaciones').select(cols).eq('cliente_nombre', client.nombre_completo).order('created_at', { ascending: false }).limit(20);
       if (!qByName.error) mergeRows(qByName.data || []);
     }
-    clientHistoryRows = Array.from(merged.values()).sort((a,b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+    clientHistoryRows = Array.from(merged.values()).sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
     renderClientHistoryRows(clientHistoryRows);
     if (subEl) subEl.innerText = `${clientHistoryRows.length} cotización(es) encontrada(s).`;
   } catch (e) {
@@ -2375,11 +2401,15 @@ async function openClientHistory(client) {
 }
 
 async function saveClient() {
-  if (!canManage) return window.showToast?.("No tienes permisos para administrar clientes.", "error");
-
   const id = (document.getElementById('client-id')?.value || '').trim();
+  if (id ? !canManage : !canCreateClient) {
+    return window.showToast?.(
+      id ? "No tienes permisos para administrar clientes." : "No tienes permisos para crear clientes.",
+      "error"
+    );
+  }
   const nombre = (document.getElementById('client-name')?.value || '').trim();
-  const telefono = (document.getElementById('client-phone')?.value || '').replace(/\D/g,'').trim();
+  const telefono = (document.getElementById('client-phone')?.value || '').replace(/\D/g, '').trim();
   const correo = (document.getElementById('client-email')?.value || '').trim();
   const rfc = (document.getElementById('client-rfc')?.value || '').trim().toUpperCase();
   if (!nombre) return window.showToast?.("Falta el nombre completo.", "error");
@@ -2463,7 +2493,7 @@ async function saveClient() {
 
 document.addEventListener('DOMContentLoaded', async () => {
   if (window.__HUB_LAYOUT_READY && typeof window.__HUB_LAYOUT_READY.then === 'function') {
-    try { await window.__HUB_LAYOUT_READY; } catch (_) {}
+    try { await window.__HUB_LAYOUT_READY; } catch (_) { }
   }
   if (window.__HUB_PAGE_ACCESS_DENIED) return;
   if (!window.PB_CLIENT) return;
@@ -2486,6 +2516,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   adminVerifierMode = false;
   installVerifierTenantNavigation(role);
   canManage = accessCtx.canManage === true;
+  canCreateClient = canManage || accessCtx.canVerify === true;
   canVerify = accessCtx.canVerify === true;
   canSeeAllDocuments = accessCtx.canSeeAllDocuments === true;
   renderAdminVerifierModeBox();
@@ -2524,7 +2555,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const btnNew = document.getElementById('btn-new-client');
   if (btnNew) {
-    if (!canManage) btnNew.classList.add('hidden');
+    if (!canCreateClient) btnNew.classList.add('hidden');
+    else btnNew.classList.remove('hidden');
     btnNew.addEventListener('click', () => openClientModal(null));
   }
 
@@ -2757,7 +2789,7 @@ async function loadClientDictamenPdfStyle() {
       const config = safeObject(row.config_json || row.elements);
       const profiles = safeObject(config.profiles);
       return normalizeClientDictamenPdfStyle(profiles.dictamen || config);
-    } catch (_) {}
+    } catch (_) { }
   }
   return normalizeClientDictamenPdfStyle();
 }
@@ -3036,11 +3068,11 @@ function getClientDictamenStatusMeta(record) {
   };
 }
 
-function isVerificationDictamenField(field='') {
+function isVerificationDictamenField(field = '') {
   return String(field || '').startsWith('__dictamen__:');
 }
 
-function getVerificationDictamenId(field='') {
+function getVerificationDictamenId(field = '') {
   return isVerificationDictamenField(field) ? String(field).slice('__dictamen__:'.length).trim() : '';
 }
 
@@ -3123,7 +3155,7 @@ async function hashClientDictamenSnapshot(snapshot) {
       const digest = await window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw));
       return Array.from(new Uint8Array(digest)).map(byte => byte.toString(16).padStart(2, '0')).join('');
     }
-  } catch (_) {}
+  } catch (_) { }
   let hash = 0;
   for (let i = 0; i < raw.length; i += 1) hash = ((hash << 5) - hash + raw.charCodeAt(i)) | 0;
   return `fallback-${Math.abs(hash)}`;
@@ -3175,7 +3207,7 @@ function downloadClientDictamenBlob(blob, filename) {
   link.click();
   link.remove();
   setTimeout(() => {
-    try { URL.revokeObjectURL(url); } catch (_) {}
+    try { URL.revokeObjectURL(url); } catch (_) { }
   }, 1500);
 }
 
@@ -3239,7 +3271,7 @@ async function persistClientDictamenSnapshot(client, folio, blob, filename, docu
     .from(CLIENT_DICTAMEN_COLLECTION)
     .insert(form);
   if (error) throw error;
-  try { await forceClientValidationRefresh(client); } catch (_) {}
+  try { await forceClientValidationRefresh(client); } catch (_) { }
   return { saved: true, record: data, documentosHash };
 }
 
@@ -3296,7 +3328,7 @@ async function uploadManualClientDictamen(client, options = {}) {
   try {
     const { data, error } = await window.tenantPocketBase.from(CLIENT_DICTAMEN_COLLECTION).insert(form);
     if (error) throw error;
-    try { await forceClientValidationRefresh(client); } catch (_) {}
+    try { await forceClientValidationRefresh(client); } catch (_) { }
     window.showToast?.('Dictamen manual guardado.', 'success');
     await loadClients();
     const insertedId = String((Array.isArray(data) ? data[0]?.id : data?.id) || '').trim();
@@ -3357,7 +3389,7 @@ function getClientDictamenTenantCode() {
   return CLIENT_TENANT_SLUG === 'casa_de_piedra' ? 'CP' : 'PM';
 }
 
-function formatClientDictamenDateTime(value='') {
+function formatClientDictamenDateTime(value = '') {
   const stamp = String(value || '').trim();
   if (!stamp) return 'Sin fecha registrada';
   const parsed = new Date(stamp);
@@ -3400,12 +3432,12 @@ function getClientDictamenStatusLabel(docInfo, traffic) {
 }
 
 function getClientDictamenExpiryText(traffic) {
-  if (!traffic || !traffic.status || traffic.status === 'missing') return 'Sin vigencia capturada';
-  if (traffic.mode === 'date_only' && traffic.status === 'expired') return 'Fecha invalida o futura';
+  if (!traffic || !traffic.status || traffic.status === 'missing') return 'Fecha pendiente por capturar';
+  if (traffic.mode === 'date_only' && traffic.status === 'expired') return 'Fecha inválida o futura';
   if (traffic.status === 'expired') return `Vencido hace ${Math.abs(traffic.daysLeft)} dia(s)`;
   if (traffic.mode === 'date_only') return `Fecha detectada: ${safeDate(traffic.date)}`;
   if (typeof traffic.daysLeft === 'number') return `Vence el ${safeDate(traffic.expiry || traffic.date)}`;
-  return 'Sin vigencia capturada';
+  return 'Fecha pendiente por capturar';
 }
 
 function getClientDictamenLegalValue(source, keys, fallback = '') {
@@ -3429,17 +3461,13 @@ function buildClientDictamenLegalData(client, folio) {
   const protocol = safeObject(legal.documentosProtocolizados || legal.documentos_protocolizados || legal.protocolizado || legal.sociedad);
   const attorney = safeObject(legal.apoderados || legal.apoderado || legal.poderes || legal.representante);
   const validation = safeObject(client?.expediente_validacion);
-  const docStates = safeObject(client?.documentos_estado);
-  const actaState = safeObject(docStates.doc_acta_constitutiva);
-  const constanciaState = safeObject(docStates.doc_constancia_fiscal);
-  const comprobanteState = safeObject(docStates.doc_comprobante_domicilio);
   const sociedad = getClientDictamenLegalValue(protocol, ['sociedad', 'razonSocial', 'razon_social', 'cliente'], client?.nombre_completo || '--').toUpperCase();
   const nombreComercial = getClientDictamenLegalValue(attorney, ['nombreComercial', 'nombre_comercial'], sociedad).toUpperCase();
   const domicilio = getClientDictamenLegalValue(protocol, ['domicilio', 'domicilioFiscal', 'domicilio_fiscal'], getClientDictamenLegalValue(validation, ['domicilio', 'domicilioFiscal', 'domicilio_fiscal'], '--')).toUpperCase();
   const ciudad = getClientDictamenLegalValue(protocol, ['ciudad', 'municipio'], getClientDictamenLegalValue(attorney, ['ciudad', 'municipio'], '--')).toUpperCase();
   const folioDocumento = getClientDictamenLegalValue(protocol, ['folio', 'folioMercantil', 'folio_mercantil'], getClientDictamenLegalValue(attorney, ['folio', 'folioMercantil', 'folio_mercantil'], '--'));
-  const fechaDocumento = getClientDictamenLegalValue(protocol, ['fechaDocumento', 'fecha_documento', 'fechaActo', 'fecha_acto'], normalizeStoredDate(actaState.subido_at || client?.created_at || client?.created));
-  const fechaPoder = getClientDictamenLegalValue(attorney, ['fechaDocumento', 'fecha_documento', 'fechaPoder', 'fecha_poder'], normalizeStoredDate(constanciaState.subido_at || comprobanteState.subido_at || client?.updated_at || client?.updated));
+  const fechaDocumento = getClientDictamenLegalValue(protocol, ['fechaDocumento', 'fecha_documento', 'fechaActo', 'fecha_acto'], '');
+  const fechaPoder = getClientDictamenLegalValue(attorney, ['fechaDocumento', 'fecha_documento', 'fechaPoder', 'fecha_poder'], '');
   return {
     sociedad,
     tipoActo: getClientDictamenLegalValue(protocol, ['tipoActo', 'tipo_acto', 'acto'], client?.doc_acta_constitutiva ? 'CONSTITUTIVA' : '--').toUpperCase(),
@@ -3691,7 +3719,7 @@ async function deleteVerificationDocument() {
         .delete()
         .eq('id', dictamenId);
       if (error) throw error;
-      try { await forceClientValidationRefresh(verifCurrentClient); } catch (_) {}
+      try { await forceClientValidationRefresh(verifCurrentClient); } catch (_) { }
       window.showToast?.('Dictamen eliminado del expediente.', 'success');
       await loadClients();
       const refreshed = allClients.find((row) => String(row?.id || '') === String(verifCurrentClient?.id || '')) || verifCurrentClient;
@@ -3804,17 +3832,19 @@ function openVerificationModal(client) {
     const hasDateRequirement = item.dateField || item.requiresDate;
     const dateBadgeHtml = hasDateRequirement
       ? `<div class="mt-2 flex flex-wrap gap-2">${docInfo.omitted
-          ? buildOmittedBadgeHtml(item.label.includes('Constancia') ? 'Constancia' : (item.label.includes('Comprobante') ? 'Comprobante' : item.label))
-          : buildTrafficBadgeHtml(
-              item.label.includes('Constancia') ? 'Constancia' : (item.label.includes('Comprobante') ? 'Comprobante' : item.label),
-              getClientDocumentValidityReferenceDate(client, item.field),
-              getClientDocumentValidityDays(item.field, client)
-            )}</div>`
+        ? buildOmittedBadgeHtml(item.label.includes('Constancia') ? 'Constancia' : (item.label.includes('Comprobante') ? 'Comprobante' : item.label))
+        : buildTrafficBadgeHtml(
+          item.label.includes('Constancia') ? 'Constancia' : (item.label.includes('Comprobante') ? 'Comprobante' : item.label),
+          getClientDocumentValidityReferenceDate(client, item.field),
+          getClientDocumentValidityDays(item.field, client)
+        )}</div>`
       : '';
     const emittedDateValue = item.dateField ? getClientValidationDate(client, item.dateField) : getClientDocumentValidityReferenceDate(client, item.field);
     const emittedDateHtml = emittedDateValue
       ? `<p class="mt-1 text-[10px] text-gray-400">Fecha detectada: ${escapeHTML(safeDate(emittedDateValue))}</p>`
-      : '';
+      : (hasDateRequirement && docInfo.uploaded && !docInfo.omitted
+        ? '<p class="mt-1 text-[10px] text-amber-600 font-semibold">Falta una fecha legible para calcular la vigencia.</p>'
+        : '');
     const reviewedMeta = getClientDocumentStateMeta(client, item.field);
     const reviewedHtml = reviewedMeta.reviewedByName
       ? `<p class="mt-2 text-[10px] text-gray-500 font-semibold">${escapeHTML((reviewedMeta.status === 'aprobado' || reviewedMeta.omitted ? 'Aprobó' : 'Revisó') + ': ' + reviewedMeta.reviewedByName + (reviewedMeta.reviewedAt ? ' · ' + safeDate(reviewedMeta.reviewedAt) : ''))}</p>`
@@ -4127,7 +4157,7 @@ async function submitVerifDecision(status, motivo) {
         .update({ documentos_hash: documentosHash, metadata: nextMeta })
         .eq('id', dictamenId);
       if (dictErr) throw dictErr;
-      try { await forceClientValidationRefresh(verifCurrentClient); } catch (_) {}
+      try { await forceClientValidationRefresh(verifCurrentClient); } catch (_) { }
 
       const verb = nextStatus === 'aprobado' ? 'aprobado' : (nextStatus === 'rechazado' ? 'rechazado' : 'actualizado');
       window.showToast?.(`Dictamen ${verb} correctamente`, 'success');
@@ -4178,4 +4208,85 @@ async function submitVerifDecision(status, motivo) {
     console.error(e);
     window.showToast?.('No se pudo actualizar el estado del documento.', 'error');
   }
+}
+const nextStatus = status === 'aprobado' ? 'aprobado' : (status === 'rechazado' ? 'rechazado' : 'pendiente');
+const baseMeta = getClientDictamenMeta(currentRecord);
+const documentSnapshot = buildClientDictamenDocumentSnapshot(verifCurrentClient);
+const existingSnapshot = Array.isArray(baseMeta.documentos_snapshot) && baseMeta.documentos_snapshot.length ? baseMeta.documentos_snapshot : null;
+const currentDocumentosHash = await hashClientDictamenSnapshot({
+  tenant: CLIENT_TENANT_SLUG,
+  clientId: verifCurrentClient.id,
+  documents: documentSnapshot
+});
+const documentosHash = existingSnapshot
+  ? (String(currentRecord?.documentos_hash || baseMeta.documentos_hash || '').trim() || currentDocumentosHash)
+  : currentDocumentosHash;
+const nextMeta = {
+  ...baseMeta,
+  documentos_hash: documentosHash,
+  documentos_snapshot: existingSnapshot || documentSnapshot,
+  approval_status: nextStatus,
+  approved: nextStatus === 'aprobado',
+  rejected: nextStatus === 'rechazado',
+  reason: nextStatus === 'rechazado' ? motivo : '',
+  reviewed_by: actor,
+  reviewed_at: reviewedAt,
+  approved_by: nextStatus === 'aprobado' ? actor : {},
+  approved_at: nextStatus === 'aprobado' ? reviewedAt : ''
+};
+const { error: dictErr } = await window.tenantPocketBase.from(CLIENT_DICTAMEN_COLLECTION)
+  .update({ documentos_hash: documentosHash, metadata: nextMeta })
+  .eq('id', dictamenId);
+if (dictErr) throw dictErr;
+try { await forceClientValidationRefresh(verifCurrentClient); } catch (_) { }
+
+const verb = nextStatus === 'aprobado' ? 'aprobado' : (nextStatus === 'rechazado' ? 'rechazado' : 'actualizado');
+window.showToast?.(`Dictamen ${verb} correctamente`, 'success');
+await loadClients();
+verifCurrentClient = allClients.find((row) => String(row?.id || '') === String(verifCurrentClient?.id || '')) || verifCurrentClient;
+openVerificationModal(verifCurrentClient);
+const refreshedHistory = await fetchClientDictamenHistory(verifCurrentClient?.id, 50);
+const nextRecord = refreshedHistory.find((row) => String(row?.id || '') === dictamenId);
+if (nextRecord) await loadVerifDictamen(nextRecord);
+return;
+    }
+
+if (status === 'omitido' && !canClientDocumentBeOmitted(verifCurrentDocField)) {
+  window.showToast?.('Este documento no se puede omitir según la configuración actual.', 'error');
+  return;
+}
+
+const estados = safeObject(verifCurrentClient.documentos_estado);
+estados[verifCurrentDocField] = {
+  status,
+  motivo: status === 'rechazado' ? motivo : '',
+  omitido: status === 'omitido',
+  actualizado_at: '',
+  actualizado_desde_rechazo: false,
+  revisado_at: reviewedAt,
+  revisado_por_id: actor.id || '',
+  revisado_por_nombre: actor.name || '',
+  aprobado_at: status === 'aprobado' ? reviewedAt : '',
+  aprobado_por_id: status === 'aprobado' ? (actor.id || '') : '',
+  aprobado_por_nombre: status === 'aprobado' ? (actor.name || '') : ''
+};
+
+const { data, error } = await window.tenantPocketBase.from('clientes')
+  .update({ documentos_estado: estados })
+  .eq('id', verifCurrentClient.id);
+if (error) throw error;
+
+const verb = status === 'aprobado' ? 'aprobado' : (status === 'rechazado' ? 'rechazado' : (status === 'omitido' ? 'omitido' : 'actualizado'));
+window.showToast?.(`Documento ${verb} correctamente`, 'success');
+
+verifCurrentClient = Array.isArray(data) ? (data[0] || verifCurrentClient) : (data || verifCurrentClient);
+const docConfig = findClientDocumentRequirement(verifCurrentClient, verifCurrentDocField);
+const nextDoc = getVerificationDocState(verifCurrentClient, verifCurrentDocField);
+openVerificationModal(verifCurrentClient);
+if (docConfig) await loadVerifDoc(verifCurrentDocField, docConfig.label, nextDoc.fileName);
+await loadClients();
+  } catch (e) {
+  console.error(e);
+  window.showToast?.('No se pudo actualizar el estado del documento.', 'error');
+}
 }

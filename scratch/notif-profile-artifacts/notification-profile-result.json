@@ -1,0 +1,30 @@
+{
+  "tenant": "plaza_mayor",
+  "appUser": {
+    "id": "q4sdiq0c68zw5g4",
+    "email": "codex.notif-plaza_mayor-1776988667774-1000@local.test",
+    "username": "notif-plaza_mayor-1776988667774-1000"
+  },
+  "client": {
+    "id": "7syv7f59kan3zr0",
+    "name": "Cliente Notificaciones PM cliente-notif-1776988668291"
+  },
+  "profileClient": {
+    "id": "9shpw33chiouda2",
+    "name": "Cliente Notificaciones PM cliente-notif-1776988669235"
+  },
+  "quote": {
+    "id": "bemxoz2aaem9l4d",
+    "folio": "PM-BEMXOZ"
+  },
+  "notifications": {
+    "rejectedDocumentId": "v83bxksaxis2hw4",
+    "quoteStatusId": "4mrj7kq2wqpsmfz"
+  },
+  "artifacts": {
+    "dashboardModal": "C:\\Users\\johan\\OneDrive\\Desktop\\repos git\\cotizadorpm-pocketbase\\scratch\\notif-profile-artifacts\\dashboard-notification-modal.png",
+    "layoutModal": "C:\\Users\\johan\\OneDrive\\Desktop\\repos git\\cotizadorpm-pocketbase\\scratch\\notif-profile-artifacts\\layout-notification-modal.png",
+    "profileScroll": "C:\\Users\\johan\\OneDrive\\Desktop\\repos git\\cotizadorpm-pocketbase\\scratch\\notif-profile-artifacts\\perfil-cliente-scroll.png",
+    "result": "C:\\Users\\johan\\OneDrive\\Desktop\\repos git\\cotizadorpm-pocketbase\\scratch\\notif-profile-artifacts\\notification-profile-result.json"
+  }
+}

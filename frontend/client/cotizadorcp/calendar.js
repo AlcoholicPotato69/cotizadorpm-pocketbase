@@ -836,10 +836,10 @@ window.saveAllColors = async function saveAllColors() {
 // ----------------------------------------------------------------------------
 document.addEventListener('DOMContentLoaded', async () => {
     if (typeof window.getHubConfigReady === 'function') {
-        try { await window.getHubConfigReady(); } catch (_) {}
+        try { await window.getHubConfigReady(); } catch (_) { }
     }
     if (window.__HUB_LAYOUT_READY && typeof window.__HUB_LAYOUT_READY.then === 'function') {
-        try { await window.__HUB_LAYOUT_READY; } catch (_) {}
+        try { await window.__HUB_LAYOUT_READY; } catch (_) { }
     }
     if (window.__HUB_PAGE_ACCESS_DENIED) return;
     const ok = await initClients();

@@ -1,6 +1,6 @@
 # Documentacion Tecnica
 
-Ultima actualizacion: 2026-04-14
+Ultima actualizacion: 2026-04-24
 
 Esta carpeta concentra la documentacion vigente para desarrollo, soporte, seguridad y auditoria tecnica del proyecto.
 
@@ -18,6 +18,7 @@ Esta carpeta concentra la documentacion vigente para desarrollo, soporte, seguri
 - troubleshooting y runbooks: `docs/70-troubleshooting-y-runbooks.md`
 - auditoria tecnica y checklist TI: `docs/80-auditoria-tecnica-y-checklist.md`
 - catalogo de funciones y puntos de extension: `docs/85-catalogo-de-funciones-y-puntos-de-extension.md`
+- cambios documentados 2026-04-24: `docs/90-cambios-2026-04-24-client-profile-y-control.md`
 
 ## Documentos canonicos
 
@@ -35,6 +36,7 @@ Esta carpeta concentra la documentacion vigente para desarrollo, soporte, seguri
 | `docs/70-troubleshooting-y-runbooks.md` | runbooks de falla comun, restauracion y diagnostico |
 | `docs/80-auditoria-tecnica-y-checklist.md` | resultado de auditoria tecnica, hallazgos y checklist reproducible |
 | `docs/85-catalogo-de-funciones-y-puntos-de-extension.md` | funciones criticas, responsabilidades y puntos seguros de modificacion |
+| `docs/90-cambios-2026-04-24-client-profile-y-control.md` | detalle operativo del flujo rapido de clientes, seguridad documental y ajustes de control |
 
 ## Herramientas de verificacion
 

@@ -95,12 +95,13 @@ async function loadClientProfilesForOrderModal() {
         }
 
         sel.onchange = () => {
-            const id = sel.value; if (!id) { if (hid) hid.value = ''; return; }
+            const id = sel.value; if (!id) { if (hid) hid.value = ''; __cpSyncOrderApprovalControls(); return; }
             const c = orderClientProfilesById[id]; if (!c) return;
             if (!__cpIsOrderClientProfileReady(c)) {
                 if (hid) hid.value = '';
                 sel.value = '';
                 window.showToast?.('Este perfil aun no tiene expediente validado. Usa captura manual o pide al cliente completar su expediente.', 'info');
+                __cpSyncOrderApprovalControls();
                 return;
             }
             if (hid) hid.value = id;
@@ -108,13 +109,19 @@ async function loadClientProfilesForOrderModal() {
             if (document.getElementById('oed-phone')) document.getElementById('oed-phone').value = (c.telefono || '');
             if (document.getElementById('oed-email')) document.getElementById('oed-email').value = (c.correo || '');
             if (document.getElementById('fiscal-rfc-re')) document.getElementById('fiscal-rfc-re').value = (c.rfc || '');
+            __cpSyncOrderApprovalControls();
         };
-        const clearAssoc = () => { if (sel.value) sel.value = ''; if (hid) hid.value = ''; };
+        const clearAssoc = () => {
+            if (sel.value) sel.value = '';
+            if (hid) hid.value = '';
+            __cpSyncOrderApprovalControls();
+        };
         ['oed-client', 'oed-phone', 'oed-email', 'fiscal-rfc-re'].forEach(id => { const el = document.getElementById(id); if (el) el.addEventListener('input', clearAssoc); });
         window.HUB_CLIENT_PROFILE_HOVER?.bindSelect?.(sel, () => {
             const selectedId = String(sel?.value || hid?.value || '').trim();
             return selectedId ? (orderClientProfilesById[selectedId] || null) : null;
         }, { tenant: 'casa_de_piedra' });
+        __cpSyncOrderApprovalControls();
     } catch (e) { console.warn("No se pudo cargar clientes", e); }
 }
 
@@ -157,6 +164,65 @@ function __cpApplyOrderClientProfileSelection(order = {}) {
     sel.value = profileId || '';
     if (hid) hid.value = profileId || '';
     return profileId;
+}
+
+function __cpReadLiveOrderClientSnapshot() {
+    return {
+        cliente_id: String(document.getElementById('oed-client-id')?.value || '').trim(),
+        cliente_nombre: String(document.getElementById('oed-client')?.value || '').trim(),
+        cliente_email: String(document.getElementById('oed-email')?.value || '').trim(),
+        cliente_rfc: String(document.getElementById('fiscal-rfc-re')?.value || '').trim()
+    };
+}
+
+function __cpResolveCurrentOrderClientProfile(order = {}) {
+    const selectedId = String(
+        document.getElementById('oed-client-id')?.value
+        || document.getElementById('oed-client-profile')?.value
+        || ''
+    ).trim();
+    if (selectedId && orderClientProfilesById[selectedId]) return orderClientProfilesById[selectedId];
+    const profileId = __cpResolveOrderClientProfileId({
+        ...(order && typeof order === 'object' ? order : {}),
+        ...__cpReadLiveOrderClientSnapshot()
+    });
+    return profileId ? (orderClientProfilesById[profileId] || null) : null;
+}
+
+function __cpGetOrderApprovalGuard(order = {}) {
+    const clientProfile = __cpResolveCurrentOrderClientProfile(order);
+    if (!clientProfile) {
+        return {
+            canApprove: false,
+            clientProfile: null,
+            reason: 'No puedes aprobar la cotizacion hasta asociar un perfil de cliente.'
+        };
+    }
+    if (!__cpIsOrderClientProfileReady(clientProfile)) {
+        return {
+            canApprove: false,
+            clientProfile,
+            reason: 'No puedes aprobar la cotizacion hasta que el expediente del cliente este completo, vigente y aprobado.'
+        };
+    }
+    return { canApprove: true, clientProfile, reason: '' };
+}
+
+function __cpSyncOrderApprovalControls(order = currentPreviewOrder || {}) {
+    const guard = __cpGetOrderApprovalGuard(order);
+    const currentStatus = String(order?.status || currentPreviewOrder?.status || '').toLowerCase();
+    const isLocked = ['aprobada', 'finalizada'].includes(currentStatus);
+    const statusSel = document.getElementById('oed-status');
+    if (statusSel) {
+        const approvalOption = Array.from(statusSel.options || []).find((opt) => String(opt.value || '').toLowerCase() === 'aprobada');
+        if (approvalOption) approvalOption.disabled = !guard.canApprove && !isLocked;
+        if (!guard.canApprove && !isLocked && String(statusSel.value || '').toLowerCase() === 'aprobada') {
+            statusSel.value = 'pendiente';
+        }
+        if (!isLocked) statusSel.title = guard.canApprove ? '' : guard.reason;
+    }
+    if (typeof __orderApplyStatusVisual === 'function') __orderApplyStatusVisual();
+    return guard;
 }
 function __orderNormalizeTaxIds(value) {
     return window.parseIds(value)
@@ -2744,6 +2810,10 @@ window.processSaveOrder = async function (options = {}) {
         const approvalTransition = nextStatus === 'aprobada' && prevStatus !== 'aprobada' && prevStatus !== 'finalizada';
         const convenioTransition = nextStatus === 'finalizada' && __orderIsConvenioOrder({ ...currentPreviewOrder, ...formData });
         const orderId = String(document.getElementById('oed-id')?.value || currentPreviewOrder?.id || '').trim();
+        if (approvalTransition) {
+            const approvalGuard = __cpGetOrderApprovalGuard(formData);
+            if (!approvalGuard.canApprove) throw new Error(approvalGuard.reason);
+        }
         if (!orderId) throw new Error('Cotización inválida.');
         if (!formData.numero_orden) {
             const sourceId = String(currentPreviewOrder?.id || orderId);
@@ -10975,6 +11045,8 @@ window.openOrderEditModal = async function (id) {
         saveBtn.disabled = true;
         saveBtn.classList.add('opacity-60');
         saveBtn.title = __orderReadOnlyMessage();
+    } else if (!isReadOnly) {
+        __cpSyncOrderApprovalControls(order);
     }
 
     window.renderConceptsList();
@@ -11056,6 +11128,11 @@ window.attemptSaveOrder = function () {
         return window.showToast(`${sp?.nombre || conflictCfg.spaceId} está ocupado ${conflictDate ? '(' + window.safeFormatDate(conflictDate) + ')' : ''}.`, "error");
     }
     if (newStatus === 'aprobada') {
+        const approvalGuard = __cpGetOrderApprovalGuard(currentPreviewOrder);
+        if (!approvalGuard.canApprove) {
+            __cpSyncOrderApprovalControls(currentPreviewOrder);
+            return window.showToast(approvalGuard.reason, 'error');
+        }
         const missing = [];
         if (!document.getElementById('oed-client').value) missing.push("Nombre Cliente");
         if (!document.getElementById('oed-email').value) missing.push("Email");

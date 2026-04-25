@@ -71,22 +71,19 @@
     
         #contract-preview-box {
             width: 816px !important;
-            min-height: 1056px !important;
-            height: auto !important;
+            height: 1056px !important;
             background-color: white;
             box-shadow: 0 10px 30px rgba(0,0,0,0.15);
             transform-origin: top center;
             transition: transform 0.2s ease;
-            overflow: visible;
+            overflow: hidden;
         }
 
         #contract-preview-iframe {
             width: 100%;
-            min-height: 1056px;
-            height: 1056px;
+            height: 100%;
             border: 0;
             background: white;
-            display: block;
         }
 </style>
     <!-- Local Animations -->
@@ -554,10 +551,10 @@
         </div>
     </div>
 
-    <div id="receipt-pdf-render" class="fixed top-0 pointer-events-none" style="left: -10000px; z-index: -1; width: 816px; min-height: 1056px; background: white; opacity: 1;"></div>
+    <div id="receipt-pdf-render" class="absolute top-0 left-0 -z-50 pointer-events-none opacity-0" style="width: 816px; min-height: 1056px; background: white;"></div>
     <script src="../js/pdf-editor-hitbox.js"></script>
     <script src="../js/pdf-margin-guides.js"></script>
-    <script src="contracts.js?v=20260422-pm-contract-flow-v1"></script>
+    <script src="contracts.js?v=20260413-pm-contract-tags-v2"></script>
 </body>
 </html> 
 

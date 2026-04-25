@@ -633,12 +633,13 @@ async function loadClientProfilesForOrderModal() {
         }
 
         sel.onchange = () => {
-            const id = sel.value; if (!id) { if (hid) hid.value = ''; return; }
+            const id = sel.value; if (!id) { if (hid) hid.value = ''; __pmSyncOrderApprovalControls(); return; }
             const c = orderClientProfilesById[id]; if (!c) return;
             if (!__pmIsOrderClientProfileReady(c)) {
                 if (hid) hid.value = '';
                 sel.value = '';
                 window.showToast?.('Este perfil aun no tiene expediente validado. Usa captura manual o pide al cliente completar su expediente.', 'info');
+                __pmSyncOrderApprovalControls();
                 return;
             }
             if (hid) hid.value = id;
@@ -646,13 +647,19 @@ async function loadClientProfilesForOrderModal() {
             if(document.getElementById('oed-phone')) document.getElementById('oed-phone').value = (c.telefono || '');
             if(document.getElementById('oed-email')) document.getElementById('oed-email').value = (c.correo || '');
             if(document.getElementById('fiscal-rfc-re')) document.getElementById('fiscal-rfc-re').value = (c.rfc || '');
+            __pmSyncOrderApprovalControls();
         };
-        const clearAssoc = () => { if (sel.value) sel.value = ''; if (hid) hid.value = ''; };
+        const clearAssoc = () => {
+            if (sel.value) sel.value = '';
+            if (hid) hid.value = '';
+            __pmSyncOrderApprovalControls();
+        };
         ['oed-client','oed-phone','oed-email','fiscal-rfc-re'].forEach(id => { const el = document.getElementById(id); if (el) el.addEventListener('input', clearAssoc); });
         window.HUB_CLIENT_PROFILE_HOVER?.bindSelect?.(sel, () => {
             const selectedId = String(sel?.value || hid?.value || '').trim();
             return selectedId ? (orderClientProfilesById[selectedId] || null) : null;
         }, { tenant: 'plaza_mayor' });
+        __pmSyncOrderApprovalControls();
     } catch (e) { console.warn("No se pudo cargar clientes", e); }
 }
 
@@ -695,6 +702,72 @@ function __pmApplyOrderClientProfileSelection(order = {}) {
     sel.value = profileId || '';
     if (hid) hid.value = profileId || '';
     return profileId;
+}
+
+function __pmReadLiveOrderClientSnapshot() {
+    return {
+        cliente_id: String(document.getElementById('oed-client-id')?.value || '').trim(),
+        cliente_nombre: String(document.getElementById('oed-client')?.value || '').trim(),
+        cliente_email: String(document.getElementById('oed-email')?.value || '').trim(),
+        cliente_rfc: String(document.getElementById('fiscal-rfc-re')?.value || '').trim()
+    };
+}
+
+function __pmResolveCurrentOrderClientProfile(order = {}) {
+    const selectedId = String(
+        document.getElementById('oed-client-id')?.value
+        || document.getElementById('oed-client-profile')?.value
+        || ''
+    ).trim();
+    if (selectedId && orderClientProfilesById[selectedId]) return orderClientProfilesById[selectedId];
+    const profileId = __pmResolveOrderClientProfileId({
+        ...(order && typeof order === 'object' ? order : {}),
+        ...__pmReadLiveOrderClientSnapshot()
+    });
+    return profileId ? (orderClientProfilesById[profileId] || null) : null;
+}
+
+function __pmGetOrderApprovalGuard(order = {}) {
+    const clientProfile = __pmResolveCurrentOrderClientProfile(order);
+    if (!clientProfile) {
+        return {
+            canApprove: false,
+            clientProfile: null,
+            reason: 'No puedes aprobar la cotizacion hasta asociar un perfil de cliente.'
+        };
+    }
+    if (!__pmIsOrderClientProfileReady(clientProfile)) {
+        return {
+            canApprove: false,
+            clientProfile,
+            reason: 'No puedes aprobar la cotizacion hasta que el expediente del cliente este completo, vigente y aprobado.'
+        };
+    }
+    return { canApprove: true, clientProfile, reason: '' };
+}
+
+function __pmSyncOrderApprovalControls(order = currentPreviewOrder || {}) {
+    const guard = __pmGetOrderApprovalGuard(order);
+    const currentStatus = String(order?.status || currentPreviewOrder?.status || '').toLowerCase();
+    const isLocked = ['aprobada', 'finalizada'].includes(currentStatus);
+    const statusSel = document.getElementById('oed-status');
+    if (statusSel) {
+        const approvalOption = Array.from(statusSel.options || []).find((opt) => String(opt.value || '').toLowerCase() === 'aprobada');
+        if (approvalOption) approvalOption.disabled = !guard.canApprove && !isLocked;
+        if (!guard.canApprove && !isLocked && String(statusSel.value || '').toLowerCase() === 'aprobada') {
+            statusSel.value = 'pendiente';
+        }
+        if (!isLocked) statusSel.title = guard.canApprove ? '' : guard.reason;
+    }
+    const approveBtn = document.getElementById('btn-save-approve');
+    if (approveBtn) {
+        const disableApprove = isLocked || !guard.canApprove;
+        approveBtn.disabled = disableApprove;
+        approveBtn.classList.toggle('opacity-60', disableApprove);
+        approveBtn.title = isLocked ? 'Cotizacion aprobada: edicion bloqueada' : (guard.canApprove ? '' : guard.reason);
+    }
+    if (typeof applyStatusVisual === 'function') applyStatusVisual();
+    return guard;
 }
 
 const _p = (window.location.pathname || '') + ' ' + (window.location.href || '');
@@ -8998,6 +9071,11 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     const newLvl = STATUS_LEVEL[newStatus] || 0;
     if (newLvl < curLvl) return window.showToast("No puedes regresar a un estado anterior.", "error");
     if (newStatus === "aprobada" && String(currentPreviewOrder?.status || "").toLowerCase() !== "aprobada") {
+      const approvalGuard = __pmGetOrderApprovalGuard(currentPreviewOrder);
+      if (!approvalGuard.canApprove) {
+        __pmSyncOrderApprovalControls(currentPreviewOrder);
+        return window.showToast(approvalGuard.reason, "error");
+      }
       const missing = [];
       const convenioOrder = selectedCfg().some((cfg) => !!cfg?.convenioEnabled);
       if (!document.getElementById("oed-client")?.value) missing.push("Nombre Cliente");
@@ -9048,6 +9126,10 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       const approvalTransition = nextStatus === "aprobada" && !["aprobada", "finalizada"].includes(prevStatus);
       const convenioTransition = nextStatus === "finalizada" && __pmIsConvenioOrder({ ...currentPreviewOrder, ...formData });
       formData.status = nextStatus;
+      if (approvalTransition) {
+        const approvalGuard = __pmGetOrderApprovalGuard(formData);
+        if (!approvalGuard.canApprove) throw new Error(approvalGuard.reason);
+      }
       const saveOrderId = String(document.getElementById("oed-id")?.value || currentPreviewOrder?.id || "").trim();
       if (!saveOrderId) throw new Error("Cotización inválida.");
       if (!formData.numero_orden) formData.numero_orden = __pmResolveQuoteFolio(currentPreviewOrder, saveOrderId);
@@ -9309,6 +9391,8 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       if (approveBtn) { approveBtn.disabled = true; approveBtn.classList.add("opacity-60"); approveBtn.title = __pmOrderReadOnlyMessage(); }
       if (quoteName) quoteName.disabled = true;
       if (statusSel) statusSel.disabled = true;
+    } else {
+      __pmSyncOrderApprovalControls(order);
     }
 
     window.renderConceptsList();

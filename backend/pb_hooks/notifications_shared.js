@@ -1,6 +1,7 @@
 (function () {
   const NOTIFICATIONS_COLLECTION = "hub_notifications";
   const AUTH_COLLECTION = "app_users";
+  const DISMISSED_RETENTION_DAYS = 5;
   const ALLOWED_ROLES = {
     admin: true,
     plaza_mayor: true,
@@ -47,6 +48,20 @@
     return normalizeTenant(tenant) === "casa_de_piedra" ? "cotizadorcp" : "cotizador";
   }
 
+  function buildTenantLink(tenant, route, params) {
+    const basePath = tenantPath(tenant) + "/" + trim(route || "");
+    const query = [];
+    const source = params && typeof params === "object" ? params : {};
+    const keys = Object.keys(source);
+    for (let i = 0; i < keys.length; i += 1) {
+      const key = trim(keys[i]);
+      const value = trim(source[key]);
+      if (!key || !value) continue;
+      query.push(encodeURIComponent(key) + "=" + encodeURIComponent(value));
+    }
+    return query.length ? (basePath + "?" + query.join("&")) : basePath;
+  }
+
   function statusLabel(status) {
     const normalized = trim(status).toLowerCase();
     return STATUS_LABELS[normalized] || (normalized ? normalized : "sin estatus");
@@ -60,6 +75,14 @@
     }
   }
 
+  function collectionHasField(collection, fieldName) {
+    try {
+      return !!collection.fields.getByName(fieldName);
+    } catch (_) {
+      return false;
+    }
+  }
+
   function getRecordString(record, field) {
     if (!record) return "";
     try {
@@ -69,6 +92,44 @@
     } catch (_) {
       return "";
     }
+  }
+
+  function getRecordBool(record, field) {
+    if (!record) return false;
+    try {
+      if (typeof record.getBool === "function") return record.getBool(field) === true;
+      if (typeof record.get === "function") return record.get(field) === true;
+      return record[field] === true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function escapeFilterValue(value) {
+    return String(value || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  }
+
+  function buildNotificationKey(payload) {
+    const source = payload && typeof payload === "object" ? payload : {};
+    const explicit = trim(source.notification_key || source.notificationKey);
+    if (explicit) return explicit.slice(0, 120);
+    const meta = source.metadata && typeof source.metadata === "object" ? source.metadata : {};
+    const type = trim(source.type || "system").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 32) || "system";
+    const tenant = normalizeTenant(meta.tenant || meta.tenant_slug || source.tenant) || "global";
+    const target = trim(meta.cotizacion_id || meta.cliente_id || meta.redirect_kind || source.link)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "")
+      .slice(0, 24) || "evt";
+    const nonce = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    return [type, tenant, target, nonce].join("_").slice(0, 120);
+  }
+
+  function getNotificationKey(record) {
+    return getRecordString(record, "notification_key") || getRecordString(record, "id");
+  }
+
+  function isNotificationDismissed(record) {
+    return getRecordBool(record, "dismissed") || !!getRecordString(record, "dismissed_at");
   }
 
   function getAllUsers() {
@@ -103,6 +164,7 @@
 
     const nowIso = new Date().toISOString();
     const source = payload && typeof payload === "object" ? payload : {};
+    const notificationKey = buildNotificationKey(source);
     try {
       const record = new Record(collection);
       record.set("user_id", trim(userId));
@@ -112,6 +174,9 @@
       record.set("source_app", trim(source.source_app || source.type || "system").slice(0, 80));
       record.set("link", trim(source.link).slice(0, 255));
       record.set("metadata", source.metadata && typeof source.metadata === "object" ? source.metadata : {});
+      if (collectionHasField(collection, "notification_key")) record.set("notification_key", notificationKey);
+      if (collectionHasField(collection, "dismissed")) record.set("dismissed", false);
+      if (collectionHasField(collection, "dismissed_at")) record.set("dismissed_at", "");
       record.set("created_at", trim(source.created_at) || nowIso);
       record.set("updated_at", trim(source.updated_at) || nowIso);
       $app.save(record);
@@ -123,9 +188,66 @@
   }
 
   function notifyAllUsers(payload) {
+    const sharedPayload = Object.assign({}, payload || {});
+    sharedPayload.notification_key = buildNotificationKey(sharedPayload);
     const users = getAllUsers();
     for (let i = 0; i < users.length; i += 1) {
-      createNotification(getRecordString(users[i], "id"), payload);
+      createNotification(getRecordString(users[i], "id"), sharedPayload);
+    }
+  }
+
+  function purgeDismissedNotifications() {
+    const cutoffDate = new Date(Date.now() - (DISMISSED_RETENTION_DAYS * 86400000));
+    const cutoffIso = cutoffDate.toISOString();
+    try {
+      while (true) {
+        const candidates = $app.findRecordsByFilter(
+          NOTIFICATIONS_COLLECTION,
+          `dismissed = true && dismissed_at != "" && dismissed_at <= "${cutoffIso}"`,
+          "-dismissed_at",
+          200,
+          0
+        ) || [];
+        if (!candidates.length) break;
+
+        const checked = {};
+        let deleted = 0;
+        for (let i = 0; i < candidates.length; i += 1) {
+          const key = getNotificationKey(candidates[i]);
+          if (!key || checked[key]) continue;
+          checked[key] = true;
+
+          const siblings = $app.findRecordsByFilter(
+            NOTIFICATIONS_COLLECTION,
+            `notification_key = "${escapeFilterValue(key)}"`,
+            "-dismissed_at",
+            500,
+            0
+          ) || [];
+          if (!siblings.length) continue;
+          if (siblings.some(function (record) { return !isNotificationDismissed(record); })) continue;
+
+          let latestDismissedAt = "";
+          for (let j = 0; j < siblings.length; j += 1) {
+            const dismissedAt = getRecordString(siblings[j], "dismissed_at");
+            if (dismissedAt && dismissedAt > latestDismissedAt) latestDismissedAt = dismissedAt;
+          }
+          if (!latestDismissedAt || latestDismissedAt > cutoffIso) continue;
+
+          for (let j = 0; j < siblings.length; j += 1) {
+            try {
+              $app.delete(siblings[j]);
+              deleted += 1;
+            } catch (err) {
+              console.log("[hub_notifications] No se pudo eliminar notificacion descartada:", String(err));
+            }
+          }
+        }
+
+        if (!deleted) break;
+      }
+    } catch (err) {
+      console.log("[hub_notifications] No se pudo limpiar notificaciones descartadas:", String(err));
     }
   }
 
@@ -139,7 +261,8 @@
       field,
       label: trim(source.label || source.documento_nombre || DOC_LABELS[field] || field),
       type: trim(source.type || source.tipo_movimiento || ""),
-      file: trim(source.file || source.archivo || "")
+      file: trim(source.file || source.archivo || ""),
+      reason: trim(source.reason || source.motivo || source.rejection_reason || "")
     };
   }
 
@@ -169,6 +292,11 @@
     };
   }
 
+  function actorLabel(actor) {
+    const source = actor && typeof actor === "object" ? actor : {};
+    return trim(source.name || source.actor_nombre || source.login_username || source.username || source.email) || "Sistema";
+  }
+
   function notifyQuoteStatusChanged(before, after, actor) {
     const previous = before && typeof before === "object" ? before : {};
     const current = after && typeof after === "object" ? after : {};
@@ -178,22 +306,27 @@
     const newStatus = trim(current.status).toLowerCase();
     if (!newStatus || oldStatus === newStatus) return;
 
+    const quoteId = trim(current.id || previous.id);
     const folio = trim(current.folio || current.numero_orden || current.id) || "cotizacion";
     const clientName = trim(current.clientName || current.cliente_nombre || previous.clientName || "");
+    const targetLink = buildTenantLink(tenant, "orders.html", quoteId ? { quote: quoteId } : {});
     notifyAllUsers({
       title: "Estatus de cotizacion actualizado",
       message: tenantLabel(tenant) + ": " + folio + " cambio de " + statusLabel(oldStatus) + " a " + statusLabel(newStatus) + (clientName ? " para " + clientName : "") + ".",
       type: "quote_status",
       source_app: "cotizador",
-      link: tenantPath(tenant) + "/orders.html",
+      link: targetLink,
       metadata: {
         tenant,
-        cotizacion_id: trim(current.id || previous.id),
+        cotizacion_id: quoteId,
         cotizacion_folio: folio,
         estado_anterior: oldStatus,
         estado_actual: newStatus,
         actor_id: trim(actor && actor.id),
-        actor_nombre: trim(actor && actor.name)
+        actor_nombre: trim(actor && actor.name),
+        cliente_nombre: clientName,
+        redirect_url: targetLink,
+        redirect_kind: "quote_detail"
       }
     });
   }
@@ -202,19 +335,22 @@
     const target = normalizeClientPayload(client);
     if (!target.tenant || !target.id) return;
     const docSummary = summarizeDocs(docs);
+    const targetLink = buildTenantLink(target.tenant, "clientes.html", { verify: target.id });
     notifyAllUsers({
       title: "Documentos cargados por cliente",
       message: tenantLabel(target.tenant) + ": " + target.name + " cargo " + docSummary + ".",
       type: "client_document_uploaded",
       source_app: "document",
-      link: tenantPath(target.tenant) + "/clientes.html",
+      link: targetLink,
       metadata: {
         tenant: target.tenant,
         cliente_id: target.id,
         cliente_nombre: target.name,
         documentos: (Array.isArray(docs) ? docs : []).map(normalizeDocEntry),
         actor_id: trim(actor && actor.id),
-        actor_nombre: trim(actor && actor.name)
+        actor_nombre: trim(actor && actor.name),
+        redirect_url: targetLink,
+        redirect_kind: "client_verify"
       }
     });
   }
@@ -223,27 +359,66 @@
     const target = normalizeClientPayload(client);
     if (!target.tenant || !target.id) return;
     const docSummary = summarizeDocs(docs);
+    const targetLink = buildTenantLink(target.tenant, "clientes.html", { verify: target.id });
     notifyAllUsers({
       title: "Documentos de cliente aprobados",
       message: tenantLabel(target.tenant) + ": se aprobo " + docSummary + " de " + target.name + ".",
       type: "client_document_approved",
       source_app: "document",
-      link: tenantPath(target.tenant) + "/control.html",
+      link: targetLink,
       metadata: {
         tenant: target.tenant,
         cliente_id: target.id,
         cliente_nombre: target.name,
         documentos: (Array.isArray(docs) ? docs : []).map(normalizeDocEntry),
         actor_id: trim(actor && actor.id),
-        actor_nombre: trim(actor && actor.name)
+        actor_nombre: trim(actor && actor.name),
+        redirect_url: targetLink,
+        redirect_kind: "client_verify"
       }
     });
   }
 
+  function notifyClientDocumentsRejected(client, docs, actor) {
+    const target = normalizeClientPayload(client);
+    if (!target.tenant || !target.id) return;
+    const docList = Array.isArray(docs) ? docs : [docs];
+    const reviewer = actorLabel(actor);
+    const targetLink = buildTenantLink(target.tenant, "clientes.html", { verify: target.id });
+
+    for (let i = 0; i < docList.length; i += 1) {
+      const item = normalizeDocEntry(docList[i]);
+      const label = item.label || item.field || "documento";
+      const reason = trim(item.reason);
+      const message = reviewer + " rechazo " + label + " del cliente " + target.name + (reason ? " por " + reason + "." : ".");
+      notifyAllUsers({
+        title: "Documento de cliente rechazado",
+        message,
+        type: "client_document_rejected",
+        source_app: "document",
+        link: targetLink,
+        metadata: {
+          tenant: target.tenant,
+          cliente_id: target.id,
+          cliente_nombre: target.name,
+          documentos: [item],
+          documento: item,
+          motivo: reason,
+          actor_id: trim(actor && actor.id),
+          actor_nombre: reviewer,
+          redirect_url: targetLink,
+          redirect_kind: "client_verify"
+        }
+      });
+    }
+  }
+
   module.exports = {
+    purgeDismissedNotifications,
     notifyAllUsers,
     notifyQuoteStatusChanged,
     notifyClientDocumentsUploaded,
-    notifyClientDocumentsApproved
+    notifyClientDocumentsApproved,
+    notifyClientDocumentsRejected
   };
 })();

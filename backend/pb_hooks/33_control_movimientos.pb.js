@@ -52,3 +52,7 @@ routerAdd("GET", "/api/cotizador/server-time", function (e) {
     now: new Date().toISOString()
   });
 });
+
+routerAdd("GET", "/api/cotizador/control-movements", function (e) {
+  return require(`${__hooks}/control_movimientos_shared.js`).handleMovementsList(e);
+});

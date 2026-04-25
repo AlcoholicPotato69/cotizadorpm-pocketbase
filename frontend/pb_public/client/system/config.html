@@ -553,42 +553,6 @@
             </div>
           </div>
         </div>
-
-        <div class="xl:col-span-2 bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
-          <div class="p-6 border-b border-gray-100 bg-gray-50 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-            <div>
-              <h3 class="font-black text-gray-800 text-lg">Documentos requeridos del cliente</h3>
-              <p class="text-xs text-gray-500 mt-1">Define qué documentos aparecen en el portal público, cuáles bloquean el perfil y cuáles bloquean la generación de contrato.</p>
-            </div>
-            <button type="button" onclick="window.saveClientDocumentRequirements(event)" class="bg-gray-900 text-white py-3 px-4 rounded-xl font-bold text-xs uppercase hover:bg-black transition">
-              Guardar documentos
-            </button>
-          </div>
-          <div class="p-6 grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6">
-            <div>
-              <div id="client-doc-requirements-list" class="space-y-3"></div>
-              <div id="client-doc-requirements-empty" class="hidden text-xs text-gray-400 italic p-4 text-center border border-dashed border-gray-200 rounded-xl">Sin documentos configurados.</div>
-            </div>
-            <form onsubmit="window.addClientDocumentRequirement(event)" class="bg-gray-50 border border-gray-100 rounded-2xl p-4 space-y-3">
-              <div>
-                <label class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2">Nombre del documento</label>
-                <input id="client-doc-new-label" class="w-full p-3 bg-white border border-gray-200 rounded-xl outline-none focus:border-blue-600 text-sm font-bold transition" placeholder="Ej. Información bancaria">
-              </div>
-              <div>
-                <label class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2">Descripción / ayuda</label>
-                <textarea id="client-doc-new-desc" rows="3" class="w-full p-3 bg-white border border-gray-200 rounded-xl outline-none focus:border-blue-600 text-xs font-semibold transition" placeholder="Qué debe subir el cliente"></textarea>
-              </div>
-              <div class="grid grid-cols-1 gap-2 text-xs font-bold text-gray-600">
-                <label class="flex items-center gap-2"><input id="client-doc-new-profile" type="checkbox" class="accent-blue-600" checked> Requerido para validar perfil</label>
-                <label class="flex items-center gap-2"><input id="client-doc-new-contract" type="checkbox" class="accent-blue-600" checked> Requerido para generar contrato</label>
-                <label class="flex items-center gap-2"><input id="client-doc-new-date" type="checkbox" class="accent-blue-600"> Solicitar/extractar fecha con OCR</label>
-              </div>
-              <button type="submit" class="w-full bg-blue-600 text-white py-3 px-4 rounded-xl font-bold text-xs uppercase hover:bg-blue-700 shadow-lg shadow-blue-100 transition">
-                Agregar documento
-              </button>
-            </form>
-          </div>
-        </div>
       </div>
     </div>
 
@@ -847,7 +811,6 @@
     const CFG_TEMPLATE_DEFAULT_KEY = 'contract_template_default';
     const CFG_REGULATION_TEMPLATE_DEFAULT_KEY = 'reglamento_template_default';
     const CFG_LETTERHEAD_KEY = 'pdf_letterhead_path';
-    const CFG_CLIENT_DOC_REQUIREMENTS_KEY = 'client_document_requirements';
 
     const PDF_EDITOR_OVERLAYS_COLLECTION = 'pdf_overlays';
     const PDF_EDITOR_OVERLAY_DOC_TYPE_BY_ID = Object.freeze({
@@ -860,7 +823,6 @@
     let docsDefaultTemplateFile = '';
     let docsDefaultRegulationFile = '';
     let docsDefaultLetterheadFile = '';
-    let clientDocumentRequirements = [];
 
     let pdfEditorConfigRecordId = '';
     let pdfEditorSelectedType = 'quote';
@@ -2251,15 +2213,6 @@
         .replace(/[^a-zA-Z0-9_\-.]/g, '');
     }
 
-    function escapeHTML(value) {
-      return String(value ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-    }
-
     function parseConfigJson(raw) {
       if (!raw) return {};
       if (typeof raw === 'object') return raw;
@@ -2387,205 +2340,24 @@
           .from('configuracion')
           .select('*')
           .eq('tenant', getCurrentConfigTenant())
-          .in('clave', [CFG_TEMPLATE_DEFAULT_KEY, CFG_REGULATION_TEMPLATE_DEFAULT_KEY, CFG_LETTERHEAD_KEY, CFG_CLIENT_DOC_REQUIREMENTS_KEY]);
+          .in('clave', [CFG_TEMPLATE_DEFAULT_KEY, CFG_REGULATION_TEMPLATE_DEFAULT_KEY, CFG_LETTERHEAD_KEY]);
         if (error) throw error;
         const rows = Array.isArray(data) ? data : (data ? [data] : []);
         const templateRow = pickLatestConfigRow(rows.filter(row => String(row?.clave || '').toLowerCase() === CFG_TEMPLATE_DEFAULT_KEY));
         const regulationRow = pickLatestConfigRow(rows.filter(row => String(row?.clave || '').toLowerCase() === CFG_REGULATION_TEMPLATE_DEFAULT_KEY));
         const letterheadRow = pickLatestConfigRow(rows.filter(row => String(row?.clave || '').toLowerCase() === CFG_LETTERHEAD_KEY));
-        const clientDocsRow = pickLatestConfigRow(rows.filter(row => String(row?.clave || '').toLowerCase() === CFG_CLIENT_DOC_REQUIREMENTS_KEY));
         const templateCfg = parseConfigJson(templateRow?.valor_json);
         const regulationCfg = parseConfigJson(regulationRow?.valor_json);
         const letterheadCfg = parseConfigJson(letterheadRow?.valor_json);
         docsDefaultTemplateFile = templateCfg.file_name || baseName(templateCfg.path || templateCfg.file_path || templateCfg.value || '');
         docsDefaultRegulationFile = regulationCfg.file_name || baseName(regulationCfg.path || regulationCfg.file_path || regulationCfg.value || '');
         docsDefaultLetterheadFile = letterheadCfg.file_name || baseName(letterheadCfg.path || letterheadCfg.file_path || letterheadCfg.value || '');
-        clientDocumentRequirements = normalizeClientDocumentRequirements(parseConfigJson(clientDocsRow?.valor_json).documents);
       } catch (_) {}
 
-      if (!clientDocumentRequirements.length) clientDocumentRequirements = defaultClientDocumentRequirements();
-      renderClientDocumentRequirements();
       await Promise.all([loadTemplateFiles(), loadLetterheadFiles()]);
       await previewSelectedContractTemplate();
       await previewSelectedLetterhead();
     }
-
-    function slugDocumentKey(label) {
-      return String(label || '')
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '_')
-        .replace(/^_+|_+$/g, '')
-        .slice(0, 48);
-    }
-
-    function defaultClientDocumentRequirements() {
-      const shared = [
-        { field: 'doc_ine', label: 'INE o identificación', description: 'Identificación oficial vigente.', icon: 'fa-id-card', requiredForProfile: true, requiredForContract: true, requiresDate: false, allowOmit: true, builtIn: true },
-        { field: 'doc_comprobante_domicilio', label: 'Comprobante de domicilio', description: 'Recibo de luz, agua o teléfono vigente.', icon: 'fa-home', requiredForProfile: true, requiredForContract: true, requiresDate: true, allowOmit: true, builtIn: true, validityMode: 'calendar_months', validityMonths: 3 },
-        { field: 'doc_constancia_fiscal', label: 'Constancia de situación fiscal', description: 'PDF oficial del SAT.', icon: 'fa-file-invoice', requiredForProfile: true, requiredForContract: true, requiresDate: true, allowOmit: false, builtIn: true, validityMode: 'days', validityDays: 30 }
-      ];
-      if (currentTenant === 'cp') return shared;
-      return [
-        { field: 'doc_acta_constitutiva', label: 'Acta constitutiva', description: 'PDF completo y legible.', icon: 'fa-building-circle-check', requiredForProfile: true, requiredForContract: true, requiresDate: false, allowOmit: true, builtIn: true },
-        ...shared
-      ];
-    }
-
-    function normalizeClientDocumentRequirements(items) {
-      const source = Array.isArray(items) ? items : [];
-      const seen = new Set();
-      return source.map((item, index) => {
-        const raw = item && typeof item === 'object' ? item : {};
-        let field = String(raw.field || raw.key || '').trim();
-        if (!field && raw.label) field = `doc_custom_${slugDocumentKey(raw.label)}`;
-        if (!field) return null;
-        if (!field.startsWith('doc_')) field = `doc_custom_${slugDocumentKey(field)}`;
-        field = field.replace(/[^a-zA-Z0-9_]/g, '_').replace(/_+/g, '_').slice(0, 80);
-        if (!field || seen.has(field)) return null;
-        seen.add(field);
-        const builtIn = ['doc_acta_constitutiva', 'doc_ine', 'doc_comprobante_domicilio', 'doc_constancia_fiscal'].includes(field);
-        return {
-          field,
-          key: field,
-          label: String(raw.label || raw.nombre || field.replace(/^doc_/, '').replace(/_/g, ' ')).trim(),
-          description: String(raw.description || raw.desc || '').trim(),
-          icon: String(raw.icon || 'fa-file-lines').replace(/^fa-solid\s+/, '').trim() || 'fa-file-lines',
-          requiredForProfile: raw.requiredForProfile !== false,
-          requiredForContract: raw.requiredForContract !== false,
-          requiresDate: raw.requiresDate === true,
-          allowOmit: field === 'doc_constancia_fiscal' ? false : raw.allowOmit !== false,
-          builtIn,
-          custom: !builtIn,
-          uploadField: builtIn ? field : `extra_doc__${field}`,
-          accept: String(raw.accept || '.pdf,.jpg,.jpeg,.png,.webp').trim(),
-          requirements: Array.isArray(raw.requirements) ? raw.requirements : [],
-          order: Number.isFinite(Number(raw.order)) ? Number(raw.order) : index,
-          validityMode: String(raw.validityMode || '').trim(),
-          validityDays: raw.validityDays || '',
-          validityMonths: raw.validityMonths || ''
-        };
-      }).filter(Boolean);
-    }
-
-    function renderClientDocumentRequirements() {
-      const host = document.getElementById('client-doc-requirements-list');
-      const empty = document.getElementById('client-doc-requirements-empty');
-      if (!host) return;
-      host.innerHTML = '';
-      const docs = normalizeClientDocumentRequirements(clientDocumentRequirements.length ? clientDocumentRequirements : defaultClientDocumentRequirements());
-      clientDocumentRequirements = docs;
-      if (empty) empty.classList.toggle('hidden', docs.length > 0);
-      docs.forEach((doc, index) => {
-        const row = document.createElement('div');
-        row.className = 'rounded-2xl border border-gray-100 bg-white p-4 shadow-sm grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3';
-        row.innerHTML = `
-          <div class="min-w-0">
-            <div class="flex flex-wrap items-center gap-2">
-              <span class="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 text-blue-600"><i class="fa-solid ${doc.icon || 'fa-file-lines'}"></i></span>
-              <div>
-                <div class="text-sm font-black text-gray-800">${escapeHTML(doc.label)}</div>
-                <div class="text-[10px] font-mono text-gray-400">${escapeHTML(doc.field)}${doc.custom ? ' · personalizado' : ' · base'}</div>
-              </div>
-            </div>
-            <div class="mt-2 text-xs text-gray-500">${escapeHTML(doc.description || 'Sin descripción.')}</div>
-            <div class="mt-3 flex flex-wrap gap-3 text-[11px] font-bold text-gray-600">
-              <label class="flex items-center gap-1"><input type="checkbox" data-doc-toggle="${index}" data-field-name="requiredForProfile" ${doc.requiredForProfile ? 'checked' : ''}> Perfil</label>
-              <label class="flex items-center gap-1"><input type="checkbox" data-doc-toggle="${index}" data-field-name="requiredForContract" ${doc.requiredForContract ? 'checked' : ''}> Contrato</label>
-              <label class="flex items-center gap-1"><input type="checkbox" data-doc-toggle="${index}" data-field-name="requiresDate" ${doc.requiresDate ? 'checked' : ''}> Pedir fecha/OCR</label>
-              <label class="flex items-center gap-1"><input type="checkbox" data-doc-toggle="${index}" data-field-name="allowOmit" ${doc.allowOmit ? 'checked' : ''} ${doc.field === 'doc_constancia_fiscal' ? 'disabled' : ''}> Permitir omitir</label>
-            </div>
-          </div>
-          <div class="flex lg:flex-col gap-2 justify-end">
-            <button type="button" class="rounded-xl border border-gray-200 px-3 py-2 text-[10px] font-black uppercase text-gray-500 hover:bg-gray-50" data-doc-move="${index}" data-dir="-1">Subir</button>
-            <button type="button" class="rounded-xl border border-gray-200 px-3 py-2 text-[10px] font-black uppercase text-gray-500 hover:bg-gray-50" data-doc-move="${index}" data-dir="1">Bajar</button>
-            <button type="button" class="rounded-xl border border-red-100 px-3 py-2 text-[10px] font-black uppercase text-red-500 hover:bg-red-50 ${doc.builtIn ? 'opacity-40 cursor-not-allowed' : ''}" data-doc-remove="${index}" ${doc.builtIn ? 'disabled' : ''}>Eliminar</button>
-          </div>`;
-        host.appendChild(row);
-      });
-      host.querySelectorAll('[data-doc-toggle]').forEach((input) => {
-        input.addEventListener('change', () => {
-          const idx = Number(input.getAttribute('data-doc-toggle'));
-          const name = input.getAttribute('data-field-name');
-          if (!clientDocumentRequirements[idx] || !name) return;
-          clientDocumentRequirements[idx][name] = input.checked;
-          if (clientDocumentRequirements[idx].field === 'doc_constancia_fiscal') clientDocumentRequirements[idx].allowOmit = false;
-        });
-      });
-      host.querySelectorAll('[data-doc-move]').forEach((btn) => {
-        btn.addEventListener('click', () => {
-          const idx = Number(btn.getAttribute('data-doc-move'));
-          const dir = Number(btn.getAttribute('data-dir'));
-          const next = idx + dir;
-          if (next < 0 || next >= clientDocumentRequirements.length) return;
-          const copy = [...clientDocumentRequirements];
-          const tmp = copy[idx];
-          copy[idx] = copy[next];
-          copy[next] = tmp;
-          clientDocumentRequirements = copy.map((item, order) => ({ ...item, order }));
-          renderClientDocumentRequirements();
-        });
-      });
-      host.querySelectorAll('[data-doc-remove]').forEach((btn) => {
-        btn.addEventListener('click', () => {
-          const idx = Number(btn.getAttribute('data-doc-remove'));
-          if (!clientDocumentRequirements[idx] || clientDocumentRequirements[idx].builtIn) return;
-          clientDocumentRequirements.splice(idx, 1);
-          renderClientDocumentRequirements();
-        });
-      });
-    }
-
-    window.addClientDocumentRequirement = (event) => {
-      if (event && typeof event.preventDefault === 'function') event.preventDefault();
-      if (!hasConfigEditAccess()) return _toast("Acceso restringido: solo Admin o Verificador.", "error");
-      const labelEl = document.getElementById('client-doc-new-label');
-      const descEl = document.getElementById('client-doc-new-desc');
-      const label = String(labelEl?.value || '').trim();
-      if (!label) return _toast('Escribe el nombre del documento.', 'error');
-      const field = `doc_custom_${slugDocumentKey(label) || Date.now()}`;
-      if (clientDocumentRequirements.some((doc) => doc.field === field)) return _toast('Ese documento ya existe.', 'error');
-      clientDocumentRequirements.push({
-        field,
-        key: field,
-        label,
-        description: String(descEl?.value || '').trim(),
-        icon: 'fa-file-lines',
-        requiredForProfile: document.getElementById('client-doc-new-profile')?.checked !== false,
-        requiredForContract: document.getElementById('client-doc-new-contract')?.checked !== false,
-        requiresDate: document.getElementById('client-doc-new-date')?.checked === true,
-        allowOmit: true,
-        builtIn: false,
-        custom: true,
-        uploadField: `extra_doc__${field}`,
-        accept: '.pdf,.jpg,.jpeg,.png,.webp',
-        requirements: [],
-        order: clientDocumentRequirements.length
-      });
-      if (labelEl) labelEl.value = '';
-      if (descEl) descEl.value = '';
-      renderClientDocumentRequirements();
-    };
-
-    window.saveClientDocumentRequirements = async (event) => {
-      if (event && typeof event.preventDefault === 'function') event.preventDefault();
-      if (!hasConfigEditAccess()) return _toast("Acceso restringido: solo Admin o Verificador.", "error");
-      const docs = normalizeClientDocumentRequirements(clientDocumentRequirements).map((doc, order) => ({ ...doc, order }));
-      const payload = {
-        tenant: getCurrentConfigTenant(),
-        clave: CFG_CLIENT_DOC_REQUIREMENTS_KEY,
-        valor_json: {
-          documents: docs,
-          updated_at: new Date().toISOString()
-        }
-      };
-      const { error } = await getDB().from('configuracion').upsert(payload, { onConflict: 'tenant,clave' });
-      if (error) return _toast("Error al guardar documentos: " + error.message, "error");
-      clientDocumentRequirements = docs;
-      renderClientDocumentRequirements();
-      _toast('Documentos requeridos guardados', 'success');
-    };
 
     async function loadTemplateFiles(){
       const tplList = document.getElementById('doc-template-list');

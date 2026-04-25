@@ -1,6 +1,6 @@
 # Seguridad y Validaciones
 
-Ultima actualizacion: 2026-04-14
+Ultima actualizacion: 2026-04-24
 
 Este documento resume los controles de seguridad y validacion realmente activos en frontend, PocketBase, hooks y storage.
 
@@ -201,6 +201,30 @@ Las colecciones `cotizaciones` y `documentos` usan file fields protegidos para:
 
 La proteccion evita acceso anonimo directo al archivo fuera de reglas/autorizacion.
 
+## 10.1. `client_profile`: cuarentena y Windows Defender
+
+Archivo principal:
+
+- `backend/pb_hooks/client_profile_shared.js`
+
+Reglas activas desde 2026-04-24:
+
+- cada archivo cargado al expediente publico pasa primero por una carpeta temporal `_upload_quarantine`
+- el hook ejecuta `MpCmdRun.exe` de Windows Defender antes de aceptar el archivo
+- si Defender detecta amenaza, el backend rechaza el upload con un mensaje de usuario:
+  - `El archivo de <documento> no paso la seguridad del sistema. Intenta de nuevo con otro archivo.`
+- si el archivo es rechazado, la UI publica marca el documento con error y elimina el archivo pendiente para forzar una nueva seleccion
+
+Objetivo operativo:
+
+- evitar que archivos maliciosos entren a `clientes`, `documentos` o espejos del expediente
+- dejar trazabilidad clara en `client_profile` sin mensajes ambiguos al usuario final
+
+Archivos relacionados:
+
+- `frontend/client/public/perfil_cliente.html`
+- `frontend/pb_public/client/public/perfil_cliente.html`
+
 ## 11. Validaciones de negocio relevantes
 
 Plaza Mayor:
@@ -214,6 +238,19 @@ Casa de Piedra:
 - convenio solo en espacios con `permite_convenio = true`
 - `espacio` requiere personas, horario y fechas coherentes
 - disponibilidad considera evento, premontaje, montaje y bloqueo indefinido
+
+## 11.1. Autoextraccion de constancia fiscal
+
+Flujo activo:
+
+- `frontend/client/public/perfil_cliente.html` extrae RFC, fecha de emision y razon social desde la constancia PDF
+- al guardar el expediente, el frontend envia `rfc` y `nombre_completo` al endpoint publico
+- `backend/pb_hooks/client_profile_shared.js` actualiza automaticamente el perfil cuando la constancia forma parte del submit
+
+Resultado esperado:
+
+- un perfil creado desde cotizacion rapida puede nacer con datos minimos
+- al subir la constancia fiscal, el expediente corrige RFC y razon social sin captura manual adicional
 
 ## 12. Hallazgos de auditoria 2026-04-13
 

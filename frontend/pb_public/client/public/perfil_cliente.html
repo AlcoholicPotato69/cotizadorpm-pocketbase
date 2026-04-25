@@ -75,14 +75,14 @@ body {
 
 /* ── SHELL ── */
 #main-shell { min-height:100vh; display:flex; flex-direction:column; }
-.profile-header { background:var(--header-bg); color:var(--header-text); padding:10px 24px; min-height:64px; display:flex; align-items:center; justify-content:space-between; gap:16px; position:sticky; top:0; z-index:100; box-shadow:0 2px 12px rgba(0,0,0,.25); }
-.header-brand { display:flex; align-items:center; gap:14px; min-width:0; }
-.header-logo { display:flex; align-items:center; gap:10px; min-width:0; }
+.profile-header { background:var(--header-bg); color:var(--header-text); padding:0 24px; height:64px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:100; box-shadow:0 2px 12px rgba(0,0,0,.25); }
+.header-brand { display:flex; align-items:center; gap:14px; }
+.header-logo { display:flex; align-items:center; gap:10px; }
 .header-logo img { height:34px; width:auto; object-fit:contain; filter:brightness(0) invert(1); }
-.header-logo-mark { height:34px; display:flex; align-items:center; gap:12px; flex-shrink:0; }
+.header-logo-mark { height:34px; display:flex; align-items:center; gap:12px; }
 .header-divider { width:1px; height:28px; background:rgba(255,255,255,.2); }
-.header-page-label { font-size:13px; font-weight:600; opacity:.7; letter-spacing:.04em; text-transform:uppercase; overflow-wrap:anywhere; }
-.header-right { display:flex; align-items:center; justify-content:flex-end; gap:12px; flex-wrap:wrap; min-width:0; }
+.header-page-label { font-size:13px; font-weight:600; opacity:.7; letter-spacing:.04em; text-transform:uppercase; }
+.header-right { display:flex; align-items:center; gap:12px; }
 .header-status-pill { padding:5px 12px; border-radius:99px; font-size:11.5px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; background:rgba(255,255,255,.12); color:rgba(255,255,255,.9); border:1px solid rgba(255,255,255,.15); }
 .header-status-pill.validated { background:rgba(5,150,105,.25); color:#6EE7B7; border-color:rgba(5,150,105,.4); }
 .header-status-pill.expired { background:rgba(220,38,38,.25); color:#FCA5A5; border-color:rgba(220,38,38,.4); }
@@ -115,15 +115,15 @@ body {
 .expired-banner-text span { font-size:13px; opacity:.85; }
 
 /* ── PROFILE BODY ── */
-.profile-body { display:grid; grid-template-columns:minmax(300px,340px) minmax(0,1fr); gap:20px; padding:20px; flex:1; align-items:start; width:100%; max-width:1280px; margin:0 auto; }
+.profile-body { display:grid; grid-template-columns:340px 1fr; gap:20px; padding:20px; flex:1; align-items:start; }
 @media(max-width:960px){ .profile-body{grid-template-columns:1fr;} .info-panel{position:static!important;} }
 
 /* ── INFO PANEL ── */
-.info-panel { position:sticky; top:88px; min-width:0; }
-.info-card { background:var(--card-bg); border:1px solid rgba(var(--accent-rgb),.12); border-radius:var(--radius-md); box-shadow:var(--shadow-md); overflow:hidden; animation:slideUp .3s ease both; }
+.info-panel { position:sticky; top:84px; }
+.info-card { background:var(--card-bg); border-radius:var(--radius-lg); box-shadow:var(--shadow-md); overflow:hidden; animation:slideUp .3s ease both; }
 .info-card-top { background:linear-gradient(135deg,var(--accent) 0%,var(--accent-dark) 100%); padding:24px 20px 20px; color:#fff; }
 .client-avatar { width:56px; height:56px; border-radius:50%; background:rgba(255,255,255,.2); border:2px solid rgba(255,255,255,.35); display:flex; align-items:center; justify-content:center; font-size:20px; font-weight:800; color:#fff; margin-bottom:12px; }
-.client-name { font-size:17px; font-weight:700; line-height:1.3; margin-bottom:3px; overflow-wrap:anywhere; }
+.client-name { font-size:17px; font-weight:700; line-height:1.3; margin-bottom:3px; }
 .client-id-label { font-size:11px; opacity:.65; font-family:'Courier New',monospace; letter-spacing:.04em; }
 .info-card-body { padding:16px; }
 .info-section { margin-bottom:16px; }
@@ -195,13 +195,14 @@ body {
 .mini-info-body { padding:18px; font-size:13px; line-height:1.7; color:var(--fg2); white-space:pre-line; }
 
 /* ── DOCS PANEL ── */
-.docs-panel { display:flex; flex-direction:column; gap:16px; animation:slideUp .35s .05s ease both; min-width:0; }
+.docs-panel { display:flex; flex-direction:column; gap:16px; animation:slideUp .35s .05s ease both; }
 .docs-panel-header { display:flex; align-items:center; justify-content:space-between; gap:16px; }
 .docs-panel-title { font-size:17px; font-weight:800; color:var(--fg); }
 .complete-edit-note { display:none; background:linear-gradient(135deg,#ECFDF5 0%,#F0FDF4 100%); border:1px solid rgba(5,150,105,.18); border-radius:var(--radius-lg); padding:18px 20px; color:#065F46; box-shadow:var(--shadow-sm); }
 .complete-edit-note strong { display:block; font-size:14px; margin-bottom:6px; }
 .complete-edit-note span { display:block; font-size:13px; line-height:1.6; color:#047857; }
 .profile-body.additional-only-mode { grid-template-columns:minmax(0, 920px); justify-content:center; }
+.profile-body.additional-only-mode .info-panel { display:none; }
 .additional-info-panel { display:none; background:var(--card-bg); border:1px solid var(--border); border-radius:var(--radius-sm); overflow:hidden; box-shadow:var(--shadow-sm); }
 .additional-info-table { width:100%; border-collapse:collapse; table-layout:fixed; }
 .additional-info-table th,
@@ -213,19 +214,18 @@ body {
 .additional-info-muted { display:block; margin-top:3px; color:var(--muted); font-size:12px; line-height:1.5; }
 .additional-entry-list { margin-bottom:8px; }
 .additional-entry-action { max-width:280px; }
-.quote-history-panel { display:flex; flex-direction:column; gap:14px; background:var(--card-bg); border:1px solid rgba(var(--accent-rgb),.14); border-radius:var(--radius-md); padding:20px; box-shadow:var(--shadow-sm); min-width:0; }
+.quote-history-panel { display:flex; flex-direction:column; gap:14px; background:var(--card-bg); border:1px solid var(--border); border-radius:var(--radius-lg); padding:20px; box-shadow:var(--shadow-sm); }
 .quote-history-head { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; flex-wrap:wrap; }
 .quote-history-kicker { font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin-bottom:4px; }
 .quote-history-title { font-size:16px; font-weight:800; color:var(--fg); }
 .quote-history-sub { font-size:13px; color:var(--muted); margin-top:4px; line-height:1.6; }
 .quote-history-summary { display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border-radius:999px; background:var(--border-light); color:var(--fg2); font-size:12px; font-weight:700; }
 .quote-history-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:14px; }
-.quote-card { border:1px solid var(--border); border-radius:var(--radius-md); padding:18px; background:linear-gradient(180deg,#fff 0%,#f9fafb 100%); box-shadow:var(--shadow-sm); display:flex; flex-direction:column; gap:12px; min-width:0; }
-.quote-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; flex-wrap:wrap; }
-.quote-card-head > div { min-width:0; flex:1 1 220px; }
-.quote-card-title { font-size:15px; font-weight:800; color:var(--fg); line-height:1.4; overflow-wrap:anywhere; }
+.quote-card { border:1px solid var(--border); border-radius:var(--radius-lg); padding:18px; background:linear-gradient(180deg,#fff 0%,#f9fafb 100%); box-shadow:var(--shadow-sm); display:flex; flex-direction:column; gap:12px; min-width:0; }
+.quote-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+.quote-card-title { font-size:15px; font-weight:800; color:var(--fg); line-height:1.4; }
 .quote-card-subtitle { font-size:12px; color:var(--muted); margin-top:3px; line-height:1.5; }
-.quote-status-pill { display:inline-flex; align-items:center; justify-content:center; padding:6px 10px; border-radius:999px; font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; white-space:normal; text-align:center; max-width:100%; }
+.quote-status-pill { display:inline-flex; align-items:center; justify-content:center; padding:6px 10px; border-radius:999px; font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; white-space:nowrap; }
 .quote-status-pill.pending { background:var(--warning-light); color:var(--warning); }
 .quote-status-pill.approved { background:var(--success-light); color:var(--success); }
 .quote-status-pill.complete { background:var(--info-light); color:var(--info); }
@@ -248,7 +248,7 @@ body {
 .docs-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:14px; }
 
 /* Doc card */
-.doc-card { background:var(--card-bg); border:2px solid var(--border); border-radius:var(--radius-md); padding:20px; display:flex; flex-direction:column; gap:14px; transition:box-shadow var(--transition),border-color var(--transition),transform var(--transition); position:relative; overflow:hidden; min-width:0; }
+.doc-card { background:var(--card-bg); border:2px solid var(--border); border-radius:var(--radius-lg); padding:20px; display:flex; flex-direction:column; gap:14px; transition:box-shadow var(--transition),border-color var(--transition),transform var(--transition); position:relative; overflow:hidden; }
 .doc-card::before { content:''; position:absolute; top:0; left:0; right:0; height:3px; background:var(--border); transition:background var(--transition); }
 .doc-card:hover { box-shadow:var(--shadow-md); transform:translateY(-2px); }
 .doc-card.uploaded { border-color:rgba(5,150,105,.3); }
@@ -264,14 +264,14 @@ body {
 .doc-card.expired::before { background:var(--danger); }
 .doc-card.locked { opacity:.5; pointer-events:none; }
 .doc-card.locked::before { background:var(--border); }
-.doc-card-header { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+.doc-card-header { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
 .doc-card-icon { width:44px; height:44px; flex-shrink:0; border-radius:var(--radius-sm); background:var(--accent-light); display:flex; align-items:center; justify-content:center; font-size:20px; color:var(--accent); transition:background var(--transition),color var(--transition); }
 .doc-card.uploaded .doc-card-icon { background:var(--success-light); color:var(--success); }
 .doc-card.pending-upload .doc-card-icon { background:var(--warning-light); color:var(--warning); }
 .doc-card.analyzing .doc-card-icon { background:var(--info-light); color:var(--info); }
 .doc-card.rejected .doc-card-icon { background:var(--danger-light); color:var(--danger); }
 .doc-card.expired .doc-card-icon { background:var(--danger-light); color:var(--danger); }
-.doc-card-badge { padding:4px 10px; border-radius:99px; font-size:10.5px; font-weight:700; letter-spacing:.04em; white-space:normal; text-align:center; max-width:100%; }
+.doc-card-badge { padding:4px 10px; border-radius:99px; font-size:10.5px; font-weight:700; letter-spacing:.04em; white-space:nowrap; }
 .doc-card-badge.empty { background:var(--border-light); color:var(--muted); }
 .doc-card-badge.uploaded { background:var(--success-light); color:var(--success); }
 .doc-card-badge.pending { background:var(--warning-light); color:var(--warning); }
@@ -295,7 +295,7 @@ body {
 .doc-card-date-pill.missing { background:var(--border-light); color:var(--muted); border-color:rgba(107,114,128,.12); }
 .doc-card-body { flex:1; }
 .doc-card-name { font-size:14.5px; font-weight:700; color:var(--fg); margin-bottom:4px; }
-.doc-card-name-row { display:flex; align-items:flex-start; gap:6px; flex-wrap:wrap; min-width:0; }
+.doc-card-name-row { display:flex; align-items:center; gap:6px; }
 .doc-card-name-row .doc-card-name { margin-bottom:0; }
 .doc-card-desc { font-size:12px; color:var(--muted); line-height:1.5; }
 .doc-card-filename { margin-top:8px; display:flex; align-items:center; gap:7px; padding:6px 10px; background:var(--border-light); border-radius:var(--radius-sm); font-size:12px; color:var(--fg2); font-weight:500; word-break:break-all; }
@@ -334,7 +334,7 @@ body {
 
 /* ── RESPONSIVE ── */
 @media(max-width:600px){
-    .profile-header{padding:10px 14px; align-items:flex-start; flex-direction:column;} .header-divider{display:none;} .header-right{width:100%; justify-content:space-between;} .profile-body{padding:12px;gap:12px;} .docs-grid{grid-template-columns:1fr;}
+    .profile-header{padding:0 14px;} .profile-body{padding:12px;gap:12px;} .docs-grid{grid-template-columns:1fr;}
     .complete-card{padding:32px 20px;} .complete-info-grid{grid-template-columns:1fr;} .docs-action-bar{flex-direction:column;}
     .additional-info-table,
     .additional-info-table tbody,
@@ -445,11 +445,6 @@ body {
                         <div class="info-help-text">El correo principal es informativo. Los cambios se hacen con un administrador.</div>
                     </div>
                     <div class="info-section">
-                        <div class="info-section-title">Teléfono principal</div>
-                        <input type="tel" id="edit-telefono-principal" class="info-editable-input info-readonly-input" placeholder="10 digitos" maxlength="15" inputmode="numeric" autocomplete="tel" readonly>
-                        <div class="info-help-text">El telefono principal se valida con la administracion.</div>
-                    </div>
-                    <div class="info-section">
                         <div class="info-section-title">Correos alternativos <span style="font-weight:400;opacity:.6;">(máx 2)</span></div>
                         <div id="emails-list" class="phones-list"></div>
                         <button type="button" id="btn-add-email" class="btn-add-phone">
@@ -480,7 +475,7 @@ body {
             </div>
             <div id="complete-edit-note" class="complete-edit-note" aria-live="polite">
                 <strong>Documentación aprobada</strong>
-                <span>La administración ya aprobó tus documentos. Aqui ya solo puedes actualizar tus datos de contacto.</span>
+                <span>La administración ya aprobó tus documentos. Actualiza únicamente tus datos adicionales de contacto.</span>
             </div>
             <div id="additional-info-panel" class="additional-info-panel">
                 <table class="additional-info-table" aria-label="Información adicional del cliente">
@@ -503,7 +498,7 @@ body {
                             <th scope="row">Correo principal</th>
                             <td>
                                 <div class="additional-info-static" id="additional-client-email">—</div>
-                                <span class="additional-info-muted">Puedes actualizarlo desde el panel superior cuando el perfil ya fue validado.</span>
+                                <span class="additional-info-muted">El correo principal solo puede cambiarlo administración.</span>
                             </td>
                         </tr>
                         <tr>
@@ -717,24 +712,67 @@ async function validateConstanciaFiscal(file) {
         }
         if (emisionDate) result.extracted.constanciaDate = emisionDate;
 
-        // Extraer nombre (línea después de "Nombre" o "Denominación")
-        for (var ni = 0; ni < linesArr.length; ni++) {
-            var nLine = linesArr[ni].toUpperCase();
-            if (nLine.indexOf('NOMBRE') !== -1 || nLine.indexOf('DENOMINACI') !== -1 || nLine.indexOf('RAZ') !== -1) {
-                // El nombre suele estar en la misma línea o la siguiente
-                var candidateName = linesArr[ni].replace(/.*(?:nombre|denominaci[oó]n|raz[oó]n\s*social)\s*[:\-]?\s*/i, '').trim();
-                if (candidateName.length > 3 && candidateName.length < 120) {
-                    result.extracted.nombre = candidateName;
-                    break;
-                }
-                if (ni + 1 < linesArr.length) {
-                    var nextLine = linesArr[ni + 1].trim();
-                    if (nextLine.length > 3 && nextLine.length < 120 && !/^\d/.test(nextLine)) {
-                        result.extracted.nombre = nextLine;
+        // Extraer nombre / razón social del contribuyente
+        // La constancia del SAT usa la etiqueta: "Nombre, Denominación o Razón Social:"
+        var extractedNombre = '';
+
+        // Primero: unir todo el texto y buscar el patrón completo del SAT
+        var fullText = linesArr.join(' ');
+        // Patrón para la etiqueta completa del SAT (con variantes de acentos y espacios)
+        var satLabelRegex = /Nombre\s*,?\s*Denominaci[oó]n\s+o\s+Raz[oó]n\s+Social\s*[:.]?\s*(.+?)(?:\s{2,}|R[eé]gimen|Fecha|RFC|C[eé]dula|Domicilio|Actividad|Estatus|Situaci[oó]n|$)/i;
+        var satMatch = satLabelRegex.exec(fullText);
+        if (satMatch && satMatch[1]) {
+            var satName = satMatch[1].trim()
+                .replace(/\s+/g, ' ')
+                .replace(/^[,.:;\-\s]+/, '')
+                .replace(/[,.:;\-\s]+$/, '');
+            if (satName.length > 2 && satName.length < 200) {
+                extractedNombre = satName;
+            }
+        }
+
+        // Intento para Personas Físicas (Nombre(s), Primer Apellido, Segundo Apellido)
+        if (!extractedNombre) {
+            var pNombre = (fullText.match(/Nombre\(s\)\s*[:.]?\s*(.+?)(?:\s{2,}|Primer|Apellido|$)/i) || [])[1];
+            var pApellido1 = (fullText.match(/Primer\s+Apellido\s*[:.]?\s*(.+?)(?:\s{2,}|Segundo|Apellido|$)/i) || [])[1];
+            var pApellido2 = (fullText.match(/Segundo\s+Apellido\s*[:.]?\s*(.+?)(?:\s{2,}|Nombre|CURP|$)/i) || [])[1];
+            if (pNombre) {
+                extractedNombre = (pNombre + ' ' + (pApellido1 || '') + ' ' + (pApellido2 || '')).trim().replace(/\s+/g, ' ');
+            }
+        }
+
+        // Segundo intento: buscar línea por línea con etiquetas individuales
+        if (!extractedNombre) {
+            // Palabras clave falsas positivas que NO son el nombre
+            var nameExclusions = /^(CONSTANCIA|C[EÉ]DULA|SERVICIO|ADMINISTRACI|TRIBUTARIA|RFC|SAT|DATOS|R[EÉ]GIMEN|DOMICILIO|ACTIVIDAD|FECHA|LUGAR|ESTADO|CL[AÁ]VE|\d)/i;
+
+            for (var ni = 0; ni < linesArr.length; ni++) {
+                var nLine = linesArr[ni].toUpperCase();
+                if (nLine.indexOf('NOMBRE') !== -1 || nLine.indexOf('DENOMINACI') !== -1 || nLine.indexOf('RAZ') !== -1) {
+                    // Intentar extraer el valor de la misma línea removiendo la etiqueta completa
+                    var candidateName = linesArr[ni]
+                        .replace(/.*(?:Nombre\s*,?\s*Denominaci[oó]n\s+o\s+Raz[oó]n\s+Social|Raz[oó]n\s+Social|Denominaci[oó]n(?:\s+Social)?|Nombre(?:\s+del?\s+Contribuyente)?)\s*[:\-.]?\s*/i, '')
+                        .trim()
+                        .replace(/^[,.:;\s]+/, '')
+                        .replace(/\s+/g, ' ');
+                    if (candidateName.length > 3 && candidateName.length < 120 && !nameExclusions.test(candidateName)) {
+                        extractedNombre = candidateName;
                         break;
+                    }
+                    // Si no hay valor en la misma línea, mirar la siguiente
+                    if (ni + 1 < linesArr.length) {
+                        var nextLine = linesArr[ni + 1].trim().replace(/^[,.:;\s]+/, '');
+                        if (nextLine.length > 3 && nextLine.length < 120 && !/^\d/.test(nextLine) && !nameExclusions.test(nextLine)) {
+                            extractedNombre = nextLine;
+                            break;
+                        }
                     }
                 }
             }
+        }
+
+        if (extractedNombre) {
+            result.extracted.nombre = extractedNombre;
         }
 
         result.valid = true;
@@ -908,31 +946,7 @@ async function validateDocument(field, file) {
         case 'doc_comprobante_domicilio': return validateComprobanteDomicilio(file);
         case 'doc_ine': return validateINE(file);
         case 'doc_acta_constitutiva': return validateActaConstitutiva(file);
-        default: {
-            var cfg = getDocConfigByField(field);
-            var result = { valid: true, reason: 'Documento aceptado.', extracted: {} };
-            if (cfg && cfg.requiresDate) {
-                if (!file.name.toLowerCase().endsWith('.pdf')) {
-                    return { valid: false, reason: 'Este documento requiere fecha y por ahora solo se puede extraer automáticamente desde PDF.', extracted: {} };
-                }
-                try {
-                    var text = await extractPdfText(file);
-                    var dates = findAllDatesInText(text);
-                    dates.sort();
-                    if (dates.length) {
-                        result.extracted.genericDate = dates[dates.length - 1];
-                        result.reason = 'Documento aceptado. Fecha detectada: ' + result.extracted.genericDate + '.';
-                    } else {
-                        result.valid = false;
-                        result.reason = 'No se detectó una fecha legible en el documento.';
-                    }
-                } catch (err) {
-                    result.valid = false;
-                    result.reason = 'No se pudo extraer la fecha del PDF: ' + (err.message || '');
-                }
-            }
-            return result;
-        }
+        default: return { valid: true, reason: 'Documento aceptado.', extracted: {} };
     }
 }
 
@@ -951,8 +965,8 @@ var TENANT_CONFIG = {
         completeSub:'Tu documentación está al día. Ya puedes cotizar en Plaza Mayor.', favicon:'assets/img/logo.png'
     },
     casa_de_piedra: {
-        name:'Casa de Piedra', accentColor:'#2F6F73', accentDark:'#173D40', accentRGB:'47,111,115', accentLight:'#EAF7F5',
-        headerBg:'#16282A', logoSrc:'assets/img/logocp.png', logoAlt:'Casa de Piedra',
+        name:'Casa de Piedra', accentColor:'#92400E', accentDark:'#6B2D07', accentRGB:'146,64,14', accentLight:'#FFFBEB',
+        headerBg:'#1C1410', logoSrc:'assets/img/logocp.png', logoAlt:'Casa de Piedra',
         brandDesc:'Consulta y actualiza tu documentación para cotizar en Casa de Piedra.',
         brandFooter:'Casa de Piedra \u00a9 2025', supportLine:'\u00bfNo recuerdas tu ID? Contacta al equipo de Casa de Piedra.',
         completeSub:'Tu documentación está al día. Ya puedes cotizar en Casa de Piedra.', favicon:'assets/img/logocp.png'
@@ -972,49 +986,6 @@ var DOC_CONFIGS = {
         { field:'doc_constancia_fiscal', label:'Constancia de Situación Fiscal', desc:'PDF del SAT — vigencia por 30 días desde la carga', icon:'fa-file-invoice', isConstancia:true, accept:'.pdf', requirements:['Debe ser PDF oficial del SAT.','Se considera vigente durante 30 días a partir de la carga del archivo.','El RFC y la razón social deben verse completos y legibles.'] }
     ]
 };
-
-function normalizeDocConfig(raw) {
-    var source = raw && typeof raw === 'object' ? raw : {};
-    var field = String(source.field || source.key || '').trim();
-    if (!field) return null;
-    return {
-        field: field,
-        key: field,
-        label: String(source.label || field).trim(),
-        desc: String(source.description || source.desc || '').trim() || 'Documento requerido para el expediente.',
-        icon: String(source.icon || 'fa-file-lines').replace(/^fa-solid\s+/, '').trim() || 'fa-file-lines',
-        isConstancia: field === 'doc_constancia_fiscal',
-        accept: String(source.accept || '.pdf,.jpg,.jpeg,.png,.webp').trim(),
-        requirements: Array.isArray(source.requirements) ? source.requirements : [],
-        requiredForProfile: source.requiredForProfile !== false,
-        requiredForContract: source.requiredForContract !== false,
-        requiresDate: source.requiresDate === true,
-        uploadField: String(source.uploadField || source.upload_field || field).trim(),
-        builtIn: source.builtIn === true,
-        custom: source.custom === true,
-        validityDays: source.validityDays || source.validity_days || '',
-        validityMonths: source.validityMonths || source.validity_months || '',
-        validityMode: String(source.validityMode || source.validity_mode || '').trim()
-    };
-}
-
-function getProfileDocConfigs(profile) {
-    var tenant = (profile && profile.tenant) || state.tenantKey || 'plaza_mayor';
-    var fromServer = profile && profile.validation && Array.isArray(profile.validation.documentRequirements)
-        ? profile.validation.documentRequirements.map(normalizeDocConfig).filter(Boolean)
-        : [];
-    if (fromServer.length) return fromServer;
-    return (DOC_CONFIGS[tenant] || DOC_CONFIGS.plaza_mayor).map(normalizeDocConfig).filter(Boolean);
-}
-
-function getDocConfigByField(field) {
-    var configs = getProfileDocConfigs(state.profile || { tenant: state.tenantKey });
-    var key = String(field || '').trim();
-    for (var i = 0; i < configs.length; i++) {
-        if (configs[i].field === key) return configs[i];
-    }
-    return null;
-}
 
 /* ============================================================
    STATE
@@ -1064,21 +1035,7 @@ function getInitials(n) { if(!n) return '??'; var p=String(n).trim().split(/\s+/
 function escapeHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function escapeAttr(s) { return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'&#10;'); }
 function setFeedback(msg, type) { var el=document.getElementById('action-feedback'); if(!el) return; el.textContent=msg||''; el.className='action-feedback'+(type?' '+type:''); }
-function isProfileValidatedMode() { return state.profileState === 'complete' || state.profileState === 'documents_approved'; }
-function hasPendingContractRequirements(profile) {
-    if (!profile || !profile.validation) return false;
-    var docConf = getProfileDocConfigs(profile).filter(function(dc){ return dc.requiredForContract === true; });
-    return docConf.some(function(dc) {
-        var doc = getProfileDocumentInfo(profile, dc.field);
-        var stateName = getProfileDocumentState(profile, dc.field);
-        if (doc.omitido === true || stateName === 'omitido') return false;
-        if (!doc.uploaded || stateName !== 'aprobado') return true;
-        if (!dc.requiresDate && dc.field !== 'doc_constancia_fiscal' && dc.field !== 'doc_comprobante_domicilio') return false;
-        var dateStatus = calcConstanciaStatus(getProfileDocumentValidityDate(profile, dc.field), getProfileDocumentValidityDays(dc.field));
-        return dateStatus.status === 'missing' || dateStatus.status === 'expired';
-    });
-}
-function isAdditionalOnlyMode() { return isProfileValidatedMode() && !hasPendingContractRequirements(state.profile); }
+function isAdditionalOnlyMode() { return state.profileState === 'complete' || state.profileState === 'documents_approved'; }
 function activeContactListId(kind) {
     if (kind === 'email') return isAdditionalOnlyMode() ? 'additional-emails-list' : 'emails-list';
     return isAdditionalOnlyMode() ? 'additional-phones-list' : 'phones-list';
@@ -1092,10 +1049,6 @@ function currentPhones() {
     var ins = list ? list.querySelectorAll('.phone-input') : [];
     var ph=[]; ins.forEach(function(i){ var v=normPhone(i.value); if(v) ph.push(v); }); return ph;
 }
-function currentMainPhone() {
-    var input = document.getElementById('edit-telefono-principal');
-    return normPhone(input ? input.value : '');
-}
 function currentEmails() {
     var list = document.getElementById(activeContactListId('email')) || document.getElementById('emails-list');
     var ins=list ? list.querySelectorAll('.phone-input') : [];
@@ -1106,16 +1059,12 @@ function currentEmails() {
     });
     return out;
 }
-function hasContactInfoEdits() {
+function hasProfileEdits() {
     var profile = state.profile || {};
     var correoInput = document.getElementById('edit-correo');
     var currentEmail = normEmail(correoInput ? correoInput.value : '');
     var savedEmail = normEmail(profile.correo || '');
     if (currentEmail !== savedEmail) return true;
-
-    var currentPhone = currentMainPhone();
-    var savedPhone = normPhone(profile.telefono || '');
-    if (currentPhone !== savedPhone) return true;
 
     var currentPhoneList = currentPhones().slice(0,2).sort().join('|');
     var savedPhoneList = safeArrayRaw(profile.telefonosAdicionales).map(normPhone).filter(Boolean).slice(0,2).sort().join('|');
@@ -1124,12 +1073,6 @@ function hasContactInfoEdits() {
     var currentEmailList = currentEmails().slice(0,2).sort().join('|');
     var savedEmailList = safeArrayRaw(profile.correosAdicionales).map(normEmail).filter(Boolean).slice(0,2).sort().join('|');
     if (currentEmailList !== savedEmailList) return true;
-
-    return false;
-}
-function hasProfileEdits() {
-    if (hasContactInfoEdits()) return true;
-    var profile = state.profile || {};
 
     var currentConstancia = normalizeStoredDate(document.getElementById('constancia-date') ? document.getElementById('constancia-date').value : '');
     var savedConstancia = normalizeStoredDate(profile.constanciaFiscalEmitidaEl || '');
@@ -1284,6 +1227,7 @@ function renderQuoteHistory(profile) {
         var quoteId = String((quote && quote.id) || '').trim();
 
         if (docs.cotizacion) docButtons.push(buildQuoteDocButton(quoteId, 'cotizacion', 'Cotizacion', 'fa-file-lines'));
+        if (docs.ordenCompra) docButtons.push(buildQuoteDocButton(quoteId, 'orden_compra', 'Orden de compra', 'fa-file-contract'));
         if (docs.contrato) {
             hasContractDocument = true;
             docButtons.push(buildQuoteDocButton(quoteId, 'contrato', 'Contrato', 'fa-file-signature'));
@@ -1393,14 +1337,6 @@ function calcConstanciaStatus(dateStr, validDays) {
     if (specialMode.indexOf('calendar_months:') === 0) {
         return calcCalendarMonthStatus(dateStr, specialMode.split(':')[1]);
     }
-    if (specialMode === 'date_only') {
-        var dateOnlyIssued = new Date(String(dateStr).trim()+'T00:00:00Z');
-        if (isNaN(dateOnlyIssued.getTime())) return { status:'missing', daysLeft:null };
-        var nowDateOnly = new Date();
-        var todayDateOnly = new Date(Date.UTC(nowDateOnly.getUTCFullYear(), nowDateOnly.getUTCMonth(), nowDateOnly.getUTCDate()));
-        if (dateOnlyIssued.getTime() > todayDateOnly.getTime()) return { status:'expired', daysLeft:-1, expiry:'', mode:'date_only' };
-        return { status:'ok', daysLeft:null, expiry:'', mode:'date_only' };
-    }
     var issued = new Date(String(dateStr).trim()+'T00:00:00Z');
     if (isNaN(issued.getTime())) return { status:'missing', daysLeft:null };
     var safeDays = Math.max(1, parseInt(validDays, 10) || CONSTANCIA_VALID_DAYS);
@@ -1416,14 +1352,9 @@ function calcConstanciaStatus(dateStr, validDays) {
     return { status:'ok', daysLeft:daysLeft, expiry:expStr };
 }
 function getProfileDocumentValidityDays(field) {
-    var cfg = getDocConfigByField(field);
-    if (cfg && cfg.validityMode === 'calendar_months') return 'calendar_months:' + (cfg.validityMonths || 3);
-    if (cfg && cfg.validityMonths) return 'calendar_months:' + cfg.validityMonths;
-    if (cfg && cfg.validityDays) return cfg.validityDays;
     if (field === 'doc_constancia_fiscal') return CONSTANCIA_VALID_DAYS;
     if (field === 'doc_comprobante_domicilio') return COMPROBANTE_VALID_DAYS;
-    if (cfg && cfg.requiresDate) return 'date_only';
-    return '';
+    return COMPROBANTE_VALID_DAYS;
 }
 function getProfileDocumentInfo(profile, field) {
     var docs = (profile && profile.validation && profile.validation.documents) ? profile.validation.documents : {};
@@ -1441,7 +1372,8 @@ function isProfileDocumentApprovedOrOmitted(profile, field) {
 function areRequiredProfileDocumentsApproved(profile) {
     if (!profile) return false;
     if (profile.verificadoManualmente === true) return true;
-    var docConf = getProfileDocConfigs(profile).filter(function(dc){ return dc.requiredForProfile !== false; });
+    var tenant = profile.tenant || 'plaza_mayor';
+    var docConf = (profile.validation && profile.validation.documentRequirements) ? profile.validation.documentRequirements.filter(function(d){return d.requiredForProfile;}) : (DOC_CONFIGS[tenant] || DOC_CONFIGS.plaza_mayor);
     return docConf.every(function(dc) {
         var doc = getProfileDocumentInfo(profile, dc.field);
         var state = getProfileDocumentState(profile, dc.field);
@@ -1456,7 +1388,7 @@ function getProfileDocumentValidityDate(profile, field) {
     if (field === 'doc_comprobante_domicilio') {
         return normalizeStoredDate(profile.comprobanteDomicilioEmitidoEl || '');
     }
-    return normalizeStoredDate(doc.fechaDocumento || doc.fecha_documento || doc.validityDate || '');
+    return '';
 }
 function buildTooltipIconHtml(text, extraClass) {
     var clean = String(text || '').trim();
@@ -1582,11 +1514,9 @@ function buildDocumentDatePill(dateValue, label, validDays) {
     var st = calcConstanciaStatus(normalized, validDays);
     var icon = 'fa-calendar-alt';
     var detail = 'Sin fecha detectada. Vuelve a subir un archivo legible.';
-    if (st.status === 'expired' && st.mode === 'date_only') { icon = 'fa-triangle-exclamation'; detail = 'La fecha detectada es futura o invalida. Sube un archivo correcto.'; }
-    else if (st.status === 'expired') { icon = 'fa-times-circle'; detail = 'Vencido hace ' + Math.abs(st.daysLeft) + ' días. Sube un reemplazo.'; }
+    if (st.status === 'expired') { icon = 'fa-times-circle'; detail = 'Vencido hace ' + Math.abs(st.daysLeft) + ' días. Sube un reemplazo.'; }
     else if (st.status === 'critical') { icon = 'fa-triangle-exclamation'; detail = 'Vence en ' + st.daysLeft + ' días. Reemplazo urgente.'; }
     else if (st.status === 'warning') { icon = 'fa-clock'; detail = 'Vence en ' + st.daysLeft + ' días. Reemplázalo pronto.'; }
-    else if (st.status === 'ok' && st.mode === 'date_only') { icon = 'fa-circle-check'; detail = 'Fecha detectada correctamente.'; }
     else if (st.status === 'ok') { icon = 'fa-circle-check'; detail = 'Vigente por ' + st.daysLeft + ' días más. Vence ' + fmtDate(st.expiry) + '.'; }
     return '<div class="doc-card-date-pill '+st.status+'">' +
         '<i class="fas '+icon+'"></i>' +
@@ -1607,7 +1537,8 @@ function buildOmittedDatePill(label) {
 }
 
 function detectProfileState(profile) {
-    var docConf = getProfileDocConfigs(profile).filter(function(dc){ return dc.requiredForProfile !== false; });
+    var tenant = profile.tenant || 'plaza_mayor';
+    var docConf = (profile.validation && profile.validation.documentRequirements) ? profile.validation.documentRequirements.filter(function(d){return d.requiredForProfile;}) : (DOC_CONFIGS[tenant] || DOC_CONFIGS.plaza_mayor);
     var docs = (profile.validation && profile.validation.documents) ? profile.validation.documents : {};
     var constSt = calcConstanciaStatus(getProfileDocumentValidityDate(profile, 'doc_constancia_fiscal'), getProfileDocumentValidityDays('doc_constancia_fiscal'));
     var compSt = calcConstanciaStatus(getProfileDocumentValidityDate(profile, 'doc_comprobante_domicilio'), getProfileDocumentValidityDays('doc_comprobante_domicilio'));
@@ -1699,35 +1630,19 @@ function renderInfoPanel(profile) {
     // Correo editable
     var correoInput = document.getElementById('edit-correo');
     var correoHelp = correoInput && correoInput.parentElement ? correoInput.parentElement.querySelector('.info-help-text') : null;
-    var telefonoInput = document.getElementById('edit-telefono-principal');
-    var telefonoHelp = telefonoInput && telefonoInput.parentElement ? telefonoInput.parentElement.querySelector('.info-help-text') : null;
     if (correoInput) {
-        var editableContacts = isProfileValidatedMode();
+        var additionalOnly = isAdditionalOnlyMode();
         correoInput.value = profile.correo || '';
-        correoInput.readOnly = !editableContacts;
-        correoInput.classList.toggle('info-readonly-input', !editableContacts);
-        correoInput.classList.toggle('bg-white', editableContacts);
-        correoInput.classList.toggle('cursor-text', editableContacts);
-        correoInput.classList.toggle('text-gray-800', editableContacts);
-    }
-    if (telefonoInput) {
-        var editablePhone = isProfileValidatedMode();
-        telefonoInput.value = profile.telefono ? fmtPhone(profile.telefono) : '';
-        telefonoInput.readOnly = !editablePhone;
-        telefonoInput.classList.toggle('info-readonly-input', !editablePhone);
-        telefonoInput.classList.toggle('bg-white', editablePhone);
-        telefonoInput.classList.toggle('cursor-text', editablePhone);
-        telefonoInput.classList.toggle('text-gray-800', editablePhone);
+        correoInput.readOnly = !additionalOnly;
+        correoInput.classList.toggle('info-readonly-input', !additionalOnly);
+        correoInput.classList.toggle('bg-white', additionalOnly);
+        correoInput.classList.toggle('cursor-text', additionalOnly);
+        correoInput.classList.toggle('text-gray-800', additionalOnly);
     }
     if (correoHelp) {
-        correoHelp.textContent = isProfileValidatedMode()
-            ? 'Tu perfil ya fue validado. Aqui puedes actualizar el correo principal y tus contactos.'
+        correoHelp.textContent = isAdditionalOnlyMode()
+            ? 'Tu perfil ya fue validado. Aqui puedes actualizar el correo principal y tus contactos alternativos.'
             : 'El correo principal es informativo. Los cambios se hacen con un administrador.';
-    }
-    if (telefonoHelp) {
-        telefonoHelp.textContent = isProfileValidatedMode()
-            ? 'Tu perfil ya fue validado. Aqui puedes actualizar el telefono principal y tus contactos alternativos.'
-            : 'El telefono principal se confirma con la administracion.';
     }
     var dateInput = document.getElementById('constancia-date');
     if (dateInput) dateInput.value = profile.constanciaFiscalEmitidaEl || '';
@@ -1841,23 +1756,20 @@ function syncSubmitButton() {
     if (!btnSubmit) return;
     var hasPending = Object.keys(state.pendingFiles || {}).length > 0;
     var hasEdits = hasProfileEdits();
-    var hasContactEdits = hasContactInfoEdits();
     var hasRejected = Object.keys(state.validationResults || {}).some(function(k) {
         return state.pendingFiles[k] && state.validationResults[k] && !state.validationResults[k].valid;
     });
     var isPendingReview = state.profileState === 'pending_review';
     var isAdditionalOnly = isAdditionalOnlyMode();
-    var canSaveContactOnlyInReview = isPendingReview && hasContactEdits && !hasPending;
-    var blockPendingReview = isPendingReview && !canSaveContactOnlyInReview;
-    btnSubmit.disabled = blockPendingReview || hasRejected || (!hasPending && !hasEdits);
-    btnSubmit.innerHTML = blockPendingReview
+    btnSubmit.disabled = isPendingReview || hasRejected || (!hasPending && !hasEdits);
+    btnSubmit.innerHTML = isPendingReview
         ? '<i class="fas fa-clock"></i> Expediente en revisión'
-        : (isAdditionalOnly || (hasContactEdits && !hasPending)
+        : (isAdditionalOnly
             ? '<i class="fas fa-address-book"></i> Guardar información adicional'
             : '<i class="fas fa-save"></i> Guardar y validar expediente');
-    btnSubmit.style.opacity = blockPendingReview ? '0.7' : '';
-    btnSubmit.style.cursor = blockPendingReview ? 'not-allowed' : '';
-    btnSubmit.style.background = blockPendingReview ? 'var(--muted)' : '';
+    btnSubmit.style.opacity = isPendingReview ? '0.7' : '';
+    btnSubmit.style.cursor = isPendingReview ? 'not-allowed' : '';
+    btnSubmit.style.background = isPendingReview ? 'var(--muted)' : '';
 }
 
 function toggleCompleteDocsState(isComplete) {
@@ -1867,16 +1779,12 @@ function toggleCompleteDocsState(isComplete) {
     var grid = document.getElementById('docs-grid');
     var note = document.getElementById('complete-edit-note');
     var additionalPanel = document.getElementById('additional-info-panel');
-    var sidebarEmails = document.getElementById('emails-list');
-    var sidebarPhones = document.getElementById('phones-list');
     if (editView) editView.classList.toggle('additional-only-mode', isComplete);
     if (title) title.textContent = isComplete ? 'Documentación aprobada y datos adicionales' : 'Documentación requerida';
     if (progressWrap) progressWrap.style.display = isComplete ? 'none' : 'flex';
     if (grid) grid.style.display = isComplete ? 'none' : 'grid';
     if (note) note.style.display = isComplete ? 'block' : 'none';
     if (additionalPanel) additionalPanel.style.display = isComplete ? 'block' : 'none';
-    if (sidebarEmails && sidebarEmails.closest('.info-section')) sidebarEmails.closest('.info-section').style.display = isComplete ? 'none' : '';
-    if (sidebarPhones && sidebarPhones.closest('.info-section')) sidebarPhones.closest('.info-section').style.display = isComplete ? 'none' : '';
 }
 
 /* ============================================================
@@ -1887,7 +1795,8 @@ function renderDocCards(profile) {
     if (!grid) return;
     grid.innerHTML = '';
     var readonlyMode = isAdditionalOnlyMode();
-    var docConf = getProfileDocConfigs(profile);
+    var tenant = profile.tenant || 'plaza_mayor';
+    var docConf = (profile.validation && profile.validation.documentRequirements) ? profile.validation.documentRequirements.filter(function(d){return d.requiredForProfile;}) : (DOC_CONFIGS[tenant] || DOC_CONFIGS.plaza_mayor);
     var docs = (profile.validation && profile.validation.documents) ? profile.validation.documents : {};
     var constSt = calcConstanciaStatus(getProfileDocumentValidityDate(profile, 'doc_constancia_fiscal'), getProfileDocumentValidityDays('doc_constancia_fiscal'));
     var compSt = calcConstanciaStatus(getProfileDocumentValidityDate(profile, 'doc_comprobante_domicilio'), getProfileDocumentValidityDays('doc_comprobante_domicilio'));
@@ -1916,7 +1825,7 @@ function renderDocCards(profile) {
         }
 
         var backendLocked = isOmitted || (isUploaded && (dStat === "aprobado" || dStat === "pendiente"));
-        var adminRejected = isUploaded && dStat === "rechazado" && !isPending;
+        var adminRejected = isUploaded && dStat === "rechazado";
 
         var cardClass = 'doc-card', badgeClass, badgeText;
         if (locked) { cardClass += ' locked'; badgeClass = 'empty'; badgeText = '—'; }
@@ -1927,13 +1836,12 @@ function renderDocCards(profile) {
         else if (isOmitted) { cardClass += ' uploaded'; badgeClass = 'uploaded'; badgeText = '✓ Omitido'; validatedCount++; }
         else if (isUploaded && dc.isConstancia && constSt.status === 'expired') { cardClass += ' expired'; badgeClass = 'expired'; badgeText = '⚠ Vencida'; }
         else if (isUploaded && dc.field === 'doc_comprobante_domicilio' && compSt.status === 'expired') { cardClass += ' expired'; badgeClass = 'expired'; badgeText = '⚠ Vencido'; }
-        else if (isUploaded && dc.requiresDate && calcConstanciaStatus(getProfileDocumentValidityDate(profile, dc.field), getProfileDocumentValidityDays(dc.field)).status === 'expired') { cardClass += ' expired'; badgeClass = 'expired'; badgeText = '⚠ Fecha vencida'; }
         else if (isUploaded && dStat === 'aprobado') { cardClass += ' uploaded'; badgeClass = 'uploaded'; badgeText = '✓ Aprobado'; validatedCount++; }
         else if (isUploaded && dStat === 'pendiente' && refreshMeta.updatedAt) { cardClass += ' analyzing'; badgeClass = 'analyzing'; badgeText = '⟳ Actualizado'; validatedCount++; }
         else if (isUploaded && dStat === 'pendiente') { cardClass += ' analyzing'; badgeClass = 'analyzing'; badgeText = '⏳ En revisión'; validatedCount++; }
         else { badgeClass = 'empty'; badgeText = 'Requerido'; }
 
-        if (!readonlyMode && locked) {
+        if (!readonlyMode && (state.profileState === 'complete' || locked)) {
             return;
         }
 
@@ -1974,7 +1882,6 @@ function renderDocCards(profile) {
         var topMetaHtml = '';
         if (dc.field === 'doc_constancia_fiscal') topMetaHtml = '<div class="doc-card-top-meta">' + (isOmitted ? buildOmittedDatePill('Constancia omitida') : buildDocumentDatePill(getProfileDocumentValidityDate(profile, dc.field), 'Constancia cargada', getProfileDocumentValidityDays(dc.field))) + '</div>';
         else if (dc.field === 'doc_comprobante_domicilio') topMetaHtml = '<div class="doc-card-top-meta">' + (isOmitted ? buildOmittedDatePill('Comprobante omitido') : buildDocumentDatePill(getProfileDocumentValidityDate(profile, dc.field), 'Comprobante emitido', getProfileDocumentValidityDays(dc.field))) + '</div>';
-        else if (dc.requiresDate) topMetaHtml = '<div class="doc-card-top-meta">' + (isOmitted ? buildOmittedDatePill(dc.label + ' omitido') : buildDocumentDatePill(getProfileDocumentValidityDate(profile, dc.field), dc.label + ' fechado', getProfileDocumentValidityDays(dc.field))) + '</div>';
 
         var docTooltipHtml = buildTooltipIconHtml(getDocRequirementText(dc));
         if (adminRejected && dMotivo) {
@@ -2062,7 +1969,8 @@ function renderCompleteState(profile) {
             return '<div class="complete-info-item"><div class="complete-info-label">'+escapeHtml(f.label)+'</div><div class="complete-info-value">'+escapeHtml(f.value||'—')+'</div></div>';
         }).join('');
     }
-    var docConf = getProfileDocConfigs(profile);
+    var tenant = profile.tenant || 'plaza_mayor';
+    var docConf = DOC_CONFIGS[tenant] || DOC_CONFIGS.plaza_mayor;
     var docs = (profile.validation && profile.validation.documents) ? profile.validation.documents : {};
     if (docsList) {
         docsList.innerHTML = docConf.map(function(dc) {
@@ -2096,10 +2004,10 @@ function renderProfile(profile) {
     }
 
     var pendingBanner = document.getElementById('pending-review-banner');
-    if (isAdditionalOnlyMode()) {
+    if (profileState === 'complete' || profileState === 'documents_approved') {
         renderCompleteState(profile);
         var completeContactNote = document.getElementById('complete-contact-note');
-        if (completeContactNote) completeContactNote.textContent = 'Tu perfil esta completo y validado. Aqui puedes actualizar tu correo principal, telefono principal y contactos alternativos.';
+        if (completeContactNote) completeContactNote.textContent = 'Tu perfil esta completo y validado. Solo puedes actualizar el correo principal, correos alternativos y telefonos alternativos.';
     } else {
         document.getElementById('complete-state').style.display = 'none';
         document.getElementById('edit-view').style.display = 'grid';
@@ -2132,12 +2040,6 @@ async function handleFileChange(e) {
     if (!file) return;
     var field = e.target.dataset.field;
     if (!field) return;
-    var preservedMainEmail = '';
-    var preservedMainPhone = '';
-    var currentEmailInput = document.getElementById('edit-correo');
-    var currentPhoneInput = document.getElementById('edit-telefono-principal');
-    if (currentEmailInput) preservedMainEmail = currentEmailInput.value;
-    if (currentPhoneInput) preservedMainPhone = currentPhoneInput.value;
 
     // Limpiar resultado previo
     delete state.validationResults[field];
@@ -2169,14 +2071,6 @@ async function handleFileChange(e) {
                 var comprobanteInput = document.getElementById('comprobante-date');
                 if (comprobanteInput) comprobanteInput.value = result.extracted.comprobanteDate;
             }
-            if (result.extracted.genericDate && state.profile) {
-                state.manualDates[field] = result.extracted.genericDate;
-                var docInfo = getProfileDocumentInfo(state.profile, field);
-                docInfo.fechaDocumento = result.extracted.genericDate;
-                if (!state.profile.validation) state.profile.validation = {};
-                if (!state.profile.validation.documents) state.profile.validation.documents = {};
-                state.profile.validation.documents[field] = docInfo;
-            }
             setFeedback('✓ ' + file.name + ' validado correctamente. Guarda el expediente para confirmar.', 'success');
         } else {
             // Rechazado: quitar de pending
@@ -2194,12 +2088,6 @@ async function handleFileChange(e) {
     // Re-render
     if (state.profile) {
         renderInfoPanel(state.profile);
-        if (isProfileValidatedMode()) {
-            var restoredEmailInput = document.getElementById('edit-correo');
-            var restoredPhoneInput = document.getElementById('edit-telefono-principal');
-            if (restoredEmailInput) restoredEmailInput.value = preservedMainEmail;
-            if (restoredPhoneInput) restoredPhoneInput.value = preservedMainPhone;
-        }
         renderDocCards(state.profile);
     }
 }
@@ -2211,10 +2099,8 @@ function buildAdminProfilePayload(raw) {
     var today = new Date();
     var serverDate = today.getUTCFullYear()+'-'+String(today.getUTCMonth()+1).padStart(2,'0')+'-'+String(today.getUTCDate()).padStart(2,'0');
     var tenant = String(raw.tenant||'plaza_mayor');
+    var docConf = DOC_CONFIGS[tenant] || DOC_CONFIGS.plaza_mayor;
     var validationSource = safeObjectRaw(raw.expediente_validacion);
-    var docConf = Array.isArray(validationSource.documentRequirements)
-        ? validationSource.documentRequirements.map(normalizeDocConfig).filter(Boolean)
-        : (DOC_CONFIGS[tenant] || DOC_CONFIGS.plaza_mayor).map(normalizeDocConfig).filter(Boolean);
     var constanciaDate = resolveProfileDate(raw.constancia_fiscal_emitida_el, validationSource.constanciaFiscalEmitidaEl || validationSource.constancia_fiscal_emitida_el);
     var comprobanteDate = resolveProfileDate(raw.comprobante_domicilio_emitido_el, validationSource.comprobanteDomicilioEmitidoEl || validationSource.comprobante_domicilio_emitido_el);
     var docStates = safeObjectRaw(raw.documentos_estado);
@@ -2224,11 +2110,10 @@ function buildAdminProfilePayload(raw) {
         var name = Array.isArray(v) ? (v[0]||'') : String(v||'');
         var stateInfo = safeObjectRaw(docStates[dc.field]);
         var currentValidation = safeObjectRaw(validationSource.documents && validationSource.documents[dc.field]);
-        if (!name.trim() && currentValidation.fileName) name = currentValidation.fileName;
         docs[dc.field] = {
             field: dc.field,
             label: currentValidation.label || dc.label,
-            uploaded: !!name.trim() || currentValidation.uploaded === true,
+            uploaded: !!name.trim(),
             fileName: name.trim(),
             estado: stateInfo.status || currentValidation.estado || (name.trim() ? 'pendiente' : 'pendiente'),
             motivo: stateInfo.motivo || currentValidation.motivo || '',
@@ -2245,7 +2130,7 @@ function buildAdminProfilePayload(raw) {
     var additionalPhones = safeArrayRaw(raw.telefonos_adicionales);
     var additionalEmails = safeArrayRaw(raw.correos_adicionales);
     var hasPhone = !!normPhone(raw.telefono) || additionalPhones.some(function(phone){ return !!normPhone(phone); });
-    var allDocs = docConf.filter(function(dc){ return dc.requiredForProfile !== false; }).every(function(dc) { return docs[dc.field].uploaded || docs[dc.field].omitido; });
+    var allDocs = docConf.every(function(dc) { return docs[dc.field].uploaded || docs[dc.field].omitido; });
     var readyForQuotes = raw.perfil_validado === true || validationSource.readyForQuotes === true || validationSource.ready === true;
     var profileStatus = raw.perfil_estatus || validationSource.status || (allDocs && hasPhone && constanciaDate ? 'pendiente_revision' : 'pendiente_expediente');
     return {
@@ -2310,32 +2195,23 @@ async function loadProfile(options) {
 async function submitProfile() {
     var btnSubmit = document.getElementById('btn-submit');
     if (btnSubmit) { btnSubmit.disabled=true; btnSubmit.innerHTML='<i class="fas fa-spinner fa-spin"></i> Guardando…'; }
-    var hasPendingUploads = Object.keys(state.pendingFiles || {}).length > 0;
-    var contactOnlySubmit = hasContactInfoEdits() && !hasPendingUploads;
-    var additionalOnly = isAdditionalOnlyMode() || contactOnlySubmit;
+    var additionalOnly = isAdditionalOnlyMode();
     setFeedback(additionalOnly ? 'Guardando información adicional…' : 'Guardando expediente…','');
     var hadProfileEdits = hasProfileEdits();
 
     try {
         var patchForm = new FormData();
-        var pendingDocumentDates = {};
 
         // Phones (máx 2) — enviar como array JSON válido
         var phones = currentPhones().slice(0, 2);
         patchForm.append('telefonos_adicionales', JSON.stringify(phones));
         patchForm.append('correos_adicionales', JSON.stringify(currentEmails().slice(0, 2)));
         var correoInput = document.getElementById('edit-correo');
-        var telefonoInput = document.getElementById('edit-telefono-principal');
         if (correoInput) {
             var correoVal = correoInput.value.trim();
-            if (correoVal && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correoVal)) throw new Error('El correo principal no es valido.');
-            if (correoVal) patchForm.append('correo', correoVal);
-        }
-        if (telefonoInput) {
-            var telefonoRaw = telefonoInput.value.trim();
-            var telefonoVal = normPhone(telefonoRaw);
-            if (telefonoRaw && !telefonoVal) throw new Error('El telefono principal debe tener 10 digitos.');
-            if (telefonoVal) patchForm.append('telefono', telefonoVal);
+            if (correoVal && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correoVal)) {
+                patchForm.append('correo', correoVal);
+            }
         }
 
         var hasAny = false;
@@ -2357,28 +2233,19 @@ async function submitProfile() {
                 patchForm.append('comprobante_domicilio_emitido_el', toPocketBaseDateTime(comprobanteToSend));
             }
 
+            // RFC (extracted from constancia) — solo si se extrajo del PDF y tiene formato válido
+            if (state.profile && state.profile.rfc && state.profile.rfc.length >= 12) {
+                patchForm.append('rfc', state.profile.rfc);
+            }
+
             // Pending validated documents — solo archivos que pasaron la validación
             Object.keys(state.pendingFiles).forEach(function(field) {
                 var vr = state.validationResults[field];
                 if (state.pendingFiles[field] && vr && vr.valid) {
-                    var cfg = getDocConfigByField(field) || { field: field, uploadField: field };
-                    var uploadField = cfg.uploadField || field;
-                    if (cfg.requiresDate) {
-                        var detectedDate = state.manualDates && state.manualDates[field] ? state.manualDates[field] : '';
-                        if (!/^\d{4}-\d{2}-\d{2}$/.test(detectedDate)) {
-                            throw new Error('No se detectó una fecha válida para ' + (cfg.label || field) + '.');
-                        }
-                        pendingDocumentDates[field] = detectedDate;
-                        pendingDocumentDates[uploadField] = detectedDate;
-                        patchForm.append(uploadField + '_date', detectedDate);
-                    }
-                    patchForm.append(uploadField, state.pendingFiles[field], state.pendingFiles[field].name);
+                    patchForm.append(field, state.pendingFiles[field], state.pendingFiles[field].name);
                     hasAny = true;
                 }
             });
-            if (Object.keys(pendingDocumentDates).length) {
-                patchForm.append('documentos_fechas', JSON.stringify(pendingDocumentDates));
-            }
         }
 
         if (state.accessToken) {
@@ -2388,7 +2255,6 @@ async function submitProfile() {
             if (!resp2.ok || !payload.profile) throw new Error(payload.message||'No se pudo guardar.');
             state.pendingFiles = {};
             state.validationResults = {};
-            state.manualDates = {};
             renderProfile(payload.profile);
             if (hasAny) {
                 setFeedback('Documento actualizado correctamente. Quedó pendiente de revisión administrativa.', 'success');

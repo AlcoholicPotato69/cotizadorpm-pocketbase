@@ -1,6 +1,6 @@
 # Catalogo de Funciones y Puntos de Extension
 
-Ultima actualizacion: 2026-04-13
+Ultima actualizacion: 2026-04-24
 
 Este documento resume las funciones criticas que TI debe conocer para auditar, corregir o extender el sistema sin romper la logica de cotizacion, convenio y documentos.
 
@@ -144,7 +144,64 @@ Funciones/acciones operativas:
 | `run-pocketbase-service.ps1` | inicia PocketBase sin `--publicDir` si `PUBLIC_DIR` esta apagado | evita que PocketBase despliegue HTML accidentalmente |
 | `levantar-todo.bat` | pide IP/puerto backend y frontend | automatiza bind, runtime, CORS, publicDir, Nginx y servicio |
 
-## 7. Puntos seguros para extender el sistema
+## 7. `client_profile`: expediente publico y seguridad documental
+
+Archivo:
+
+- `backend/pb_hooks/client_profile_shared.js`
+
+Funciones y responsabilidades:
+
+| Funcion | Responsabilidad | Nota de mantenimiento |
+| --- | --- | --- |
+| `scanBytesInQuarantine` | manda el archivo a cuarentena temporal y ejecuta Windows Defender | si cambia el mensaje de rechazo, mantenerlo alineado con la UI publica |
+| `validateUploadedFilesForRequest` | valida extension, mime, tamano y cantidad de archivos por documento | reutiliza cache por request para no duplicar trabajo |
+| `handlePublicClientProfileComplete` | procesa el submit publico del expediente | desde 2026-04-24 acepta RFC y razon social extraidos de la constancia |
+
+Archivos frontend acoplados:
+
+- `frontend/client/public/perfil_cliente.html`
+- `frontend/pb_public/client/public/perfil_cliente.html`
+
+## 8. Catalogo CP: perfil rapido al capturar cliente manualmente
+
+Archivo:
+
+- `frontend/client/cotizadorcp/catalog.js`
+
+Funciones y responsabilidades:
+
+| Funcion | Responsabilidad | Nota de mantenimiento |
+| --- | --- | --- |
+| `buildCpCatalogQuoteClientSnapshot` | arma el snapshot del cliente para la cotizacion | toma perfil listo o captura manual |
+| `findCpCatalogExistingClientProfile` | busca coincidencias por nombre, correo o RFC | reduce duplicados al crear perfiles pendientes |
+| `createCpCatalogQuickQuoteClientProfile` | crea el perfil `pendiente_expediente` desde catalogo CP | deja `perfil_origen = cotizacion_rapida` |
+| `resolveCpCatalogQuoteClientId` | garantiza que la cotizacion salga con `cliente_id` | es la compuerta canonica antes del insert |
+| `loadClientProfilesForQuoteModal` | carga perfiles listos, pero permite captura manual | si el perfil no esta listo, pide captura manual y crea pendiente |
+
+Nota de mantenimiento:
+
+- `backend/pb_hooks/10_cotizaciones.pb.js` permite crear cotizaciones rapidas pendientes, pero sigue bloqueando la transicion a `aprobada` hasta que el perfil del cliente este listo para cotizar
+
+## 9. Control operativo: paginacion de tablas resumidas
+
+Archivo:
+
+- `frontend/client/cotizador/control.js`
+- `frontend/client/cotizadorcp/control.js`
+
+Funciones y responsabilidades:
+
+| Funcion | Responsabilidad | Nota de mantenimiento |
+| --- | --- | --- |
+| `normalizeSummaryPageSize` | valida el selector local de 5/10 filas | no mezclar con la paginacion server-side de movimientos |
+| `buildSummaryPaginationMeta` | calcula pagina actual, totales y rango visible | se usa tanto para clientes como para ordenes |
+| `updateSummaryPaginationUi` | actualiza contador, pagina y botones prev/next | depende de ids `clients-*` y `orders-*` en `control.html` |
+| `goToSummaryPage` | navega entre paginas locales del resumen | no dispara fetch al backend |
+| `renderClientsTable` | filtra, pagina y renderiza clientes | comparte el buscador global lateral |
+| `renderOrdersTable` | filtra, pagina y renderiza ordenes/responsables | misma politica 5/10 y siguiente pagina |
+
+## 10. Puntos seguros para extender el sistema
 
 Si TI necesita agregar un nuevo criterio de convenio:
 
@@ -161,12 +218,15 @@ Si TI necesita agregar una nueva categoria en CP:
 3. revisar disponibilidad en `__cpBuildReservationsMap` y `__cpEvalAvailability`
 4. revisar `orders.js` para PDF, editor y persistencia
 
-## 8. Checklist minimo de auditoria para estos modulos
+## 11. Checklist minimo de auditoria para estos modulos
 
 - una carta convenio no muestra importes en preview ni PDF descargado
 - una cotizacion con `fecha_fin` real no se muestra como `Indefinido`
 - una cotizacion convenio en Plaza Mayor solo deja elegir espacios con `permite_convenio = true`
 - una cotizacion convenio en Casa de Piedra solo deja elegir espacios publicitarios con `permite_convenio = true`
+- una cotizacion rapida CP desde `catalog.js` crea o reutiliza perfil pendiente cuando no hay `cliente_id`
+- una constancia fiscal publica actualiza RFC y razon social del perfil
+- un archivo bloqueado por Windows Defender deja mensaje claro por documento
 - la multi-seleccion sigue funcionando dentro de la categoria valida
 - CP sigue bloqueando la mezcla `publicidad`/`espacio`
 - el modal de materiales CP usa `<select>` y no `datalist`
@@ -174,9 +234,10 @@ Si TI necesita agregar una nueva categoria en CP:
 - PocketBase corre sin `PUBLIC_DIR` cuando el frontend se sirve por separado
 - los espejos en `frontend/pb_public/` quedan sincronizados
 
-## 9. Referencias cruzadas
+## 12. Referencias cruzadas
 
 - `docs/50-modulos-y-flujos-de-negocio.md`
 - `docs/55-casa-de-piedra-publicidad-y-espacios.md`
 - `docs/60-pdfs-y-documentos.md`
 - `docs/80-auditoria-tecnica-y-checklist.md`
+- `docs/90-cambios-2026-04-24-client-profile-y-control.md`

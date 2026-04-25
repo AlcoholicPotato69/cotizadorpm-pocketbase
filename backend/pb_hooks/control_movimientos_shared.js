@@ -1,6 +1,8 @@
 (function () {
   const MOVEMENTS_COLLECTION = "control_movimientos";
-  const MOVEMENTS_RETENTION_MONTHS = 3;
+  const AUTH_COLLECTION = "app_users";
+  const MOVEMENTS_RETENTION_MONTHS = 12;
+  const MOVEMENTS_PAGE_SIZE_OPTIONS = [10, 25, 50];
   const DOC_FIELDS = [
     "doc_acta_constitutiva",
     "doc_ine",
@@ -113,6 +115,35 @@
     return role || "";
   }
 
+  function sanitizeSearchValue(value) {
+    return trim(value).slice(0, 120);
+  }
+
+  function normalizePageNumber(value, fallback) {
+    const parsed = parseInt(value, 10);
+    if (!isFinite(parsed) || parsed < 1) return fallback || 1;
+    return parsed;
+  }
+
+  function normalizePageSize(value, fallback) {
+    const parsed = parseInt(value, 10);
+    if (MOVEMENTS_PAGE_SIZE_OPTIONS.indexOf(parsed) !== -1) return parsed;
+    return fallback || 50;
+  }
+
+  function getDateIsoBoundary(value, isEnd) {
+    const raw = trim(value);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return "";
+    const stamp = new Date(raw + (isEnd ? "T23:59:59.999Z" : "T00:00:00.000Z"));
+    return isNaN(stamp.getTime()) ? "" : stamp.toISOString();
+  }
+
+  function getMovementsRetentionCutoffIso() {
+    const cutoffDate = new Date();
+    cutoffDate.setMonth(cutoffDate.getMonth() - MOVEMENTS_RETENTION_MONTHS);
+    return cutoffDate.toISOString();
+  }
+
   function sanitizePhone(value) {
     const digits = String(value || "").replace(/\D+/g, "").slice(-10);
     return digits.length === 10 ? digits : "";
@@ -188,9 +219,7 @@
   }
 
   function purgeOldMovements() {
-    const cutoffDate = new Date();
-    cutoffDate.setMonth(cutoffDate.getMonth() - MOVEMENTS_RETENTION_MONTHS);
-    const cutoff = cutoffDate.toISOString();
+    const cutoff = getMovementsRetentionCutoffIso();
     try {
       while (true) {
         const records = $app.findRecordsByFilter(MOVEMENTS_COLLECTION, `created_at < "${cutoff}"`, "-created_at", 100, 0) || [];
@@ -208,6 +237,249 @@
       }
     } catch (err) {
       console.log("[control_movimientos] No se pudo ejecutar purga de historico:", String(err));
+    }
+  }
+
+  function resolveEndpointAuthRecord(e) {
+    const authHeader = trim(e && e.request && e.request.header ? e.request.header.get("Authorization") : "");
+    if (!authHeader) throw new UnauthorizedError("Debes iniciar sesion para consultar movimientos.");
+
+    let authRecord = null;
+    try {
+      authRecord = $app.findAuthRecordByToken(authHeader, "auth");
+    } catch (_) {
+      authRecord = null;
+    }
+    if (!authRecord) throw new UnauthorizedError("Sesion invalida o expirada. Inicia sesion nuevamente.");
+    if (trim(authRecord.collection().name) !== AUTH_COLLECTION) {
+      throw new ForbiddenError("No tienes acceso a esta funcion.");
+    }
+    return authRecord;
+  }
+
+  function normalizeAllowedTenants(authRecord) {
+    const tenants = safeArray(recordValue(authRecord, "allowed_tenants"))
+      .map(normalizeTenant)
+      .filter(Boolean);
+    if (tenants.length) return tenants;
+    const role = normalizeRole(recordValue(authRecord, "role"));
+    if (role === "admin" || role === "verificador") return ["plaza_mayor", "casa_de_piedra"];
+    const tenantDefault = normalizeTenant(recordValue(authRecord, "tenant_default"));
+    return tenantDefault ? [tenantDefault] : [];
+  }
+
+  function canAuthAccessTenant(authRecord, tenant) {
+    const safeTenant = normalizeTenant(tenant);
+    if (!authRecord || !safeTenant) return false;
+    const role = normalizeRole(recordValue(authRecord, "role"));
+    if (role === "admin" || role === "verificador") return true;
+    const allowed = normalizeAllowedTenants(authRecord);
+    return allowed.indexOf(safeTenant) !== -1;
+  }
+
+  function serializeMovementRecord(record) {
+    return {
+      id: trim(recordValue(record, "id")),
+      tenant: normalizeTenant(recordValue(record, "tenant")),
+      tipo_movimiento: trim(recordValue(record, "tipo_movimiento")),
+      entidad_tipo: trim(recordValue(record, "entidad_tipo")),
+      entidad_id: trim(recordValue(record, "entidad_id")),
+      entidad_nombre: trim(recordValue(record, "entidad_nombre")),
+      cliente_id: trim(recordValue(record, "cliente_id")),
+      cliente_nombre: trim(recordValue(record, "cliente_nombre")),
+      cotizacion_id: trim(recordValue(record, "cotizacion_id")),
+      cotizacion_folio: trim(recordValue(record, "cotizacion_folio")),
+      documento_campo: trim(recordValue(record, "documento_campo")),
+      documento_nombre: trim(recordValue(record, "documento_nombre")),
+      actor_id: trim(recordValue(record, "actor_id")),
+      actor_nombre: trim(recordValue(record, "actor_nombre")),
+      actor_role: trim(recordValue(record, "actor_role")),
+      resumen: trim(recordValue(record, "resumen")),
+      metadata: safeObject(recordValue(record, "metadata")),
+      created_at: trim(recordValue(record, "created_at")),
+      updated_at: trim(recordValue(record, "updated_at")),
+      created: trim(recordValue(record, "created")),
+      updated: trim(recordValue(record, "updated"))
+    };
+  }
+
+  function buildMovementSearchExpression(search) {
+    const safeSearch = sanitizeSearchValue(search).toLowerCase();
+    if (!safeSearch) return null;
+    const likeSearch = "%" + safeSearch + "%";
+    return $dbx.or(
+      $dbx.exp("LOWER(COALESCE([[actor_nombre]], '')) LIKE {:search}", { search: likeSearch }),
+      $dbx.exp("LOWER(COALESCE([[actor_role]], '')) LIKE {:search}", { search: likeSearch }),
+      $dbx.exp("LOWER(COALESCE([[tipo_movimiento]], '')) LIKE {:search}", { search: likeSearch }),
+      $dbx.exp("LOWER(REPLACE(COALESCE([[tipo_movimiento]], ''), '_', ' ')) LIKE {:search}", { search: likeSearch }),
+      $dbx.exp("LOWER(COALESCE([[cliente_nombre]], '')) LIKE {:search}", { search: likeSearch }),
+      $dbx.exp("LOWER(COALESCE([[cliente_id]], '')) LIKE {:search}", { search: likeSearch }),
+      $dbx.exp("LOWER(COALESCE([[cotizacion_folio]], '')) LIKE {:search}", { search: likeSearch }),
+      $dbx.exp("LOWER(COALESCE([[documento_nombre]], '')) LIKE {:search}", { search: likeSearch }),
+      $dbx.exp("LOWER(COALESCE([[resumen]], '')) LIKE {:search}", { search: likeSearch }),
+      $dbx.exp("LOWER(COALESCE([[entidad_nombre]], '')) LIKE {:search}", { search: likeSearch }),
+      $dbx.exp("LOWER(COALESCE([[entidad_id]], '')) LIKE {:search}", { search: likeSearch }),
+      $dbx.exp("LOWER(COALESCE([[entidad_tipo]], '')) LIKE {:search}", { search: likeSearch }),
+      $dbx.exp("LOWER(REPLACE(COALESCE([[entidad_tipo]], ''), '_', ' ')) LIKE {:search}", { search: likeSearch })
+    );
+  }
+
+  function buildMovementExpressions(params, options) {
+    const cfg = options && typeof options === "object" ? options : {};
+    const exprs = [];
+    const tenant = normalizeTenant(params && params.tenant);
+    const actor = trim(params && params.actor);
+    const type = trim(params && params.type);
+    const dateFromIso = trim(params && params.dateFromIso);
+    const dateToIso = trim(params && params.dateToIso);
+    const search = sanitizeSearchValue(params && params.search);
+    const cutoffIso = trim(params && params.cutoffIso) || getMovementsRetentionCutoffIso();
+
+    if (tenant) exprs.push($dbx.hashExp({ tenant: tenant }));
+    exprs.push($dbx.exp("COALESCE([[created_at]], '') >= {:cutoffIso}", { cutoffIso: cutoffIso }));
+
+    if (cfg.includeActor !== false && actor) {
+      exprs.push($dbx.hashExp({ actor_nombre: actor }));
+    }
+
+    if (cfg.includeType !== false && type) {
+      exprs.push($dbx.hashExp({ tipo_movimiento: type }));
+    }
+
+    if (dateFromIso) {
+      exprs.push($dbx.exp("COALESCE([[created_at]], '') >= {:dateFromIso}", { dateFromIso: dateFromIso }));
+    }
+
+    if (dateToIso) {
+      exprs.push($dbx.exp("COALESCE([[created_at]], '') <= {:dateToIso}", { dateToIso: dateToIso }));
+    }
+
+    const searchExpr = buildMovementSearchExpression(search);
+    if (searchExpr) exprs.push(searchExpr);
+    return exprs;
+  }
+
+  function applyMovementExpressions(query, exprs) {
+    const safeQuery = query;
+    const list = Array.isArray(exprs) ? exprs : [];
+    for (let i = 0; i < list.length; i += 1) {
+      if (!list[i]) continue;
+      if (i === 0) safeQuery.where(list[i]);
+      else safeQuery.andWhere(list[i]);
+    }
+    return safeQuery;
+  }
+
+  function countMovementRecords(params, options) {
+    const exprs = buildMovementExpressions(params, options);
+    return Number($app.countRecords(MOVEMENTS_COLLECTION, ...exprs) || 0);
+  }
+
+  function listMovementRecords(params, pageSize, offset) {
+    const collection = getMovementCollection();
+    if (!collection) return [];
+    const rows = arrayOf(new Record(collection));
+    const query = applyMovementExpressions(
+      $app.recordQuery(collection)
+        .orderBy("created_at DESC", "updated_at DESC")
+        .limit(Math.max(1, Number(pageSize) || 0))
+        .offset(Math.max(0, Number(offset) || 0)),
+      buildMovementExpressions(params, { includeActor: true, includeType: true })
+    );
+    query.all(rows);
+    return rows
+      .map(serializeMovementRecord)
+      .filter(function (row) { return !!trim(row.id); });
+  }
+
+  function listDistinctMovementValues(field, params) {
+    const collection = getMovementCollection();
+    if (!collection || !field) return [];
+    const rows = arrayOf(new Record(collection));
+    const query = applyMovementExpressions(
+      $app.recordQuery(collection)
+        .select(field)
+        .distinct(true)
+        .orderBy(field + " ASC"),
+      buildMovementExpressions(params, { includeActor: false, includeType: false })
+    );
+    query.andWhere($dbx.exp("COALESCE([[" + field + "]], '') != ''"));
+    query.all(rows);
+    return rows
+      .map(function (row) { return trim(recordValue(row, field)); })
+      .filter(Boolean);
+  }
+
+  function handleMovementsList(e) {
+    try {
+      const collection = getMovementCollection();
+      if (!collection) throw new InternalServerError("No se encontro la coleccion de movimientos.");
+      const authRecord = resolveEndpointAuthRecord(e);
+      const query = e.request.url.query();
+      const tenant = normalizeTenant(query.get("tenant"));
+      if (!tenant) throw new BadRequestError("Debes indicar un tenant valido.");
+      if (!canAuthAccessTenant(authRecord, tenant)) {
+        throw new ForbiddenError("No tienes acceso a esta sede.");
+      }
+
+      const pageSize = normalizePageSize(query.get("perPage"), 50);
+      const requestedPage = normalizePageNumber(query.get("page"), 1);
+      const params = {
+        tenant: tenant,
+        actor: query.get("actor"),
+        type: query.get("type"),
+        search: query.get("search"),
+        dateFromIso: trim(query.get("dateFromIso")) || getDateIsoBoundary(query.get("dateFrom"), false),
+        dateToIso: trim(query.get("dateToIso")) || getDateIsoBoundary(query.get("dateTo"), true),
+        cutoffIso: getMovementsRetentionCutoffIso()
+      };
+
+      const totalItems = countMovementRecords(params, { includeActor: true, includeType: true });
+      const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+      const currentPage = Math.min(requestedPage, totalPages);
+      const offset = (currentPage - 1) * pageSize;
+      const items = listMovementRecords(params, pageSize, offset);
+
+      const approvalsTotal = params.type && params.type !== "documento_aprobado"
+        ? 0
+        : (
+          params.type === "documento_aprobado"
+            ? totalItems
+            : countMovementRecords(Object.assign({}, params, { type: "documento_aprobado" }), { includeActor: true, includeType: true })
+        );
+
+      const actors = listDistinctMovementValues("actor_nombre", params);
+      const types = listDistinctMovementValues("tipo_movimiento", params);
+
+      e.response.header().set("Cache-Control", "no-store");
+      e.response.header().set("Content-Type", "application/json; charset=utf-8");
+      e.response.header().set("X-Content-Type-Options", "nosniff");
+      e.response.header().set("X-Frame-Options", "DENY");
+      return e.json(200, {
+        ok: true,
+        tenant: tenant,
+        page: currentPage,
+        perPage: pageSize,
+        totalItems: totalItems,
+        totalPages: totalPages,
+        approvalsTotal: approvalsTotal,
+        actors: actors,
+        types: types,
+        cutoffIso: params.cutoffIso,
+        items: items
+      });
+    } catch (err) {
+      const message = trim(err && err.message ? err.message : String(err || ""));
+      console.log("[control_movimientos] handleMovementsList error:", message || String(err));
+      if (
+        err instanceof BadRequestError ||
+        err instanceof UnauthorizedError ||
+        err instanceof ForbiddenError ||
+        err instanceof NotFoundError
+      ) {
+        throw err;
+      }
+      throw new InternalServerError("No se pudo consultar la bitacora de movimientos.");
     }
   }
 
@@ -609,6 +881,7 @@
     if (before.id && after.id && before.id !== after.id) return;
     const uploadedDocs = [];
     const approvedDocs = [];
+    const rejectedDocs = [];
     for (let i = 0; i < DOC_FIELDS.length; i += 1) {
       const field = DOC_FIELDS[i];
       const label = DOC_LABELS[field] || field;
@@ -687,6 +960,8 @@
         });
         if (transitionType === "documento_aprobado") {
           approvedDocs.push({ field, label, type: transitionType, file: nextDoc.file });
+        } else if (transitionType === "documento_rechazado") {
+          rejectedDocs.push({ field, label, type: transitionType, file: nextDoc.file, reason: nextDoc.reason });
         } else if (transitionType === "documento_reenviado" || transitionType === "documento_pendiente_revision") {
           uploadedDocs.push({ field, label, type: transitionType, file: nextDoc.file });
         }
@@ -699,6 +974,9 @@
     }
     if (approvedDocs.length && typeof notifier.notifyClientDocumentsApproved === "function") {
       notifier.notifyClientDocumentsApproved(after, approvedDocs, actor);
+    }
+    if (rejectedDocs.length && typeof notifier.notifyClientDocumentsRejected === "function") {
+      notifier.notifyClientDocumentsRejected(after, rejectedDocs, actor);
     }
 
     if (JSON.stringify(before.phones) !== JSON.stringify(after.phones) || JSON.stringify(before.emails) !== JSON.stringify(after.emails)) {
@@ -974,6 +1252,8 @@
   }
 
   module.exports = {
+    purgeOldMovements,
+    handleMovementsList,
     handleQuoteCreate,
     handleQuoteUpdate,
     handleQuoteDelete,

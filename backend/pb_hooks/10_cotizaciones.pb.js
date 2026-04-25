@@ -286,6 +286,11 @@
     return clientRecord;
   }
 
+  function isQuickQuoteClientProfile(clientRecord) {
+    if (!clientRecord) return false;
+    return sanitizeText(clientRecord.getString("perfil_origen"), 40).toLowerCase() === "cotizacion_rapida";
+  }
+
   function syncQuoteClientSnapshot(record) {
     var clientRecord = resolveQuoteClientRecord(record);
     if (!clientRecord) return;
@@ -356,6 +361,8 @@
     if (tenant && clientTenant && tenant !== clientTenant) {
       throw new BadRequestError("El perfil del cliente no pertenece al tenant de esta cotizacion.");
     }
+    // Los perfiles creados desde cotizacion rapida deben poder cotizar antes de completar expediente.
+    if (isQuickQuoteClientProfile(clientRecord)) return;
     var readiness = resolveCurrentClientReadiness(clientRecord);
     if (!readiness.readyForQuotes) {
       throw new BadRequestError("El expediente del cliente debe estar completo, vigente y aprobado antes de generar cotizaciones.");
@@ -386,6 +393,41 @@
         throw new BadRequestError("El perfil del cliente todavia no tiene la etiqueta 'puede_generar_contrato'.");
       }
       throw new BadRequestError("Para generar contrato necesitas un dictamen aprobado o guardado del cliente.");
+    }
+  }
+
+  function normalizeQuoteStatusValue(value) {
+    return sanitizeText(value, 40).toLowerCase();
+  }
+
+  function isApprovalRequiredQuoteStatus(value) {
+    var normalized = normalizeQuoteStatusValue(value);
+    return normalized === "aprobada" || normalized === "finalizada";
+  }
+
+  function quoteApprovalTransitionRequested(record, original) {
+    if (!isApprovalRequiredQuoteStatus(record ? record.getString("status") : "")) return false;
+    var previousStatus = normalizeQuoteStatusValue(original ? original.getString("status") : "");
+    return previousStatus !== "aprobada" && previousStatus !== "finalizada";
+  }
+
+  function ensureClientReadyForQuoteApproval(record) {
+    var clientRecord = resolveQuoteClientRecord(record);
+    var clientId = sanitizeText(clientRecord ? clientRecord.get("id") : record.getString("cliente_id"), 64).replace(/[^a-zA-Z0-9]/g, "");
+    if (!clientId) {
+      throw new BadRequestError("No puedes aprobar la cotizacion sin un perfil de cliente asociado.");
+    }
+    if (!clientRecord) {
+      throw new BadRequestError("No se encontro el perfil de cliente asociado a la cotizacion.");
+    }
+    var tenant = sanitizeText(record.getString("tenant"), 40).toLowerCase();
+    var clientTenant = sanitizeText(clientRecord.getString("tenant"), 40).toLowerCase();
+    if (tenant && clientTenant && tenant !== clientTenant) {
+      throw new BadRequestError("El perfil del cliente no pertenece al tenant de esta cotizacion.");
+    }
+    var readiness = resolveCurrentClientReadiness(clientRecord);
+    if (!readiness.readyForQuotes) {
+      throw new BadRequestError("No puedes aprobar la cotizacion hasta que el expediente del cliente este completo, vigente y aprobado.");
     }
   }
 
@@ -1026,6 +1068,11 @@
       return clientRecord;
     }
 
+    function isQuickQuoteClientProfileLocal(clientRecord) {
+      if (!clientRecord) return false;
+      return sanitizeText(clientRecord.getString("perfil_origen"), 40).toLowerCase() === "cotizacion_rapida";
+    }
+
     function syncQuoteClientSnapshotLocal(record) {
       var clientRecord = resolveQuoteClientRecordLocal(record);
       if (!clientRecord) return;
@@ -1223,6 +1270,8 @@
       if (tenant && clientTenant && tenant !== clientTenant) {
         throw new BadRequestError("El perfil del cliente no pertenece al tenant de esta cotizacion.");
       }
+      // Los perfiles creados desde cotizacion rapida deben poder cotizar antes de completar expediente.
+      if (isQuickQuoteClientProfileLocal(clientRecord)) return;
       var readiness = resolveCurrentClientReadinessLocal(clientRecord);
       if (!readiness.readyForQuotes) {
         throw new BadRequestError("El expediente del cliente debe estar completo, vigente y aprobado antes de generar cotizaciones.");
@@ -1253,6 +1302,41 @@
           throw new BadRequestError("El perfil del cliente todavia no tiene la etiqueta 'puede_generar_contrato'.");
         }
         throw new BadRequestError("Para generar contrato necesitas un dictamen aprobado o guardado del cliente.");
+      }
+    }
+
+    function normalizeQuoteStatusValueLocal(value) {
+      return sanitizeText(value, 40).toLowerCase();
+    }
+
+    function isApprovalRequiredQuoteStatusLocal(value) {
+      var normalized = normalizeQuoteStatusValueLocal(value);
+      return normalized === "aprobada" || normalized === "finalizada";
+    }
+
+    function quoteApprovalTransitionRequestedLocal(record, original) {
+      if (!isApprovalRequiredQuoteStatusLocal(record ? record.getString("status") : "")) return false;
+      var previousStatus = normalizeQuoteStatusValueLocal(original ? original.getString("status") : "");
+      return previousStatus !== "aprobada" && previousStatus !== "finalizada";
+    }
+
+    function ensureClientReadyForQuoteApprovalLocal(record) {
+      var clientRecord = resolveQuoteClientRecordLocal(record);
+      var clientId = sanitizeText(clientRecord ? clientRecord.get("id") : record.getString("cliente_id"), 64).replace(/[^a-zA-Z0-9]/g, "");
+      if (!clientId) {
+        throw new BadRequestError("No puedes aprobar la cotizacion sin un perfil de cliente asociado.");
+      }
+      if (!clientRecord) {
+        throw new BadRequestError("No se encontro el perfil de cliente asociado a la cotizacion.");
+      }
+      var tenant = sanitizeText(record.getString("tenant"), 40).toLowerCase();
+      var clientTenant = sanitizeText(clientRecord.getString("tenant"), 40).toLowerCase();
+      if (tenant && clientTenant && tenant !== clientTenant) {
+        throw new BadRequestError("El perfil del cliente no pertenece al tenant de esta cotizacion.");
+      }
+      var readiness = resolveCurrentClientReadinessLocal(clientRecord);
+      if (!readiness.readyForQuotes) {
+        throw new BadRequestError("No puedes aprobar la cotizacion hasta que el expediente del cliente este completo, vigente y aprobado.");
       }
     }
 
@@ -1475,6 +1559,9 @@
     ensureClientReadyForQuoteLocal(e.record);
     ensureQuoteFinancials(e.record);
     enforceQuoteDiscountLimitLocal(e.record);
+    if (quoteApprovalTransitionRequestedLocal(e.record, null)) {
+      ensureClientReadyForQuoteApprovalLocal(e.record);
+    }
     if (contractFieldsTouchedLocal(e.record, null)) {
       ensureClientReadyForContractLocal(e.record);
     }
@@ -1853,6 +1940,41 @@
       }
     }
 
+    function normalizeQuoteStatusValueLocal(value) {
+      return sanitizeText(value, 40).toLowerCase();
+    }
+
+    function isApprovalRequiredQuoteStatusLocal(value) {
+      var normalized = normalizeQuoteStatusValueLocal(value);
+      return normalized === "aprobada" || normalized === "finalizada";
+    }
+
+    function quoteApprovalTransitionRequestedLocal(record, original) {
+      if (!isApprovalRequiredQuoteStatusLocal(record ? record.getString("status") : "")) return false;
+      var previousStatus = normalizeQuoteStatusValueLocal(original ? original.getString("status") : "");
+      return previousStatus !== "aprobada" && previousStatus !== "finalizada";
+    }
+
+    function ensureClientReadyForQuoteApprovalLocal(record) {
+      var clientRecord = resolveQuoteClientRecordLocal(record);
+      var clientId = sanitizeText(clientRecord ? clientRecord.get("id") : record.getString("cliente_id"), 64).replace(/[^a-zA-Z0-9]/g, "");
+      if (!clientId) {
+        throw new BadRequestError("No puedes aprobar la cotizacion sin un perfil de cliente asociado.");
+      }
+      if (!clientRecord) {
+        throw new BadRequestError("No se encontro el perfil de cliente asociado a la cotizacion.");
+      }
+      var tenant = sanitizeText(record.getString("tenant"), 40).toLowerCase();
+      var clientTenant = sanitizeText(clientRecord.getString("tenant"), 40).toLowerCase();
+      if (tenant && clientTenant && tenant !== clientTenant) {
+        throw new BadRequestError("El perfil del cliente no pertenece al tenant de esta cotizacion.");
+      }
+      var readiness = resolveCurrentClientReadinessLocal(clientRecord);
+      if (!readiness.readyForQuotes) {
+        throw new BadRequestError("No puedes aprobar la cotizacion hasta que el expediente del cliente este completo, vigente y aprobado.");
+      }
+    }
+
     function comparableValueLocal(record, field) {
       if (!record) return "";
       var value = record.get(field);
@@ -1960,6 +2082,9 @@
     syncQuoteClientSnapshotLocal(e.record);
     if (quoteFinancialFieldsTouchedLocal(e.record, original)) {
       enforceQuoteDiscountLimitLocal(e.record);
+    }
+    if (quoteApprovalTransitionRequestedLocal(e.record, original)) {
+      ensureClientReadyForQuoteApprovalLocal(e.record);
     }
     if (contractFieldsTouchedLocal(e.record, original)) {
       ensureClientReadyForContractLocal(e.record);

@@ -2,6 +2,17 @@
  * DOC: client\cotizador\control.js
  * Proposito: Bitacora operativa, perfiles y ordenes para seguimiento interno.
  * Notas: Archivo compartido entre control PM y CP por configuracion en window.CONTROL_PAGE_CONFIG.
+ * Indice rapido:
+ * 1. Filtros y paginacion de bitacora
+ * 2. Resumenes operativos de clientes y ordenes
+ * 3. Modal de perfil y generacion de dictamen
+ * 4. Carga inicial, permisos y wiring del DOM
+ * Funciones clave de este mantenimiento:
+ * - normalizeSummaryPageSize
+ * - buildSummaryPaginationMeta
+ * - updateSummaryPaginationUi
+ * - renderClientsTable
+ * - renderOrdersTable
  */
 
 const PB_URL = (window.HUB_CONFIG && window.HUB_CONFIG.pocketbaseUrl) || 'http://127.0.0.1:8090';
@@ -12,7 +23,11 @@ const TENANT_SLUG = PAGE_CFG.tenantSlug || 'plaza_mayor';
 const PUBLIC_PROFILE_PATH = PAGE_CFG.publicProfilePath || '../public/perfil_cliente.html';
 const CONSTANCIA_VALID_DAYS = 30;
 const COMPROBANTE_VALID_DAYS = 'calendar_months:3';
-const CONTROL_MOVEMENTS_RETENTION_MONTHS = 3;
+const CONTROL_MOVEMENTS_RETENTION_MONTHS = 12;
+const CONTROL_MOVEMENTS_PAGE_SIZE_OPTIONS = [10, 25, 50];
+const CONTROL_MOVEMENTS_DEFAULT_PAGE_SIZE = 50;
+const CONTROL_SUMMARY_PAGE_SIZE_OPTIONS = [5, 10];
+const CONTROL_SUMMARY_DEFAULT_PAGE_SIZE = 5;
 
 const DOC_REQUIREMENTS = {
   plaza_mayor: [
@@ -34,10 +49,26 @@ const state = {
   orders: [],
   movements: [],
   filteredMovements: [],
+  movementActors: [],
+  movementTypes: [],
+  movementsTotal: 0,
+  movementApprovalsTotal: 0,
+  movementPage: 1,
+  movementPageSize: CONTROL_MOVEMENTS_DEFAULT_PAGE_SIZE,
+  movementTotalPages: 1,
   serverNowIso: '',
-  loading: false
+  loading: false,
+  loadingMovements: false,
+  clientsPage: 1,
+  clientsPageSize: CONTROL_SUMMARY_DEFAULT_PAGE_SIZE,
+  clientsTotalPages: 1,
+  ordersPage: 1,
+  ordersPageSize: CONTROL_SUMMARY_DEFAULT_PAGE_SIZE,
+  ordersTotalPages: 1
 };
 let adminVerifierMode = false;
+let movementSearchDebounceTimer = 0;
+let movementRequestSequence = 0;
 const CONTROL_ADMIN_VERIFIER_MODE_STORAGE_KEY = `hub_admin_verifier_mode_${TENANT_SLUG}`;
 
 function safeArray(value) {
@@ -247,58 +278,7 @@ function getAllowedTenantsForVerifier() {
 }
 
 function installVerifierTenantNavigation(accessCtx) {
-  const activeRole = normalizeRoleName(accessCtx?.role || '');
-  if (activeRole !== 'verificador' && activeRole !== 'admin') return;
-  const currentFile = getCurrentPageFile();
-  const currentTenant = TENANT_SLUG;
-  const allowedTenants = getAllowedTenantsForVerifier();
-  const switchHtml = allowedTenants.map((tenantSlug) => {
-    const isActive = tenantSlug === currentTenant;
-    const label = tenantSlug === 'casa_de_piedra' ? 'Casa de Piedra' : 'Plaza Mayor';
-    const shortLabel = tenantSlug === 'casa_de_piedra' ? 'CP' : 'PM';
-    const classes = isActive
-      ? 'bg-brand-red text-white shadow-sm'
-      : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900';
-    return `<a href="${buildTenantPageHref(tenantSlug, currentFile)}" class="${classes} rounded-lg px-3 py-2 text-[11px] font-black uppercase tracking-wide transition whitespace-nowrap flex items-center gap-2"><span class="inline-flex h-5 w-5 items-center justify-center rounded-md bg-white/15 text-[10px]">${shortLabel}</span><span>${label}</span></a>`;
-  }).join('');
-
-  const switchContainer = document.getElementById('control-tenant-switch');
-  if (switchContainer) {
-    if (allowedTenants.length > 1) {
-      switchContainer.innerHTML = switchHtml;
-      switchContainer.classList.remove('hidden');
-      switchContainer.classList.add('flex');
-    } else {
-      switchContainer.classList.add('hidden');
-      switchContainer.classList.remove('flex');
-    }
-    return;
-  }
-
-  if (activeRole !== 'verificador') return;
-  const navContainer = document.querySelector('nav .container');
-  if (!navContainer) return;
-  navContainer.dataset.verifierTenantNav = 'true';
-  const navLinks = [
-    { file: 'catalog.html', label: 'Precios', icon: 'fa-tags' },
-    { file: 'clientes.html', label: 'Clientes', icon: 'fa-users' },
-    { file: 'control.html', label: 'Control', icon: 'fa-clipboard-check' }
-  ];
-
-  const linksHtml = navLinks.map((item) => {
-    const isActive = item.file === currentFile;
-    const baseClass = isActive
-      ? 'bg-white/20 shadow-inner'
-      : 'hover:bg-white/20 transition';
-    return `<a href="${buildTenantPageHref(currentTenant, item.file)}" class="${baseClass} px-4 py-1.5 rounded-full text-xs font-bold uppercase whitespace-nowrap flex items-center gap-2"><i class="fa-solid ${item.icon}"></i>${item.label}</a>`;
-  }).join('');
-
-  navContainer.innerHTML = `
-    ${linksHtml}
-    <div class="ml-auto flex items-center gap-1 rounded-full bg-white/10 p-1 shadow-inner backdrop-blur">
-      ${switchHtml}
-    </div>
-  `;
+  return;
 }
 
 function isAdminControlRoleActive() {
@@ -340,6 +320,97 @@ function getAuthToken() {
     } catch (_) {}
   }
   return '';
+}
+
+function normalizeMovementPageSize(value, fallback = CONTROL_MOVEMENTS_DEFAULT_PAGE_SIZE) {
+  const parsed = parseInt(value, 10);
+  return CONTROL_MOVEMENTS_PAGE_SIZE_OPTIONS.includes(parsed) ? parsed : fallback;
+}
+
+function getMovementDateBoundaryIso(dateValue, isEnd) {
+  const raw = String(dateValue || '').trim();
+  if (!raw) return '';
+  const stamp = new Date(`${raw}T${isEnd ? '23:59:59.999' : '00:00:00.000'}`);
+  return Number.isNaN(stamp.getTime()) ? '' : stamp.toISOString();
+}
+
+function buildControlMovementsEndpointUrl(params = {}) {
+  const apiBase = String(PB_URL || '').replace(/\/+$/, '');
+  const search = new URLSearchParams();
+  search.set('tenant', TENANT_SLUG);
+  search.set('page', String(Math.max(1, parseInt(params.page, 10) || 1)));
+  search.set('perPage', String(normalizeMovementPageSize(params.perPage, state.movementPageSize || CONTROL_MOVEMENTS_DEFAULT_PAGE_SIZE)));
+  if (params.actor) search.set('actor', String(params.actor).trim());
+  if (params.type) search.set('type', String(params.type).trim());
+  if (params.search) search.set('search', String(params.search).trim());
+  if (params.dateFromIso) search.set('dateFromIso', String(params.dateFromIso).trim());
+  if (params.dateToIso) search.set('dateToIso', String(params.dateToIso).trim());
+  return `${apiBase}/api/cotizador/control-movements?${search.toString()}`;
+}
+
+async function fetchControlMovementsPage(options = {}) {
+  const filters = getMovementReportFilters();
+  const token = getAuthToken();
+  if (!token) throw new Error('No se encontro una sesion valida.');
+
+  const requestedPage = Math.max(1, parseInt(options.page, 10) || state.movementPage || 1);
+  const requestedPageSize = normalizeMovementPageSize(options.perPage, state.movementPageSize || CONTROL_MOVEMENTS_DEFAULT_PAGE_SIZE);
+  const url = buildControlMovementsEndpointUrl({
+    page: requestedPage,
+    perPage: requestedPageSize,
+    actor: filters.actor,
+    type: filters.type,
+    search: filters.search,
+    dateFromIso: getMovementDateBoundaryIso(filters.dateFrom, false),
+    dateToIso: getMovementDateBoundaryIso(filters.dateTo, true)
+  });
+
+  const resp = await fetch(url, {
+    method: 'GET',
+    headers: { Authorization: token },
+    credentials: 'omit',
+    cache: 'no-store'
+  });
+  const payload = await resp.json().catch(() => ({}));
+  if (!resp.ok || payload?.ok !== true) {
+    throw new Error(payload?.message || 'No se pudieron cargar los movimientos.');
+  }
+  return payload;
+}
+
+async function fetchAllMovementsForExport() {
+  const rows = [];
+  let page = 1;
+  let totalPages = 1;
+  do {
+    const payload = await fetchControlMovementsPage({ page, perPage: 50 });
+    rows.push(...(Array.isArray(payload?.items) ? payload.items : []));
+    totalPages = Math.max(1, Number(payload?.totalPages || 1));
+    page += 1;
+  } while (page <= totalPages);
+  return rows;
+}
+
+function scheduleMovementRefresh() {
+  if (movementSearchDebounceTimer) window.clearTimeout(movementSearchDebounceTimer);
+  movementSearchDebounceTimer = window.setTimeout(() => {
+    refreshMovementRows({ resetPage: true });
+  }, 220);
+}
+
+function goToMovementPage(page) {
+  const totalPages = Math.max(1, Number(state.movementTotalPages || 1));
+  const targetPage = Math.min(totalPages, Math.max(1, parseInt(page, 10) || 1));
+  if (state.loadingMovements || targetPage === state.movementPage) return;
+  refreshMovementRows({ resetPage: false, page: targetPage });
+}
+
+function handleGlobalSearchInput() {
+  state.clientsPage = 1;
+  state.ordersPage = 1;
+  renderClientsTable();
+  renderOrdersTable();
+  scheduleMovementRefresh();
 }
 
 function hasClockTime(value) {
@@ -1055,7 +1126,7 @@ function getDictamenRequirementDetail(item) {
   if (item.field === 'doc_acta_constitutiva') return 'Documento legal completo y legible.';
   if (item.field === 'doc_ine') return 'Identificación oficial vigente y legible.';
   if (item.field === 'doc_comprobante_domicilio') return 'Recibo de luz, agua o teléfono vigente durante el mes de emisión y los 2 meses siguientes.';
-  if (item.field === 'doc_constancia_fiscal') return 'Constancia SAT legible con vigencia operativa de 30 días.';
+  if (item.field === 'doc_constancia_fiscal') return 'Constancia SAT legible con vigencia operativa de 30 días a partir de la fecha de emisión detectada.';
   return item.label || 'Documento';
 }
 
@@ -1069,7 +1140,7 @@ function getDictamenStatusLabel(doc, expiry) {
 }
 
 function getDictamenExpiryText(expiry) {
-  if (!expiry || expiry.daysLeft === null) return 'Sin vigencia capturada';
+  if (!expiry || expiry.daysLeft === null) return 'Fecha pendiente por capturar';
   if (expiry.status === 'expired') return `Vencido hace ${Math.abs(expiry.daysLeft)} dia(s)`;
   return `Vence el ${formatDate(expiry.expiry)}`;
 }
@@ -1095,17 +1166,13 @@ function buildControlDictamenLegalData(client, folio) {
   const protocol = safeObject(legal.documentosProtocolizados || legal.documentos_protocolizados || legal.protocolizado || legal.sociedad);
   const attorney = safeObject(legal.apoderados || legal.apoderado || legal.poderes || legal.representante);
   const validation = safeObject(client?.expediente_validacion);
-  const docStates = safeObject(client?.documentos_estado);
-  const actaState = safeObject(docStates.doc_acta_constitutiva);
-  const constanciaState = safeObject(docStates.doc_constancia_fiscal);
-  const comprobanteState = safeObject(docStates.doc_comprobante_domicilio);
   const sociedad = getControlDictamenLegalValue(protocol, ['sociedad', 'razonSocial', 'razon_social', 'cliente'], client?.nombre_completo || '--').toUpperCase();
   const nombreComercial = getControlDictamenLegalValue(attorney, ['nombreComercial', 'nombre_comercial'], sociedad).toUpperCase();
   const domicilio = getControlDictamenLegalValue(protocol, ['domicilio', 'domicilioFiscal', 'domicilio_fiscal'], getControlDictamenLegalValue(validation, ['domicilio', 'domicilioFiscal', 'domicilio_fiscal'], '--')).toUpperCase();
   const ciudad = getControlDictamenLegalValue(protocol, ['ciudad', 'municipio'], getControlDictamenLegalValue(attorney, ['ciudad', 'municipio'], '--')).toUpperCase();
   const folioDocumento = getControlDictamenLegalValue(protocol, ['folio', 'folioMercantil', 'folio_mercantil'], getControlDictamenLegalValue(attorney, ['folio', 'folioMercantil', 'folio_mercantil'], '--'));
-  const fechaDocumento = getControlDictamenLegalValue(protocol, ['fechaDocumento', 'fecha_documento', 'fechaActo', 'fecha_acto'], normalizeStoredDate(actaState.subido_at || client?.created_at || client?.created));
-  const fechaPoder = getControlDictamenLegalValue(attorney, ['fechaDocumento', 'fecha_documento', 'fechaPoder', 'fecha_poder'], normalizeStoredDate(constanciaState.subido_at || comprobanteState.subido_at || client?.updated_at || client?.updated));
+  const fechaDocumento = getControlDictamenLegalValue(protocol, ['fechaDocumento', 'fecha_documento', 'fechaActo', 'fecha_acto'], '');
+  const fechaPoder = getControlDictamenLegalValue(attorney, ['fechaDocumento', 'fecha_documento', 'fechaPoder', 'fecha_poder'], '');
   return {
     sociedad,
     tipoActo: getControlDictamenLegalValue(protocol, ['tipoActo', 'tipo_acto', 'acto'], client?.doc_acta_constitutiva ? 'CONSTITUTIVA' : '--').toUpperCase(),
@@ -1652,7 +1719,7 @@ function buildMovementReportHtml(rows, generatedAtIso = '') {
 }
 
 async function exportFilteredMovements() {
-  const rows = state.filteredMovements || [];
+  const rows = await fetchAllMovementsForExport();
   if (!rows.length) return window.showToast?.('No hay movimientos con los filtros actuales.', 'error');
   const slug = String(PAGE_CFG.tenantLabel || TENANT_SLUG).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
   state.serverNowIso = await fetchServerNowIso();
@@ -1679,24 +1746,135 @@ function latestMovementText(row) {
   return `${row.resumen || row.tipo_movimiento || 'Movimiento'} · ${formatDateTime(resolveMovementTimestamp(row))}`;
 }
 
-function latestMovementText(row) {
-  if (!row) return 'Sin movimientos';
-  return `${row.resumen || formatMovementTypeLabel(row.tipo_movimiento) || 'Movimiento'} - ${formatDateTime(resolveMovementTimestamp(row))}`;
-}
-
 function matchesGlobalSearch(parts, searchValue) {
   if (!searchValue) return true;
   return normalizeText(parts.join(' ')).includes(searchValue);
 }
 
-function renderStats() {
-  const approvals = (state.filteredMovements || []).filter((row) => String(row?.tipo_movimiento || '').trim() === 'documento_aprobado').length;
-  document.getElementById('stat-movements').textContent = String((state.filteredMovements || []).length);
-  document.getElementById('stat-orders').textContent = String((state.orders || []).length);
-  document.getElementById('stat-clients').textContent = String((state.clients || []).length);
-  document.getElementById('stat-doc-approvals').textContent = String(approvals);
+function normalizeSummaryPageSize(value, fallback = CONTROL_SUMMARY_DEFAULT_PAGE_SIZE) {
+  const parsed = parseInt(value, 10);
+  if (CONTROL_SUMMARY_PAGE_SIZE_OPTIONS.includes(parsed)) return parsed;
+  return CONTROL_SUMMARY_PAGE_SIZE_OPTIONS.includes(fallback) ? fallback : CONTROL_SUMMARY_DEFAULT_PAGE_SIZE;
 }
 
+function getSummaryPaginationKeys(scope) {
+  return scope === 'orders'
+    ? { pageKey: 'ordersPage', pageSizeKey: 'ordersPageSize', totalPagesKey: 'ordersTotalPages' }
+    : { pageKey: 'clientsPage', pageSizeKey: 'clientsPageSize', totalPagesKey: 'clientsTotalPages' };
+}
+
+// Centraliza la paginacion local de las tablas resumidas de clientes y ordenes.
+function buildSummaryPaginationMeta(scope, rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  const keys = getSummaryPaginationKeys(scope);
+  state[keys.pageSizeKey] = normalizeSummaryPageSize(state[keys.pageSizeKey], CONTROL_SUMMARY_DEFAULT_PAGE_SIZE);
+  const pageSize = state[keys.pageSizeKey];
+  const totalItems = list.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize) || 1);
+  const currentPage = Math.min(totalPages, Math.max(1, parseInt(state[keys.pageKey], 10) || 1));
+  const startIndex = totalItems ? (currentPage - 1) * pageSize : 0;
+  const pageRows = list.slice(startIndex, startIndex + pageSize);
+  state[keys.pageKey] = currentPage;
+  state[keys.totalPagesKey] = totalPages;
+  return {
+    totalItems,
+    totalPages,
+    currentPage,
+    pageSize,
+    showingStart: totalItems ? startIndex + 1 : 0,
+    showingEnd: totalItems ? Math.min(totalItems, startIndex + pageRows.length) : 0,
+    pageRows
+  };
+}
+
+function updateSummaryPaginationUi(scope, meta) {
+  const safeMeta = meta || {
+    totalItems: 0,
+    totalPages: 1,
+    currentPage: 1,
+    pageSize: CONTROL_SUMMARY_DEFAULT_PAGE_SIZE,
+    showingStart: 0,
+    showingEnd: 0
+  };
+  const countLabel = document.getElementById(`control-${scope}-count`);
+  const pageLabel = document.getElementById(`control-${scope}-page-label`);
+  const pageSizeSelect = document.getElementById(`${scope}-page-size`);
+  const prevButton = document.getElementById(`btn-${scope}-prev`);
+  const nextButton = document.getElementById(`btn-${scope}-next`);
+  if (countLabel) {
+    countLabel.textContent = safeMeta.totalItems
+      ? `Mostrando ${safeMeta.showingStart}-${safeMeta.showingEnd} de ${safeMeta.totalItems}`
+      : 'Mostrando 0 de 0';
+  }
+  if (pageLabel) pageLabel.textContent = `Pagina ${safeMeta.currentPage} de ${safeMeta.totalPages}`;
+  if (pageSizeSelect) {
+    if (String(pageSizeSelect.value || '') !== String(safeMeta.pageSize)) pageSizeSelect.value = String(safeMeta.pageSize);
+  }
+  [
+    [prevButton, safeMeta.currentPage <= 1 || !safeMeta.totalItems],
+    [nextButton, safeMeta.currentPage >= safeMeta.totalPages || !safeMeta.totalItems]
+  ].forEach(([button, disabled]) => {
+    if (!button) return;
+    button.disabled = !!disabled;
+    button.classList.toggle('opacity-50', !!disabled);
+    button.classList.toggle('cursor-not-allowed', !!disabled);
+  });
+}
+
+function goToSummaryPage(scope, page) {
+  const keys = getSummaryPaginationKeys(scope);
+  const totalPages = Math.max(1, Number(state[keys.totalPagesKey] || 1));
+  const targetPage = Math.min(totalPages, Math.max(1, parseInt(page, 10) || 1));
+  if (targetPage === state[keys.pageKey]) return;
+  state[keys.pageKey] = targetPage;
+  if (scope === 'orders') renderOrdersTable();
+  else renderClientsTable();
+}
+
+function updateMovementPaginationUi() {
+  const totalItems = Number(state.movementsTotal || 0);
+  const currentPage = Math.max(1, Number(state.movementPage || 1));
+  const totalPages = Math.max(1, Number(state.movementTotalPages || 1));
+  const pageSize = normalizeMovementPageSize(state.movementPageSize, CONTROL_MOVEMENTS_DEFAULT_PAGE_SIZE);
+  const showingStart = totalItems ? ((currentPage - 1) * pageSize) + 1 : 0;
+  const showingEnd = totalItems ? Math.min(totalItems, showingStart + (state.filteredMovements || []).length - 1) : 0;
+  const countLabel = document.getElementById('control-movements-count');
+  const pageLabel = document.getElementById('control-movements-page-label');
+  const pageSizeSelect = document.getElementById('movement-page-size');
+  if (countLabel) countLabel.textContent = totalItems ? `Mostrando ${showingStart}-${showingEnd} de ${totalItems}` : 'Mostrando 0 de 0';
+  if (pageLabel) pageLabel.textContent = `Página ${currentPage} de ${totalPages}`;
+  if (pageSizeSelect) {
+    if (String(pageSizeSelect.value || '') !== String(pageSize)) pageSizeSelect.value = String(pageSize);
+    pageSizeSelect.disabled = !!state.loadingMovements;
+    pageSizeSelect.classList.toggle('opacity-60', !!state.loadingMovements);
+    pageSizeSelect.classList.toggle('cursor-not-allowed', !!state.loadingMovements);
+  }
+
+  const isFirstPage = currentPage <= 1;
+  const isLastPage = currentPage >= totalPages;
+  [
+    ['btn-movements-first', isFirstPage || !totalItems],
+    ['btn-movements-prev', isFirstPage || !totalItems],
+    ['btn-movements-next', isLastPage || !totalItems],
+    ['btn-movements-last', isLastPage || !totalItems]
+  ].forEach(([id, disabled]) => {
+    const button = document.getElementById(id);
+    if (!button) return;
+    const shouldDisable = !!state.loadingMovements || !!disabled;
+    button.disabled = shouldDisable;
+    button.classList.toggle('opacity-50', shouldDisable);
+    button.classList.toggle('cursor-not-allowed', shouldDisable);
+  });
+}
+
+function renderStats() {
+  document.getElementById('stat-movements').textContent = String(Number(state.movementsTotal || 0));
+  document.getElementById('stat-orders').textContent = String((state.orders || []).length);
+  document.getElementById('stat-clients').textContent = String((state.clients || []).length);
+  document.getElementById('stat-doc-approvals').textContent = String(Number(state.movementApprovalsTotal || 0));
+}
+
+// Renderiza el resumen paginado de clientes sin volver a consultar al backend.
 function renderClientsTable() {
   const tbody = document.getElementById('control-clients-body');
   if (!tbody) return;
@@ -1714,13 +1892,15 @@ function renderClientsTable() {
       const bTime = Date.parse(resolveMovementTimestamp(latestMap.get(String(b?.id || ''))) || resolveRecordUpdatedTimestamp(b)) || 0;
       return bTime - aTime;
     });
+  const pagination = buildSummaryPaginationMeta('clients', rows);
+  updateSummaryPaginationUi('clients', pagination);
 
   if (!rows.length) {
     tbody.innerHTML = '<tr><td colspan="4" class="py-6 text-center text-gray-400 font-semibold">No hay perfiles para mostrar.</td></tr>';
     return;
   }
 
-  tbody.innerHTML = rows.map((client) => {
+  tbody.innerHTML = pagination.pageRows.map((client) => {
     const latest = latestMap.get(String(client?.id || ''));
     return `
       <tr>
@@ -1747,6 +1927,7 @@ function renderClientsTable() {
   }).join('');
 }
 
+// Renderiza el resumen paginado de ordenes y responsables con el buscador lateral.
 function renderOrdersTable() {
   const tbody = document.getElementById('control-orders-body');
   if (!tbody) return;
@@ -1761,13 +1942,15 @@ function renderOrdersTable() {
       order?.status
     ], searchValue))
     .sort((a, b) => (Date.parse(resolveRecordUpdatedTimestamp(b)) || 0) - (Date.parse(resolveRecordUpdatedTimestamp(a)) || 0));
+  const pagination = buildSummaryPaginationMeta('orders', rows);
+  updateSummaryPaginationUi('orders', pagination);
 
   if (!rows.length) {
     tbody.innerHTML = '<tr><td colspan="5" class="py-6 text-center text-gray-400 font-semibold">No hay ordenes para mostrar.</td></tr>';
     return;
   }
 
-  tbody.innerHTML = rows.map((order) => `
+  tbody.innerHTML = pagination.pageRows.map((order) => `
     <tr>
       <td class="py-4 pr-3">
         <div class="font-black text-gray-800">${escapeHTML(order?.numero_orden || order?.id || '--')}</div>
@@ -1806,6 +1989,11 @@ function renderMovementsTable() {
   const tbody = document.getElementById('control-movements-body');
   if (!tbody) return;
   document.getElementById('control-filter-caption').textContent = describeActiveFilters();
+  updateMovementPaginationUi();
+  if (state.loadingMovements) {
+    tbody.innerHTML = '<tr><td colspan="6" class="py-6 text-center text-gray-400 font-semibold"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Cargando movimientos...</td></tr>';
+    return;
+  }
   const rows = state.filteredMovements || [];
   if (!rows.length) {
     tbody.innerHTML = '<tr><td colspan="6" class="py-6 text-center text-gray-400 font-semibold">No hay movimientos con los filtros activos.</td></tr>';
@@ -1847,10 +2035,8 @@ function populateFilters() {
 
   const currentActor = actorSelect.value;
   const currentType = typeSelect.value;
-  const actors = Array.from(new Set((state.movements || []).map((row) => String(row?.actor_nombre || '').trim()).filter(Boolean)))
-    .sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
-  const types = Array.from(new Set((state.movements || []).map((row) => String(row?.tipo_movimiento || '').trim()).filter(Boolean)))
-    .sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+  const actors = Array.isArray(state.movementActors) ? state.movementActors.slice() : [];
+  const types = Array.isArray(state.movementTypes) ? state.movementTypes.slice() : [];
 
   actorSelect.innerHTML = '<option value="">Todas</option>' + actors.map((value) => `<option value="${escapeHTML(value)}">${escapeHTML(value)}</option>`).join('');
   typeSelect.innerHTML = '<option value="">Todos</option>' + types.map((value) => `<option value="${escapeHTML(value)}">${escapeHTML(formatMovementTypeLabel(value))}</option>`).join('');
@@ -1859,39 +2045,81 @@ function populateFilters() {
   if (currentType && types.includes(currentType)) typeSelect.value = currentType;
 }
 
-function applyFilters() {
-  const filters = getMovementReportFilters();
-  const actor = filters.actor;
-  const type = filters.type;
-  const search = normalizeText(filters.search || '');
-  const fromTime = filters.dateFrom ? new Date(`${filters.dateFrom}T00:00:00`).getTime() : 0;
-  const toTime = filters.dateTo ? new Date(`${filters.dateTo}T23:59:59.999`).getTime() : 0;
+async function refreshMovementRows(options = {}) {
+  if (options.resetPage === true) state.movementPage = 1;
+  if (options.page) state.movementPage = Math.max(1, parseInt(options.page, 10) || 1);
+  if (options.perPage) state.movementPageSize = normalizeMovementPageSize(options.perPage, state.movementPageSize || CONTROL_MOVEMENTS_DEFAULT_PAGE_SIZE);
 
-  state.filteredMovements = (state.movements || []).filter((row) => {
-    if (actor && String(row?.actor_nombre || '').trim() !== actor) return false;
-    if (type && String(row?.tipo_movimiento || '').trim() !== type) return false;
-    const movementTime = getDateTimeParts(resolveMovementTimestamp(row)).timestamp;
-    if (fromTime && (!movementTime || movementTime < fromTime)) return false;
-    if (toTime && (!movementTime || movementTime > toTime)) return false;
-    if (search && !matchesGlobalSearch([
-      row?.actor_nombre,
-      row?.actor_role,
-      row?.tipo_movimiento,
-      formatMovementTypeLabel(row?.tipo_movimiento),
-      row?.cliente_nombre,
-      row?.cliente_id,
-      row?.cotizacion_folio,
-      row?.documento_nombre,
-      row?.resumen,
-      getMovementSupervisionText(row)
-    ], search)) return false;
-    return true;
-  });
-
+  const requestId = ++movementRequestSequence;
+  state.loadingMovements = true;
   renderStats();
+  renderMovementsTable();
+
+  try {
+    const payload = await fetchControlMovementsPage({
+      page: state.movementPage,
+      perPage: state.movementPageSize
+    });
+    if (requestId !== movementRequestSequence) return;
+
+    state.movements = Array.isArray(payload?.items) ? payload.items : [];
+    state.filteredMovements = state.movements.slice();
+    state.movementActors = Array.isArray(payload?.actors) ? payload.actors : [];
+    state.movementTypes = Array.isArray(payload?.types) ? payload.types : [];
+    state.movementsTotal = Number(payload?.totalItems || 0);
+    state.movementApprovalsTotal = Number(payload?.approvalsTotal || 0);
+    state.movementPage = Math.max(1, Number(payload?.page || state.movementPage || 1));
+    state.movementPageSize = normalizeMovementPageSize(payload?.perPage, state.movementPageSize || CONTROL_MOVEMENTS_DEFAULT_PAGE_SIZE);
+    state.movementTotalPages = Math.max(1, Number(payload?.totalPages || 1));
+    populateFilters();
+  } catch (error) {
+    console.error(error);
+    if (requestId !== movementRequestSequence) return;
+    state.movements = [];
+    state.filteredMovements = [];
+    state.movementActors = [];
+    state.movementTypes = [];
+    state.movementsTotal = 0;
+    state.movementApprovalsTotal = 0;
+    state.movementTotalPages = 1;
+    populateFilters();
+    window.showToast?.(error?.message || 'No se pudieron cargar los movimientos.', 'error');
+  } finally {
+    if (requestId !== movementRequestSequence) return;
+    state.loadingMovements = false;
+    renderStats();
+    renderMovementsTable();
+    renderClientsTable();
+    renderOrdersTable();
+  }
+}
+
+function applyFilters(options = {}) {
+  if (options.resetPage !== false) {
+    state.clientsPage = 1;
+    state.ordersPage = 1;
+  }
   renderClientsTable();
   renderOrdersTable();
-  renderMovementsTable();
+  return refreshMovementRows({ resetPage: options.resetPage !== false });
+}
+
+function resetFilters() {
+  const actor = document.getElementById('filter-actor');
+  const type = document.getElementById('filter-type');
+  const dateFrom = document.getElementById('filter-date-from');
+  const dateTo = document.getElementById('filter-date-to');
+  const search = document.getElementById('filter-search');
+  if (actor) actor.value = '';
+  if (type) type.value = '';
+  if (dateFrom) dateFrom.value = '';
+  if (dateTo) dateTo.value = '';
+  if (search) search.value = '';
+  if (movementSearchDebounceTimer) {
+    window.clearTimeout(movementSearchDebounceTimer);
+    movementSearchDebounceTimer = 0;
+  }
+  applyFilters({ resetPage: true });
 }
 
 function bindTableActions() {
@@ -1923,8 +2151,11 @@ async function loadControlData() {
   }
 
   try {
+    if (movementSearchDebounceTimer) {
+      window.clearTimeout(movementSearchDebounceTimer);
+      movementSearchDebounceTimer = 0;
+    }
     state.serverNowIso = await fetchServerNowIso();
-    const movementsCutoffIso = getControlMovementsCutoffIso(state.serverNowIso);
     const clientsQuery = window.tenantPocketBase.from('clientes')
       .select('id,nombre_completo,telefono,correo,correos_adicionales,rfc,telefonos_adicionales,perfil_estatus,perfil_validado,perfil_completo,documentos_estado,expediente_validacion,constancia_fiscal_emitida_el,comprobante_domicilio_emitido_el,doc_acta_constitutiva,doc_ine,doc_comprobante_domicilio,doc_constancia_fiscal,created_at,updated_at,created,updated')
       .order('updated_at', { ascending: false })
@@ -1935,22 +2166,16 @@ async function loadControlData() {
       .order('updated_at', { ascending: false })
       .limit(500);
 
-    const movementsQuery = window.tenantPocketBase.from('control_movimientos')
-      .select('id,tenant,tipo_movimiento,entidad_tipo,entidad_id,entidad_nombre,cliente_id,cliente_nombre,cotizacion_id,cotizacion_folio,documento_campo,documento_nombre,actor_id,actor_nombre,actor_role,resumen,metadata,created_at,updated_at,created,updated')
-      .gte('created_at', movementsCutoffIso)
-      .order('created_at', { ascending: false })
-      .limit(500);
-
-    const [clientsResp, ordersResp, movementsResp] = await Promise.all([clientsQuery, ordersQuery, movementsQuery]);
+    const [clientsResp, ordersResp] = await Promise.all([clientsQuery, ordersQuery]);
     if (clientsResp.error) throw clientsResp.error;
     if (ordersResp.error) throw ordersResp.error;
-    if (movementsResp.error) throw movementsResp.error;
 
     state.clients = clientsResp.data || [];
     state.orders = ordersResp.data || [];
-    state.movements = (movementsResp.data || []).slice().sort((a, b) => (Date.parse(resolveMovementTimestamp(b) || '') || 0) - (Date.parse(resolveMovementTimestamp(a) || '') || 0));
-    populateFilters();
-    applyFilters();
+    renderStats();
+    renderClientsTable();
+    renderOrdersTable();
+    await refreshMovementRows({ resetPage: false });
   } catch (error) {
     console.error(error);
     window.showToast?.('No se pudo cargar la pagina de control.', 'error');
@@ -2019,11 +2244,35 @@ document.addEventListener('DOMContentLoaded', async () => {
   bindTableActions();
   document.getElementById('btn-refresh-control')?.addEventListener('click', () => loadControlData());
   document.getElementById('btn-export-movements')?.addEventListener('click', exportFilteredMovements);
-  document.getElementById('filter-actor')?.addEventListener('change', applyFilters);
-  document.getElementById('filter-type')?.addEventListener('change', applyFilters);
-  document.getElementById('filter-date-from')?.addEventListener('change', applyFilters);
-  document.getElementById('filter-date-to')?.addEventListener('change', applyFilters);
-  document.getElementById('filter-search')?.addEventListener('input', applyFilters);
+  document.getElementById('filter-actor')?.addEventListener('change', () => applyFilters({ resetPage: true }));
+  document.getElementById('filter-type')?.addEventListener('change', () => applyFilters({ resetPage: true }));
+  document.getElementById('filter-date-from')?.addEventListener('change', () => applyFilters({ resetPage: true }));
+  document.getElementById('filter-date-to')?.addEventListener('change', () => applyFilters({ resetPage: true }));
+  document.getElementById('filter-search')?.addEventListener('input', handleGlobalSearchInput);
+  document.getElementById('btn-reset-filters')?.addEventListener('click', resetFilters);
+  document.getElementById('clients-page-size')?.addEventListener('change', (event) => {
+    state.clientsPageSize = normalizeSummaryPageSize(event?.target?.value, state.clientsPageSize || CONTROL_SUMMARY_DEFAULT_PAGE_SIZE);
+    state.clientsPage = 1;
+    renderClientsTable();
+  });
+  document.getElementById('orders-page-size')?.addEventListener('change', (event) => {
+    state.ordersPageSize = normalizeSummaryPageSize(event?.target?.value, state.ordersPageSize || CONTROL_SUMMARY_DEFAULT_PAGE_SIZE);
+    state.ordersPage = 1;
+    renderOrdersTable();
+  });
+  document.getElementById('btn-clients-prev')?.addEventListener('click', () => goToSummaryPage('clients', Number(state.clientsPage || 1) - 1));
+  document.getElementById('btn-clients-next')?.addEventListener('click', () => goToSummaryPage('clients', Number(state.clientsPage || 1) + 1));
+  document.getElementById('btn-orders-prev')?.addEventListener('click', () => goToSummaryPage('orders', Number(state.ordersPage || 1) - 1));
+  document.getElementById('btn-orders-next')?.addEventListener('click', () => goToSummaryPage('orders', Number(state.ordersPage || 1) + 1));
+  document.getElementById('movement-page-size')?.addEventListener('change', (event) => {
+    refreshMovementRows({ resetPage: true, perPage: event?.target?.value });
+  });
+  document.getElementById('btn-movements-first')?.addEventListener('click', () => goToMovementPage(1));
+  document.getElementById('btn-movements-prev')?.addEventListener('click', () => goToMovementPage(Math.max(1, Number(state.movementPage || 1) - 1)));
+  document.getElementById('btn-movements-next')?.addEventListener('click', () => goToMovementPage(Math.min(Math.max(1, Number(state.movementTotalPages || 1)), Number(state.movementPage || 1) + 1)));
+  document.getElementById('btn-movements-last')?.addEventListener('click', () => goToMovementPage(Math.max(1, Number(state.movementTotalPages || 1))));
 
   await loadControlData();
 });
+
+

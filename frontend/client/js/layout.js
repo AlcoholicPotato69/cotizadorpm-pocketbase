@@ -46,6 +46,8 @@
     let layoutNotifPollTimer = null;
     let layoutNotifLastKey = '';
     let layoutNotifVisibilityBound = false;
+    let layoutNotifCache = new Map();
+    let layoutNotifActive = null;
     
     const scriptTag = document.querySelector('script[src*="layout.js"]');
     const pathPrefix = scriptTag ? scriptTag.getAttribute('src').replace('js/layout.js', '') : './';
@@ -472,6 +474,185 @@
         if (t.includes('fina')) return pathPrefix + 'finanzas/index.html';
         
         return originalLink || '#';
+    }
+
+    function normalizeNotificationLink(link) {
+        const value = String(link || '').trim();
+        if (!value || value === '#') return '#';
+        if (/^(?:https?:|mailto:|tel:)/i.test(value)) return value;
+        if (value.startsWith('/') || value.startsWith('./') || value.startsWith('../') || value.startsWith('?') || value.startsWith('#')) return value;
+        return pathPrefix + value;
+    }
+
+    function parseNotificationMetadata(value) {
+        if (!value) return {};
+        if (typeof value === 'string') {
+            try {
+                const parsed = JSON.parse(value);
+                return parsed && typeof parsed === 'object' ? parsed : {};
+            } catch (_) {
+                return {};
+            }
+        }
+        return value && typeof value === 'object' ? value : {};
+    }
+
+    function escapeNotificationHtml(value) {
+        return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function formatNotificationDateTime(value) {
+        const stamp = value ? new Date(value) : null;
+        if (!stamp || Number.isNaN(stamp.getTime())) return 'Sin fecha disponible';
+        try {
+            return new Intl.DateTimeFormat('es-MX', {
+                timeZone: 'America/Mexico_City',
+                day: '2-digit',
+                month: 'short',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            }).format(stamp).replace(/\./g, '');
+        } catch (_) {
+            return stamp.toLocaleString('es-MX');
+        }
+    }
+
+    function summarizeNotificationDocuments(metadata) {
+        const source = parseNotificationMetadata(metadata);
+        const primaryDoc = source.documento && typeof source.documento === 'object' ? [source.documento] : [];
+        const docs = primaryDoc.length ? primaryDoc : (Array.isArray(source.documentos) ? source.documentos : []);
+        const labels = docs.map((item) => String(item?.label || item?.documento_nombre || item?.field || '').trim()).filter(Boolean);
+        if (!labels.length) return '';
+        if (labels.length === 1) return labels[0];
+        if (labels.length === 2) return `${labels[0]} y ${labels[1]}`;
+        return `${labels.slice(0, -1).join(', ')} y ${labels[labels.length - 1]}`;
+    }
+
+    function getNotificationVisual(type) {
+        const sourceType = String(type || '').toLowerCase();
+        let icon = 'fa-bell text-gray-400';
+        let bgIcon = 'bg-gray-50';
+        if (sourceType === 'calendar') { icon = 'fa-calendar text-blue-500'; bgIcon = 'bg-blue-50'; }
+        else if (sourceType === 'ticket' || sourceType === 'tickets') { icon = 'fa-ticket text-orange-500'; bgIcon = 'bg-orange-50'; }
+        else if (sourceType === 'finanzas' || sourceType === 'cotizador' || sourceType === 'order' || sourceType.includes('quote')) { icon = 'fa-file-invoice-dollar text-brand-red'; bgIcon = 'bg-red-50'; }
+        else if (sourceType.includes('client') || sourceType.includes('cliente') || sourceType.includes('document')) { icon = 'fa-user-check text-brand-red'; bgIcon = 'bg-red-50'; }
+        return { icon, bgIcon };
+    }
+
+    function buildNotificationTargetLink(notification) {
+        const source = notification && typeof notification === 'object' ? notification : {};
+        const metadata = parseNotificationMetadata(source.metadata);
+        const tenant = normalizeTenantSlug(metadata.tenant || metadata.tenant_slug || '');
+        const quoteId = String(metadata.cotizacion_id || metadata.quote_id || '').trim();
+        const clientId = String(metadata.cliente_id || metadata.client_id || '').trim();
+        const explicitLink = normalizeNotificationLink(metadata.redirect_url || source.link || '');
+        const tenantModule = tenant === 'casa_de_piedra' ? 'cotizadorcp' : 'cotizador';
+
+        if (metadata.redirect_url) return explicitLink;
+        if (quoteId && tenant) return normalizeNotificationLink(`${tenantModule}/orders.html?quote=${encodeURIComponent(quoteId)}`);
+        if (clientId && tenant) return normalizeNotificationLink(`${tenantModule}/clientes.html?verify=${encodeURIComponent(clientId)}`);
+        return normalizeNotificationLink(getManualLink(source.source_app || source.type, source.link));
+    }
+
+    function buildNotificationActionLabel(notification) {
+        const source = notification && typeof notification === 'object' ? notification : {};
+        const metadata = parseNotificationMetadata(source.metadata);
+        if (String(metadata.cotizacion_id || metadata.quote_id || '').trim()) return 'Ir a la cotizacion';
+        if (String(metadata.cliente_id || metadata.client_id || '').trim()) return 'Ir al perfil del cliente';
+        return 'Abrir modulo';
+    }
+
+    function buildNotificationKicker(notification) {
+        const source = notification && typeof notification === 'object' ? notification : {};
+        const metadata = parseNotificationMetadata(source.metadata);
+        const tenant = normalizeTenantSlug(metadata.tenant || metadata.tenant_slug || '');
+        if (String(source.type || '').toLowerCase().includes('rejected')) return 'Documento rechazado';
+        if (String(metadata.cotizacion_id || metadata.quote_id || '').trim()) return tenant === 'casa_de_piedra' ? 'Cotizacion CP' : 'Cotizacion PM';
+        if (String(metadata.cliente_id || metadata.client_id || '').trim()) return tenant === 'casa_de_piedra' ? 'Cliente CP' : 'Cliente PM';
+        return 'Notificacion';
+    }
+
+    function buildNotificationDetailRows(notification) {
+        const source = notification && typeof notification === 'object' ? notification : {};
+        const metadata = parseNotificationMetadata(source.metadata);
+        const rows = [{ label: 'Fecha y hora', value: formatNotificationDateTime(source.created_at || source.updated_at || '') }];
+        const actor = String(metadata.actor_nombre || metadata.actor_name || '').trim();
+        const clientName = String(metadata.cliente_nombre || metadata.client_name || '').trim();
+        const quoteFolio = String(metadata.cotizacion_folio || metadata.quote_folio || '').trim();
+        const status = String(metadata.estado_actual || metadata.status || '').trim();
+        const reason = String(metadata.motivo || metadata.reason || metadata.documento?.reason || '').trim();
+        const docs = summarizeNotificationDocuments(metadata);
+        const tenant = normalizeTenantSlug(metadata.tenant || metadata.tenant_slug || '');
+
+        if (tenant) rows.push({ label: 'Tenant', value: tenant === 'casa_de_piedra' ? 'Casa de Piedra' : 'Plaza Mayor' });
+        if (actor) rows.push({ label: 'Usuario', value: actor });
+        if (clientName) rows.push({ label: 'Cliente', value: clientName });
+        if (quoteFolio) rows.push({ label: 'Cotizacion', value: quoteFolio });
+        if (status) rows.push({ label: 'Estado', value: status });
+        if (docs) rows.push({ label: 'Documento', value: docs });
+        if (reason) rows.push({ label: 'Motivo', value: reason });
+        return rows;
+    }
+
+    function renderNotificationDetailRows(rows) {
+        const source = Array.isArray(rows) ? rows : [];
+        if (!source.length) return '';
+        return source.map((row) => `
+            <div class="rounded-2xl border border-slate-200 bg-slate-50/90 px-4 py-3">
+                <div class="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">${escapeNotificationHtml(row.label)}</div>
+                <div class="mt-1 text-sm font-semibold text-slate-700 leading-relaxed break-words">${escapeNotificationHtml(row.value)}</div>
+            </div>
+        `).join('');
+    }
+
+    function openLayoutNotificationDetail(notificationOrId) {
+        const record = typeof notificationOrId === 'string'
+            ? layoutNotifCache.get(String(notificationOrId).trim())
+            : notificationOrId;
+        if (!record) return;
+        const modal = document.getElementById('global-notif-modal');
+        if (!modal) return;
+        const targetLink = buildNotificationTargetLink(record);
+        const cta = document.getElementById('global-notif-modal-cta');
+        document.getElementById('global-notif-modal-kicker').textContent = buildNotificationKicker(record);
+        document.getElementById('global-notif-modal-title').textContent = String(record.title || 'Notificacion').trim() || 'Notificacion';
+        document.getElementById('global-notif-modal-datetime').textContent = formatNotificationDateTime(record.created_at || record.updated_at || '');
+        document.getElementById('global-notif-modal-message').textContent = String(record.message || 'Sin descripcion.').trim() || 'Sin descripcion.';
+        document.getElementById('global-notif-modal-meta').innerHTML = renderNotificationDetailRows(buildNotificationDetailRows(record));
+        if (cta) {
+            cta.dataset.href = targetLink;
+            cta.textContent = buildNotificationActionLabel(record);
+            cta.classList.toggle('hidden', !targetLink || targetLink === '#');
+        }
+        layoutNotifActive = { ...record, __targetLink: targetLink };
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+        document.getElementById('global-notif-dropdown')?.classList.add('hidden');
+    }
+
+    function closeLayoutNotificationDetail() {
+        const modal = document.getElementById('global-notif-modal');
+        if (!modal) return;
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        layoutNotifActive = null;
+    }
+
+    function navigateLayoutNotification(targetUrl) {
+        const destination = normalizeNotificationLink(targetUrl || layoutNotifActive?.__targetLink || '');
+        if (!destination || destination === '#') return;
+        closeLayoutNotificationDetail();
+        if (typeof window.__HUB_SAFE_NAVIGATE === 'function') {
+            window.__HUB_SAFE_NAVIGATE(destination, { allowSamePage: true });
+        } else {
+            window.location.href = destination;
+        }
     }
 
     if (typeof window.__HUB_LAYOUT_READY_RESOLVE !== 'function' || !window.__HUB_LAYOUT_READY || typeof window.__HUB_LAYOUT_READY.then !== 'function') {
@@ -1126,8 +1307,8 @@
                 orders_view: true,
                 orders_edit: true,
                 reports_view: true,
-                clients_view: false,
-                clients_manage: false,
+                clients_view: true,
+                clients_manage: true,
                 clients_verify: false,
                 clients_all_docs: false,
                 catalog_manage: false
@@ -1215,6 +1396,14 @@
         return authCtx?.isVerifier === true || normalizeLayoutRole(authCtx?.role || authCtx?.profile?.role || authCtx?.user?.role || '') === 'verificador';
     }
 
+    const VERIFIER_TENANT_PREFERENCE_KEY = 'hub_verifier_dashboard_tenant_v1';
+
+    function persistVerifierTenantPreference(tenantSlug) {
+        const normalized = normalizeTenantSlug(tenantSlug);
+        if (!normalized) return;
+        try { localStorage.setItem(VERIFIER_TENANT_PREFERENCE_KEY, normalized); } catch (_) {}
+    }
+
     function getLayoutNavFile(link) {
         const rawHref = String(link?.getAttribute?.('href') || link?.getAttribute?.('data-href') || '').trim();
         if (!rawHref) return '';
@@ -1229,7 +1418,9 @@
 
     function getCurrentVerifierTenantSlug() {
         const path = String(window.location.pathname || '').toLowerCase();
-        return path.indexOf('/cotizadorcp/') !== -1 ? 'casa_de_piedra' : 'plaza_mayor';
+        const tenantSlug = path.indexOf('/cotizadorcp/') !== -1 ? 'casa_de_piedra' : 'plaza_mayor';
+        persistVerifierTenantPreference(tenantSlug);
+        return tenantSlug;
     }
 
     function getVerifierTenantDirectory(tenantSlug) {
@@ -1308,8 +1499,13 @@
             const classes = active
                 ? 'bg-white text-brand-red shadow'
                 : 'text-white/80 hover:bg-white/15 hover:text-white';
-            return `<a data-verifier-tenant-option="true" href="${buildVerifierTenantHref(tenantSlug, currentPage)}" title="${title}" class="${classes} rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-wider transition whitespace-nowrap">${label}</a>`;
+            return `<a data-verifier-tenant-option="true" data-verifier-tenant-value="${tenantSlug}" href="${buildVerifierTenantHref(tenantSlug, currentPage)}" title="${title}" class="${classes} rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-wider transition whitespace-nowrap">${label}</a>`;
         }).join('');
+        switcher.querySelectorAll('[data-verifier-tenant-option="true"]').forEach((link) => {
+            link.addEventListener('click', () => {
+                persistVerifierTenantPreference(link.getAttribute('data-verifier-tenant-value') || '');
+            });
+        });
     }
 
     function ensureVerifierNavRootExists() {
@@ -1828,11 +2024,22 @@
             if (IS_LOCAL) return;
 
             const drop = document.getElementById('global-notif-dropdown');
+            if (!drop) return;
             drop.classList.toggle('hidden');
             if (!drop.classList.contains('hidden')) {
                 drop.style.opacity = '0'; drop.style.transform = 'translateY(-10px)';
                 requestAnimationFrame(() => { drop.style.transition = 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)'; drop.style.opacity = '1'; drop.style.transform = 'translateY(0)'; });
             }
+        },
+        openNotif: (id) => {
+            if (IS_LOCAL) return;
+            openLayoutNotificationDetail(id);
+        },
+        closeNotifModal: () => {
+            closeLayoutNotificationDetail();
+        },
+        openNotifLink: (url) => {
+            navigateLayoutNotification(url);
         },
         deleteNotif: async (id) => {
             if (IS_LOCAL) return;
@@ -2474,6 +2681,31 @@
             </div>
         </header>
         <div id="global-widget-layer" class="fixed inset-0 pointer-events-none z-[100] flex flex-col items-end justify-end p-6 gap-4"></div>
+        <div id="global-notif-modal" class="fixed inset-0 z-[120] hidden items-center justify-center bg-slate-950/55 backdrop-blur-sm p-4" onclick="if(event.target === this) window.layoutApi.closeNotifModal()">
+            <div class="w-full max-w-xl overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-2xl">
+                <div class="flex items-start justify-between gap-4 bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800 px-6 py-5 text-white">
+                    <div class="min-w-0">
+                        <div id="global-notif-modal-kicker" class="text-[10px] font-black uppercase tracking-[0.22em] text-white/55">Notificacion</div>
+                        <h3 id="global-notif-modal-title" class="mt-2 text-xl font-black leading-tight">Notificacion</h3>
+                        <p id="global-notif-modal-datetime" class="mt-2 text-xs font-medium text-white/70">Sin fecha disponible</p>
+                    </div>
+                    <button type="button" onclick="window.layoutApi.closeNotifModal()" class="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white/75 transition hover:bg-white/10 hover:text-white">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+                <div class="space-y-5 px-6 py-5">
+                    <p id="global-notif-modal-message" class="text-sm font-medium leading-relaxed text-slate-600">Sin descripcion.</p>
+                    <div id="global-notif-modal-meta" class="grid gap-3 md:grid-cols-2"></div>
+                    <div class="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                        <button type="button" onclick="window.layoutApi.closeNotifModal()" class="inline-flex items-center justify-center rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold text-slate-500 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-700">Cerrar</button>
+                        <button id="global-notif-modal-cta" type="button" onclick="window.layoutApi.openNotifLink(this.dataset.href)" class="inline-flex items-center justify-center gap-2 rounded-2xl bg-brand-dark px-4 py-3 text-sm font-black text-white shadow-lg shadow-slate-300/60 transition hover:bg-brand-red">
+                            <span>Abrir modulo</span>
+                            <i class="fa-solid fa-arrow-up-right-from-square"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
         `;
         
         if (document.body) document.body.insertAdjacentHTML('afterbegin', html);
@@ -2516,7 +2748,7 @@
             (payload) => {
                 const n = payload.new;
                 const type = n.source_app || n.type || 'system';
-                spawnWidget(n.title, n.message, type, getManualLink(type, n.link));
+                spawnWidget(n.title, n.message, type, buildNotificationTargetLink(n));
                 loadHistory();
                 const audio = new Audio('' + NOTIFY_SOUND + ''); audio.volume = 0.2; audio.play().catch(()=>{});
             }).subscribe();
@@ -2548,16 +2780,18 @@
             const old = payload.old || {};
             const eventType = payload.eventType || 'UPDATE';
             const folio = rec.numero_cotizacion || rec.folio || rec.id || '';
+            const tenant = tenantPath === 'cotizadorcp' ? 'casa_de_piedra' : 'plaza_mayor';
+            const quoteId = String(rec.id || old.id || '').trim();
             let title = '';
             let msg = '';
-            let link = tenantPath + '/orders.html';
+            let link = tenantPath + '/orders.html' + (quoteId ? `?quote=${encodeURIComponent(quoteId)}` : '');
+            const newStatus = rec.status || rec.estado || '';
+            const oldStatus = old.status || old.estado || '';
 
             if (eventType === 'INSERT') {
                 title = '\u{1F4CB} Nueva Orden — ' + tenantLabel;
                 msg = 'Folio ' + folio + (rec.client_name || rec.nombre_cliente ? ' · ' + (rec.client_name || rec.nombre_cliente) : '');
             } else {
-                const newStatus = rec.status || rec.estado || '';
-                const oldStatus = old.status || old.estado || '';
                 if (newStatus && newStatus !== oldStatus) {
                     const statusText = statusLabels[newStatus] || newStatus;
                     title = '\u{1F504} Estado actualizado — ' + tenantLabel;
@@ -2575,7 +2809,17 @@
                     message: msg,
                     type: 'order',
                     source_app: 'cotizador',
-                    link: link
+                    link: link,
+                    metadata: {
+                        tenant,
+                        cotizacion_id: quoteId,
+                        cotizacion_folio: String(folio || '').trim(),
+                        cliente_nombre: String(rec.client_name || rec.nombre_cliente || rec.cliente_nombre || '').trim(),
+                        estado_anterior: String(oldStatus || '').trim(),
+                        estado_actual: String(newStatus || '').trim(),
+                        redirect_url: link,
+                        redirect_kind: 'quote_detail'
+                    }
                 });
             } catch (_) {}
         }
@@ -2637,27 +2881,25 @@
         const shouldNotify = options.notifyNew === true && !!layoutNotifLastKey && !!latestKey && latestKey !== layoutNotifLastKey;
         if (shouldNotify) {
             const sourceType = latest.source_app || latest.type || 'system';
-            spawnWidget(latest.title, latest.message, sourceType, getManualLink(sourceType, latest.link));
+            spawnWidget(latest.title, latest.message, sourceType, buildNotificationTargetLink(latest));
             const audio = new Audio('' + NOTIFY_SOUND + '');
             audio.volume = 0.2;
             audio.play().catch(()=>{});
         }
         if (latestKey) layoutNotifLastKey = latestKey;
         list.innerHTML = '';
+        layoutNotifCache = new Map();
         if (rows.length > 0) {
             badge.innerText = rows.length; badge.classList.remove('hidden');
             rows.forEach(n => {
                 const sourceType = n.source_app || n.type || 'system';
-                let icon = 'fa-bell text-gray-400'; let bgIcon = 'bg-gray-50';
-                if (sourceType === 'calendar') { icon = 'fa-calendar text-blue-500'; bgIcon = 'bg-blue-50'; }
-                if (sourceType === 'ticket') { icon = 'fa-ticket text-orange-500'; bgIcon = 'bg-orange-50'; }
-                if (sourceType === 'finanzas' || sourceType === 'cotizador' || sourceType === 'order') { icon = 'fa-file-invoice-dollar text-brand-red'; bgIcon = 'bg-red-50'; }
-                if (String(sourceType || '').includes('client') || String(sourceType || '').includes('document')) { icon = 'fa-user-check text-brand-red'; bgIcon = 'bg-red-50'; }
+                const { icon, bgIcon } = getNotificationVisual(sourceType);
+                const dateText = formatNotificationDateTime(n.created_at || n.updated_at || '');
                 const item = document.createElement('div');
                 item.className = "p-4 relative group hover:bg-gray-50 transition cursor-pointer flex gap-3 items-start";
-                item.innerHTML = `<div class="w-8 h-8 rounded-full ${bgIcon} flex items-center justify-center shrink-0 mt-0.5"><i class="fa-solid ${icon}"></i></div><div class="flex-grow"><div class="flex justify-between items-start"><p class="text-xs font-bold text-gray-800">${n.title}</p><span class="text-[9px] text-gray-400 font-mono">${new Date(n.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span></div><p class="text-[11px] text-gray-500 leading-snug mt-0.5 pr-4">${n.message}</p></div><button onclick="event.stopPropagation(); window.layoutApi.deleteNotif('${n.id}')" class="absolute bottom-2 right-3 opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-500 transition"><i class="fa-solid fa-trash-can"></i></button>`;
-                const smartLink = getManualLink(sourceType, n.link);
-                if(smartLink) item.onclick = () => window.location.href = smartLink;
+                item.innerHTML = `<div class="w-8 h-8 rounded-full ${bgIcon} flex items-center justify-center shrink-0 mt-0.5"><i class="fa-solid ${icon}"></i></div><div class="min-w-0 flex-grow"><div class="flex flex-col gap-1"><p class="text-xs font-bold text-gray-800 leading-snug break-words">${escapeNotificationHtml(n.title)}</p><p class="text-[11px] text-gray-500 leading-snug break-words">${escapeNotificationHtml(n.message)}</p><div class="flex items-center justify-between gap-3 pt-1"><span class="text-[10px] font-semibold text-slate-400">${escapeNotificationHtml(dateText)}</span><span class="inline-flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">Ver detalle <i class="fa-solid fa-chevron-right text-[9px]"></i></span></div></div></div><button onclick="event.stopPropagation(); window.layoutApi.deleteNotif('${n.id}')" class="absolute bottom-2 right-3 opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-500 transition"><i class="fa-solid fa-trash-can"></i></button>`;
+                layoutNotifCache.set(String(n.id || ''), n);
+                item.onclick = () => openLayoutNotificationDetail(n);
                 list.appendChild(item); 
             });
         } else { badge.classList.add('hidden'); list.innerHTML = `<div class="p-10 text-center flex flex-col items-center"><div class="w-12 h-12 bg-gray-50 rounded-full flex items-center justify-center mb-3"><i class="fa-regular fa-bell-slash text-gray-300 text-xl"></i></div><p class="text-xs font-bold text-gray-400">Todo al día</p><p class="text-[10px] text-gray-300 mt-1">No tienes notificaciones nuevas.</p></div>`; }
@@ -2666,6 +2908,9 @@
     window.addEventListener('click', (e) => {
         const drop = document.getElementById('global-notif-dropdown');
         if (drop && !drop.contains(e.target) && !e.target.closest('button[onclick*="toggleNotif"]')) { drop.classList.add('hidden'); }
+    });
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeLayoutNotificationDetail();
     });
 })();
 

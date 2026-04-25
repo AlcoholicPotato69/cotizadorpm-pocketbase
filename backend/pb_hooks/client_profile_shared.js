@@ -1,4 +1,16 @@
 (function () {
+  /*
+   * Indice rapido de mantenimiento
+   * 1. Sanitizacion y utilidades base
+   * 2. Validacion de archivos y cuarentena de seguridad
+   * 3. Evaluacion del expediente del cliente
+   * 4. Endpoints publicos de client_profile
+   * 5. Sincronizacion de espejos documentales y dictamenes
+   *
+   * Funciones tocadas en este mantenimiento:
+   * - scanBytesInQuarantine
+   * - handlePublicClientProfileComplete
+   */
   const AUTH_COLLECTION = "app_users";
   const DOC_FIELDS = [
     "doc_acta_constitutiva",
@@ -61,6 +73,8 @@
   const CLIENT_PROFILE_LINK_DURATION_SECONDS = 48 * 60 * 60;
   const CLIENT_PROFILE_LINK_SECRET_ENV = "PB_CLIENT_PROFILE_LINK_SECRET";
   const CLIENT_PROFILE_LINK_PURPOSE = "public_client_profile";
+  const WINDOWS_DEFENDER_CLI_ENV = "WINDOWS_DEFENDER_CLI";
+  const UPLOAD_QUARANTINE_DIR_NAME = "_upload_quarantine";
   const CONTRACT_GENERATION_TAG = "puede_generar_contrato";
   const CONTRACT_GENERATION_LABEL = "Puede generar contrato";
   const DEFAULT_DOCUMENT_DEFINITIONS = {
@@ -166,6 +180,7 @@
     ]
   };
   let notificationsApi = null;
+  let defenderCliPathCache = null;
   const TENANT_THEME = {
     plaza_mayor: {
       accent: "#d32f2f",
@@ -243,6 +258,18 @@
     return withPrefix.replace(/_+/g, "_").slice(0, 80);
   }
 
+  function humanizeDocumentFieldLabel(value) {
+    const normalized = normalizeDocumentFieldKey(value);
+    if (!normalized) return "";
+    const compact = normalized
+      .replace(/^doc_custom_/, "")
+      .replace(/^doc_/, "")
+      .replace(/_+/g, " ")
+      .trim();
+    if (!compact) return "";
+    return compact.replace(/\b[a-z]/g, function (char) { return char.toUpperCase(); });
+  }
+
   function isBuiltInDocumentField(field) {
     return DOC_FIELDS.indexOf(trim(field)) !== -1;
   }
@@ -260,7 +287,7 @@
     const field = normalizeDocumentFieldKey(source.field || source.key || source.id || source.name);
     if (!field || !/^doc_[a-z0-9_]{1,76}$/.test(field)) return null;
     const builtIn = isBuiltInDocumentField(field);
-    const label = sanitizeText(source.label || source.nombre || DOC_LABELS[field] || field.replace(/^doc_/, "").replace(/_/g, " "), 120);
+    const label = sanitizeText(source.label || source.nombre || DOC_LABELS[field] || humanizeDocumentFieldLabel(field), 120);
     const dateField = trim(source.dateField || source.date_field);
     const requiresDate = source.requiresDate === true || source.requires_date === true || source.pideFecha === true || source.pide_fecha === true;
     const validityMode = trim(source.validityMode || source.validity_mode).toLowerCase();
@@ -421,28 +448,20 @@
   function getClientDocumentValidityReferenceDate(record, field, stateInfo, validationDoc) {
     const state = stateInfo && typeof stateInfo === "object" ? stateInfo : {};
     const doc = validationDoc && typeof validationDoc === "object" ? validationDoc : {};
-    const activityDate = normalizeDate(state.subido_at)
-      || normalizeDate(doc.subidoAt)
-      || normalizeDate(doc.subido_at)
-      || normalizeDate(state.aprobado_at)
-      || normalizeDate(doc.aprobadoAt)
-      || normalizeDate(doc.aprobado_at)
-      || normalizeDate(state.revisado_at)
-      || normalizeDate(doc.revisadoAt)
-      || normalizeDate(doc.revisado_at)
-      || normalizeDate(record ? record.get("created_at") : "")
-      || normalizeDate(record ? record.get("created") : "");
+    const explicitDate = normalizeDate(state.fecha_documento)
+      || normalizeDate(state.fecha)
+      || normalizeDate(doc.fechaDocumento)
+      || normalizeDate(doc.fecha_documento)
+      || normalizeDate(doc.validityDate);
     if (field === "doc_constancia_fiscal") {
-      return activityDate
-        || normalizeDate(record ? record.get("constancia_fiscal_emitida_el") : "")
-        || normalizeDate(doc.validityDate);
+      return normalizeDate(record ? record.get("constancia_fiscal_emitida_el") : "")
+        || explicitDate;
     }
     if (field === "doc_comprobante_domicilio") {
       return normalizeDate(record ? record.get("comprobante_domicilio_emitido_el") : "")
-        || normalizeDate(doc.validityDate)
-        || activityDate;
+        || explicitDate;
     }
-    return activityDate;
+    return explicitDate;
   }
 
   function buildClientDictamenDocumentSnapshot(record) {
@@ -845,6 +864,98 @@
     return token.slice(0, 48);
   }
 
+  function getUploadQuarantineRoot() {
+    const dataDir = String($app.dataDir ? $app.dataDir() : "pb_data").replace(/\\/g, "/").replace(/\/+$/, "");
+    return $filepath.join(dataDir, UPLOAD_QUARANTINE_DIR_NAME);
+  }
+
+  function getDefenderCliCandidates() {
+    return uniqueStringList([
+      trim($os.getenv(WINDOWS_DEFENDER_CLI_ENV)),
+      "C:\\Program Files\\Windows Defender\\MpCmdRun.exe",
+      "C:/Program Files/Windows Defender/MpCmdRun.exe",
+      "MpCmdRun.exe"
+    ]);
+  }
+
+  function runDefenderScanCommand(targetPath) {
+    const candidates = uniqueStringList([defenderCliPathCache].concat(getDefenderCliCandidates()));
+    let lastError = null;
+    for (let i = 0; i < candidates.length; i += 1) {
+      const candidate = candidates[i];
+      if (!candidate) continue;
+      try {
+        const cmd = $os.cmd(candidate, "-Scan", "-ScanType", "3", "-File", targetPath);
+        const output = toString(cmd.combinedOutput() || "");
+        if (!trim(output)) continue;
+        defenderCliPathCache = candidate;
+        return output;
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    throw lastError || new Error("Windows Defender scan did not return output.");
+  }
+
+  function isCleanDefenderOutput(output) {
+    const text = String(output || "");
+    return /found no threats|found\s+0\s+threat|no threats found|no se encontraron amenazas/i.test(text);
+  }
+
+  function isBlockedDefenderOutput(output) {
+    const text = String(output || "");
+    return /found\s+[1-9]\d*\s+threat|se encontraron\s+[1-9]\d*\s+amenaza/i.test(text);
+  }
+
+  // Ejecuta la validacion en cuarentena antes de permitir que un archivo entre al expediente.
+  function scanBytesInQuarantine(bytes, originalName, label) {
+    const safeLabel = label || "Documento";
+    const safeName = sanitizeUploadName(originalName || "documento.bin") || "documento.bin";
+    if (!bytes || !bytes.length) {
+      throw new BadRequestError("El archivo de " + safeLabel + " esta vacio.");
+    }
+
+    const quarantineDir = $filepath.join(
+      getUploadQuarantineRoot(),
+      new Date().toISOString().slice(0, 10),
+      randomToken().slice(0, 12)
+    );
+    const quarantinePath = $filepath.join(quarantineDir, safeName);
+
+    try {
+      $os.mkdirAll(quarantineDir, 448);
+      $os.writeFile(quarantinePath, bytes, 384);
+      const output = runDefenderScanCommand(quarantinePath);
+      if (isCleanDefenderOutput(output)) {
+        return { ok: true, output: output };
+      }
+      if (isBlockedDefenderOutput(output)) {
+        console.log("[client_profile] Blocked upload after Defender scan:", safeName, output);
+        throw new BadRequestError("El archivo de " + safeLabel + " no paso la seguridad del sistema. Intenta de nuevo con otro archivo.");
+      }
+      console.log("[client_profile] Unexpected Defender response:", safeName, output);
+      throw new BadRequestError("No se pudo validar la seguridad del archivo de " + safeLabel + ".");
+    } catch (scanErr) {
+      if (scanErr && scanErr.name === "BadRequestError") throw scanErr;
+      console.log("[client_profile] Defender scan failed:", safeName, String(scanErr));
+      throw new BadRequestError("No se pudo validar la seguridad del archivo de " + safeLabel + ".");
+    } finally {
+      try { $os.removeAll(quarantineDir); } catch (_) { }
+    }
+  }
+
+  function scanUploadedFileInQuarantine(field, file, definition, validationInfo) {
+    const def = definition && typeof definition === "object" ? definition : {};
+    const label = def.label || DOC_LABELS[field] || "Documento";
+    const safeValidation = validationInfo && typeof validationInfo === "object" ? validationInfo : {};
+    const bytes = toBytes(file);
+    return scanBytesInQuarantine(
+      bytes,
+      safeValidation.originalName || file.originalName || file.name || label,
+      label
+    );
+  }
+
   function currentUtcDay() {
     const now = new Date();
     return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
@@ -1091,8 +1202,15 @@
   }
 
   function validateUploadedFilesForRequest(e, tenant) {
+    const resolvedTenant = normalizeTenant(tenant || (e && e.record ? e.record.get("tenant") : ""));
+    const cacheKey = resolvedTenant || "__default__";
+    try {
+      if (e && e.__validatedUploadedFilesCache && e.__validatedUploadedFilesCache[cacheKey]) {
+        return e.__validatedUploadedFilesCache[cacheKey];
+      }
+    } catch (_) { }
     const uploaded = {};
-    const definitions = getDocumentDefinitionsForTenant(tenant || (e && e.record ? e.record.get("tenant") : ""));
+    const definitions = getDocumentDefinitionsForTenant(resolvedTenant);
     for (let i = 0; i < definitions.length; i += 1) {
       const definition = definitions[i];
       const field = definition.field;
@@ -1107,13 +1225,21 @@
         throw new BadRequestError("Solo puedes subir un archivo por documento.");
       }
       if (files.length === 1) {
-        validateUploadedFile(field, files[0], definition);
+        const validationInfo = validateUploadedFile(field, files[0], definition);
+        scanUploadedFileInQuarantine(field, files[0], definition, validationInfo);
         uploaded[field] = {
           file: files[0],
-          definition
+          definition,
+          validation: validationInfo
         };
       }
     }
+    try {
+      if (e) {
+        if (!e.__validatedUploadedFilesCache) e.__validatedUploadedFilesCache = {};
+        e.__validatedUploadedFilesCache[cacheKey] = uploaded;
+      }
+    } catch (_) { }
     return uploaded;
   }
 
@@ -1308,12 +1434,10 @@
       : {};
     const constanciaDate = normalizeDate(record.get("constancia_fiscal_emitida_el"));
     const comprobanteDate = normalizeDate(record.get("comprobante_domicilio_emitido_el"));
-    const constanciaLifecycleDate = getRecordLifecycleDate(record, constanciaState);
-    const comprobanteLifecycleDate = getRecordLifecycleDate(record, comprobanteState);
-    const constanciaUploadDate = normalizeDate(constanciaState.subido_at) || normalizeDate(constanciaState.aprobado_at) || normalizeDate(constanciaState.revisado_at) || constanciaDate || constanciaLifecycleDate;
-    const comprobanteEffectiveDate = comprobanteDate || normalizeDate(comprobanteState.subido_at) || normalizeDate(comprobanteState.aprobado_at) || normalizeDate(comprobanteState.revisado_at) || comprobanteLifecycleDate;
-    const constanciaInfo = evaluateDocumentDate(constanciaUploadDate, MAX_CONSTANCIA_VALID_DAYS);
-    const comprobanteInfo = evaluateDocumentCalendarMonths(comprobanteEffectiveDate, MAX_COMPROBANTE_VALID_MONTHS);
+    const constanciaUploadDate = normalizeDate(constanciaState.subido_at) || normalizeDate(constanciaState.aprobado_at) || normalizeDate(constanciaState.revisado_at);
+    const comprobanteUploadDate = normalizeDate(comprobanteState.subido_at) || normalizeDate(comprobanteState.aprobado_at) || normalizeDate(comprobanteState.revisado_at);
+    const constanciaInfo = evaluateDocumentDate(constanciaDate, MAX_CONSTANCIA_VALID_DAYS);
+    const comprobanteInfo = evaluateDocumentCalendarMonths(comprobanteDate, MAX_COMPROBANTE_VALID_MONTHS);
     const missingFields = [];
     const missingDocuments = [];
     const contractMissingFields = [];
@@ -1416,19 +1540,26 @@
         aprobadoPorNombre: trim(stateInfo.aprobado_por_nombre),
         aprobadoAt: trim(stateInfo.aprobado_at)
       };
+      const hasDedicatedDateField = field === "doc_constancia_fiscal" || field === "doc_comprobante_domicilio";
       if (definition.requiredForProfile) {
         if (!uploaded && !omitted) missingDocuments.push(field);
-        if (definition.requiresDate && !omitted && !documentDate) missingFields.push(field + "_fecha_documento");
+        if (definition.requiresDate && !omitted && !documentDate && !hasDedicatedDateField) missingFields.push(field + "_fecha_documento");
       }
       if (definition.requiredForContract) {
         if (!uploaded && !omitted) contractMissingDocuments.push(field);
-        if (definition.requiresDate && !omitted && !documentDate) contractMissingFields.push(field + "_fecha_documento");
+        if (definition.requiresDate && !omitted && !documentDate && !hasDedicatedDateField) contractMissingFields.push(field + "_fecha_documento");
         if (uploaded && dStat !== "aprobado" && !omitted) contractMissingFields.push(field + "_aprobado");
       }
     }
 
-    if (!constanciaOmitted && !constanciaUploadDate) missingFields.push("constancia_fiscal_emitida_el");
-    if (!comprobanteOmitted && !comprobanteEffectiveDate) missingFields.push("comprobante_domicilio_emitido_el");
+    if (!constanciaOmitted && !constanciaDate) {
+      missingFields.push("constancia_fiscal_emitida_el");
+      contractMissingFields.push("constancia_fiscal_emitida_el");
+    }
+    if (!comprobanteOmitted && !comprobanteDate) {
+      missingFields.push("comprobante_domicilio_emitido_el");
+      contractMissingFields.push("comprobante_domicilio_emitido_el");
+    }
 
     const uniqueMissingFields = uniqueStringList(missingFields);
     const uniqueMissingDocuments = uniqueStringList(missingDocuments);
@@ -1517,8 +1648,8 @@
         constanciaFiscalReason: constanciaOmitted ? "omitted" : constanciaInfo.reason,
         constanciaFiscalLimiteDesde: constanciaInfo.thresholdDate || "",
         constanciaFiscalDiasAntiguedad: constanciaInfo.ageDays,
-        comprobanteDomicilioEmitidoEl: comprobanteDate || comprobanteEffectiveDate || "",
-        comprobanteDomicilioSubidoEl: comprobanteEffectiveDate || "",
+        comprobanteDomicilioEmitidoEl: comprobanteDate || "",
+        comprobanteDomicilioSubidoEl: comprobanteUploadDate || "",
         comprobanteDomicilioVigente: comprobanteValid,
         comprobanteDomicilioReason: comprobanteOmitted ? "omitted" : comprobanteInfo.reason,
         comprobanteDomicilioLimiteDesde: comprobanteInfo.thresholdDate || "",
@@ -2651,6 +2782,10 @@
       throw new BadRequestError("Debes adjuntar el archivo ZIP del expediente.");
     }
 
+    const archiveName = sanitizeUploadName(archiveFile.originalName || archiveFile.name || "expediente.zip") || "expediente.zip";
+    if (fileExtension(archiveName) !== ".zip") {
+      throw new BadRequestError("Debes adjuntar un archivo ZIP valido del expediente.");
+    }
     const archiveBytes = toBytes(archiveFile);
     if (archiveFile && typeof archiveFile.close === "function") {
       try { archiveFile.close(); } catch (_) { }
@@ -2658,6 +2793,7 @@
     if (!archiveBytes || !archiveBytes.length) {
       throw new BadRequestError("El archivo ZIP recibido esta vacio.");
     }
+    scanBytesInQuarantine(archiveBytes, archiveName, "ZIP del expediente");
 
     const tempRoot = $filepath.join($os.tempDir(), `client_zip_${randomToken().slice(0, 12)}`);
     const sourceZipPath = $filepath.join(tempRoot, "source.zip");
@@ -2702,7 +2838,8 @@
       ) {
         throw err;
       }
-      throw new InternalServerError(message || "No se pudo proteger el ZIP del expediente.");
+      console.log("[client_profile] protected zip error:", message || String(err));
+      throw new InternalServerError("No se pudo proteger el ZIP del expediente.");
     } finally {
       try { $os.removeAll(tempRoot); } catch (_) { }
     }
@@ -2733,12 +2870,17 @@
     return e.blob(200, asset.mime || "application/octet-stream", asset.bytes);
   }
 
+  // Cierra el submit publico del expediente: guarda archivos, fechas y datos fiscales extraidos.
   function handlePublicClientProfileComplete(e) {
     applyResponseHeaders(e);
 
     const payload = new DynamicModel({
       access: "",
       accessToken: "",
+      nombreCompleto: "",
+      nombre_completo: "",
+      razonSocial: "",
+      razon_social: "",
       telefono: "",
       phone: "",
       telefonoPrincipal: "",
@@ -2799,6 +2941,16 @@
     const access = resolveAuthorizedAccess(submittedValue(payload.access, payload.accessToken, formValue("access"), formValue("accessToken")));
     const record = access.record;
     const uploadedFiles = validateUploadedFilesForRequest(e, record.get("tenant"));
+    const requestedBusinessName = sanitizeText(submittedValue(
+      payload.nombreCompleto,
+      payload.nombre_completo,
+      payload.razonSocial,
+      payload.razon_social,
+      formValue("nombreCompleto"),
+      formValue("nombre_completo"),
+      formValue("razonSocial"),
+      formValue("razon_social")
+    ), 255);
     const requestedPhoneRaw = trim(submittedValue(
       payload.telefono,
       payload.phone,
@@ -2882,7 +3034,8 @@
     record.set("correos_adicionales", additionalEmails);
     if (requestedPhone) record.set("telefono", requestedPhone);
     if (requestedEmail) record.set("correo", requestedEmail);
-    if (requestedRfc && !trim(record.get("rfc")) && hasConstanciaUpload) record.set("rfc", requestedRfc);
+    if (requestedBusinessName && hasConstanciaUpload) record.set("nombre_completo", requestedBusinessName);
+    if (requestedRfc && hasConstanciaUpload) record.set("rfc", requestedRfc);
     if (constanciaDate !== null) record.set("constancia_fiscal_emitida_el", constanciaDate);
     if (comprobanteDate !== null) record.set("comprobante_domicilio_emitido_el", comprobanteDate);
 

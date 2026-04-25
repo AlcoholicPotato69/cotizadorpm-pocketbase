@@ -1,6 +1,6 @@
 # Modulos y Flujos de Negocio
 
-Ultima actualizacion: 2026-04-13
+Ultima actualizacion: 2026-04-24
 
 Este documento describe como opera cada modulo funcional del sistema y donde vive la logica principal en el codigo.
 
@@ -117,6 +117,27 @@ Motivo:
 7. editar desde `orders.js`
 8. generar PDF/contrato/recibo/factura segun corresponda
 
+## 6.1. Cotizacion rapida administrativa en Casa de Piedra
+
+Archivos involucrados:
+
+- `frontend/client/cotizadorcp/catalog.js`
+- `frontend/client/cotizadorcp/cotizacion.js`
+- `backend/pb_hooks/client_profile_shared.js`
+
+Regla actual:
+
+- si el usuario captura datos manualmente y no selecciona un `cliente_id`, el sistema crea un perfil pendiente automaticamente
+- si ya existe un perfil con el mismo nombre, correo o RFC, se reutiliza en lugar de duplicarlo
+- la cotizacion se guarda enlazada a ese perfil pendiente para que el expediente pueda completarse despues
+- la cotizacion rapida puede guardarse en `pendiente` aunque el expediente del cliente siga incompleto
+- la aprobacion de la cotizacion queda bloqueada hasta que el perfil del cliente pueda cotizar formalmente
+
+Objetivo:
+
+- no perder cotizaciones rapidas por falta de asociacion manual
+- dejar siempre rastro entre cotizacion y perfil del cliente
+
 ## 7. Flujo publico Plaza Mayor
 
 Archivo:
@@ -211,6 +232,35 @@ Nota:
 
 - la documentacion antigua referenciaba `users1.html`
 - la pantalla vigente y real es `frontend/client/system/config.html`
+
+## 11.1. Portal publico de expediente del cliente
+
+Archivo principal:
+
+- `frontend/client/public/perfil_cliente.html`
+
+Comportamiento relevante desde 2026-04-24:
+
+- al subir una constancia de situacion fiscal PDF, el navegador intenta extraer RFC, fecha de emision y razon social
+- esos datos viajan al endpoint publico `client_profile`
+- el backend actualiza el perfil del cliente cuando la constancia viene en el mismo submit
+- si Windows Defender bloquea el archivo, la tarjeta del documento queda marcada como error y el usuario debe elegir otro archivo
+
+## 11.2. Control operativo
+
+Archivos principales:
+
+- `frontend/client/cotizador/control.html`
+- `frontend/client/cotizador/control.js`
+- `frontend/client/cotizadorcp/control.html`
+- `frontend/client/cotizadorcp/control.js`
+
+Cambios operativos vigentes:
+
+- el buscador principal del panel lateral ahora vive arriba del resto de filtros
+- se elimino la tarjeta informativa de `Carga eficiente`
+- el encabezado principal de `Control Operativo` es mas compacto
+- clientes y ordenes/responsables tienen paginacion local con opciones de 5 o 10 filas por vista
 
 ## 12. Donde tocar segun el cambio
 
