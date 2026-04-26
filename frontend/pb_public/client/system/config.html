@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <!-- DOC: client\system\config.html | Proposito: Vista de configuracion de usuarios/permisos del sistema. | Ver docs/10-funcionamiento-general-del-codigo.txt -->
 <html lang="es">
+
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
@@ -10,18 +11,18 @@
 
   <!-- Local assets -->
   <link rel="preload" as="script" href="../../assets/libs/js/tailwindcss.js">
-    <script src="../../assets/libs/js/tailwindcss.js"></script>
-  <link rel="preload" as="style" href="../../assets/libs/css/all.min.css">
-    <link rel="stylesheet" href="../../assets/libs/css/all.min.css">
+  <script src="../../assets/libs/js/tailwindcss.js?v=20260426-v3-digital-calendar"></script>
+  <link rel="preload" as="style" href="../../assets/libs/css/all.min.css?v=20260426-v3-digital-calendar">
+  <link rel="stylesheet" href="../../assets/libs/css/all.min.css?v=20260426-v3-digital-calendar">
 
   <!-- PocketBase + Hub config + Layout (fijo para que SI renderice layout) -->
-  <script src="../services/pb-client.js"></script>
-  <script src="../js/hub-config.js"></script>
+  <script src="../services/pb-client.js?v=20260426-v3-digital-calendar"></script>
+  <script src="../js/hub-config.js?v=20260426-v3-digital-calendar"></script>
   <script>
     window.__HUB_SYSTEM_PAGE_MANAGES_AUTH = true;
   </script>
-  <script src="../js/layout.js"></script>
-  <script src="../js/pdf-editor-hitbox.js"></script>
+  <script src="../js/layout.js?v=20260426-v3-digital-calendar"></script>
+  <script src="../js/pdf-editor-hitbox.js?v=20260426-v3-digital-calendar"></script>
 
   <script>
     tailwind.config = {
@@ -43,35 +44,55 @@
   </script>
 
   <style>
-    body { font-family: 'Segoe UI', sans-serif; background-color: #f3f4f6; overflow-x: hidden; }
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background-color: #f3f4f6;
+      overflow-x: hidden;
+    }
+
     body.tenant-pm {
       --tenant-primary: #D32F2F;
       --tenant-primary-dark: #991b1b;
       --tenant-soft: #fef2f2;
-      --tenant-muted: rgba(255,255,255,0.18);
+      --tenant-muted: rgba(255, 255, 255, 0.18);
     }
+
     body.tenant-cp {
       --tenant-primary: #c1621e;
       --tenant-primary-dark: #c18e00;
       --tenant-soft: #fff7dc;
-      --tenant-muted: rgba(255,255,255,0.18);
+      --tenant-muted: rgba(255, 255, 255, 0.18);
     }
-    .hidden { display: none !important; }
-    .custom-scroll::-webkit-scrollbar { width: 6px; }
-    .custom-scroll::-webkit-scrollbar-track { background: transparent; }
-    .custom-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .custom-scroll::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .custom-scroll::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .custom-scroll::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 10px;
+    }
 
     .theme-nav {
       background-color: var(--tenant-primary, #D32F2F);
       border-top-color: var(--tenant-primary-dark, #991b1b);
       transition: background-color 0.45s ease, border-color 0.45s ease;
     }
+
     .tool-tab {
       display: inline-flex;
       align-items: center;
       gap: 8px;
       white-space: nowrap;
-      border: 1px solid rgba(255,255,255,0.34);
+      border: 1px solid rgba(255, 255, 255, 0.34);
       border-radius: 999px;
       padding: 8px 14px;
       font-size: 11px;
@@ -82,41 +103,60 @@
       background: var(--tenant-muted);
       transition: all 0.35s ease;
     }
-    .tool-tab:hover { background: rgba(255,255,255,0.30); }
+
+    .tool-tab:hover {
+      background: rgba(255, 255, 255, 0.30);
+    }
+
     .tool-tab.is-active {
       background: #fff;
       color: var(--tenant-primary, #D32F2F);
       border-color: #fff;
-      box-shadow: 0 10px 24px -10px rgba(0,0,0,0.45);
+      box-shadow: 0 10px 24px -10px rgba(0, 0, 0, 0.45);
     }
+
     .tenant-chip {
       transition: all 0.35s ease;
     }
+
     .tenant-chip.is-active {
       background: #fff;
       color: var(--tenant-primary, #D32F2F);
-      box-shadow: 0 8px 20px -10px rgba(0,0,0,0.45);
+      box-shadow: 0 8px 20px -10px rgba(0, 0, 0, 0.45);
     }
+
     .tenant-refresh {
       transition: color 0.35s ease, background-color 0.35s ease;
     }
+
     .tenant-refresh:hover {
       color: var(--tenant-primary, #D32F2F);
       background-color: var(--tenant-soft, #fef2f2);
     }
+
     .tenant-title {
       transition: color 0.45s ease;
     }
-    body.tenant-pm .tenant-title { color: #1f2937; }
-    body.tenant-cp .tenant-title { color: #b58500; }
+
+    body.tenant-pm .tenant-title {
+      color: #1f2937;
+    }
+
+    body.tenant-cp .tenant-title {
+      color: #b58500;
+    }
 
     /* Card Hover Effect */
-    .hover-card { transition: all 0.3s ease; }
+    .hover-card {
+      transition: all 0.3s ease;
+    }
+
     .hover-card:hover {
       transform: translateY(-4px);
       box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1),
-                  0 10px 10px -5px rgba(0, 0, 0, 0.04);
+        0 10px 10px -5px rgba(0, 0, 0, 0.04);
     }
+
     .pdf-type-card {
       border: 1px solid #e5e7eb;
       border-radius: 14px;
@@ -125,12 +165,18 @@
       cursor: pointer;
       transition: all 0.25s ease;
     }
-    .pdf-type-card:hover { border-color: var(--tenant-primary, #D32F2F); box-shadow: 0 10px 20px -14px rgba(0,0,0,0.35); }
+
+    .pdf-type-card:hover {
+      border-color: var(--tenant-primary, #D32F2F);
+      box-shadow: 0 10px 20px -14px rgba(0, 0, 0, 0.35);
+    }
+
     .pdf-type-card.is-active {
       border-color: var(--tenant-primary, #D32F2F);
       background: var(--tenant-soft, #fef2f2);
-      box-shadow: inset 0 0 0 1px rgba(0,0,0,0.02);
+      box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.02);
     }
+
     .pdf-preview-shell {
       background: linear-gradient(145deg, #f3f4f6, #e5e7eb);
       border: 1px solid #e5e7eb;
@@ -142,16 +188,18 @@
       align-items: center;
       justify-content: center;
     }
+
     .pdf-preview-stage {
       position: relative;
       margin: 0 auto;
     }
+
     .pdf-preview-page {
       width: 816px;
       height: 1056px;
       background: #fff;
       border-radius: 8px;
-      box-shadow: 0 16px 40px -22px rgba(0,0,0,0.35);
+      box-shadow: 0 16px 40px -22px rgba(0, 0, 0, 0.35);
       position: absolute;
       top: 0;
       left: 0;
@@ -159,11 +207,23 @@
       user-select: none;
       transform-origin: top left;
     }
+
     .pdf-editor-pane {
       height: clamp(560px, calc(100vh - 230px), 860px);
     }
-    .pdf-preview-base-selected { outline: 2px dashed var(--tenant-primary, #D32F2F); outline-offset: 2px; }
-    .pdf-preview-resource { position: absolute; cursor: move; z-index: 25; box-sizing: border-box; }
+
+    .pdf-preview-base-selected {
+      outline: 2px dashed var(--tenant-primary, #D32F2F);
+      outline-offset: 2px;
+    }
+
+    .pdf-preview-resource {
+      position: absolute;
+      cursor: move;
+      z-index: 25;
+      box-sizing: border-box;
+    }
+
     .pdf-preview-resource::after {
       content: '';
       position: absolute;
@@ -174,13 +234,13 @@
       border-radius: 999px;
       background: var(--tenant-primary, #D32F2F);
       border: 2px solid #fff;
-      box-shadow: 0 3px 8px rgba(0,0,0,0.2);
+      box-shadow: 0 3px 8px rgba(0, 0, 0, 0.2);
       opacity: 0.95;
     }
   </style>
-    <!-- Local Animations -->
-    <link rel="preload" as="style" href="../../assets/libs/css/animate.min.css">
-    <link rel="stylesheet" href="../../assets/libs/css/animate.min.css">
+  <!-- Local Animations -->
+  <link rel="preload" as="style" href="../../assets/libs/css/animate.min.css?v=20260426-v3-digital-calendar">
+  <link rel="stylesheet" href="../../assets/libs/css/animate.min.css?v=20260426-v3-digital-calendar">
 </head>
 
 <body class="bg-brand-gray text-gray-800 flex flex-col min-h-screen tenant-pm">
@@ -191,7 +251,8 @@
     <div class="container mx-auto px-6 flex h-14 gap-4 items-center text-white">
 
       <div class="flex items-center gap-2">
-        <button type="button" id="menu-concepts" onclick="switchView('v_concepts'); return false;" class="tool-tab is-active">
+        <button type="button" id="menu-concepts" onclick="switchView('v_concepts'); return false;"
+          class="tool-tab is-active">
           <i class="fa-solid fa-tags"></i> Conceptos adicionales
         </button>
         <button type="button" id="menu-taxes" onclick="switchView('v_taxes'); return false;" class="tool-tab">
@@ -200,10 +261,12 @@
         <button type="button" id="menu-docs" onclick="switchView('v_docs'); return false;" class="tool-tab">
           <i class="fa-solid fa-file-lines"></i> Documentos
         </button>
-        <button type="button" id="menu-cp-settings" onclick="switchView('v_cp_settings'); return false;" class="tool-tab hidden">
+        <button type="button" id="menu-cp-settings" onclick="switchView('v_cp_settings'); return false;"
+          class="tool-tab hidden">
           <i class="fa-solid fa-cogs"></i> Config CP
         </button>
-        <button type="button" id="menu-materials" onclick="switchView('v_materials'); return false;" class="tool-tab hidden">
+        <button type="button" id="menu-materials" onclick="switchView('v_materials'); return false;"
+          class="tool-tab hidden">
           <i class="fa-solid fa-palette"></i> Config de espacio
         </button>
         <button type="button" id="menu-users" onclick="switchView('v_users'); return false;" class="tool-tab">
@@ -238,10 +301,12 @@
           <div class="text-[10px] font-black uppercase tracking-wider text-gray-400">Configuración</div>
           <div id="tenant-label" class="tenant-title text-lg font-black text-gray-800">Plaza Mayor</div>
           <div class="text-xs font-bold text-gray-500 mt-1">
-            Admin: gestiona <span class="text-gray-700">Conceptos adicionales</span>, <span class="text-gray-700">Impuestos</span> y <span class="text-gray-700">Documentos</span> por tenant.
+            Admin: gestiona <span class="text-gray-700">Conceptos adicionales</span>, <span
+              class="text-gray-700">Impuestos</span> y <span class="text-gray-700">Documentos</span> por tenant.
           </div>
         </div>
-        <button type="button" onclick="refreshCurrent()" class="tenant-refresh w-10 h-10 rounded-2xl bg-gray-50 text-gray-400 flex items-center justify-center">
+        <button type="button" onclick="refreshCurrent()"
+          class="tenant-refresh w-10 h-10 rounded-2xl bg-gray-50 text-gray-400 flex items-center justify-center">
           <i class="fa-solid fa-rotate"></i>
         </button>
       </div>
@@ -265,7 +330,8 @@
             </button>
           </div>
         </div>
-        <div id="hint-premontaje-missing" class="hidden mt-3 text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-100 rounded-xl p-3">
+        <div id="hint-premontaje-missing"
+          class="hidden mt-3 text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-100 rounded-xl p-3">
           No existe la tabla de configuración todavía. Aplica la migración SQL para persistir este valor.
         </div>
       </div>
@@ -278,7 +344,8 @@
             <div class="text-[10px] font-black uppercase tracking-wider text-gray-400">Casa de Piedra</div>
             <div class="text-sm font-black text-gray-800">Precio de horas extra</div>
             <div class="text-xs text-gray-500 mt-1">
-              Define si se usa precio <span class="font-bold text-gray-700">fijo</span> o <span class="font-bold text-gray-700">porcentaje</span>
+              Define si se usa precio <span class="font-bold text-gray-700">fijo</span> o <span
+                class="font-bold text-gray-700">porcentaje</span>
               sobre el precio base de hora extra configurado en el espacio.
             </div>
           </div>
@@ -306,14 +373,17 @@
               placeholder="100">
           </div>
           <div class="flex items-end">
-            <label class="flex items-center gap-2 p-3 border border-gray-200 rounded-xl w-full bg-gray-50 cursor-pointer">
+            <label
+              class="flex items-center gap-2 p-3 border border-gray-200 rounded-xl w-full bg-gray-50 cursor-pointer">
               <input id="cfg-hora-extra-custom" type="checkbox" class="accent-blue-600 w-4 h-4" checked>
-              <span class="text-xs font-bold text-gray-700">Permitir personalizar en <span class="font-mono">order_detail</span></span>
+              <span class="text-xs font-bold text-gray-700">Permitir personalizar en <span
+                  class="font-mono">order_detail</span></span>
             </label>
           </div>
         </div>
 
-        <div id="hint-hora-extra-missing" class="hidden mt-3 text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-100 rounded-xl p-3">
+        <div id="hint-hora-extra-missing"
+          class="hidden mt-3 text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-100 rounded-xl p-3">
           No existe la tabla de configuración todavía. Aplica la migración SQL para persistir este valor.
         </div>
       </div>
@@ -334,13 +404,16 @@
 
           <div class="space-y-4">
             <div class="group">
-              <label class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-1.5 ml-1">Nombre</label>
-              <input id="cpt-name" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-blue-600 text-sm font-bold transition"
+              <label
+                class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-1.5 ml-1">Nombre</label>
+              <input id="cpt-name"
+                class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-blue-600 text-sm font-bold transition"
                 placeholder="Ej: Servicio de Limpieza">
             </div>
 
             <div class="group">
-              <label class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-1.5 ml-1">Precio Sugerido</label>
+              <label class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-1.5 ml-1">Precio
+                Sugerido</label>
               <div class="relative">
                 <span class="absolute left-3 top-3 text-gray-400 text-xs font-bold">$</span>
                 <input type="number" id="cpt-price"
@@ -349,7 +422,8 @@
               </div>
             </div>
 
-            <label class="flex items-center gap-3 p-3 border border-gray-100 rounded-xl cursor-pointer hover:bg-gray-50 transition">
+            <label
+              class="flex items-center gap-3 p-3 border border-gray-100 rounded-xl cursor-pointer hover:bg-gray-50 transition">
               <input type="checkbox" id="cpt-active" checked class="accent-blue-600 w-5 h-5 rounded">
               <span class="text-xs font-bold text-gray-600">Activo en catálogo</span>
             </label>
@@ -365,7 +439,8 @@
               </button>
             </div>
 
-            <div id="admin-hint-concepts" class="hidden text-[11px] font-bold text-red-600 bg-red-50 border border-red-100 rounded-xl p-3">
+            <div id="admin-hint-concepts"
+              class="hidden text-[11px] font-bold text-red-600 bg-red-50 border border-red-100 rounded-xl p-3">
               Solo Admin o Verificador pueden guardar cambios.
             </div>
           </div>
@@ -380,7 +455,8 @@
             </button>
           </div>
 
-          <ul id="concepts-list" class="divide-y divide-gray-50 text-sm max-h-[600px] overflow-y-auto custom-scroll p-2">
+          <ul id="concepts-list"
+            class="divide-y divide-gray-50 text-sm max-h-[600px] overflow-y-auto custom-scroll p-2">
             <li class="p-8 text-center text-gray-400 italic font-medium">Cargando...</li>
           </ul>
         </div>
@@ -402,20 +478,23 @@
 
           <div class="space-y-4">
             <div>
-              <label class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-1.5 ml-1">Nombre (Siglas)</label>
+              <label class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-1.5 ml-1">Nombre
+                (Siglas)</label>
               <input id="tax-name"
                 class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-purple-600 text-sm font-bold transition"
                 placeholder="Ej: IVA">
             </div>
 
             <div>
-              <label class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-1.5 ml-1">Porcentaje</label>
+              <label
+                class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-1.5 ml-1">Porcentaje</label>
               <input type="number" id="tax-pct"
                 class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-purple-600 text-sm font-bold transition"
                 placeholder="16">
             </div>
 
-            <label class="flex items-center gap-3 p-3 border border-gray-100 rounded-xl cursor-pointer hover:bg-gray-50 transition">
+            <label
+              class="flex items-center gap-3 p-3 border border-gray-100 rounded-xl cursor-pointer hover:bg-gray-50 transition">
               <input type="checkbox" id="tax-active" checked class="accent-purple-600 w-5 h-5 rounded">
               <span class="text-xs font-bold text-gray-600">Activo</span>
             </label>
@@ -431,7 +510,8 @@
               </button>
             </div>
 
-            <div id="admin-hint-taxes" class="hidden text-[11px] font-bold text-red-600 bg-red-50 border border-red-100 rounded-xl p-3">
+            <div id="admin-hint-taxes"
+              class="hidden text-[11px] font-bold text-red-600 bg-red-50 border border-red-100 rounded-xl p-3">
               Solo Admin o Verificador pueden guardar cambios.
             </div>
           </div>
@@ -466,18 +546,24 @@
         <div class="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
           <div class="p-6 border-b border-gray-100 bg-gray-50">
             <h3 id="docs-template-title" class="font-black text-gray-800 text-lg">Plantillas de Contrato</h3>
-            <p id="docs-template-copy" class="text-xs text-gray-500 mt-1">Sube archivos HTML/TXT por tenant y define la plantilla predeterminada para <span id="docs-template-tenant" class="font-bold text-gray-700">Plaza Mayor</span>.</p>
+            <p id="docs-template-copy" class="text-xs text-gray-500 mt-1">Sube archivos HTML/TXT por tenant y define la
+              plantilla predeterminada para <span id="docs-template-tenant" class="font-bold text-gray-700">Plaza
+                Mayor</span>.</p>
           </div>
           <div class="p-6 space-y-4">
             <div>
-              <label class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2">Tipo de plantilla</label>
-              <select id="doc-template-kind" onchange="loadDocsConfig()" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-blue-600 text-xs font-bold transition">
+              <label class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2">Tipo de
+                plantilla</label>
+              <select id="doc-template-kind" onchange="loadDocsConfig()"
+                class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-blue-600 text-xs font-bold transition">
                 <option value="contract">Contrato</option>
                 <option value="regulation">Reglamento</option>
               </select>
             </div>
             <div class="grid grid-cols-1 gap-3">
-              <input id="doc-template-name" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-blue-600 text-sm font-bold transition" placeholder="Nombre (opcional)">
+              <input id="doc-template-name"
+                class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-blue-600 text-sm font-bold transition"
+                placeholder="Nombre (opcional)">
               <input id="doc-template-file" type="file" accept=".html,.txt"
                 class="w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700">
               <button type="button" id="btn-upload-template-doc" onclick="uploadContractTemplate(event)"
@@ -487,9 +573,11 @@
             </div>
 
             <div>
-              <label class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2">Plantilla predeterminada</label>
+              <label class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2">Plantilla
+                predeterminada</label>
               <div class="flex gap-2">
-                <select id="doc-template-default" class="flex-1 p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-blue-600 text-xs font-bold transition">
+                <select id="doc-template-default"
+                  class="flex-1 p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-blue-600 text-xs font-bold transition">
                   <option value="">-- Seleccionar --</option>
                 </select>
                 <button type="button" id="btn-save-template-default" onclick="saveDefaultTemplate(event)"
@@ -500,14 +588,18 @@
             </div>
 
             <div>
-              <label class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2">Plantillas cargadas</label>
+              <label class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2">Plantillas
+                cargadas</label>
               <div id="doc-template-list" class="space-y-2 max-h-64 overflow-y-auto custom-scroll"></div>
             </div>
 
             <div class="border border-gray-200 rounded-xl p-3 bg-gray-50">
-              <div class="text-[10px] font-black uppercase tracking-wider text-gray-400 mb-2">Vista rápida plantilla</div>
-              <div id="doc-template-preview-empty" class="rounded border border-dashed border-gray-300 bg-white px-4 py-8 text-center text-xs font-semibold text-gray-500">
-                Previsualización embebida desactivada por estabilidad. Usa el selector y guarda la plantilla predeterminada.
+              <div class="text-[10px] font-black uppercase tracking-wider text-gray-400 mb-2">Vista rápida plantilla
+              </div>
+              <div id="doc-template-preview-empty"
+                class="rounded border border-dashed border-gray-300 bg-white px-4 py-8 text-center text-xs font-semibold text-gray-500">
+                Previsualización embebida desactivada por estabilidad. Usa el selector y guarda la plantilla
+                predeterminada.
               </div>
             </div>
           </div>
@@ -516,11 +608,14 @@
         <div class="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
           <div class="p-6 border-b border-gray-100 bg-gray-50">
             <h3 class="font-black text-gray-800 text-lg">Membretes PDF</h3>
-            <p class="text-xs text-gray-500 mt-1">El PDF de cotización/orden usa el membrete seleccionado para <span id="docs-letterhead-tenant" class="font-bold text-gray-700">Plaza Mayor</span>.</p>
+            <p class="text-xs text-gray-500 mt-1">El PDF de cotización/orden usa el membrete seleccionado para <span
+                id="docs-letterhead-tenant" class="font-bold text-gray-700">Plaza Mayor</span>.</p>
           </div>
           <div class="p-6 space-y-4">
             <div class="grid grid-cols-1 gap-3">
-              <input id="doc-letterhead-name" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-blue-600 text-sm font-bold transition" placeholder="Nombre (opcional)">
+              <input id="doc-letterhead-name"
+                class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-blue-600 text-sm font-bold transition"
+                placeholder="Nombre (opcional)">
               <input id="doc-letterhead-file" type="file" accept=".png,.jpg,.jpeg,.webp"
                 class="w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700">
               <button type="button" id="btn-upload-letterhead-doc" onclick="uploadLetterheadFile(event)"
@@ -530,9 +625,11 @@
             </div>
 
             <div>
-              <label class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2">Membrete activo</label>
+              <label class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2">Membrete
+                activo</label>
               <div class="flex gap-2">
-                <select id="doc-letterhead-default" onchange="previewSelectedLetterhead()" class="flex-1 p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-blue-600 text-xs font-bold transition">
+                <select id="doc-letterhead-default" onchange="previewSelectedLetterhead()"
+                  class="flex-1 p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-blue-600 text-xs font-bold transition">
                   <option value="">-- Seleccionar --</option>
                 </select>
                 <button type="button" id="btn-save-letterhead-default" onclick="saveDefaultLetterhead(event)"
@@ -543,14 +640,73 @@
             </div>
 
             <div>
-              <label class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2">Membretes cargados</label>
+              <label class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2">Membretes
+                cargados</label>
               <div id="doc-letterhead-list" class="space-y-2 max-h-40 overflow-y-auto custom-scroll"></div>
             </div>
 
             <div class="border border-gray-200 rounded-xl p-3 bg-gray-50">
               <div class="text-[10px] font-black uppercase tracking-wider text-gray-400 mb-2">Vista rápida</div>
-              <img id="doc-letterhead-preview" class="w-full h-auto rounded border border-gray-200 bg-white hidden" alt="Vista previa membrete">
+              <img id="doc-letterhead-preview" class="w-full h-auto rounded border border-gray-200 bg-white hidden"
+                alt="Vista previa membrete">
             </div>
+          </div>
+        </div>
+
+        <div class="xl:col-span-2 bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+          <div
+            class="p-6 border-b border-gray-100 bg-gray-50 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+            <div>
+              <h3 class="font-black text-gray-800 text-lg">Documentos requeridos del cliente</h3>
+              <p class="text-xs text-gray-500 mt-1">Define qué documentos aparecen en el portal público, cuáles bloquean
+                el perfil y cuáles bloquean la generación de contrato.</p>
+            </div>
+            <button type="button" onclick="window.saveClientDocumentRequirements(event)"
+              class="bg-gray-900 text-white py-3 px-4 rounded-xl font-bold text-xs uppercase hover:bg-black transition">
+              Guardar documentos
+            </button>
+          </div>
+          <div class="p-6 grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6">
+            <div>
+              <div id="client-doc-requirements-list" class="space-y-3"></div>
+              <div id="client-doc-requirements-empty"
+                class="hidden text-xs text-gray-400 italic p-4 text-center border border-dashed border-gray-200 rounded-xl">
+                Sin documentos configurados.</div>
+            </div>
+            <form onsubmit="window.addClientDocumentRequirement(event)"
+              class="bg-gray-50 border border-gray-100 rounded-2xl p-4 space-y-3">
+              <div>
+                <label class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2">Nombre del
+                  documento</label>
+                <input id="client-doc-new-label"
+                  class="w-full p-3 bg-white border border-gray-200 rounded-xl outline-none focus:border-blue-600 text-sm font-bold transition"
+                  placeholder="Ej. Información bancaria">
+              </div>
+              <div>
+                <label class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2">Descripción /
+                  ayuda</label>
+                <textarea id="client-doc-new-desc" rows="3"
+                  class="w-full p-3 bg-white border border-gray-200 rounded-xl outline-none focus:border-blue-600 text-xs font-semibold transition"
+                  placeholder="Qué debe subir el cliente"></textarea>
+              </div>
+              <div>
+                <label class="block text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2">Icono</label>
+                <input id="client-doc-new-icon" type="hidden" value="fa-file-lines">
+                <div id="client-doc-new-icon-grid" class="grid grid-cols-6 gap-1"></div>
+              </div>
+              <div class="grid grid-cols-1 gap-2 text-xs font-bold text-gray-600">
+                <label class="flex items-center gap-2"><input id="client-doc-new-profile" type="checkbox"
+                    class="accent-blue-600" checked> Requerido para validar perfil</label>
+                <label class="flex items-center gap-2"><input id="client-doc-new-contract" type="checkbox"
+                    class="accent-blue-600" checked> Requerido para generar contrato</label>
+                <label class="flex items-center gap-2"><input id="client-doc-new-date" type="checkbox"
+                    class="accent-blue-600"> Calcular vigencia con fecha detectada</label>
+              </div>
+              <button type="submit"
+                class="w-full bg-blue-600 text-white py-3 px-4 rounded-xl font-bold text-xs uppercase hover:bg-blue-700 shadow-lg shadow-blue-100 transition">
+                Agregar documento
+              </button>
+            </form>
           </div>
         </div>
       </div>
@@ -560,7 +716,8 @@
       <div class="bg-white rounded-2xl border border-amber-100 shadow-sm p-5">
         <div class="text-[10px] font-black uppercase tracking-wider text-amber-500">Casa de Piedra</div>
         <div class="text-sm font-black text-gray-800 mt-1">Configuración de Premontaje y Horas Extra</div>
-        <div class="text-xs text-gray-500 mt-1">Usa esta sección para configurar porcentaje de premontaje y regla de horas extra para CP.</div>
+        <div class="text-xs text-gray-500 mt-1">Usa esta sección para configurar porcentaje de premontaje y regla de
+          horas extra para CP.</div>
       </div>
     </div>
 
@@ -569,53 +726,72 @@
         <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
           <div class="text-[10px] font-black uppercase tracking-wider text-brand-red">Plaza Mayor</div>
           <div class="text-sm font-black text-gray-800 mt-1">Materiales, Ubicaciones y Convenios</div>
-          <div class="text-xs text-gray-500 mt-1">Administra los catálogos auxiliares que usa el cotizador de Plaza Mayor.</div>
+          <div class="text-xs text-gray-500 mt-1">Administra los catálogos auxiliares que usa el cotizador de Plaza
+            Mayor.</div>
         </div>
         <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
           <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
             <div class="p-5 border-b border-gray-100">
               <div class="text-[10px] font-black uppercase tracking-wider text-brand-red">Plaza Mayor</div>
               <div class="text-sm font-black text-gray-800 mt-1">Materiales Disponibles</div>
-              <div class="text-xs text-gray-500 mt-1">Administra los materiales que aparecerán en el cotizador de Plaza Mayor.</div>
+              <div class="text-xs text-gray-500 mt-1">Administra los materiales que aparecerán en el cotizador de Plaza
+                Mayor.</div>
             </div>
             <div class="p-5">
               <div class="flex gap-2 mb-4">
-                <input type="text" id="mat-new-name" placeholder="Nombre del material (ej. Vinyl, Lona, Acrílico)" class="flex-1 border border-gray-200 rounded-lg p-2.5 text-sm font-bold outline-none focus:border-brand-red">
-                <button type="button" id="btn-mat-add" onclick="window.addMaterialItem()" class="bg-brand-red text-white px-5 rounded-lg text-xs font-black uppercase hover:bg-red-700 transition shadow"><i class="fa-solid fa-plus mr-1"></i> Agregar</button>
+                <input type="text" id="mat-new-name" placeholder="Nombre del material (ej. Vinyl, Lona, Acrílico)"
+                  class="flex-1 border border-gray-200 rounded-lg p-2.5 text-sm font-bold outline-none focus:border-brand-red">
+                <button type="button" id="btn-mat-add" onclick="window.addMaterialItem()"
+                  class="bg-brand-red text-white px-5 rounded-lg text-xs font-black uppercase hover:bg-red-700 transition shadow"><i
+                    class="fa-solid fa-plus mr-1"></i> Agregar</button>
               </div>
               <div id="mat-list" class="space-y-2"></div>
-              <p id="mat-empty" class="text-xs text-gray-400 italic text-center py-4 hidden">No hay materiales configurados.</p>
+              <p id="mat-empty" class="text-xs text-gray-400 italic text-center py-4 hidden">No hay materiales
+                configurados.</p>
             </div>
           </div>
           <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
             <div class="p-5 border-b border-gray-100">
               <div class="text-[10px] font-black uppercase tracking-wider text-brand-red">Plaza Mayor</div>
               <div class="text-sm font-black text-gray-800 mt-1">Ubicaciones Disponibles</div>
-              <div class="text-xs text-gray-500 mt-1">Administra las ubicaciones que podrás asignar a locales e islas en el catálogo.</div>
+              <div class="text-xs text-gray-500 mt-1">Administra las ubicaciones que podrás asignar a locales e islas en
+                el catálogo.</div>
             </div>
             <div class="p-5">
               <div class="flex gap-2 mb-4">
-                <input type="text" id="loc-new-name" placeholder="Nombre de la ubicación (ej. Planta Baja, Pasillo Central)" class="flex-1 border border-gray-200 rounded-lg p-2.5 text-sm font-bold outline-none focus:border-brand-red">
-                <button type="button" id="btn-loc-add" onclick="window.addLocationItem()" class="bg-brand-red text-white px-5 rounded-lg text-xs font-black uppercase hover:bg-red-700 transition shadow"><i class="fa-solid fa-plus mr-1"></i> Agregar</button>
+                <input type="text" id="loc-new-name"
+                  placeholder="Nombre de la ubicación (ej. Planta Baja, Pasillo Central)"
+                  class="flex-1 border border-gray-200 rounded-lg p-2.5 text-sm font-bold outline-none focus:border-brand-red">
+                <button type="button" id="btn-loc-add" onclick="window.addLocationItem()"
+                  class="bg-brand-red text-white px-5 rounded-lg text-xs font-black uppercase hover:bg-red-700 transition shadow"><i
+                    class="fa-solid fa-plus mr-1"></i> Agregar</button>
               </div>
               <div id="loc-list" class="space-y-2"></div>
-              <p id="loc-empty" class="text-xs text-gray-400 italic text-center py-4 hidden">No hay ubicaciones configuradas.</p>
+              <p id="loc-empty" class="text-xs text-gray-400 italic text-center py-4 hidden">No hay ubicaciones
+                configuradas.</p>
             </div>
           </div>
           <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
             <div class="p-5 border-b border-gray-100">
               <div class="text-[10px] font-black uppercase tracking-wider text-brand-red">Plaza Mayor</div>
               <div class="text-sm font-black text-gray-800 mt-1">Convenios Disponibles</div>
-              <div class="text-xs text-gray-500 mt-1">Administra las opciones que aparecerán al activar convenio dentro del cotizador de Plaza Mayor.</div>
+              <div class="text-xs text-gray-500 mt-1">Administra las opciones que aparecerán al activar convenio dentro
+                del cotizador de Plaza Mayor.</div>
             </div>
             <div class="p-5">
               <div class="flex gap-2 mb-4">
-                <input type="text" id="conv-new-name" placeholder="Nombre del convenio (ej. Patrocinio, Intercambio, Activación)" class="flex-1 border border-gray-200 rounded-lg p-2.5 text-sm font-bold outline-none focus:border-brand-red">
-                <button type="button" id="btn-conv-save" onclick="window.saveConvenioItem()" class="bg-brand-red text-white px-5 rounded-lg text-xs font-black uppercase hover:bg-red-700 transition shadow"><i class="fa-solid fa-plus mr-1"></i> Guardar</button>
-                <button type="button" id="btn-conv-cancel" onclick="window.cancelConvenioEdit()" class="hidden bg-gray-100 text-gray-600 px-4 rounded-lg text-xs font-black uppercase hover:bg-gray-200 transition">Cancelar</button>
+                <input type="text" id="conv-new-name"
+                  placeholder="Nombre del convenio (ej. Patrocinio, Intercambio, Activación)"
+                  class="flex-1 border border-gray-200 rounded-lg p-2.5 text-sm font-bold outline-none focus:border-brand-red">
+                <button type="button" id="btn-conv-save" onclick="window.saveConvenioItem()"
+                  class="bg-brand-red text-white px-5 rounded-lg text-xs font-black uppercase hover:bg-red-700 transition shadow"><i
+                    class="fa-solid fa-plus mr-1"></i> Guardar</button>
+                <button type="button" id="btn-conv-cancel" onclick="window.cancelConvenioEdit()"
+                  class="hidden bg-gray-100 text-gray-600 px-4 rounded-lg text-xs font-black uppercase hover:bg-gray-200 transition">Cancelar</button>
               </div>
               <div id="conv-list" class="space-y-2"></div>
-              <p id="conv-empty" class="text-xs text-gray-400 italic text-center py-4 hidden">No hay convenios configurados.</p>
+              <p id="conv-empty" class="text-xs text-gray-400 italic text-center py-4 hidden">No hay convenios
+                configurados.</p>
             </div>
           </div>
         </div>
@@ -624,38 +800,51 @@
         <div class="bg-white rounded-2xl border border-amber-100 shadow-sm p-5">
           <div class="text-[10px] font-black uppercase tracking-wider text-amber-500">Casa de Piedra</div>
           <div class="text-sm font-black text-gray-800 mt-1">Materiales y Convenios</div>
-          <div class="text-xs text-gray-500 mt-1">Administra los materiales y opciones de convenio que usarán los espacios de publicidad en Casa de Piedra.</div>
+          <div class="text-xs text-gray-500 mt-1">Administra los materiales y opciones de convenio que usarán los
+            espacios de publicidad en Casa de Piedra.</div>
         </div>
         <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
           <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
             <div class="p-5 border-b border-gray-100">
               <div class="text-[10px] font-black uppercase tracking-wider text-amber-500">Casa de Piedra</div>
               <div class="text-sm font-black text-gray-800 mt-1">Materiales Disponibles</div>
-              <div class="text-xs text-gray-500 mt-1">Administra los materiales sugeridos para la publicidad de Casa de Piedra.</div>
+              <div class="text-xs text-gray-500 mt-1">Administra los materiales sugeridos para la publicidad de Casa de
+                Piedra.</div>
             </div>
             <div class="p-5">
               <div class="flex gap-2 mb-4">
-                <input type="text" id="cp-mat-new-name" placeholder="Nombre del material (ej. Lona, Vinil, Coroplast)" class="flex-1 border border-gray-200 rounded-lg p-2.5 text-sm font-bold outline-none focus:border-brand-red">
-                <button type="button" id="btn-cp-mat-add" onclick="window.addCpMaterialItem()" class="bg-brand-red text-white px-5 rounded-lg text-xs font-black uppercase hover:bg-red-700 transition shadow"><i class="fa-solid fa-plus mr-1"></i> Agregar</button>
+                <input type="text" id="cp-mat-new-name" placeholder="Nombre del material (ej. Lona, Vinil, Coroplast)"
+                  class="flex-1 border border-gray-200 rounded-lg p-2.5 text-sm font-bold outline-none focus:border-brand-red">
+                <button type="button" id="btn-cp-mat-add" onclick="window.addCpMaterialItem()"
+                  class="bg-brand-red text-white px-5 rounded-lg text-xs font-black uppercase hover:bg-red-700 transition shadow"><i
+                    class="fa-solid fa-plus mr-1"></i> Agregar</button>
               </div>
               <div id="cp-mat-list" class="space-y-2"></div>
-              <p id="cp-mat-empty" class="text-xs text-gray-400 italic text-center py-4 hidden">No hay materiales configurados.</p>
+              <p id="cp-mat-empty" class="text-xs text-gray-400 italic text-center py-4 hidden">No hay materiales
+                configurados.</p>
             </div>
           </div>
           <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
             <div class="p-5 border-b border-gray-100">
               <div class="text-[10px] font-black uppercase tracking-wider text-amber-500">Casa de Piedra</div>
               <div class="text-sm font-black text-gray-800 mt-1">Convenios Disponibles</div>
-              <div class="text-xs text-gray-500 mt-1">Administra las opciones de convenio que podrán activarse en los espacios de publicidad de Casa de Piedra.</div>
+              <div class="text-xs text-gray-500 mt-1">Administra las opciones de convenio que podrán activarse en los
+                espacios de publicidad de Casa de Piedra.</div>
             </div>
             <div class="p-5">
               <div class="flex gap-2 mb-4">
-                <input type="text" id="cp-conv-new-name" placeholder="Nombre del convenio (ej. Patrocinio, Intercambio, Activación)" class="flex-1 border border-gray-200 rounded-lg p-2.5 text-sm font-bold outline-none focus:border-brand-red">
-                <button type="button" id="btn-cp-conv-save" onclick="window.saveCpConvenioItem()" class="bg-brand-red text-white px-5 rounded-lg text-xs font-black uppercase hover:bg-red-700 transition shadow"><i class="fa-solid fa-plus mr-1"></i> Guardar</button>
-                <button type="button" id="btn-cp-conv-cancel" onclick="window.cancelCpConvenioEdit()" class="hidden bg-gray-100 text-gray-600 px-4 rounded-lg text-xs font-black uppercase hover:bg-gray-200 transition">Cancelar</button>
+                <input type="text" id="cp-conv-new-name"
+                  placeholder="Nombre del convenio (ej. Patrocinio, Intercambio, Activación)"
+                  class="flex-1 border border-gray-200 rounded-lg p-2.5 text-sm font-bold outline-none focus:border-brand-red">
+                <button type="button" id="btn-cp-conv-save" onclick="window.saveCpConvenioItem()"
+                  class="bg-brand-red text-white px-5 rounded-lg text-xs font-black uppercase hover:bg-red-700 transition shadow"><i
+                    class="fa-solid fa-plus mr-1"></i> Guardar</button>
+                <button type="button" id="btn-cp-conv-cancel" onclick="window.cancelCpConvenioEdit()"
+                  class="hidden bg-gray-100 text-gray-600 px-4 rounded-lg text-xs font-black uppercase hover:bg-gray-200 transition">Cancelar</button>
               </div>
               <div id="cp-conv-list" class="space-y-2"></div>
-              <p id="cp-conv-empty" class="text-xs text-gray-400 italic text-center py-4 hidden">No hay convenios configurados.</p>
+              <p id="cp-conv-empty" class="text-xs text-gray-400 italic text-center py-4 hidden">No hay convenios
+                configurados.</p>
             </div>
           </div>
         </div>
@@ -664,7 +853,8 @@
 
     <!-- VISTA DE USUARIOS -->
     <div id="v_users" class="view hidden">
-      <div class="bg-white rounded-3xl border border-gray-100 shadow-sm p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+      <div
+        class="bg-white rounded-3xl border border-gray-100 shadow-sm p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
           <h2 class="text-lg sm:text-xl font-black text-gray-800 tracking-tight flex items-center gap-2">
             <div class="w-8 h-8 rounded-full bg-brand-red/10 text-brand-red flex items-center justify-center text-sm">
@@ -676,7 +866,8 @@
             Revisión y edición de todos los usuarios registrados en el panel
           </p>
         </div>
-        <button type="button" onclick="window.openUserModal()" class="shrink-0 bg-brand-red text-white hover:bg-red-700 transition px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider shadow-sm hover:shadow-md flex items-center gap-2">
+        <button type="button" onclick="window.openUserModal()"
+          class="shrink-0 bg-brand-red text-white hover:bg-red-700 transition px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider shadow-sm hover:shadow-md flex items-center gap-2">
           <i class="fa-solid fa-user-plus"></i> Añadir Usuario
         </button>
       </div>
@@ -688,12 +879,16 @@
                 <th class="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-gray-400">Usuario</th>
                 <th class="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-gray-400">Rol</th>
                 <th class="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-gray-400">Sede Principal</th>
-                <th class="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-gray-400">Permisos de Acceso</th>
-                <th class="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-gray-400 text-center w-24">Acciones</th>
+                <th class="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-gray-400">Permisos de Acceso
+                </th>
+                <th class="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-gray-400 text-center w-24">
+                  Acciones</th>
               </tr>
             </thead>
             <tbody id="users-tbody" class="divide-y divide-gray-100/60 text-xs text-gray-700">
-              <tr><td colspan="5" class="py-8 text-center text-gray-400 font-bold italic">Cargando usuarios...</td></tr>
+              <tr>
+                <td colspan="5" class="py-8 text-center text-gray-400 font-bold italic">Cargando usuarios...</td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -702,8 +897,11 @@
   </main>
 
   <!-- Modal Usuarios -->
-  <div id="modal-user" class="fixed inset-0 bg-black/60 z-[100] hidden items-center justify-center p-4 backdrop-blur-sm transition-opacity opacity-0">
-    <div class="bg-white rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col scale-95 transition-transform duration-300" id="modal-user-content">
+  <div id="modal-user"
+    class="fixed inset-0 bg-black/60 z-[100] hidden items-center justify-center p-4 backdrop-blur-sm transition-opacity opacity-0">
+    <div
+      class="bg-white rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col scale-95 transition-transform duration-300"
+      id="modal-user-content">
       <div class="bg-gray-50/80 px-6 py-4 flex justify-between items-center border-b border-gray-100">
         <h3 class="font-black text-gray-800 tracking-tight flex items-center gap-2">
           <div class="w-6 h-6 rounded-full bg-brand-red text-white flex items-center justify-center text-[10px]">
@@ -711,7 +909,8 @@
           </div>
           <span id="modal-user-title-text">Añadir Usuario</span>
         </h3>
-        <button type="button" onclick="window.closeUserModal()" class="w-8 h-8 rounded-full bg-white border border-gray-200 text-gray-400 hover:text-brand-red hover:border-brand-red flex items-center justify-center transition focus:outline-none">
+        <button type="button" onclick="window.closeUserModal()"
+          class="w-8 h-8 rounded-full bg-white border border-gray-200 text-gray-400 hover:text-brand-red hover:border-brand-red flex items-center justify-center transition focus:outline-none">
           <i class="fa-solid fa-times"></i>
         </button>
       </div>
@@ -720,30 +919,40 @@
           <input type="hidden" id="user-id" />
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div class="space-y-1">
-              <label class="block text-[10px] font-black uppercase text-brand-red tracking-wider">Correo Electrónico <span class="text-red-500">*</span></label>
-              <input type="email" id="user-email" required placeholder="correo@ejemplo.com" class="w-full text-sm font-bold bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 outline-none focus:border-brand-red focus:bg-white transition" />
+              <label class="block text-[10px] font-black uppercase text-brand-red tracking-wider">Correo Electrónico
+                <span class="text-red-500">*</span></label>
+              <input type="email" id="user-email" required placeholder="correo@ejemplo.com"
+                class="w-full text-sm font-bold bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 outline-none focus:border-brand-red focus:bg-white transition" />
             </div>
             <div class="space-y-1">
               <label class="block text-[10px] font-black uppercase text-brand-red tracking-wider">Alias / Nombre</label>
-              <input type="text" id="user-name" placeholder="Nombre completo o alias" class="w-full text-sm font-bold bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 outline-none focus:border-brand-red focus:bg-white transition" />
+              <input type="text" id="user-name" placeholder="Nombre completo o alias"
+                class="w-full text-sm font-bold bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 outline-none focus:border-brand-red focus:bg-white transition" />
             </div>
           </div>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div class="space-y-1">
-              <label class="block text-[10px] font-black uppercase tracking-wider text-gray-500" id="lbl-password">Contraseña <span id="pwd-req" class="text-red-500">*</span></label>
-              <input type="password" id="user-password" placeholder="Mínimo 8 caracteres" class="w-full text-sm font-bold bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 outline-none focus:border-brand-red focus:bg-white transition" />
+              <label class="block text-[10px] font-black uppercase tracking-wider text-gray-500"
+                id="lbl-password">Contraseña <span id="pwd-req" class="text-red-500">*</span></label>
+              <input type="password" id="user-password" placeholder="Mínimo 8 caracteres"
+                class="w-full text-sm font-bold bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 outline-none focus:border-brand-red focus:bg-white transition" />
             </div>
             <div class="space-y-1">
-              <label class="block text-[10px] font-black uppercase tracking-wider text-gray-500" id="lbl-passwordConfirm">Confirmar Clave <span id="pwdc-req" class="text-red-500">*</span></label>
-              <input type="password" id="user-passwordConfirm" placeholder="Mínimo 8 caracteres" class="w-full text-sm font-bold bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 outline-none focus:border-brand-red focus:bg-white transition" />
+              <label class="block text-[10px] font-black uppercase tracking-wider text-gray-500"
+                id="lbl-passwordConfirm">Confirmar Clave <span id="pwdc-req" class="text-red-500">*</span></label>
+              <input type="password" id="user-passwordConfirm" placeholder="Mínimo 8 caracteres"
+                class="w-full text-sm font-bold bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 outline-none focus:border-brand-red focus:bg-white transition" />
             </div>
           </div>
-          <p class="text-[10px] text-gray-400 font-bold hidden" id="user-pwd-hint">Para cambiar la contraseña, llena los campos arriba. Déjalos en blanco para conservarla.</p>
+          <p class="text-[10px] text-gray-400 font-bold hidden" id="user-pwd-hint">Para cambiar la contraseña, llena los
+            campos arriba. Déjalos en blanco para conservarla.</p>
           <hr class="border-gray-100 my-2">
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div class="space-y-1">
-              <label class="block text-[10px] font-black uppercase text-brand-red tracking-wider">Rol de Sistema <span class="text-red-500">*</span></label>
-              <select id="user-role" required class="w-full text-sm font-bold bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 outline-none focus:border-brand-red focus:bg-white transition text-gray-700 cursor-pointer">
+              <label class="block text-[10px] font-black uppercase text-brand-red tracking-wider">Rol de Sistema <span
+                  class="text-red-500">*</span></label>
+              <select id="user-role" required
+                class="w-full text-sm font-bold bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 outline-none focus:border-brand-red focus:bg-white transition text-gray-700 cursor-pointer">
                 <option value="admin">Administrador Global</option>
                 <option value="plaza_mayor">Agente Plaza Mayor</option>
                 <option value="casa_de_piedra">Agente Casa Piedra</option>
@@ -751,31 +960,38 @@
               </select>
             </div>
             <div class="space-y-1">
-              <label class="block text-[10px] font-black uppercase text-brand-red tracking-wider">Sede Principal <span class="text-red-500">*</span></label>
-              <select id="user-default-tenant" required class="w-full text-sm font-bold bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 outline-none focus:border-brand-red focus:bg-white transition text-gray-700 cursor-pointer">
+              <label class="block text-[10px] font-black uppercase text-brand-red tracking-wider">Sede Principal <span
+                  class="text-red-500">*</span></label>
+              <select id="user-default-tenant" required
+                class="w-full text-sm font-bold bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 outline-none focus:border-brand-red focus:bg-white transition text-gray-700 cursor-pointer">
                 <option value="plaza_mayor">Plaza Mayor</option>
                 <option value="casa_de_piedra">Casa de Piedra</option>
               </select>
             </div>
           </div>
           <div class="space-y-2 mt-4 bg-gray-50 p-4 rounded-xl border border-gray-100">
-             <label class="block text-[10px] font-black uppercase text-gray-500 tracking-wider">Sedes Permitidas (Accesos Multi-Tenant)</label>
-             <div class="flex flex-col sm:flex-row gap-4 mt-1">
-                 <label class="flex items-center gap-2 cursor-pointer w-max">
-                     <input type="checkbox" id="user-allowed-pm" value="plaza_mayor" class="accent-brand-red w-4 h-4 rounded cursor-pointer" />
-                     <span class="text-xs font-bold text-gray-700">Plaza Mayor</span>
-                 </label>
-                 <label class="flex items-center gap-2 cursor-pointer w-max">
-                     <input type="checkbox" id="user-allowed-cp" value="casa_de_piedra" class="accent-brand-red w-4 h-4 rounded cursor-pointer" />
-                     <span class="text-xs font-bold text-gray-700">Casa de Piedra</span>
-                 </label>
-             </div>
+            <label class="block text-[10px] font-black uppercase text-gray-500 tracking-wider">Sedes Permitidas (Accesos
+              Multi-Tenant)</label>
+            <div class="flex flex-col sm:flex-row gap-4 mt-1">
+              <label class="flex items-center gap-2 cursor-pointer w-max">
+                <input type="checkbox" id="user-allowed-pm" value="plaza_mayor"
+                  class="accent-brand-red w-4 h-4 rounded cursor-pointer" />
+                <span class="text-xs font-bold text-gray-700">Plaza Mayor</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer w-max">
+                <input type="checkbox" id="user-allowed-cp" value="casa_de_piedra"
+                  class="accent-brand-red w-4 h-4 rounded cursor-pointer" />
+                <span class="text-xs font-bold text-gray-700">Casa de Piedra</span>
+              </label>
+            </div>
           </div>
         </form>
       </div>
       <div class="bg-gray-50 border-t border-gray-100 p-4 flex justify-end gap-3 rounded-b-3xl shrink-0">
-        <button type="button" onclick="window.closeUserModal()" class="px-5 py-2 rounded-xl text-xs font-black text-gray-500 hover:bg-gray-200 transition tracking-wider uppercase">Cancelar</button>
-        <button type="submit" form="form-user" id="btn-save-user" class="bg-brand-red text-white px-6 py-2 rounded-xl text-xs font-black hover:bg-red-700 transition tracking-wider uppercase shadow flex items-center gap-2">
+        <button type="button" onclick="window.closeUserModal()"
+          class="px-5 py-2 rounded-xl text-xs font-black text-gray-500 hover:bg-gray-200 transition tracking-wider uppercase">Cancelar</button>
+        <button type="submit" form="form-user" id="btn-save-user"
+          class="bg-brand-red text-white px-6 py-2 rounded-xl text-xs font-black hover:bg-red-700 transition tracking-wider uppercase shadow flex items-center gap-2">
           <i class="fa-solid fa-save"></i> Guardar
         </button>
       </div>
@@ -811,6 +1027,7 @@
     const CFG_TEMPLATE_DEFAULT_KEY = 'contract_template_default';
     const CFG_REGULATION_TEMPLATE_DEFAULT_KEY = 'reglamento_template_default';
     const CFG_LETTERHEAD_KEY = 'pdf_letterhead_path';
+    const CFG_CLIENT_DOC_REQUIREMENTS_KEY = 'client_document_requirements';
 
     const PDF_EDITOR_OVERLAYS_COLLECTION = 'pdf_overlays';
     const PDF_EDITOR_OVERLAY_DOC_TYPE_BY_ID = Object.freeze({
@@ -823,6 +1040,7 @@
     let docsDefaultTemplateFile = '';
     let docsDefaultRegulationFile = '';
     let docsDefaultLetterheadFile = '';
+    let clientDocumentRequirements = [];
 
     let pdfEditorConfigRecordId = '';
     let pdfEditorSelectedType = 'quote';
@@ -1177,7 +1395,7 @@
         if (!path) return;
         const signed = await getSignedStorageUrl(path);
         if (signed) pdfEditorLetterheadUrl = signed;
-      } catch (_) {}
+      } catch (_) { }
     }
 
     function fitPdfEditorPreviewScale() {
@@ -1574,8 +1792,8 @@
       const quickSample = pdfEditorSelectedType === 'dictamen'
         ? 'Resumen de requisitos\nDocumentos aprobados\nPendientes y vencidos'
         : quickLines
-        ? `${content.quickLeftTitle || 'Notas'}\n${quickLines}\n${content.quickRightTitle || ''}\n${content.quickRightBody || ''}`.trim()
-        : 'Notas rapidas / observaciones.';
+          ? `${content.quickLeftTitle || 'Notas'}\n${quickLines}\n${content.quickRightTitle || ''}\n${content.quickRightBody || ''}`.trim()
+          : 'Notas rapidas / observaciones.';
       const conditionsSample = pdfEditorSelectedType === 'dictamen'
         ? `${content.annexHintTitle || 'Anexos del Dictamen'}\n${content.dictamenNotes || content.annexHintBody || 'Notas y observaciones del dictamen.'}`.trim()
         : `${content.conditionsTitle || 'Condiciones'}\n${conditionsLines || (content.annexHintBody || 'Condiciones generales del documento.')}`.trim();
@@ -2182,35 +2400,44 @@
       refreshPdfEditorWorkspace();
     }
 
-    function _toast(msg, type){
+    function _toast(msg, type) {
       if (window.showToast) return window.showToast(msg, type);
       console[type === 'error' ? 'error' : 'log'](msg);
-      try { alert(msg); } catch(e) {}
+      try { alert(msg); } catch (e) { }
     }
 
-    function getDB(){
+    function getDB() {
       return activePocketBase || pmPocketBase || window.tenantPocketBase || window.pbClient;
     }
 
-    function getTenantBucket(){
+    function getTenantBucket() {
       return currentTenant === 'cp' ? 'documentos-cp' : 'documentos';
     }
 
-    function getCurrentConfigTenant(){
+    function getCurrentConfigTenant() {
       return currentTenant === 'cp' ? 'casa_de_piedra' : 'plaza_mayor';
     }
 
-    function baseName(path){
+    function baseName(path) {
       const normalized = String(path || '').replace(/\\/g, '/');
       const parts = normalized.split('/').filter(Boolean);
       return parts.length ? parts[parts.length - 1] : '';
     }
 
-    function sanitizeName(v){
+    function sanitizeName(v) {
       return String(v || '')
         .trim()
         .replace(/\s+/g, '_')
         .replace(/[^a-zA-Z0-9_\-.]/g, '');
+    }
+
+    function escapeHTML(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
     }
 
     function parseConfigJson(raw) {
@@ -2298,7 +2525,7 @@
       else docsDefaultTemplateFile = fileName;
     }
 
-    async function getSignedStorageUrl(path){
+    async function getSignedStorageUrl(path) {
       const cleanPath = String(path || '').trim();
       if (!cleanPath) return null;
       const { data, error } = await window.globalPocketBase.storage.from(getTenantBucket()).createSignedUrl(cleanPath, 3600);
@@ -2306,7 +2533,7 @@
       return data.signedUrl;
     }
 
-    function resetContractTemplatePreview(message){
+    function resetContractTemplatePreview(message) {
       const empty = document.getElementById('doc-template-preview-empty');
       if (empty) {
         empty.textContent = message || 'Previsualización embebida desactivada por estabilidad.';
@@ -2318,7 +2545,7 @@
       resetContractTemplatePreview();
     };
 
-    async function loadDocsConfig(){
+    async function loadDocsConfig() {
       const tplList = document.getElementById('doc-template-list');
       const ltrList = document.getElementById('doc-letterhead-list');
       const tplSel = document.getElementById('doc-template-default');
@@ -2340,26 +2567,336 @@
           .from('configuracion')
           .select('*')
           .eq('tenant', getCurrentConfigTenant())
-          .in('clave', [CFG_TEMPLATE_DEFAULT_KEY, CFG_REGULATION_TEMPLATE_DEFAULT_KEY, CFG_LETTERHEAD_KEY]);
+          .in('clave', [CFG_TEMPLATE_DEFAULT_KEY, CFG_REGULATION_TEMPLATE_DEFAULT_KEY, CFG_LETTERHEAD_KEY, CFG_CLIENT_DOC_REQUIREMENTS_KEY]);
         if (error) throw error;
         const rows = Array.isArray(data) ? data : (data ? [data] : []);
         const templateRow = pickLatestConfigRow(rows.filter(row => String(row?.clave || '').toLowerCase() === CFG_TEMPLATE_DEFAULT_KEY));
         const regulationRow = pickLatestConfigRow(rows.filter(row => String(row?.clave || '').toLowerCase() === CFG_REGULATION_TEMPLATE_DEFAULT_KEY));
         const letterheadRow = pickLatestConfigRow(rows.filter(row => String(row?.clave || '').toLowerCase() === CFG_LETTERHEAD_KEY));
+        const clientDocsRow = pickLatestConfigRow(rows.filter(row => String(row?.clave || '').toLowerCase() === CFG_CLIENT_DOC_REQUIREMENTS_KEY));
         const templateCfg = parseConfigJson(templateRow?.valor_json);
         const regulationCfg = parseConfigJson(regulationRow?.valor_json);
         const letterheadCfg = parseConfigJson(letterheadRow?.valor_json);
         docsDefaultTemplateFile = templateCfg.file_name || baseName(templateCfg.path || templateCfg.file_path || templateCfg.value || '');
         docsDefaultRegulationFile = regulationCfg.file_name || baseName(regulationCfg.path || regulationCfg.file_path || regulationCfg.value || '');
         docsDefaultLetterheadFile = letterheadCfg.file_name || baseName(letterheadCfg.path || letterheadCfg.file_path || letterheadCfg.value || '');
-      } catch (_) {}
+        clientDocumentRequirements = normalizeClientDocumentRequirements(parseConfigJson(clientDocsRow?.valor_json).documents);
+      } catch (_) { }
 
+      if (!clientDocumentRequirements.length) clientDocumentRequirements = defaultClientDocumentRequirements();
+      renderClientDocumentRequirements();
+      renderClientDocumentNewIconGrid();
       await Promise.all([loadTemplateFiles(), loadLetterheadFiles()]);
       await previewSelectedContractTemplate();
       await previewSelectedLetterhead();
     }
 
-    async function loadTemplateFiles(){
+    function slugDocumentKey(label) {
+      return String(label || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 48);
+    }
+
+    const CLIENT_DOCUMENT_ICON_OPTIONS = Object.freeze([
+      'fa-file-lines', 'fa-id-card', 'fa-house', 'fa-receipt', 'fa-file-invoice',
+      'fa-file-pdf', 'fa-building', 'fa-building-circle-check', 'fa-landmark',
+      'fa-scale-balanced', 'fa-signature', 'fa-user-tie', 'fa-shield-halved',
+      'fa-address-card', 'fa-passport', 'fa-credit-card', 'fa-money-check-dollar',
+      'fa-briefcase', 'fa-folder-open', 'fa-file-contract', 'fa-file-shield',
+      'fa-certificate', 'fa-stamp', 'fa-clipboard-check'
+    ]);
+
+    function normalizeClientDocumentIcon(value) {
+      const icon = String(value || '').replace(/^fa-solid\s+/, '').trim();
+      return CLIENT_DOCUMENT_ICON_OPTIONS.includes(icon) ? icon : (icon || 'fa-file-lines');
+    }
+
+    function renderClientDocumentIconGrid(container, selectedIcon, onSelect) {
+      if (!container) return;
+      const selected = normalizeClientDocumentIcon(selectedIcon);
+      container.innerHTML = CLIENT_DOCUMENT_ICON_OPTIONS.map((icon) => {
+        const active = icon === selected;
+        return `<button type="button" class="h-9 rounded-xl border text-sm transition ${active ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-sm' : 'border-gray-200 bg-white text-gray-500 hover:border-blue-300 hover:bg-blue-50'}" data-doc-icon-option="${escapeHTML(icon)}" title="${escapeHTML(icon)}" aria-label="${escapeHTML(icon)}"><i class="fa-solid ${escapeHTML(icon)}"></i></button>`;
+      }).join('');
+      container.querySelectorAll('[data-doc-icon-option]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const icon = normalizeClientDocumentIcon(btn.getAttribute('data-doc-icon-option'));
+          if (typeof onSelect === 'function') onSelect(icon);
+        });
+      });
+    }
+
+    function renderClientDocumentNewIconGrid() {
+      const input = document.getElementById('client-doc-new-icon');
+      const grid = document.getElementById('client-doc-new-icon-grid');
+      renderClientDocumentIconGrid(grid, input?.value || 'fa-file-lines', (icon) => {
+        if (input) input.value = icon;
+        renderClientDocumentNewIconGrid();
+      });
+    }
+
+    function defaultClientDocumentRequirements() {
+      const shared = [
+        { field: 'doc_ine', label: 'INE o identificación', description: 'Identificación oficial vigente.', icon: 'fa-id-card', enabled: true, requiredForProfile: true, requiredForContract: true, requiresDate: false, allowOmit: true, builtIn: true, accept: '.pdf,.jpg,.jpeg,.png,.webp', requirements: [] },
+        { field: 'doc_comprobante_domicilio', label: 'Comprobante de domicilio', description: 'Recibo de luz, agua o teléfono vigente.', icon: 'fa-home', enabled: true, requiredForProfile: true, requiredForContract: true, requiresDate: true, allowOmit: true, builtIn: true, accept: '.pdf,.jpg,.jpeg,.png,.webp', requirements: [], validityMode: 'calendar_months', validityMonths: 3 },
+        { field: 'doc_constancia_fiscal', label: 'Constancia de situación fiscal', description: 'PDF oficial del SAT.', icon: 'fa-file-invoice', enabled: true, requiredForProfile: true, requiredForContract: true, requiresDate: true, allowOmit: false, builtIn: true, accept: '.pdf', requirements: [], validityMode: 'days', validityDays: 30 }
+      ];
+      if (currentTenant === 'cp') return shared;
+      return [
+        { field: 'doc_acta_constitutiva', label: 'Acta constitutiva', description: 'PDF completo y legible.', icon: 'fa-building-circle-check', enabled: true, requiredForProfile: true, requiredForContract: true, requiresDate: false, allowOmit: true, builtIn: true, accept: '.pdf', requirements: [] },
+        ...shared
+      ];
+    }
+
+    function normalizeClientDocumentRequirementsList(value) {
+      if (Array.isArray(value)) {
+        return value.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 8);
+      }
+      if (typeof value === 'string') {
+        return value.split(/\r?\n/).map((item) => String(item || '').trim()).filter(Boolean).slice(0, 8);
+      }
+      return [];
+    }
+
+    function normalizeClientDocumentRequirements(items) {
+      const source = Array.isArray(items) ? items : [];
+      const seen = new Set();
+      return source.map((item, index) => {
+        const raw = item && typeof item === 'object' ? item : {};
+        let field = String(raw.field || raw.key || '').trim();
+        if (!field && raw.label) field = `doc_custom_${slugDocumentKey(raw.label)}`;
+        if (!field) return null;
+        if (!field.startsWith('doc_')) field = `doc_custom_${slugDocumentKey(field)}`;
+        field = field.replace(/[^a-zA-Z0-9_]/g, '_').replace(/_+/g, '_').slice(0, 80);
+        if (!field || seen.has(field)) return null;
+        seen.add(field);
+        const builtIn = ['doc_acta_constitutiva', 'doc_ine', 'doc_comprobante_domicilio', 'doc_constancia_fiscal'].includes(field);
+        const builtInDefaults = defaultClientDocumentRequirements().find((doc) => doc.field === field) || {};
+        const rawValidityDays = Object.prototype.hasOwnProperty.call(raw, 'validityDays') ? raw.validityDays : raw.validity_days;
+        const rawValidityMonths = Object.prototype.hasOwnProperty.call(raw, 'validityMonths') ? raw.validityMonths : raw.validity_months;
+        return {
+          field,
+          key: field,
+          label: String(raw.label || raw.nombre || builtInDefaults.label || field.replace(/^doc_/, '').replace(/_/g, ' ')).trim(),
+          description: String(raw.description || raw.desc || builtInDefaults.description || '').trim(),
+          icon: String(raw.icon || builtInDefaults.icon || 'fa-file-lines').replace(/^fa-solid\s+/, '').trim() || 'fa-file-lines',
+          enabled: raw.enabled !== false,
+          requiredForProfile: raw.requiredForProfile !== false && raw.required_for_profile !== false,
+          requiredForContract: raw.requiredForContract !== false && raw.required_for_contract !== false,
+          requiresDate: raw.requiresDate === true,
+          allowOmit: raw.allowOmit !== false && raw.allow_omit !== false,
+          builtIn,
+          custom: !builtIn,
+          uploadField: builtIn ? field : `extra_doc__${field}`,
+          accept: String(raw.accept || builtInDefaults.accept || '.pdf,.jpg,.jpeg,.png,.webp').trim(),
+          requirements: normalizeClientDocumentRequirementsList(raw.requirements || raw.requisitos || builtInDefaults.requirements || []),
+          order: Number.isFinite(Number(raw.order)) ? Number(raw.order) : index,
+          validityMode: String(raw.validityMode || raw.validity_mode || builtInDefaults.validityMode || '').trim(),
+          validityDays: rawValidityDays ?? builtInDefaults.validityDays ?? '',
+          validityMonths: rawValidityMonths ?? builtInDefaults.validityMonths ?? ''
+        };
+      }).filter(Boolean);
+    }
+
+    function renderClientDocumentRequirements() {
+      const host = document.getElementById('client-doc-requirements-list');
+      const empty = document.getElementById('client-doc-requirements-empty');
+      if (!host) return;
+      host.innerHTML = '';
+      const docs = normalizeClientDocumentRequirements(clientDocumentRequirements.length ? clientDocumentRequirements : defaultClientDocumentRequirements());
+      clientDocumentRequirements = docs;
+      if (empty) empty.classList.toggle('hidden', docs.length > 0);
+      docs.forEach((doc, index) => {
+        const row = document.createElement('div');
+        row.className = 'rounded-2xl border border-gray-100 bg-white p-4 shadow-sm grid grid-cols-1 gap-4';
+        row.innerHTML = `
+          <div class="flex flex-col gap-4 min-w-0">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div class="flex items-center gap-2 min-w-0">
+                <span class="inline-flex h-9 w-9 items-center justify-center rounded-xl ${doc.enabled ? 'bg-blue-50 text-blue-600' : 'bg-gray-100 text-gray-400'}"><i class="fa-solid ${doc.icon || 'fa-file-lines'}"></i></span>
+                <div class="min-w-0">
+                  <div class="text-sm font-black text-gray-800">${escapeHTML(doc.label)}</div>
+                  <div class="text-[10px] font-mono text-gray-400">${escapeHTML(doc.field)}${doc.custom ? ' · personalizado' : ' · base'}${doc.enabled ? '' : ' · desactivado'}</div>
+                </div>
+              </div>
+              <div class="flex flex-wrap gap-2 justify-end">
+                <button type="button" class="rounded-xl border border-gray-200 px-3 py-2 text-[10px] font-black uppercase text-gray-500 hover:bg-gray-50" data-doc-move="${index}" data-dir="-1">Subir</button>
+                <button type="button" class="rounded-xl border border-gray-200 px-3 py-2 text-[10px] font-black uppercase text-gray-500 hover:bg-gray-50" data-doc-move="${index}" data-dir="1">Bajar</button>
+                <button type="button" class="rounded-xl border border-red-100 px-3 py-2 text-[10px] font-black uppercase text-red-500 hover:bg-red-50 ${doc.builtIn ? 'opacity-40 cursor-not-allowed' : ''}" data-doc-remove="${index}" ${doc.builtIn ? 'disabled' : ''}>Eliminar</button>
+              </div>
+            </div>
+            <div class="grid grid-cols-1 xl:grid-cols-2 gap-3">
+              <label class="block text-[11px] font-black uppercase tracking-[0.08em] text-gray-500">
+                Nombre
+                <input type="text" class="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-800" data-doc-input="${index}" data-field-name="label" maxlength="120" value="${escapeHTML(doc.label)}">
+              </label>
+              <label class="block text-[11px] font-black uppercase tracking-[0.08em] text-gray-500">
+                Icono Font Awesome
+                <input type="text" class="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-800" data-doc-input="${index}" data-field-name="icon" maxlength="50" value="${escapeHTML(doc.icon || 'fa-file-lines')}">
+                <div class="mt-2 grid grid-cols-8 sm:grid-cols-12 xl:grid-cols-8 gap-1" data-doc-icon-grid="${index}"></div>
+              </label>
+              <label class="block text-[11px] font-black uppercase tracking-[0.08em] text-gray-500 xl:col-span-2">
+                Descripción
+                <input type="text" class="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-700" data-doc-input="${index}" data-field-name="description" maxlength="240" value="${escapeHTML(doc.description || '')}">
+              </label>
+              <label class="block text-[11px] font-black uppercase tracking-[0.08em] text-gray-500">
+                Tipos permitidos
+                <input type="text" class="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-mono text-gray-700" data-doc-input="${index}" data-field-name="accept" maxlength="120" value="${escapeHTML(doc.accept || '')}">
+              </label>
+              <label class="block text-[11px] font-black uppercase tracking-[0.08em] text-gray-500">
+                Vigencia
+                <select class="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-800" data-doc-input="${index}" data-field-name="validityMode">
+                  <option value="" ${!doc.validityMode ? 'selected' : ''}>Sin vencimiento</option>
+                  <option value="days" ${doc.validityMode === 'days' ? 'selected' : ''}>Días exactos</option>
+                  <option value="calendar_months" ${doc.validityMode === 'calendar_months' ? 'selected' : ''}>Meses calendario</option>
+                </select>
+              </label>
+              <label class="block text-[11px] font-black uppercase tracking-[0.08em] text-gray-500">
+                Días
+                <input type="number" min="0" max="3650" class="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-800" data-doc-input="${index}" data-field-name="validityDays" value="${escapeHTML(doc.validityDays === '' ? '' : String(doc.validityDays))}">
+              </label>
+              <label class="block text-[11px] font-black uppercase tracking-[0.08em] text-gray-500">
+                Meses calendario
+                <input type="number" min="0" max="60" class="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-800" data-doc-input="${index}" data-field-name="validityMonths" value="${escapeHTML(doc.validityMonths === '' ? '' : String(doc.validityMonths))}">
+              </label>
+              <label class="block text-[11px] font-black uppercase tracking-[0.08em] text-gray-500 xl:col-span-2">
+                Requisitos (uno por línea)
+                <textarea class="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-700 min-h-[92px]" data-doc-input="${index}" data-field-name="requirements">${escapeHTML((doc.requirements || []).join('\n'))}</textarea>
+              </label>
+            </div>
+            <div class="flex flex-wrap gap-3 text-[11px] font-bold text-gray-600">
+              <label class="flex items-center gap-2 rounded-full border border-gray-200 px-3 py-2"><input type="checkbox" data-doc-toggle="${index}" data-field-name="enabled" ${doc.enabled ? 'checked' : ''}> Solicitar documento</label>
+              <label class="flex items-center gap-2 rounded-full border border-gray-200 px-3 py-2"><input type="checkbox" data-doc-toggle="${index}" data-field-name="requiredForProfile" ${doc.requiredForProfile ? 'checked' : ''}> Bloquea perfil</label>
+              <label class="flex items-center gap-2 rounded-full border border-gray-200 px-3 py-2"><input type="checkbox" data-doc-toggle="${index}" data-field-name="requiredForContract" ${doc.requiredForContract ? 'checked' : ''}> Bloquea contrato</label>
+              <label class="flex items-center gap-2 rounded-full border border-gray-200 px-3 py-2"><input type="checkbox" data-doc-toggle="${index}" data-field-name="requiresDate" ${doc.requiresDate ? 'checked' : ''}> Calcular vigencia</label>
+              <label class="flex items-center gap-2 rounded-full border border-gray-200 px-3 py-2"><input type="checkbox" data-doc-toggle="${index}" data-field-name="allowOmit" ${doc.allowOmit ? 'checked' : ''}> Permitir omitir</label>
+            </div>
+            <div class="text-[11px] text-gray-500">${doc.enabled ? (doc.requiredForProfile || doc.requiredForContract ? 'Este documento participa en la validación según las casillas activas.' : 'Este documento queda visible, pero no bloqueará ni el perfil ni el contrato.') : 'Este documento no se solicitará al cliente.'}</div>
+          </div>`;
+        host.appendChild(row);
+      });
+      host.querySelectorAll('[data-doc-input]').forEach((input) => {
+        const syncValue = () => {
+          const idx = Number(input.getAttribute('data-doc-input'));
+          const name = input.getAttribute('data-field-name');
+          if (!clientDocumentRequirements[idx] || !name) return;
+          if (name === 'requirements') {
+            clientDocumentRequirements[idx][name] = normalizeClientDocumentRequirementsList(input.value);
+          } else if (name === 'validityDays' || name === 'validityMonths') {
+            clientDocumentRequirements[idx][name] = input.value === '' ? '' : Math.max(0, parseInt(input.value, 10) || 0);
+          } else if (name === 'icon') {
+            clientDocumentRequirements[idx][name] = normalizeClientDocumentIcon(input.value);
+          } else {
+            clientDocumentRequirements[idx][name] = input.value;
+          }
+          renderClientDocumentRequirements();
+        };
+        input.addEventListener('change', syncValue);
+        if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
+          input.addEventListener('blur', syncValue);
+        }
+      });
+      host.querySelectorAll('[data-doc-icon-grid]').forEach((grid) => {
+        const idx = Number(grid.getAttribute('data-doc-icon-grid'));
+        const doc = clientDocumentRequirements[idx];
+        if (!doc) return;
+        renderClientDocumentIconGrid(grid, doc.icon, (icon) => {
+          clientDocumentRequirements[idx].icon = icon;
+          renderClientDocumentRequirements();
+        });
+      });
+      host.querySelectorAll('[data-doc-toggle]').forEach((input) => {
+        input.addEventListener('change', () => {
+          const idx = Number(input.getAttribute('data-doc-toggle'));
+          const name = input.getAttribute('data-field-name');
+          if (!clientDocumentRequirements[idx] || !name) return;
+          clientDocumentRequirements[idx][name] = input.checked;
+          renderClientDocumentRequirements();
+        });
+      });
+      host.querySelectorAll('[data-doc-move]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const idx = Number(btn.getAttribute('data-doc-move'));
+          const dir = Number(btn.getAttribute('data-dir'));
+          const next = idx + dir;
+          if (next < 0 || next >= clientDocumentRequirements.length) return;
+          const copy = [...clientDocumentRequirements];
+          const tmp = copy[idx];
+          copy[idx] = copy[next];
+          copy[next] = tmp;
+          clientDocumentRequirements = copy.map((item, order) => ({ ...item, order }));
+          renderClientDocumentRequirements();
+        });
+      });
+      host.querySelectorAll('[data-doc-remove]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const idx = Number(btn.getAttribute('data-doc-remove'));
+          if (!clientDocumentRequirements[idx] || clientDocumentRequirements[idx].builtIn) return;
+          clientDocumentRequirements.splice(idx, 1);
+          renderClientDocumentRequirements();
+        });
+      });
+    }
+
+    window.addClientDocumentRequirement = (event) => {
+      if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      if (!hasConfigEditAccess()) return _toast("Acceso restringido: solo Admin o Verificador.", "error");
+      const labelEl = document.getElementById('client-doc-new-label');
+      const descEl = document.getElementById('client-doc-new-desc');
+      const iconEl = document.getElementById('client-doc-new-icon');
+      const label = String(labelEl?.value || '').trim();
+      if (!label) return _toast('Escribe el nombre del documento.', 'error');
+      const field = `doc_custom_${slugDocumentKey(label) || Date.now()}`;
+      if (clientDocumentRequirements.some((doc) => doc.field === field)) return _toast('Ese documento ya existe.', 'error');
+      clientDocumentRequirements.push({
+        field,
+        key: field,
+        label,
+        description: String(descEl?.value || '').trim(),
+        icon: normalizeClientDocumentIcon(iconEl?.value || 'fa-file-lines'),
+        requiredForProfile: document.getElementById('client-doc-new-profile')?.checked !== false,
+        requiredForContract: document.getElementById('client-doc-new-contract')?.checked !== false,
+        requiresDate: document.getElementById('client-doc-new-date')?.checked === true,
+        enabled: true,
+        allowOmit: true,
+        builtIn: false,
+        custom: true,
+        uploadField: `extra_doc__${field}`,
+        accept: '.pdf,.jpg,.jpeg,.png,.webp',
+        requirements: [],
+        order: clientDocumentRequirements.length
+      });
+      if (labelEl) labelEl.value = '';
+      if (descEl) descEl.value = '';
+      if (iconEl) iconEl.value = 'fa-file-lines';
+      renderClientDocumentNewIconGrid();
+      renderClientDocumentRequirements();
+    };
+
+    window.saveClientDocumentRequirements = async (event) => {
+      if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      if (!hasConfigEditAccess()) return _toast("Acceso restringido: solo Admin o Verificador.", "error");
+      const docs = normalizeClientDocumentRequirements(clientDocumentRequirements).map((doc, order) => ({ ...doc, order }));
+      const payload = {
+        tenant: getCurrentConfigTenant(),
+        clave: CFG_CLIENT_DOC_REQUIREMENTS_KEY,
+        valor_json: {
+          documents: docs,
+          updated_at: new Date().toISOString()
+        }
+      };
+      const { error } = await getDB().from('configuracion').upsert(payload, { onConflict: 'tenant,clave' });
+      if (error) return _toast("Error al guardar documentos: " + error.message, "error");
+      clientDocumentRequirements = docs;
+      renderClientDocumentRequirements();
+      _toast('Documentos requeridos guardados', 'success');
+    };
+
+    async function loadTemplateFiles() {
       const tplList = document.getElementById('doc-template-list');
       const tplSel = document.getElementById('doc-template-default');
       if (!tplList || !tplSel) return;
@@ -2408,7 +2945,7 @@
       else resetContractTemplatePreview();
     }
 
-    async function loadLetterheadFiles(){
+    async function loadLetterheadFiles() {
       const ltrList = document.getElementById('doc-letterhead-list');
       const ltrSel = document.getElementById('doc-letterhead-default');
       if (!ltrList || !ltrSel) return;
@@ -2730,14 +3267,14 @@
       }
     };
 
-    function normalizeAdminRole(roleValue){
+    function normalizeAdminRole(roleValue) {
       const safe = String(roleValue || '').trim().toLowerCase();
       if (!safe) return '';
       if (safe === 'administrador' || safe === 'superadmin' || safe === 'super_admin') return 'admin';
       return safe;
     }
 
-    function readUsers1StoredAuthState(key){
+    function readUsers1StoredAuthState(key) {
       try {
         const raw = sessionStorage.getItem(key) || localStorage.getItem(key);
         if (!raw) return null;
@@ -2748,7 +3285,7 @@
       }
     }
 
-    function readAnyStoredAuthState(){
+    function readAnyStoredAuthState() {
       const keys = ['pb_native_auth_v1', 'pb_compat_auth_v1', 'pb_auth'];
       for (const key of keys) {
         const parsed = readUsers1StoredAuthState(key);
@@ -2757,7 +3294,7 @@
       return null;
     }
 
-    function collectUsers1RoleCandidates(...groups){
+    function collectUsers1RoleCandidates(...groups) {
       const out = [];
       const seen = new Set();
       groups.forEach((group) => {
@@ -2773,7 +3310,7 @@
       return out;
     }
 
-    function getConfigRoleHints(){
+    function getConfigRoleHints() {
       const authState = readAnyStoredAuthState();
       const profileHints = [
         window.currentUserProfile,
@@ -2797,7 +3334,7 @@
       return '';
     }
 
-    async function resolveConfigAccess(){
+    async function resolveConfigAccess() {
       isAdminUser = await requireAdmin();
       const hintedRole = resolvedConfigRole || getConfigRoleHints();
       isVerifierUser = !isAdminUser && hintedRole === 'verificador';
@@ -2805,7 +3342,7 @@
       return canEditConfigUser;
     }
 
-    function getUsersAdminClient(){
+    function getUsersAdminClient() {
       const existingClient = window.globalPocketBase || window.pbClient || window.tenantPocketBase;
       if (existingClient) return existingClient;
       if (window.PB_CLIENT && window.HUB_CONFIG) {
@@ -2817,26 +3354,26 @@
       return null;
     }
 
-    function getResolvedLayoutAuthContext(){
+    function getResolvedLayoutAuthContext() {
       try {
         if (window.__HUB_AUTH_CONTEXT && typeof window.__HUB_AUTH_CONTEXT === 'object') {
           return window.__HUB_AUTH_CONTEXT;
         }
-      } catch (_) {}
+      } catch (_) { }
       try {
         if (window.HUB_SESSION && typeof window.HUB_SESSION.getContext === 'function') {
           const ctx = window.HUB_SESSION.getContext();
           if (ctx && typeof ctx === 'object') return ctx;
         }
-      } catch (_) {}
+      } catch (_) { }
       return null;
     }
 
-    async function requireAdmin(){
+    async function requireAdmin() {
       resolvedConfigRole = '';
       const layoutCtx = getResolvedLayoutAuthContext();
       if (layoutCtx?.isAdmin === true && layoutCtx?.canAccessCurrentRoute !== false) {
-        try { localStorage.setItem('hub_user_cache_role', 'admin'); } catch (_) {}
+        try { localStorage.setItem('hub_user_cache_role', 'admin'); } catch (_) { }
         resolvedConfigRole = 'admin';
         return true;
       }
@@ -2861,7 +3398,7 @@
       if (hintedRoles.includes('admin')) {
         resolvedConfigRole = 'admin';
         if (layoutCtx?.canAccessCurrentRoute !== false && (layoutCtx?.user || layoutCtx?.profile)) {
-          try { localStorage.setItem('hub_user_cache_role', 'admin'); } catch (_) {}
+          try { localStorage.setItem('hub_user_cache_role', 'admin'); } catch (_) { }
           return true;
         }
       }
@@ -2873,14 +3410,14 @@
       try {
         const sessionResp = await sb.auth.getSession();
         session = sessionResp?.data?.session || sessionResp?.session || null;
-      } catch (_) {}
+      } catch (_) { }
 
       let sessionUser = session?.user || null;
       if (!sessionUser) {
         try {
           const userResp = await sb.auth.getUser();
           sessionUser = userResp?.data?.user || userResp?.user || null;
-        } catch (_) {}
+        } catch (_) { }
       }
       const hasLiveSession = !!sessionUser;
 
@@ -2935,7 +3472,7 @@
                 .maybeSingle();
               if (error) continue;
               if (data) return data;
-            } catch (_) {}
+            } catch (_) { }
           }
           return null;
         };
@@ -2954,12 +3491,12 @@
           resolvedConfigRole = resolvedRole;
         }
         return resolvedRole === 'admin';
-      } catch (_) {}
+      } catch (_) { }
       if (cachedRole && hasLiveSession) resolvedConfigRole = cachedRole;
       return false;
     }
 
-    function showAdminAccessDenied(){
+    function showAdminAccessDenied() {
       const prevOverlay = document.getElementById('users1-admin-denied-overlay');
       if (prevOverlay) prevOverlay.remove();
       document.body.classList.add('overflow-hidden');
@@ -2994,7 +3531,7 @@
       document.body.appendChild(overlay);
     }
 
-    function paintViewMenu(){
+    function paintViewMenu() {
       const links = [
         { id: 'menu-concepts', view: 'v_concepts' },
         { id: 'menu-taxes', view: 'v_taxes' },
@@ -3011,7 +3548,7 @@
       if (matBtn) matBtn.classList.toggle('is-active', currentView === 'v_materials');
     }
 
-    function paintTenantUI(){
+    function paintTenantUI() {
       const body = document.body;
       const pmBtn = document.getElementById('btn-tenant-pm');
       const cpBtn = document.getElementById('btn-tenant-cp');
@@ -3100,10 +3637,10 @@
       const target = document.getElementById(viewId);
       if (target) target.classList.remove('hidden');
 
-      if(viewId === 'v_concepts') await loadConcepts();
-      if(viewId === 'v_taxes') await loadTaxesConfig();
-      if(viewId === 'v_docs') await loadDocsConfig();
-      if(viewId === 'v_users') {
+      if (viewId === 'v_concepts') await loadConcepts();
+      if (viewId === 'v_taxes') await loadTaxesConfig();
+      if (viewId === 'v_docs') await loadDocsConfig();
+      if (viewId === 'v_users') {
         if (!isAdminUser) {
           currentView = 'v_concepts';
           paintViewMenu();
@@ -3113,16 +3650,16 @@
         }
         await loadUsers();
       }
-      if(viewId === 'v_cp_settings' && currentTenant === 'cp') {
+      if (viewId === 'v_cp_settings' && currentTenant === 'cp') {
         await loadPremontajePct();
         await loadHoraExtraCfg();
       }
-      if(viewId === 'v_materials' && currentTenant === 'pm') {
+      if (viewId === 'v_materials' && currentTenant === 'pm') {
         await window.loadMaterialsList();
         await window.loadLocationsList();
         await window.loadConveniosList();
       }
-      if(viewId === 'v_materials' && currentTenant === 'cp') {
+      if (viewId === 'v_materials' && currentTenant === 'cp') {
         await window.loadCpMaterialsList();
         await window.loadCpConveniosList();
       }
@@ -3142,10 +3679,10 @@
       const db = getDB();
       const { data, error } = await db.from('conceptos_catalogo').select('*').order('nombre');
 
-      if(error) { _toast("No se pudo cargar el catálogo de conceptos.", "error"); return; }
+      if (error) { _toast("No se pudo cargar el catálogo de conceptos.", "error"); return; }
 
       list.innerHTML = '';
-      if(data && data.length > 0) {
+      if (data && data.length > 0) {
         data.forEach(c => {
           const priceNum = (c.precio_sugerido == null) ? 0 : Number(c.precio_sugerido);
           const row = document.createElement('li');
@@ -3238,7 +3775,7 @@
       const price = document.getElementById('cpt-price').value;
       const active = document.getElementById('cpt-active').checked;
 
-      if(!name) return _toast("El nombre es obligatorio", "error");
+      if (!name) return _toast("El nombre es obligatorio", "error");
 
       const payload = { nombre: name, precio_sugerido: parseFloat(price) || 0, activo: active };
 
@@ -3247,12 +3784,12 @@
 
       const db = getDB();
       let error;
-      if(id) ({ error } = await db.from('conceptos_catalogo').update(payload).eq('id', id));
-      else   ({ error } = await db.from('conceptos_catalogo').insert(payload));
+      if (id) ({ error } = await db.from('conceptos_catalogo').update(payload).eq('id', id));
+      else ({ error } = await db.from('conceptos_catalogo').insert(payload));
 
       btn.disabled = false; btn.innerText = "Guardar";
 
-      if(error) _toast("Error: " + error.message, "error");
+      if (error) _toast("Error: " + error.message, "error");
       else {
         _toast("Concepto guardado", "success");
         resetCptForm();
@@ -3266,7 +3803,7 @@
       openConfirm("¿Eliminar este concepto?", async () => {
         const db = getDB();
         const { error } = await db.from('conceptos_catalogo').delete().eq('id', id);
-        if(error) _toast("Error al eliminar: " + error.message, "error");
+        if (error) _toast("Error al eliminar: " + error.message, "error");
         else { _toast("Eliminado", "success"); loadConcepts(); }
       });
     };
@@ -3278,10 +3815,10 @@
       const db = getDB();
       const { data, error } = await db.from('impuestos').select('*').order('id');
 
-      if(error) return _toast("Error cargando impuestos: " + error.message, "error");
+      if (error) return _toast("Error cargando impuestos: " + error.message, "error");
 
       tbody.innerHTML = '';
-      if(data && data.length > 0) {
+      if (data && data.length > 0) {
         data.forEach(t => {
           const statusClass = t.activo ? 'bg-green-100 text-green-700 border-green-200' : 'bg-red-50 text-red-600 border-red-100';
           const statusText = t.activo ? 'ACTIVO' : 'INACTIVO';
@@ -3349,16 +3886,16 @@
       const pct = document.getElementById('tax-pct').value;
       const active = document.getElementById('tax-active').checked;
 
-      if(!name || pct === '') return _toast("Datos incompletos", "error");
+      if (!name || pct === '') return _toast("Datos incompletos", "error");
 
       const payload = { nombre: name, porcentaje: parseFloat(pct), activo: active };
       const db = getDB();
 
       let error;
-      if(id) ({ error } = await db.from('impuestos').update(payload).eq('id', id));
-      else   ({ error } = await db.from('impuestos').insert(payload));
+      if (id) ({ error } = await db.from('impuestos').update(payload).eq('id', id));
+      else ({ error } = await db.from('impuestos').insert(payload));
 
-      if(error) _toast("Error: " + error.message, "error");
+      if (error) _toast("Error: " + error.message, "error");
       else {
         _toast("Impuesto guardado", "success");
         resetTaxForm();
@@ -3370,12 +3907,12 @@
       if (window.HUB_CONFIG_READY && typeof window.HUB_CONFIG_READY.then === 'function') {
         try {
           await window.HUB_CONFIG_READY;
-        } catch (_) {}
+        } catch (_) { }
       }
       if (window.__HUB_LAYOUT_READY && typeof window.__HUB_LAYOUT_READY.then === 'function') {
         try {
           await window.__HUB_LAYOUT_READY;
-        } catch (_) {}
+        } catch (_) { }
       }
       const pageManagesOwnAuth = window.__HUB_SYSTEM_PAGE_MANAGES_AUTH === true;
       if (window.__HUB_PAGE_ACCESS_DENIED && !pageManagesOwnAuth) return;
@@ -3387,7 +3924,7 @@
 
       // 1) Guard de acceso para admin/verificador
       const canAccessConfig = await resolveConfigAccess();
-      if(!canAccessConfig){
+      if (!canAccessConfig) {
         showAdminAccessDenied();
         return;
       }
@@ -3412,7 +3949,7 @@
       let __materialItems = [];
       let __materialsRecordId = null;
       const __materialsTenant = 'plaza_mayor';
-      window.loadMaterialsList = async function() {
+      window.loadMaterialsList = async function () {
         try {
           const { data, error } = await pmPocketBase
             .from('configuracion')
@@ -3438,7 +3975,7 @@
           list.innerHTML += `<div class="flex justify-between items-center bg-gray-50 border border-gray-100 p-3 rounded-lg"><span class="text-sm font-bold text-gray-700"><i class="fa-solid fa-palette text-brand-red mr-2"></i>${name}</span><button onclick="window.removeMaterialItem(${idx})" class="text-gray-400 hover:text-red-500 transition text-xs"><i class="fa-solid fa-trash"></i></button></div>`;
         });
       }
-      window.addMaterialItem = async function() {
+      window.addMaterialItem = async function () {
         const input = document.getElementById('mat-new-name');
         const name = (input?.value || '').trim();
         if (!name) return showToast('Ingresa un nombre de material.', 'error');
@@ -3448,7 +3985,7 @@
         if (input) input.value = '';
         renderMaterialsList();
       };
-      window.removeMaterialItem = async function(idx) {
+      window.removeMaterialItem = async function (idx) {
         __materialItems.splice(idx, 1);
         await __saveMaterialsToDB();
         renderMaterialsList();
@@ -3469,7 +4006,7 @@
       let __locationItems = [];
       let __locationsRecordId = null;
       const __locationsTenant = 'plaza_mayor';
-      window.loadLocationsList = async function() {
+      window.loadLocationsList = async function () {
         try {
           const { data, error } = await pmPocketBase
             .from('configuracion')
@@ -3495,7 +4032,7 @@
           list.innerHTML += `<div class="flex justify-between items-center bg-gray-50 border border-gray-100 p-3 rounded-lg"><span class="text-sm font-bold text-gray-700"><i class="fa-solid fa-location-dot text-brand-red mr-2"></i>${name}</span><button onclick="window.removeLocationItem(${idx})" class="text-gray-400 hover:text-red-500 transition text-xs"><i class="fa-solid fa-trash"></i></button></div>`;
         });
       }
-      window.addLocationItem = async function() {
+      window.addLocationItem = async function () {
         const input = document.getElementById('loc-new-name');
         const name = (input?.value || '').trim();
         if (!name) return showToast('Ingresa un nombre de ubicación.', 'error');
@@ -3505,7 +4042,7 @@
         if (input) input.value = '';
         renderLocationsList();
       };
-      window.removeLocationItem = async function(idx) {
+      window.removeLocationItem = async function (idx) {
         __locationItems.splice(idx, 1);
         await __saveLocationsToDB();
         renderLocationsList();
@@ -3597,7 +4134,7 @@
           throw e;
         }
       }
-      window.loadConveniosList = async function() {
+      window.loadConveniosList = async function () {
         try {
           const { data, error } = await pmPocketBase
             .from('configuracion')
@@ -3616,7 +4153,7 @@
         resetConvenioForm();
         renderConveniosList();
       };
-      window.saveConvenioItem = async function() {
+      window.saveConvenioItem = async function () {
         const input = document.getElementById('conv-new-name');
         const nombre = normalizeConvenioName(input?.value || '');
         if (!nombre) return showToast('Ingresa un nombre de convenio.', 'error');
@@ -3632,7 +4169,7 @@
         resetConvenioForm();
         renderConveniosList();
       };
-      window.editConvenioItem = function(id) {
+      window.editConvenioItem = function (id) {
         const item = __convenioItems.find((entry) => entry.id === id);
         if (!item) return;
         __editingConvenioId = item.id;
@@ -3646,10 +4183,10 @@
         if (saveBtn) saveBtn.innerHTML = '<i class="fa-solid fa-floppy-disk mr-1"></i> Actualizar';
         if (cancelBtn) cancelBtn.classList.remove('hidden');
       };
-      window.cancelConvenioEdit = function() {
+      window.cancelConvenioEdit = function () {
         resetConvenioForm();
       };
-      window.removeConvenioItem = async function(id) {
+      window.removeConvenioItem = async function (id) {
         __convenioItems = __convenioItems.filter((item) => item.id !== id);
         if (__editingConvenioId === id) resetConvenioForm();
         await __saveConveniosToDB();
@@ -3660,7 +4197,7 @@
       let __cpMaterialItems = [];
       let __cpMaterialsRecordId = null;
       const __cpMaterialsTenant = 'casa_de_piedra';
-      window.loadCpMaterialsList = async function() {
+      window.loadCpMaterialsList = async function () {
         try {
           const { data, error } = await cpPocketBase
             .from('configuracion')
@@ -3706,7 +4243,7 @@
           showToast('Error al guardar materiales de Casa de Piedra: ' + (e.message || e), 'error');
         }
       }
-      window.addCpMaterialItem = async function() {
+      window.addCpMaterialItem = async function () {
         const input = document.getElementById('cp-mat-new-name');
         const name = (input?.value || '').trim();
         if (!name) return showToast('Ingresa un nombre de material.', 'error');
@@ -3716,7 +4253,7 @@
         if (input) input.value = '';
         renderCpMaterialsList();
       };
-      window.removeCpMaterialItem = async function(idx) {
+      window.removeCpMaterialItem = async function (idx) {
         __cpMaterialItems.splice(idx, 1);
         await __saveCpMaterialsToDB();
         renderCpMaterialsList();
@@ -3773,7 +4310,7 @@
           throw e;
         }
       }
-      window.loadCpConveniosList = async function() {
+      window.loadCpConveniosList = async function () {
         try {
           const { data, error } = await cpPocketBase
             .from('configuracion')
@@ -3792,7 +4329,7 @@
         resetCpConvenioForm();
         renderCpConveniosList();
       };
-      window.saveCpConvenioItem = async function() {
+      window.saveCpConvenioItem = async function () {
         const input = document.getElementById('cp-conv-new-name');
         const nombre = normalizeConvenioName(input?.value || '');
         if (!nombre) return showToast('Ingresa un nombre de convenio.', 'error');
@@ -3808,7 +4345,7 @@
         resetCpConvenioForm();
         renderCpConveniosList();
       };
-      window.editCpConvenioItem = function(id) {
+      window.editCpConvenioItem = function (id) {
         const item = __cpConvenioItems.find((entry) => entry.id === id);
         if (!item) return;
         __cpEditingConvenioId = item.id;
@@ -3822,10 +4359,10 @@
         if (saveBtn) saveBtn.innerHTML = '<i class="fa-solid fa-floppy-disk mr-1"></i> Actualizar';
         if (cancelBtn) cancelBtn.classList.remove('hidden');
       };
-      window.cancelCpConvenioEdit = function() {
+      window.cancelCpConvenioEdit = function () {
         resetCpConvenioForm();
       };
-      window.removeCpConvenioItem = async function(id) {
+      window.removeCpConvenioItem = async function (id) {
         __cpConvenioItems = __cpConvenioItems.filter((item) => item.id !== id);
         if (__cpEditingConvenioId === id) resetCpConvenioForm();
         await __saveCpConveniosToDB();
@@ -3834,22 +4371,22 @@
 
       // --- LOGICA DE USUARIOS ---
       let allUsers = [];
-      window.loadUsers = async function() {
+      window.loadUsers = async function () {
         const tbody = document.getElementById('users-tbody');
         tbody.innerHTML = '<tr><td colspan="5" class="py-8 text-center text-gray-400 font-bold italic"><i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Cargando...</td></tr>';
         try {
           const pb = getUsersAdminClient();
           if (!pb) throw new Error('No se pudo inicializar PocketBase.');
           const { data: records, error } = await pb.from('app_users').select('*').order('login_username', { ascending: true }).limit(100);
-          
+
           if (error) {
-              throw error;
+            throw error;
           }
           allUsers = records || [];
-          
+
           if (allUsers.length === 0) {
-             tbody.innerHTML = '<tr><td colspan="5" class="py-8 text-center text-gray-400 font-bold italic">No hay usuarios registrados (o la lista volvió vacía).</td></tr>';
-             return;
+            tbody.innerHTML = '<tr><td colspan="5" class="py-8 text-center text-gray-400 font-bold italic">No hay usuarios registrados (o la lista volvió vacía).</td></tr>';
+            return;
           }
 
           let html = '';
@@ -3857,22 +4394,22 @@
           const roleColors = { 'admin': 'bg-red-100 text-red-700', 'plaza_mayor': 'bg-blue-100 text-blue-700', 'casa_de_piedra': 'bg-amber-100 text-amber-700', 'verificador': 'bg-emerald-100 text-emerald-700' };
 
           records.forEach(u => {
-             const rLabel = roleLabels[u.role] || u.role;
-             const rColor = roleColors[u.role] || 'bg-gray-100 text-gray-600';
-             
-             let tenDefault = 'N/A';
-             if (u.tenant_default === 'plaza_mayor') tenDefault = 'Plaza Mayor';
-             if (u.tenant_default === 'casa_de_piedra') tenDefault = 'Casa de Piedra';
+            const rLabel = roleLabels[u.role] || u.role;
+            const rColor = roleColors[u.role] || 'bg-gray-100 text-gray-600';
 
-             let allowedTenants = Array.isArray(u.allowed_tenants) ? u.allowed_tenants.slice() : [];
-             if (!allowedTenants.length && u.role === 'verificador') allowedTenants = ['plaza_mayor', 'casa_de_piedra'];
-             let allowed = allowedTenants.map(t => {
-               if(t==='plaza_mayor') return '<span class="inline-block px-2 py-0.5 bg-blue-50 text-blue-600 rounded text-[9px] font-bold">PM</span>';
-               if(t==='casa_de_piedra') return '<span class="inline-block px-2 py-0.5 bg-amber-50 text-amber-600 rounded text-[9px] font-bold">CP</span>';
-               return t;
-             }).join(' ');
+            let tenDefault = 'N/A';
+            if (u.tenant_default === 'plaza_mayor') tenDefault = 'Plaza Mayor';
+            if (u.tenant_default === 'casa_de_piedra') tenDefault = 'Casa de Piedra';
 
-             html += `
+            let allowedTenants = Array.isArray(u.allowed_tenants) ? u.allowed_tenants.slice() : [];
+            if (!allowedTenants.length && u.role === 'verificador') allowedTenants = ['plaza_mayor', 'casa_de_piedra'];
+            let allowed = allowedTenants.map(t => {
+              if (t === 'plaza_mayor') return '<span class="inline-block px-2 py-0.5 bg-blue-50 text-blue-600 rounded text-[9px] font-bold">PM</span>';
+              if (t === 'casa_de_piedra') return '<span class="inline-block px-2 py-0.5 bg-amber-50 text-amber-600 rounded text-[9px] font-bold">CP</span>';
+              return t;
+            }).join(' ');
+
+            html += `
                 <tr class="hover:bg-gray-50/50 transition border-b border-gray-100 last:border-0">
                   <td class="py-3 px-4">
                     <div class="font-black text-gray-800 text-xs">${u.login_username || 'Sin Nombre'}</div>
@@ -3897,21 +4434,21 @@
              `;
           });
           tbody.innerHTML = html;
-        } catch(e) {
+        } catch (e) {
           const message = String(e?.message || e || 'Error desconocido');
           tbody.innerHTML = `<tr><td colspan="5" class="py-8 text-center text-red-500 font-bold">No se pudo cargar el listado de usuarios: ${escapePdfEditorHtml(message)}</td></tr>`;
           showToast('No se pudo cargar usuarios: ' + message, 'error');
         }
       };
 
-      window.openUserModal = function() {
+      window.openUserModal = function () {
         document.getElementById('user-id').value = '';
         document.getElementById('form-user').reset();
         document.getElementById('modal-user-title-text').innerText = 'Añadir Usuario Nuevo';
         document.getElementById('user-pwd-hint').classList.add('hidden');
         document.getElementById('pwd-req').classList.remove('hidden');
         document.getElementById('pwdc-req').classList.remove('hidden');
-        
+
         document.getElementById('user-password').required = true;
         document.getElementById('user-passwordConfirm').required = true;
         syncUserRoleTenantControls();
@@ -3926,7 +4463,7 @@
         }, 10);
       };
 
-      window.closeUserModal = function() {
+      window.closeUserModal = function () {
         const modal = document.getElementById('modal-user');
         const mcontent = document.getElementById('modal-user-content');
         modal.classList.add('opacity-0');
@@ -3937,10 +4474,10 @@
         }, 300);
       };
 
-      window.editUser = function(id) {
+      window.editUser = function (id) {
         const user = allUsers.find(u => u.id === id);
-        if(!user) return;
-        
+        if (!user) return;
+
         window.openUserModal();
 
         document.getElementById('user-id').value = user.id;
@@ -3948,7 +4485,7 @@
         document.getElementById('user-name').value = user.login_username || user.username || '';
         document.getElementById('user-role').value = ['admin', 'plaza_mayor', 'casa_de_piedra', 'verificador'].includes(user.role) ? user.role : 'plaza_mayor';
         document.getElementById('user-default-tenant').value = user.tenant_default || 'plaza_mayor';
-        
+
         const editAllowedTenants = Array.isArray(user.allowed_tenants) && user.allowed_tenants.length
           ? user.allowed_tenants
           : ((user.role === 'verificador') ? ['plaza_mayor', 'casa_de_piedra'] : []);
@@ -3991,22 +4528,22 @@
 
       document.getElementById('user-role')?.addEventListener('change', syncUserRoleTenantControls);
 
-      window.deleteUser = async function(id) {
-        if(!confirm('¿Estás seguro de que deseas eliminar este usuario definitivamente?')) return;
+      window.deleteUser = async function (id) {
+        if (!confirm('¿Estás seguro de que deseas eliminar este usuario definitivamente?')) return;
         try {
-           const { error } = await getDB().from('app_users').delete().eq('id', id);
-           if (error) throw error;
-           showToast('Usuario eliminado con éxito', 'success');
-           await loadUsers();
-        } catch(e) {
-           showToast('Error al eliminar usuario: ' + (e.message || e), 'error');
+          const { error } = await getDB().from('app_users').delete().eq('id', id);
+          if (error) throw error;
+          showToast('Usuario eliminado con éxito', 'success');
+          await loadUsers();
+        } catch (e) {
+          showToast('Error al eliminar usuario: ' + (e.message || e), 'error');
         }
       };
 
-      window.saveUser = async function(e) {
+      window.saveUser = async function (e) {
         e.preventDefault();
         const btn = document.getElementById('btn-save-user');
-        
+
         const id = document.getElementById('user-id').value;
         const email = document.getElementById('user-email').value;
         const name = document.getElementById('user-name').value;
@@ -4014,23 +4551,23 @@
         const passC = document.getElementById('user-passwordConfirm').value;
         const role = document.getElementById('user-role').value;
         const defaultTenant = document.getElementById('user-default-tenant').value;
-        
+
         let allowed = [];
         if (role === 'admin' || role === 'verificador') {
           allowed = ['plaza_mayor', 'casa_de_piedra'];
         } else {
-          if(document.getElementById('user-allowed-pm').checked) allowed.push('plaza_mayor');
-          if(document.getElementById('user-allowed-cp').checked) allowed.push('casa_de_piedra');
+          if (document.getElementById('user-allowed-pm').checked) allowed.push('plaza_mayor');
+          if (document.getElementById('user-allowed-cp').checked) allowed.push('casa_de_piedra');
         }
-        if(allowed.length === 0 && role !== 'verificador') allowed.push(defaultTenant); // fallback safe
-        
+        if (allowed.length === 0 && role !== 'verificador') allowed.push(defaultTenant); // fallback safe
+
         if (pass || passC || !id) {
-           if(pass !== passC) {
-              return showToast('Las contraseñas no coinciden', 'error');
-           }
-           if(pass.length < 8) {
-              return showToast('La contraseña debe tener al menos 8 caracteres', 'error');
-           }
+          if (pass !== passC) {
+            return showToast('Las contraseñas no coinciden', 'error');
+          }
+          if (pass.length < 8) {
+            return showToast('La contraseña debe tener al menos 8 caracteres', 'error');
+          }
         }
 
         const data = {
@@ -4040,7 +4577,7 @@
           tenant_default: defaultTenant,
           allowed_tenants: allowed
         };
-        
+
         if (pass) {
           data.password = pass;
           data.passwordConfirm = passC;
@@ -4071,18 +4608,12 @@
           btn.innerHTML = originalText;
         }
       };
-      
+
       // default view
       await switchView('v_concepts');
     });
   </script>
 
 </body>
+
 </html>
-
-
-
-
-
-
-

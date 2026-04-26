@@ -1073,6 +1073,54 @@
       return sanitizeText(clientRecord.getString("perfil_origen"), 40).toLowerCase() === "cotizacion_rapida";
     }
 
+    function ensureQuickQuoteClientProfileLocal(record) {
+      var existingRecord = resolveQuoteClientRecordLocal(record);
+      if (existingRecord) return existingRecord;
+
+      var tenant = sanitizeText(record.getString("tenant"), 40).toLowerCase();
+      if (tenant !== "plaza_mayor" && tenant !== "casa_de_piedra") return null;
+
+      var clientName = sanitizeText(record.getString("cliente_nombre"), 255);
+      var clientEmail = normalizeEmailLocal(record.getString("cliente_email"));
+      var clientPhone = normalizePhoneLocal(record.getString("cliente_telefono")) || normalizePhoneLocal(record.getString("cliente_contacto"));
+      var clientRfc = sanitizeText(record.getString("cliente_rfc"), 40).toUpperCase();
+      if (!clientName && !clientEmail && !clientPhone) return null;
+
+      var collection = null;
+      try {
+        collection = $app.findCollectionByNameOrId("clientes");
+      } catch (_) {
+        collection = null;
+      }
+      if (!collection) return null;
+
+      try {
+        var clientRecord = new Record(collection);
+        clientRecord.set("tenant", tenant);
+        clientRecord.set("nombre_completo", clientName || clientEmail || clientPhone || "Cliente rapido");
+        if (clientPhone) clientRecord.set("telefono", clientPhone);
+        if (clientEmail) clientRecord.set("correo", clientEmail);
+        if (clientRfc) clientRecord.set("rfc", clientRfc);
+        clientRecord.set("perfil_origen", "cotizacion_rapida");
+        clientRecord.set("perfil_estatus", "pendiente_expediente");
+        clientRecord.set("perfil_validado", false);
+        clientRecord.set("perfil_completo", false);
+        $app.save(clientRecord);
+        var createdId = sanitizeText(clientRecord.get("id"), 64).replace(/[^a-zA-Z0-9]/g, "");
+        if (createdId) record.set("cliente_id", createdId);
+        return clientRecord;
+      } catch (clientCreateErr) {
+        var fallbackRecord = findQuoteClientFallbackRecordLocal(record, tenant);
+        if (fallbackRecord) {
+          var fallbackId = sanitizeText(fallbackRecord.get("id"), 64).replace(/[^a-zA-Z0-9]/g, "");
+          if (fallbackId) record.set("cliente_id", fallbackId);
+          return fallbackRecord;
+        }
+        console.log("[cotizaciones create] No se pudo crear perfil rapido:", String(clientCreateErr));
+        throw new BadRequestError("No se pudo crear el perfil rapido del cliente para esta cotizacion.");
+      }
+    }
+
     function syncQuoteClientSnapshotLocal(record) {
       var clientRecord = resolveQuoteClientRecordLocal(record);
       if (!clientRecord) return;
@@ -1555,6 +1603,7 @@
       }
     }
 
+    ensureQuickQuoteClientProfileLocal(e.record);
     syncQuoteClientSnapshotLocal(e.record);
     ensureClientReadyForQuoteLocal(e.record);
     ensureQuoteFinancials(e.record);
@@ -1726,6 +1775,54 @@
         return fallbackRecord;
       }
       return clientRecord;
+    }
+
+    function ensureQuickQuoteClientProfileLocal(record) {
+      var existingRecord = resolveQuoteClientRecordLocal(record);
+      if (existingRecord) return existingRecord;
+
+      var tenant = sanitizeText(record.getString("tenant"), 40).toLowerCase();
+      if (tenant !== "plaza_mayor" && tenant !== "casa_de_piedra") return null;
+
+      var clientName = sanitizeText(record.getString("cliente_nombre"), 255);
+      var clientEmail = normalizeEmailLocal(record.getString("cliente_email"));
+      var clientPhone = normalizePhoneLocal(record.getString("cliente_telefono")) || normalizePhoneLocal(record.getString("cliente_contacto"));
+      var clientRfc = sanitizeText(record.getString("cliente_rfc"), 40).toUpperCase();
+      if (!clientName && !clientEmail && !clientPhone) return null;
+
+      var collection = null;
+      try {
+        collection = $app.findCollectionByNameOrId("clientes");
+      } catch (_) {
+        collection = null;
+      }
+      if (!collection) return null;
+
+      try {
+        var clientRecord = new Record(collection);
+        clientRecord.set("tenant", tenant);
+        clientRecord.set("nombre_completo", clientName || clientEmail || clientPhone || "Cliente rapido");
+        if (clientPhone) clientRecord.set("telefono", clientPhone);
+        if (clientEmail) clientRecord.set("correo", clientEmail);
+        if (clientRfc) clientRecord.set("rfc", clientRfc);
+        clientRecord.set("perfil_origen", "cotizacion_rapida");
+        clientRecord.set("perfil_estatus", "pendiente_expediente");
+        clientRecord.set("perfil_validado", false);
+        clientRecord.set("perfil_completo", false);
+        $app.save(clientRecord);
+        var createdId = sanitizeText(clientRecord.get("id"), 64).replace(/[^a-zA-Z0-9]/g, "");
+        if (createdId) record.set("cliente_id", createdId);
+        return clientRecord;
+      } catch (clientCreateErr) {
+        var fallbackRecord = findQuoteClientFallbackRecordLocal(record, tenant);
+        if (fallbackRecord) {
+          var fallbackId = sanitizeText(fallbackRecord.get("id"), 64).replace(/[^a-zA-Z0-9]/g, "");
+          if (fallbackId) record.set("cliente_id", fallbackId);
+          return fallbackRecord;
+        }
+        console.log("[cotizaciones update] No se pudo crear perfil rapido:", String(clientCreateErr));
+        throw new BadRequestError("No se pudo crear el perfil rapido del cliente para esta cotizacion.");
+      }
     }
 
     function syncQuoteClientSnapshotLocal(record) {
@@ -2079,6 +2176,7 @@
     }
 
     var original = e && e.record && typeof e.record.originalCopy === "function" ? e.record.originalCopy() : null;
+    ensureQuickQuoteClientProfileLocal(e.record);
     syncQuoteClientSnapshotLocal(e.record);
     if (quoteFinancialFieldsTouchedLocal(e.record, original)) {
       enforceQuoteDiscountLimitLocal(e.record);

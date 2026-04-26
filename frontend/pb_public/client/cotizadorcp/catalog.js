@@ -7,6 +7,16 @@
 let clientProfiles = [];
 let clientProfilesById = {};
 
+/*
+ * Indice de funciones del flujo de cliente en catalogo CP
+ * 1. isCpCatalogQuoteProfileReady
+ * 2. fillCpCatalogQuoteClientFields
+ * 3. buildCpCatalogQuoteClientSnapshot
+ * 4. createCpCatalogQuickQuoteClientProfile
+ * 5. resolveCpCatalogQuoteClientId
+ * 6. loadClientProfilesForQuoteModal
+ */
+
 window.finalMontajeDates = [];
 window.tempMontajeDates = [];
 window.currentMontajePrefix = 'q';
@@ -132,17 +142,160 @@ window.clearManagerPlanoGeografico = function () {
     paintCpManagerPlanoStatus();
 };
 
+// Rellena el bloque visual del cliente cuando se reutiliza un perfil existente.
+function fillCpCatalogQuoteClientFields(client = {}) {
+    const nameEl = document.getElementById('cli-name');
+    const phoneEl = document.getElementById('cli-phone');
+    const emailEl = document.getElementById('cli-email');
+    const rfcEl = document.getElementById('cli-rfc');
+    if (nameEl) nameEl.value = client?.nombre_completo || '';
+    if (phoneEl) phoneEl.value = client?.telefono || '';
+    if (emailEl) emailEl.value = client?.correo || '';
+    if (rfcEl) rfcEl.value = client?.rfc || '';
+}
+
+// Limpia la relacion con un perfil para que la captura manual se trate como perfil rapido.
+function clearCpCatalogQuoteClientAssociation(options = {}) {
+    const selectEl = document.getElementById('cli-select');
+    const hiddenIdEl = document.getElementById('cli-id');
+    if (selectEl) selectEl.value = '';
+    if (hiddenIdEl) hiddenIdEl.value = '';
+    if (options.clearFields === true) fillCpCatalogQuoteClientFields({});
+}
+
+// Construye el snapshot del cliente tal como se va a persistir en la cotizacion.
+function buildCpCatalogQuoteClientSnapshot() {
+    const hiddenIdEl = document.getElementById('cli-id');
+    const selectEl = document.getElementById('cli-select');
+    const selectedId = String(hiddenIdEl?.value || selectEl?.value || '').trim();
+    const selectedProfile = selectedId ? (clientProfilesById[selectedId] || null) : null;
+    if (selectedProfile && isCpCatalogQuoteProfileReady(selectedProfile)) {
+        fillCpCatalogQuoteClientFields(selectedProfile);
+        return {
+            id: selectedId,
+            name: String(selectedProfile.nombre_completo || '').trim(),
+            rfc: String(selectedProfile.rfc || '').trim().toUpperCase(),
+            phone: String(selectedProfile.telefono || '').trim(),
+            email: String(selectedProfile.correo || '').trim().toLowerCase()
+        };
+    }
+    return {
+        id: '',
+        name: String(document.getElementById('cli-name')?.value || '').trim(),
+        rfc: String(document.getElementById('cli-rfc')?.value || '').trim().toUpperCase(),
+        phone: String(document.getElementById('cli-phone')?.value || '').trim(),
+        email: String(document.getElementById('cli-email')?.value || '').trim().toLowerCase()
+    };
+}
+
+function findCpCatalogExistingClientProfile(cli = {}) {
+    const targetEmail = String(cli?.email || '').trim().toLowerCase();
+    const targetRfc = String(cli?.rfc || '').trim().toUpperCase();
+    const targetName = String(cli?.name || '').trim().toLowerCase();
+    return clientProfiles.find((candidate) => {
+        const candidateEmail = String(candidate?.correo || '').trim().toLowerCase();
+        const candidateRfc = String(candidate?.rfc || '').trim().toUpperCase();
+        const candidateName = String(candidate?.nombre_completo || '').trim().toLowerCase();
+        if (targetEmail && candidateEmail && candidateEmail === targetEmail) return true;
+        if (targetRfc && candidateRfc && candidateRfc === targetRfc) return true;
+        if (targetName && candidateName && candidateName === targetName) return true;
+        return false;
+    }) || null;
+}
+
+// Crea o reutiliza el perfil pendiente que respalda la captura manual del catalogo CP.
+async function createCpCatalogQuickQuoteClientProfile(cli) {
+    const existing = findCpCatalogExistingClientProfile(cli);
+    if (existing?.id) {
+        const hiddenIdEl = document.getElementById('cli-id');
+        if (hiddenIdEl) hiddenIdEl.value = String(existing.id || '').trim();
+        return String(existing.id || '').trim();
+    }
+    const payload = {
+        tenant: CP_TENANT_SLUG,
+        nombre_completo: String(cli?.name || '').trim(),
+        telefono: String(cli?.phone || '').trim(),
+        correo: String(cli?.email || '').trim().toLowerCase() || null,
+        rfc: String(cli?.rfc || '').trim().toUpperCase() || null,
+        perfil_origen: 'cotizacion_rapida',
+        perfil_estatus: 'pendiente_expediente',
+        perfil_validado: false,
+        perfil_completo: false
+    };
+    const { data, error } = await window.tenantPocketBase.from('clientes').insert(payload);
+    if (error) throw error;
+    const created = Array.isArray(data) ? (data[0] || null) : (data || null);
+    const createdId = String(created?.id || '').trim();
+    if (!createdId) throw new Error('No se pudo crear el perfil rápido del cliente.');
+    clientProfiles.push(created || { ...payload, id: createdId });
+    clientProfilesById[createdId] = created || { ...payload, id: createdId };
+    const hiddenIdEl = document.getElementById('cli-id');
+    if (hiddenIdEl) hiddenIdEl.value = createdId;
+    return createdId;
+}
+
+async function resolveCpCatalogQuoteClientId(cli) {
+    const hiddenIdEl = document.getElementById('cli-id');
+    const existingId = String(hiddenIdEl?.value || '').trim();
+    if (existingId) return existingId;
+    if (!String(cli?.name || '').trim()) {
+        throw new Error('Captura el nombre del cliente antes de generar la cotización.');
+    }
+    return createCpCatalogQuickQuoteClientProfile(cli);
+}
+
+// Carga perfiles listos para cotizar, pero permite captura manual con creacion automatica de perfil pendiente.
 async function loadClientProfilesForQuoteModal() {
-    const sel = document.getElementById('cli-select'); const hid = document.getElementById('cli-id'); if (!sel || !window.tenantPocketBase) return;
+    const sel = document.getElementById('cli-select');
+    const hid = document.getElementById('cli-id');
+    if (!sel || !window.tenantPocketBase) return;
     try {
-        const { data, error } = await window.tenantPocketBase.from('clientes').select('id,nombre_completo,telefono,correo,rfc,perfil_validado,perfil_estatus,expediente_validacion').order('nombre_completo', { ascending: true });
-        if (error) throw error; clientProfiles = (data || []).slice().sort((a, b) => { const aReady = isCpCatalogQuoteProfileReady(a) ? 1 : 0; const bReady = isCpCatalogQuoteProfileReady(b) ? 1 : 0; if (aReady !== bReady) return bReady - aReady; return String(a?.nombre_completo || '').localeCompare(String(b?.nombre_completo || ''), 'es'); }); clientProfilesById = {}; clientProfiles.forEach(c => clientProfilesById[c.id] = c);
-        sel.innerHTML = '<option value="">-- Capturar manualmente --</option>' + clientProfiles.map(c => `<option value="${c.id}">${(c.nombre_completo || '').toUpperCase()} - ${isCpCatalogQuoteProfileReady(c) ? 'LISTO' : 'PENDIENTE'}</option>`).join('');
-        sel.innerHTML = '<option value="">— Capturar manualmente —</option>' + clientProfiles.map(c => `<option value="${c.id}">${(c.nombre_completo || '').toUpperCase()} • ${c?.perfil_validado === true ? 'LISTO' : 'PENDIENTE'}</option>`).join('');
-        sel.innerHTML = '<option value="">-- Capturar manualmente --</option>' + clientProfiles.map(c => `<option value="${c.id}">${(c.nombre_completo || '').toUpperCase()} - ${isCpCatalogQuoteProfileReady(c) ? 'LISTO' : 'PENDIENTE'}</option>`).join('');
-        sel.onchange = () => { const id = sel.value; if (!id) { if (hid) hid.value = ''; return; } const c = clientProfilesById[id]; if (!c) return; if (!isCpCatalogQuoteProfileReady(c)) { if (hid) hid.value = ''; sel.value = ''; window.showToast?.('Este perfil aun no tiene permiso vigente para cotizar. Usa captura manual o pide al cliente completar su expediente.', 'info'); return; } if (hid) hid.value = id; const n = document.getElementById('cli-name'); const p = document.getElementById('cli-phone'); const e = document.getElementById('cli-email'); const r = document.getElementById('cli-rfc'); if (n) n.value = c.nombre_completo || ''; if (p) p.value = (c.telefono || ''); if (e) e.value = (c.correo || ''); if (r) r.value = (c.rfc || ''); };
-        const clearAssoc = () => { if (sel.value) sel.value = ''; if (hid) hid.value = ''; };['cli-name', 'cli-phone', 'cli-email', 'cli-rfc'].forEach(id => { const el = document.getElementById(id); if (el) el.addEventListener('input', clearAssoc); });
-    } catch (e) { console.warn("No se pudo cargar clientes", e); }
+        const { data, error } = await window.tenantPocketBase
+            .from('clientes')
+            .select('id,nombre_completo,telefono,correo,rfc,perfil_validado,perfil_estatus,expediente_validacion')
+            .order('nombre_completo', { ascending: true });
+        if (error) throw error;
+        clientProfiles = (data || []).slice().sort((a, b) => {
+            const aReady = isCpCatalogQuoteProfileReady(a) ? 1 : 0;
+            const bReady = isCpCatalogQuoteProfileReady(b) ? 1 : 0;
+            if (aReady !== bReady) return bReady - aReady;
+            return String(a?.nombre_completo || '').localeCompare(String(b?.nombre_completo || ''), 'es');
+        });
+        clientProfilesById = {};
+        clientProfiles.forEach((client) => { clientProfilesById[client.id] = client; });
+        sel.innerHTML = '<option value="">— Capturar manualmente —</option>' + clientProfiles
+            .map((client) => `<option value="${client.id}">${(client.nombre_completo || '').toUpperCase()} • ${isCpCatalogQuoteProfileReady(client) ? 'LISTO' : 'PENDIENTE'}</option>`)
+            .join('');
+        sel.onchange = () => {
+            const id = sel.value;
+            if (!id) {
+                if (hid) hid.value = '';
+                return;
+            }
+            const selected = clientProfilesById[id];
+            if (!selected) return;
+            if (!isCpCatalogQuoteProfileReady(selected)) {
+                if (hid) hid.value = '';
+                sel.value = '';
+                window.showToast?.('Este perfil aun no tiene permiso vigente para cotizar. Usa captura manual y se generara un perfil pendiente automaticamente.', 'info');
+                return;
+            }
+            if (hid) hid.value = id;
+            fillCpCatalogQuoteClientFields(selected);
+        };
+        const clearAssoc = () => {
+            if (sel.value) sel.value = '';
+            if (hid) hid.value = '';
+        };
+        ['cli-name', 'cli-phone', 'cli-email', 'cli-rfc'].forEach((id) => {
+            const el = document.getElementById(id);
+            if (!el || el.dataset.cpCatalogClientBound === '1') return;
+            el.dataset.cpCatalogClientBound = '1';
+            el.addEventListener('input', clearAssoc);
+        });
+    } catch (e) {
+        console.warn("No se pudo cargar clientes", e);
+    }
 }
 
 const PB_URL = window.HUB_CONFIG?.pocketbaseUrl || window.ENV?.POCKETBASE_URL || '';
@@ -811,7 +964,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     const profile = authCtx?.profile || await cpResolveCurrentUserProfile(session.user);
     const cachedRole = String(localStorage.getItem('hub_user_cache_role') || '').trim().toLowerCase();
-    const userRole = String(profile?.role || profile?.rol || cachedRole).toLowerCase().trim();
+    let userRole = String(profile?.role || profile?.rol || cachedRole).toLowerCase().trim();
+    if (typeof userRole.normalize === 'function') userRole = userRole.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    userRole = userRole.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    if (userRole === 'casadepiedra' || userRole === 'cp') userRole = 'casa_de_piedra';
+    if (userRole === 'plazamayor' || userRole === 'pm' || userRole === 'finanzas') userRole = 'plaza_mayor';
+    if (userRole === 'administrador' || userRole === 'superadmin' || userRole === 'super_admin') userRole = 'admin';
     const roleHasAccess = (userRole === 'admin') || (userRole === 'casa_de_piedra') || (userRole === 'verificador');
     if (userRole === 'admin' || userRole === 'verificador') myPermissions = { access: true, catalog_manage: true };
     else if (roleHasAccess) myPermissions = { access: true, catalog_manage: false };
@@ -892,6 +1050,10 @@ function renderSpaces(list) {
         let eTags = []; try { eTags = typeof s.etiquetas === 'string' ? JSON.parse(s.etiquetas) : (s.etiquetas || []); } catch (e) { }
         let tagsHtml = ''; if (eTags.length > 0) { tagsHtml = `<div class="flex gap-1 mb-2 flex-wrap">` + eTags.map(t => `<span class="bg-gray-100 text-gray-500 border border-gray-200 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase">${t}</span>`).join('') + `</div>`; }
 
+        const b2bConfig = getCpSpaceB2bConfig(s);
+        const isDigitalMedia = normalizeCpDigitalMediaConfig(b2bConfig.digital_media || b2bConfig.digitalMedia || b2bConfig.medio_digital || {}).enabled;
+        const digitalBadgeHtml = isDigitalMedia ? `<div class="absolute top-2 right-2 bg-blue-500 text-white text-[10px] font-bold px-2 py-1 rounded shadow-md z-30 flex items-center gap-1"><i class="fa-solid fa-desktop"></i> Digital</div>` : '';
+
         const editBtn = (myPermissions.catalog_manage && IS_CATALOG_ADMIN_PAGE) ? `<button onclick="event.stopPropagation(); window.openManagerModal('${String(s.id)}')" class="absolute top-3 right-3 bg-white/90 text-gray-700 p-2 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-all z-20"><i class="fa-solid fa-pen"></i></button>` : '';
         const actionBtn = IS_QUOTE_PAGE
             ? `<div class="border-t pt-3"><button onclick="event.stopPropagation(); window.openQuoteModal('${String(s.id)}')" class="bg-gray-900 text-white w-full py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide hover:bg-brand-red transition-colors duration-300 shadow-lg"><i class="fa-solid fa-calculator mr-2"></i> Cotizar Evento</button></div>`
@@ -908,10 +1070,11 @@ function renderSpaces(list) {
                  onmouseenter="window.startCardCarousel(this)" 
                  onmouseleave="window.stopCardCarousel(this)">
                 <div class="h-48 bg-gray-200 relative overflow-hidden">
-                    ${editBtn}
                     <div class="carousel-container absolute inset-0 transition-transform duration-700 group-hover:scale-110">
                         ${imgsHtml}
                     </div>
+                    ${editBtn}
+                    ${digitalBadgeHtml}
                     <div class="absolute bottom-3 left-4 text-white z-10 pointer-events-none">
                         <p class="text-[10px] font-bold uppercase tracking-wider bg-brand-red px-2 py-0.5 rounded inline-block mb-1">${s.tipo}</p>
                         <h3 class="font-bold text-lg leading-tight shadow-black drop-shadow-md">${s.nombre}</h3>
@@ -1315,8 +1478,14 @@ window.generatePDF = async function () {
         return window.showToast("Faltan asignar las fechas específicas del montaje.", "error");
     }
 
-    const cli = { name: document.getElementById('cli-name').value, rfc: document.getElementById('cli-rfc').value, phone: document.getElementById('cli-phone').value.trim(), email: document.getElementById('cli-email').value.trim() };
+    const cli = buildCpCatalogQuoteClientSnapshot();
     if (!cli.name) return window.showToast("Falta nombre del cliente", "error"); const phoneRegex = /^\d{10}$/; if (!phoneRegex.test(cli.phone)) return window.showToast("El teléfono debe tener 10 dígitos numéricos.", "error");
+    let quoteClientId = '';
+    try {
+        quoteClientId = await resolveCpCatalogQuoteClientId(cli);
+    } catch (clientErr) {
+        return window.showToast(clientErr?.message || 'No se pudo preparar el perfil del cliente.', 'error');
+    }
 
     window.updateQuoteCalculation(); const guests = parseInt(document.getElementById('q-guests').value) || 1;
     let b2b = {}; try { b2b = typeof currentSpace.config_b2b === 'string' ? JSON.parse(currentSpace.config_b2b) : (currentSpace.config_b2b || {}); } catch (ex) { }
@@ -1332,7 +1501,7 @@ window.generatePDF = async function () {
     adminSelectedConcepts.forEach(c => conceptosB2B.push(c));
 
     const auditSingle = await cpResolveQuoteActorAudit();
-    const payload = { cliente_id: (document.getElementById('cli-id') ? (document.getElementById('cli-id').value || null) : null), espacio_id: currentSpace.id, espacio_nombre: currentSpace.nombre, espacio_clave: currentSpace.clave, cliente_nombre: cli.name, cliente_rfc: cli.rfc, cliente_contacto: cli.phone, cliente_email: cli.email, fecha_inicio: document.getElementById('date-start').value, fecha_fin: document.getElementById('date-end').value, precio_final: currentPricing.final, desglose_precios: { subtotal_antes_impuestos: currentPricing.subtotal, impuestos_detalle: parseIds(currentSpace.impuestos_ids || currentSpace.impuestos), tax_total: currentPricing.taxes }, conceptos_adicionales: conceptosB2B, status: 'pendiente', creado_por: auditSingle.actorId || null, creado_por_nombre: auditSingle.actorName, modificado_por: auditSingle.actorId || null, modificado_por_nombre: auditSingle.actorName, personas: guests };
+    const payload = { cliente_id: quoteClientId || null, espacio_id: currentSpace.id, espacio_nombre: currentSpace.nombre, espacio_clave: currentSpace.clave, cliente_nombre: cli.name, cliente_rfc: cli.rfc, cliente_contacto: cli.phone, cliente_email: cli.email, fecha_inicio: document.getElementById('date-start').value, fecha_fin: document.getElementById('date-end').value, precio_final: currentPricing.final, desglose_precios: { subtotal_antes_impuestos: currentPricing.subtotal, impuestos_detalle: parseIds(currentSpace.impuestos_ids || currentSpace.impuestos), tax_total: currentPricing.taxes }, conceptos_adicionales: conceptosB2B, status: 'pendiente', creado_por: auditSingle.actorId || null, creado_por_nombre: auditSingle.actorName, modificado_por: auditSingle.actorId || null, modificado_por_nombre: auditSingle.actorName, personas: guests };
 
     const { error, id: createdQuoteId } = await cpCreateQuoteRecord(payload);
     if (error) {
@@ -1796,10 +1965,16 @@ window.generatePDF = async function () {
     const spaces = currentPricing.spaces || [];
     const invalidCapacity = spaces.find(sp => sp.capacityOk === false);
     if (invalidCapacity) return window.showToast(`El aforo para ${invalidCapacity.spaceName} excede su capacidad máxima.`, "error");
-    const cli = { name: document.getElementById('cli-name').value, rfc: document.getElementById('cli-rfc').value, phone: document.getElementById('cli-phone').value.trim(), email: document.getElementById('cli-email').value.trim() };
+    const cli = buildCpCatalogQuoteClientSnapshot();
     if (!cli.name) return window.showToast("Falta nombre del cliente", "error");
     const phoneRegex = /^\d{10}$/;
     if (!phoneRegex.test(cli.phone)) return window.showToast("El teléfono debe tener 10 dígitos numéricos.", "error");
+    let quoteClientId = '';
+    try {
+        quoteClientId = await resolveCpCatalogQuoteClientId(cli);
+    } catch (clientErr) {
+        return window.showToast(clientErr?.message || 'No se pudo preparar el perfil del cliente.', 'error');
+    }
     if (!spaces.length) return window.showToast("No hay espacios configurados.", "error");
     const quoteNameInput = document.getElementById('q-quote-name');
     const quoteNameRaw = (quoteNameInput?.value || '').trim();
@@ -1831,7 +2006,7 @@ window.generatePDF = async function () {
     const maxGuests = Math.max(...spaces.map(s => parseInt(s.guests, 10) || 0), 0);
     const taxIdsUnion = Array.from(new Set(spaces.flatMap(s => s.taxIds || []).map(x => String(x))));
     const auditMulti = await cpResolveQuoteActorAudit();
-    const payload = { cliente_id: (document.getElementById('cli-id') ? (document.getElementById('cli-id').value || null) : null), nombre_cotizacion: quoteName, espacio_id: first.spaceId, espacio_nombre: spaces.length === 1 ? first.spaceName : `${first.spaceName} + ${spaces.length - 1} espacio(s)`, espacio_clave: spaces.length === 1 ? first.spaceKey : 'MULTI', cliente_nombre: cli.name, cliente_rfc: cli.rfc, cliente_contacto: cli.phone, cliente_email: cli.email, fecha_inicio: minStart, fecha_fin: maxEnd, precio_final: currentPricing.final, desglose_precios: { subtotal_antes_impuestos: currentPricing.subtotal, impuestos_detalle: taxIdsUnion, tax_total: currentPricing.taxes, espacios: espaciosDetalle }, detalles_evento: { multi_espacio: spaces.length > 1, total_espacios: spaces.length, nombre_cotizacion: quoteName }, espacios_detalle: espaciosDetalle, conceptos_adicionales: conceptosB2B, status: 'pendiente', creado_por: auditMulti.actorId || null, creado_por_nombre: auditMulti.actorName, modificado_por: auditMulti.actorId || null, modificado_por_nombre: auditMulti.actorName, personas: maxGuests || 1 };
+    const payload = { cliente_id: quoteClientId || null, nombre_cotizacion: quoteName, espacio_id: first.spaceId, espacio_nombre: spaces.length === 1 ? first.spaceName : `${first.spaceName} + ${spaces.length - 1} espacio(s)`, espacio_clave: spaces.length === 1 ? first.spaceKey : 'MULTI', cliente_nombre: cli.name, cliente_rfc: cli.rfc, cliente_contacto: cli.phone, cliente_email: cli.email, fecha_inicio: minStart, fecha_fin: maxEnd, precio_final: currentPricing.final, desglose_precios: { subtotal_antes_impuestos: currentPricing.subtotal, impuestos_detalle: taxIdsUnion, tax_total: currentPricing.taxes, espacios: espaciosDetalle }, detalles_evento: { multi_espacio: spaces.length > 1, total_espacios: spaces.length, nombre_cotizacion: quoteName }, espacios_detalle: espaciosDetalle, conceptos_adicionales: conceptosB2B, status: 'pendiente', creado_por: auditMulti.actorId || null, creado_por_nombre: auditMulti.actorName, modificado_por: auditMulti.actorId || null, modificado_por_nombre: auditMulti.actorName, personas: maxGuests || 1 };
     const { error, id: createdQuoteId } = await cpCreateQuoteRecord(payload);
     if (error) {
         console.error(error);
@@ -1845,3 +2020,4 @@ window.generatePDF = async function () {
     const targetUrl = createdQuoteId ? `order_detail.html?quote=${encodeURIComponent(createdQuoteId)}` : 'orders.html';
     setTimeout(() => { cpNavigateSafely(targetUrl); }, 900);
 }
+

@@ -964,7 +964,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     const profile = authCtx?.profile || await cpResolveCurrentUserProfile(session.user);
     const cachedRole = String(localStorage.getItem('hub_user_cache_role') || '').trim().toLowerCase();
-    const userRole = String(profile?.role || profile?.rol || cachedRole).toLowerCase().trim();
+    let userRole = String(profile?.role || profile?.rol || cachedRole).toLowerCase().trim();
+    if (typeof userRole.normalize === 'function') userRole = userRole.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    userRole = userRole.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    if (userRole === 'casadepiedra' || userRole === 'cp') userRole = 'casa_de_piedra';
+    if (userRole === 'plazamayor' || userRole === 'pm' || userRole === 'finanzas') userRole = 'plaza_mayor';
+    if (userRole === 'administrador' || userRole === 'superadmin' || userRole === 'super_admin') userRole = 'admin';
     const roleHasAccess = (userRole === 'admin') || (userRole === 'casa_de_piedra') || (userRole === 'verificador');
     if (userRole === 'admin' || userRole === 'verificador') myPermissions = { access: true, catalog_manage: true };
     else if (roleHasAccess) myPermissions = { access: true, catalog_manage: false };
@@ -1045,6 +1050,10 @@ function renderSpaces(list) {
         let eTags = []; try { eTags = typeof s.etiquetas === 'string' ? JSON.parse(s.etiquetas) : (s.etiquetas || []); } catch (e) { }
         let tagsHtml = ''; if (eTags.length > 0) { tagsHtml = `<div class="flex gap-1 mb-2 flex-wrap">` + eTags.map(t => `<span class="bg-gray-100 text-gray-500 border border-gray-200 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase">${t}</span>`).join('') + `</div>`; }
 
+        const b2bConfig = getCpSpaceB2bConfig(s);
+        const isDigitalMedia = normalizeCpDigitalMediaConfig(b2bConfig.digital_media || b2bConfig.digitalMedia || b2bConfig.medio_digital || {}).enabled;
+        const digitalBadgeHtml = isDigitalMedia ? `<div class="absolute top-2 right-2 bg-blue-500 text-white text-[10px] font-bold px-2 py-1 rounded shadow-md z-30 flex items-center gap-1"><i class="fa-solid fa-desktop"></i> Digital</div>` : '';
+
         const editBtn = (myPermissions.catalog_manage && IS_CATALOG_ADMIN_PAGE) ? `<button onclick="event.stopPropagation(); window.openManagerModal('${String(s.id)}')" class="absolute top-3 right-3 bg-white/90 text-gray-700 p-2 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-all z-20"><i class="fa-solid fa-pen"></i></button>` : '';
         const actionBtn = IS_QUOTE_PAGE
             ? `<div class="border-t pt-3"><button onclick="event.stopPropagation(); window.openQuoteModal('${String(s.id)}')" class="bg-gray-900 text-white w-full py-2.5 rounded-lg text-xs font-bold uppercase tracking-wide hover:bg-brand-red transition-colors duration-300 shadow-lg"><i class="fa-solid fa-calculator mr-2"></i> Cotizar Evento</button></div>`
@@ -1061,10 +1070,11 @@ function renderSpaces(list) {
                  onmouseenter="window.startCardCarousel(this)" 
                  onmouseleave="window.stopCardCarousel(this)">
                 <div class="h-48 bg-gray-200 relative overflow-hidden">
-                    ${editBtn}
                     <div class="carousel-container absolute inset-0 transition-transform duration-700 group-hover:scale-110">
                         ${imgsHtml}
                     </div>
+                    ${editBtn}
+                    ${digitalBadgeHtml}
                     <div class="absolute bottom-3 left-4 text-white z-10 pointer-events-none">
                         <p class="text-[10px] font-bold uppercase tracking-wider bg-brand-red px-2 py-0.5 rounded inline-block mb-1">${s.tipo}</p>
                         <h3 class="font-bold text-lg leading-tight shadow-black drop-shadow-md">${s.nombre}</h3>

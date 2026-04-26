@@ -1157,7 +1157,8 @@
       throw new BadRequestError("No se encontro el archivo de " + label + ".");
     }
 
-    const originalName = sanitizeUploadName(file.originalName || file.name);
+    const rawName = file.originalName || file.OriginalName || file.name || file.Name || file.Filename || file.filename || "";
+    const originalName = sanitizeUploadName(rawName);
     if (!originalName) {
       throw new BadRequestError("El archivo de " + label + " debe conservar un nombre valido.");
     }
@@ -1174,9 +1175,18 @@
 
     const extension = fileExtension(originalName);
     var detectedMime = detectUploadedFileType(file);
+
+    if (!detectedMime && extension) {
+      if (extension === ".pdf") detectedMime = "application/pdf";
+      else if (extension === ".jpg" || extension === ".jpeg") detectedMime = "image/jpeg";
+      else if (extension === ".png") detectedMime = "image/png";
+      else if (extension === ".webp") detectedMime = "image/webp";
+    }
+
     const allowedExtensions = DOC_ALLOWED_EXTENSIONS[detectedMime] || [];
 
     if (!extension || !detectedMime || allowedExtensions.indexOf(extension) === -1) {
+      console.log("[client_profile] File validation failed for", label, "| Name:", originalName, "| Ext:", extension, "| Detected MIME:", detectedMime);
       throw new BadRequestError(
         "El archivo de " + label + " debe ser un PDF, JPG, PNG o WEBP valido y coincidir con su extension."
       );
@@ -1185,7 +1195,7 @@
       throw new BadRequestError("El archivo de " + label + " debe ser un PDF para poder extraer la fecha automaticamente.");
     }
 
-    const fileSize = Math.max(0, Number(file.size || 0) || 0);
+    const fileSize = Math.max(0, Number(file.size || file.Size || 0) || 0);
     if (!fileSize) {
       throw new BadRequestError("El archivo de " + label + " esta vacio.");
     }
@@ -2078,7 +2088,8 @@
     if (!tenant || !clientId || !field) return null;
     const collection = getCollectionByName("documentos");
     if (!collection) throw new BadRequestError("No se encontro el almacen de documentos.");
-    const originalName = sanitizeUploadName(uploadedFile.originalName || uploadedFile.name || definition.label || "documento.pdf");
+    const rawName = uploadedFile.originalName || uploadedFile.OriginalName || uploadedFile.name || uploadedFile.Name || uploadedFile.Filename || uploadedFile.filename || "";
+    const originalName = sanitizeUploadName(rawName || definition.label || "documento.pdf");
     const existing = findClientDocumentMirrorRecords(tenant, clientId, field);
     const ruta = buildClientDocumentMirrorPath(tenant, clientId, field, originalName);
     const target = existing.find(function (row) {

@@ -355,7 +355,12 @@ async function initClients() {
 }
 
 function resolvePermissions(profile) {
-    const role = String(profile?.role || '').toLowerCase().trim();
+    let role = String(profile?.role || '').toLowerCase().trim();
+    if (typeof role.normalize === 'function') role = role.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    role = role.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    if (role === 'casadepiedra' || role === 'cp') role = 'casa_de_piedra';
+    if (role === 'plazamayor' || role === 'pm' || role === 'finanzas') role = 'plaza_mayor';
+    if (role === 'administrador' || role === 'superadmin' || role === 'super_admin') role = 'admin';
     const roleHasAccess = role === 'admin' || role === 'casa_de_piedra';
     if (role === 'admin' || roleHasAccess) return { access: true, orders_edit: true };
     return {

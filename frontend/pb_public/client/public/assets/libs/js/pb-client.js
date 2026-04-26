@@ -368,7 +368,7 @@
     _tenantFilterParts() {
       const tenant = this.client.tenant;
       if (!tenant) return [];
-      if (this.collection === 'app_users' || this.collection === 'hub_notifications') return [];
+      if (this.collection === 'app_users' || this.collection === 'hub_notifications' || this.collection === 'clientes_dictamenes') return [];
       return ['tenant = ' + escapeFilterValue(tenant)];
     }
     _buildFilter() {
@@ -407,7 +407,7 @@
       let p = clone(payload);
       if (Array.isArray(p)) p = p[0];
       if (!isObject(p)) return p;
-      if (this.client.tenant && this.collection !== 'app_users' && this.collection !== 'hub_notifications' && !p.tenant) p.tenant = this.client.tenant;
+      if (this.client.tenant && this.collection !== 'app_users' && this.collection !== 'hub_notifications' && this.collection !== 'clientes_dictamenes' && !p.tenant) p.tenant = this.client.tenant;
       if (this.collection === 'app_users') {
         if (Object.prototype.hasOwnProperty.call(p, 'username')) { p.login_username = p.username; delete p.username; }
         if (Object.prototype.hasOwnProperty.call(p, 'default_tenant')) { p.tenant_default = p.default_tenant; delete p.default_tenant; }

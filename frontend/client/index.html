@@ -8,22 +8,22 @@
     <title>Marketing Hub - Plaza Mayor</title>
 
     <link rel="preload" as="script" href="../assets/libs/js/tailwindcss.js">
-    <script src="../assets/libs/js/tailwindcss.js"></script>
-    <link rel="preload" as="style" href="../assets/libs/css/all.min.css">
-    <link rel="stylesheet" href="../assets/libs/css/all.min.css">
-    <script src="./js/hub-config.js"></script>
-    <script src="./services/pb-core.js"></script>
-    <script src="./services/_shared.js"></script>
-    <script src="./services/auth.js"></script>
-    <script src="./services/security.js"></script>
-    <script src="./services/clientes.js"></script>
-    <script src="./services/conceptos.js"></script>
-    <script src="./services/configuracion.js"></script>
-    <script src="./services/impuestos.js"></script>
-    <script src="./services/espacios.js"></script>
-    <script src="./services/cotizaciones.js"></script>
-    <script src="./services/documentos.js"></script>
-    <script src="./services/pb-client.js"></script>
+    <script src="../assets/libs/js/tailwindcss.js?v=20260426-v3-digital-calendar"></script>
+    <link rel="preload" as="style" href="../assets/libs/css/all.min.css?v=20260426-v3-digital-calendar">
+    <link rel="stylesheet" href="../assets/libs/css/all.min.css?v=20260426-v3-digital-calendar">
+    <script src="./js/hub-config.js?v=20260426-v3-digital-calendar"></script>
+    <script src="./services/pb-core.js?v=20260426-v3-digital-calendar"></script>
+    <script src="./services/_shared.js?v=20260426-v3-digital-calendar"></script>
+    <script src="./services/auth.js?v=20260426-v3-digital-calendar"></script>
+    <script src="./services/security.js?v=20260426-v3-digital-calendar"></script>
+    <script src="./services/clientes.js?v=20260426-v3-digital-calendar"></script>
+    <script src="./services/conceptos.js?v=20260426-v3-digital-calendar"></script>
+    <script src="./services/configuracion.js?v=20260426-v3-digital-calendar"></script>
+    <script src="./services/impuestos.js?v=20260426-v3-digital-calendar"></script>
+    <script src="./services/espacios.js?v=20260426-v3-digital-calendar"></script>
+    <script src="./services/cotizaciones.js?v=20260426-v3-digital-calendar"></script>
+    <script src="./services/documentos.js?v=20260426-v3-digital-calendar"></script>
+    <script src="./services/pb-client.js?v=20260426-v3-digital-calendar"></script>
 
 
     <script>
@@ -199,8 +199,8 @@
         }
     </style>
     <!-- Local Animations -->
-    <link rel="preload" as="style" href="../assets/libs/css/animate.min.css">
-    <link rel="stylesheet" href="../assets/libs/css/animate.min.css">
+    <link rel="preload" as="style" href="../assets/libs/css/animate.min.css?v=20260426-v3-digital-calendar">
+    <link rel="stylesheet" href="../assets/libs/css/animate.min.css?v=20260426-v3-digital-calendar">
     <link rel="icon" type="image/png" href="../assets/img/logo.png">
 </head>
 
@@ -491,9 +491,13 @@
         }
 
         function normalizeDashboardRole(value) {
-            const role = String(value || '').toLowerCase().trim();
+            let role = String(value || '').toLowerCase().trim();
+            if (typeof role.normalize === 'function') role = role.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+            role = role.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
             if (role === 'administrador' || role === 'superadmin' || role === 'super_admin') return 'admin';
             if (role === 'ambos' || role === 'both' || role === 'user' || role === 'usuario') return '';
+            if (role === 'plaza_mayor' || role === 'plazamayor' || role === 'pm' || role === 'finanzas') return 'plaza_mayor';
+            if (role === 'casa_de_piedra' || role === 'casadepiedra' || role === 'cp') return 'casa_de_piedra';
             return role;
         }
 
@@ -513,6 +517,136 @@
             const path = String(module?.url_path || module?.path || module?.href || '').toLowerCase();
             const name = String(module?.name || module?.title || '').toLowerCase();
             return /(^|\/)control\.html(?:$|[?#])/.test(path) || name === 'control' || name === 'control operativo';
+        }
+
+        function getDashboardModuleKey(module) {
+            const rawPath = String(module?.url_path || module?.path || module?.href || '').toLowerCase().split('#')[0].split('?')[0];
+            const file = rawPath.split('/').pop() || '';
+            const name = String(module?.name || module?.title || '').toLowerCase();
+            if (file === 'catalog.html' || name.includes('catalog') || name.includes('precios')) return 'catalog';
+            if (file === 'orders.html' || name.includes('orden')) return 'orders';
+            if (file === 'cotizacion.html' || name.includes('cotiz')) return 'quote';
+            if (file === 'agenda.html' || file === 'calendar.html' || name.includes('agenda') || name.includes('calend')) return 'agenda';
+            if (file === 'contracts.html' || name.includes('contrato')) return 'contracts';
+            if (file === 'receipts.html' || name.includes('recibo')) return 'receipts';
+            if (file === 'invoices.html' || name.includes('factura')) return 'invoices';
+            if (file === 'reports.html' || name.includes('reporte')) return 'reports';
+            if (file === 'clientes.html' || name.includes('cliente')) return 'clients';
+            if (isControlDashboardModule(module)) return 'control';
+            if (rawPath.includes('/system/') || file === 'config.html' || name.includes('config')) return 'config';
+            return file || name;
+        }
+
+        function getDashboardFinanzasPermissions(profile) {
+            const fromLayout = window.currentUserPermissions && typeof window.currentUserPermissions === 'object'
+                ? window.currentUserPermissions
+                : null;
+            const fromProfile = profile?.app_metadata?.finanzas?.permissions;
+            return (fromProfile && typeof fromProfile === 'object') ? fromProfile : (fromLayout || null);
+        }
+
+        function hasExplicitDashboardPermission(perms, keys) {
+            if (!perms || typeof perms !== 'object') return null;
+            for (const key of keys) {
+                if (Object.prototype.hasOwnProperty.call(perms, key)) return !!perms[key];
+            }
+            return null;
+        }
+
+        function canShowDashboardApp(app, profile, role) {
+            const normalizedRole = normalizeDashboardRole(role || profile?.role || profile?.rol || '');
+            if (normalizedRole === 'admin') return true;
+            const perms = getDashboardFinanzasPermissions(profile);
+            const key = getDashboardModuleKey(app);
+            const accessFallback = !perms || perms.access !== false;
+
+            if (normalizedRole === 'verificador') {
+                return ['catalog', 'clients', 'control', 'config'].includes(key);
+            }
+
+            if (key === 'control' || key === 'config') return normalizedRole === 'verificador' || normalizedRole === 'admin';
+            if (key === 'clients') {
+                const explicit = hasExplicitDashboardPermission(perms, ['clients_view', 'clients_manage', 'clients_verify']);
+                return explicit === null ? accessFallback : explicit;
+            }
+            if (key === 'reports') {
+                const explicit = hasExplicitDashboardPermission(perms, ['reports_view']);
+                return explicit === null ? accessFallback : explicit;
+            }
+            if (key === 'catalog') {
+                const explicit = hasExplicitDashboardPermission(perms, ['catalog_view', 'catalog_manage']);
+                return explicit === null ? accessFallback : explicit;
+            }
+            if (['orders', 'quote', 'agenda', 'contracts', 'receipts', 'invoices'].includes(key)) {
+                const explicit = hasExplicitDashboardPermission(perms, ['orders_view']);
+                return explicit === null ? accessFallback : explicit;
+            }
+            return accessFallback;
+        }
+
+        async function filterDashboardAppsByAssignedModules(apps, role, profile) {
+            const normalizedRole = normalizeDashboardRole(role || profile?.role || profile?.rol || '');
+            if (normalizedRole === 'admin') return apps;
+
+            let roleData = null;
+            let allModules = null;
+            if (hubPocketBase && normalizedRole) {
+                try {
+                    const roleRes = await hubPocketBase.from('roles').select('allowed_modules').eq('name', normalizedRole).maybeSingle();
+                    roleData = roleRes?.data || null;
+                } catch (_) { }
+                try {
+                    const modulesRes = await hubPocketBase.from('modules').select('*').eq('active', true).order('orden', { ascending: true });
+                    allModules = modulesRes?.data || null;
+                } catch (_) { }
+            }
+
+            const allowedIds = Array.isArray(roleData?.allowed_modules) ? roleData.allowed_modules.map(id => Number(id)) : [];
+            const hasAssignedModules = allowedIds.includes('*') || allowedIds.length > 0;
+            const allowedKeys = new Set();
+            if (hasAssignedModules && Array.isArray(allModules)) {
+                allModules.forEach((module) => {
+                    if (allowedIds.includes('*') || allowedIds.includes(Number(module.id))) {
+                        allowedKeys.add(getDashboardModuleKey(module));
+                    }
+                });
+            }
+
+            return apps.filter((app) => {
+                if (!canShowDashboardApp(app, profile, normalizedRole)) return false;
+                const key = getDashboardModuleKey(app);
+                if (!hasAssignedModules) {
+                    if (normalizedRole === 'verificador') return ['catalog', 'clients', 'control', 'config'].includes(key);
+                    return true;
+                }
+                if (key === 'control') return allowedKeys.has('control') || canOpenControlFromDashboard(normalizedRole);
+                if (key === 'config') return allowedKeys.has('config') || normalizedRole === 'verificador';
+                return allowedKeys.has(key);
+            });
+        }
+
+        async function renderTenantSwitchDashboard(grid, profile, role, buildModulesFn, cardHTMLFn, options = {}) {
+            const activeTenant = resolveVerifierDashboardTenant(profile);
+            const activePrefix = activeTenant === 'casa_de_piedra' ? 'cotizadorcp' : 'cotizador';
+            const activeAccent = activeTenant === 'casa_de_piedra' ? 'cp' : 'red';
+            const includeClients = options.includeClients !== false;
+            const includeAdminTools = options.includeAdminTools === true;
+            const normalizedRole = normalizeDashboardRole(role || profile?.role || profile?.rol || '');
+
+            const modules = [
+                ...buildModulesFn(activePrefix, activeAccent)
+            ];
+
+            if (includeAdminTools) {
+                modules.push({ name: 'Control Operativo', description: 'Supervisión de bitácoras y reportes.', icon: 'fa-shield-halved', url_path: `${activePrefix}/control.html`, color: 'admin' });
+                modules.push({ name: 'Configuracion', description: 'Panel de administración general.', icon: 'fa-gear', url_path: 'system/config.html', color: 'admin' });
+            }
+
+            const allowedModules = await filterDashboardAppsByAssignedModules(modules, normalizedRole, profile);
+            grid.className = 'grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 md:gap-6 max-w-7xl mx-auto';
+            grid.innerHTML = buildVerifierDashboardSwitchHtml(profile, activeTenant);
+            allowedModules.forEach(app => grid.innerHTML += cardHTMLFn(app));
+            bindVerifierDashboardTenantSwitch(grid, async () => { await showDashboard(currentUser || profile || {}); });
         }
 
         function resolveDashboardControlPrefix(profile) {
@@ -619,7 +753,7 @@
 
         async function showDashboard(user) {
             // Carga silenciosa de layout.js para mantener la sesión global activa al navegar
-            if (!document.querySelector('script[src="./js/layout.js"]')) {
+            if (!document.querySelector('script[src="./js/layout.js?v=20260426-v3-digital-calendar"]')) {
                 const layoutScript = document.createElement('script');
                 layoutScript.src = "./js/layout.js";
                 document.body.appendChild(layoutScript);
@@ -637,7 +771,7 @@
             } else {
                 const resp = await hubPocketBase
                     .from('app_users')
-                    .select('role, username, allowed_tenants, tenant_default')
+                    .select('role, username, allowed_tenants, tenant_default, app_metadata')
                     .eq('id', user.id)
                     .single();
                 profileRecord = resp.data || null;
@@ -694,143 +828,137 @@
 
         async function loadApps(user, preloadedProfile) {
             const grid = document.getElementById('apps-grid');
-            if ((window.HUB_CONFIG && window.HUB_CONFIG.localMode) || useNativeAuth) {
-                const p = preloadedProfile || user || {};
-                let userRole = normalizeDashboardRole(p.role || p.rol || '');
-                const allowedTenants = Array.isArray(p.allowed_tenants)
-                    ? p.allowed_tenants.map(normalizeDashboardTenant).filter(Boolean)
-                    : ((userRole === 'admin' || userRole === 'verificador')
-                        ? ['plaza_mayor', 'casa_de_piedra']
-                        : ((userRole === 'plaza_mayor' || userRole === 'casa_de_piedra') ? [userRole] : []));
-                const isAdmin = userRole === 'admin';
-                const isVerifier = userRole === 'verificador';
+            const p = preloadedProfile || user || {};
+            let userRole = normalizeDashboardRole(p.role || p.rol || '');
+            const allowedTenants = Array.isArray(p.allowed_tenants)
+                ? p.allowed_tenants.map(normalizeDashboardTenant).filter(Boolean)
+                : ((userRole === 'admin' || userRole === 'verificador')
+                    ? ['plaza_mayor', 'casa_de_piedra']
+                    : ((userRole === 'plaza_mayor' || userRole === 'casa_de_piedra') ? [userRole] : []));
+            const isAdmin = userRole === 'admin';
+            const isVerifier = userRole === 'verificador';
 
-                const hasPM = isAdmin || allowedTenants.includes('plaza_mayor');
-                const hasCP = isAdmin || allowedTenants.includes('casa_de_piedra');
-                const defaultGridClass = 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6';
-                const dualGridClass = 'grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-6 max-w-5xl mx-auto';
+            const hasPM = isAdmin || allowedTenants.includes('plaza_mayor');
+            const hasCP = isAdmin || allowedTenants.includes('casa_de_piedra');
+            const defaultGridClass = 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6';
+            const dualGridClass = 'grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-6 max-w-5xl mx-auto';
 
-                const pmLogo = (window.HUB_CONFIG && window.HUB_CONFIG.companyLogoUrl) || '../assets/logo.png';
-                const cpLogo = (window.HUB_CONFIG && (window.HUB_CONFIG.companyLogoUrlCP || window.HUB_CONFIG.cpLogoUrl)) || '../assets/logocp.png';
+            const pmLogo = (window.HUB_CONFIG && window.HUB_CONFIG.companyLogoUrl) || '../assets/logo.png';
+            const cpLogo = (window.HUB_CONFIG && (window.HUB_CONFIG.companyLogoUrlCP || window.HUB_CONFIG.cpLogoUrl)) || '../assets/logocp.png';
 
-                function cardHTML(app) {
-                    const colorKey = app.color || 'gray';
-                    const isCPCard = colorKey === 'cp';
-                    const isAdminCard = colorKey === 'admin';
+            function cardHTML(app) {
+                const colorKey = app.color || 'gray';
+                const isCPCard = colorKey === 'cp';
+                const isAdminCard = colorKey === 'admin';
 
-                    const textColor = isAdminCard ? 'text-slate-600' : (isCPCard ? 'text-brand-cp' : getTextColorClass(colorKey));
-                    const bgColor = isAdminCard ? 'bg-slate-100' : (isCPCard ? 'bg-yellow-50' : getBgColorClass(colorKey));
-                    const cardClass = 'module-card ' + (isCPCard ? 'cp ' : '') + 'bg-white rounded-2xl p-6 relative overflow-hidden group cursor-pointer block' + (isAdminCard ? ' border border-slate-200' : '');
+                const textColor = isAdminCard ? 'text-slate-600' : (isCPCard ? 'text-brand-cp' : getTextColorClass(colorKey));
+                const bgColor = isAdminCard ? 'bg-slate-100' : (isCPCard ? 'bg-yellow-50' : getBgColorClass(colorKey));
+                const cardClass = 'module-card ' + (isCPCard ? 'cp ' : '') + 'bg-white rounded-2xl p-6 relative overflow-hidden group cursor-pointer block' + (isAdminCard ? ' border border-slate-200' : '');
 
-                    const logoFallback = isCPCard ? '../assets/logocp.png' : '../assets/logo.png';
-                    const iconHTML = app.logoUrl
-                        ? `<img src="${app.logoUrl}" alt="${app.name || ''}" class="h-8 object-contain" onerror="if(!this.dataset.fallback){this.dataset.fallback='1';this.src='${logoFallback}';return;} this.style.display='none';">`
-                        : `<i class="fa-solid ${app.icon || 'fa-cube'}"></i>`;
+                const logoFallback = isCPCard ? '../assets/logocp.png' : '../assets/logo.png';
+                const iconHTML = app.logoUrl
+                    ? `<img src="${app.logoUrl}" alt="${app.name || ''}" class="h-8 object-contain" onerror="if(!this.dataset.fallback){this.dataset.fallback='1';this.src='${logoFallback}';return;} this.style.display='none';">`
+                    : `<i class="fa-solid ${app.icon || 'fa-cube'}"></i>`;
 
-                    return `
-                                <a href="${app.url_path || '#'}" class="${cardClass}">
-                                    <div class="absolute -right-6 -bottom-6 w-24 h-24 rounded-full opacity-10 ${bgColor} group-hover:scale-150 transition-transform duration-500 ease-out"></div>
-                                    <div class="relative z-10 flex flex-col h-full justify-between">
-                                        <div>
-                                            <div class="flex justify-between items-start mb-6">
-                                                <div class="module-icon w-12 h-12 rounded-xl ${bgColor} flex items-center justify-center text-xl ${textColor}">${iconHTML}</div>
-                                            </div>
-                                            <h3 class="font-black text-lg text-gray-800 mb-2">${app.name || ''}</h3>
-                                            <p class="text-sm text-gray-500 font-medium leading-relaxed">${app.description || ''}</p>
+                return `
+                            <a href="${app.url_path || '#'}" class="${cardClass}">
+                                <div class="absolute -right-6 -bottom-6 w-24 h-24 rounded-full opacity-10 ${bgColor} group-hover:scale-150 transition-transform duration-500 ease-out"></div>
+                                <div class="relative z-10 flex flex-col h-full justify-between">
+                                    <div>
+                                        <div class="flex justify-between items-start mb-6">
+                                            <div class="module-icon w-12 h-12 rounded-xl ${bgColor} flex items-center justify-center text-xl ${textColor}">${iconHTML}</div>
                                         </div>
-                                        <div class="mt-6 flex items-center justify-between">
-                                            <span class="text-xs font-black uppercase tracking-widest ${textColor}">Abrir</span>
-                                            <i class="fa-solid fa-arrow-right text-gray-300 group-hover:text-gray-400 transition"></i>
+                                        <h3 class="font-black text-lg text-gray-800 mb-2">${app.name || ''}</h3>
+                                        <p class="text-sm text-gray-500 font-medium leading-relaxed">${app.description || ''}</p>
+                                    </div>
+                                    <div class="mt-6 flex items-center justify-between">
+                                        <span class="text-xs font-black uppercase tracking-widest ${textColor}">Abrir</span>
+                                        <i class="fa-solid fa-arrow-right text-gray-300 group-hover:text-gray-400 transition"></i>
+                                    </div>
+                                </div>
+                            </a>`;
+            }
+
+            function heroCardHTML(prefix, isCP) {
+                const textColor = isCP ? 'text-brand-cp' : 'text-brand-red';
+                const bgIcon = isCP ? 'bg-yellow-50' : 'bg-red-50';
+                const cardClass = 'module-card bg-white rounded-2xl p-5 relative overflow-hidden group cursor-pointer block';
+
+                return `
+                            <div class="col-span-full flex justify-center mb-2">
+                                <a href="${prefix}/cotizacion.html" class="${cardClass} w-full max-w-xl border border-gray-100/80 shadow-sm flex flex-row items-center gap-5 hover:-translate-y-1 transition-transform">
+                                    <div class="absolute -right-6 -bottom-6 w-24 h-24 rounded-full opacity-10 ${bgIcon} group-hover:scale-150 transition-transform duration-500 ease-out"></div>
+                                    <div class="relative z-10 w-12 h-12 rounded-xl ${bgIcon} flex items-center justify-center text-xl ${textColor} shadow-sm shrink-0">
+                                        <i class="fa-solid fa-file-invoice-dollar"></i>
+                                    </div>
+                                    <div class="relative z-10 flex-grow">
+                                        <h3 class="font-black text-lg text-gray-800 leading-tight mb-1 group-hover:${textColor} transition-colors">Crear Cotización</h3>
+                                        <p class="text-[11px] text-gray-500 font-medium leading-snug">Comenzar una nueva orden, selección de espacios y conceptos para presupuestos.</p>
+                                    </div>
+                                    <div class="relative z-10 shrink-0 opacity-50 group-hover:opacity-100 transition-opacity">
+                                        <div class="w-8 h-8 rounded-full border border-gray-200 flex items-center justify-center text-gray-400 group-hover:border-current group-hover:${textColor} transition-colors bg-white shadow-sm">
+                                            <i class="fa-solid fa-arrow-right -rotate-45 group-hover:rotate-0 transition-transform duration-300"></i>
                                         </div>
                                     </div>
-                                </a>`;
-                }
+                                </a>
+                            </div>`;
+            }
 
-                function heroCardHTML(prefix, isCP) {
-                    const textColor = isCP ? 'text-brand-cp' : 'text-brand-red';
-                    const bgIcon = isCP ? 'bg-yellow-50' : 'bg-red-50';
-                    const cardClass = 'module-card bg-white rounded-2xl p-5 relative overflow-hidden group cursor-pointer block';
+            const buildModules = (prefix, colorKey) => {
+                return [
+                    { name: 'Cotización', description: 'Crear y gestionar cotizaciones.', icon: 'fa-file-invoice-dollar', url_path: `${prefix}/cotizacion.html`, color: colorKey },
+                    { name: 'Clientes', description: 'Gestión de expedientes y documentos.', icon: 'fa-users', url_path: `${prefix}/clientes.html`, color: colorKey },
+                    { name: 'Catálogo', description: 'Catálogo y cotización de conceptos.', icon: 'fa-cart-shopping', url_path: `${prefix}/catalog.html`, color: colorKey },
+                    { name: 'Órdenes', description: 'Gestión de órdenes y seguimiento.', icon: 'fa-clipboard-list', url_path: `${prefix}/orders.html`, color: colorKey },
+                    { name: 'Agenda', description: 'Calendario y agenda de entregas.', icon: 'fa-calendar-days', url_path: `${prefix}/agenda.html`, color: colorKey },
+                    { name: 'Contratos', description: 'Plantillas y generación de contratos.', icon: 'fa-file-signature', url_path: `${prefix}/contracts.html`, color: colorKey },
+                    { name: 'Recibos', description: 'Recibos, constancias y control de pagos.', icon: 'fa-receipt', url_path: `${prefix}/receipts.html`, color: colorKey },
+                    { name: 'Facturas', description: 'Gestión de facturación y recibos.', icon: 'fa-file-invoice-dollar', url_path: `${prefix}/invoices.html`, color: colorKey },
+                    { name: 'Reportes', description: 'Reportes y métricas del cotizador.', icon: 'fa-chart-pie', url_path: `${prefix}/reports.html`, color: colorKey },
+                ];
+            };
 
-                    return `
-                                <div class="col-span-full flex justify-center mb-2">
-                                    <a href="${prefix}/cotizacion.html" class="${cardClass} w-full max-w-xl border border-gray-100/80 shadow-sm flex flex-row items-center gap-5 hover:-translate-y-1 transition-transform">
-                                        <div class="absolute -right-6 -bottom-6 w-24 h-24 rounded-full opacity-10 ${bgIcon} group-hover:scale-150 transition-transform duration-500 ease-out"></div>
-                                        <div class="relative z-10 w-12 h-12 rounded-xl ${bgIcon} flex items-center justify-center text-xl ${textColor} shadow-sm shrink-0">
-                                            <i class="fa-solid fa-file-invoice-dollar"></i>
-                                        </div>
-                                        <div class="relative z-10 flex-grow">
-                                            <h3 class="font-black text-lg text-gray-800 leading-tight mb-1 group-hover:${textColor} transition-colors">Crear Cotización</h3>
-                                            <p class="text-[11px] text-gray-500 font-medium leading-snug">Comenzar una nueva orden, selección de espacios y conceptos para presupuestos.</p>
-                                        </div>
-                                        <div class="relative z-10 shrink-0 opacity-50 group-hover:opacity-100 transition-opacity">
-                                            <div class="w-8 h-8 rounded-full border border-gray-200 flex items-center justify-center text-gray-400 group-hover:border-current group-hover:${textColor} transition-colors bg-white shadow-sm">
-                                                <i class="fa-solid fa-arrow-right -rotate-45 group-hover:rotate-0 transition-transform duration-300"></i>
-                                            </div>
-                                        </div>
-                                    </a>
-                                </div>`;
-                }
-
-                function buildModules(prefix, colorKey) {
-                    return [
-                        { name: 'Catálogo', description: 'Catálogo y cotización de conceptos.', icon: 'fa-cart-shopping', url_path: `${prefix}/catalog.html`, color: colorKey },
-                        { name: 'Órdenes', description: 'Gestión de órdenes y seguimiento.', icon: 'fa-clipboard-list', url_path: `${prefix}/orders.html`, color: colorKey },
-                        { name: 'Agenda', description: 'Calendario y agenda de entregas.', icon: 'fa-calendar-days', url_path: `${prefix}/agenda.html`, color: colorKey },
-                        { name: 'Contratos', description: 'Plantillas y generación de contratos.', icon: 'fa-file-signature', url_path: `${prefix}/contracts.html`, color: colorKey },
-                        { name: 'Recibos', description: 'Recibos, constancias y control de pagos.', icon: 'fa-receipt', url_path: `${prefix}/receipts.html`, color: colorKey },
-                        { name: 'Facturas', description: 'Gestión de facturación y recibos.', icon: 'fa-file-invoice-dollar', url_path: `${prefix}/invoices.html`, color: colorKey },
-                        { name: 'Reportes', description: 'Reportes y métricas del cotizador.', icon: 'fa-chart-pie', url_path: `${prefix}/reports.html`, color: colorKey },
-                    ];
-                }
-
+            if ((window.HUB_CONFIG && window.HUB_CONFIG.localMode) || useNativeAuth) {
                 grid.innerHTML = '';
-                grid.className = defaultGridClass;
                 if (isVerifier) {
                     const verifierTenant = resolveVerifierDashboardTenant(p);
                     const verifierPrefix = verifierTenant === 'casa_de_piedra' ? 'cotizadorcp' : 'cotizador';
                     const verifierAccent = verifierTenant === 'casa_de_piedra' ? 'cp' : 'red';
                     grid.className = 'grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 md:gap-6 max-w-7xl mx-auto';
                     const verifierCards = [
-                        { name: 'Precios', description: 'Catalogo y ajustes autorizados de la vista seleccionada.', icon: 'fa-tags', url_path: `${verifierPrefix}/catalog.html`, color: verifierAccent, logoUrl: verifierTenant === 'casa_de_piedra' ? cpLogo : pmLogo },
+                        { name: 'Catálogo', description: 'Catálogo y cotización de conceptos.', icon: 'fa-cart-shopping', url_path: `${verifierPrefix}/catalog.html`, color: verifierAccent },
                         { name: 'Clientes', description: 'Revision de expedientes, documentos y dictamenes de la vista activa.', icon: 'fa-users', url_path: `${verifierPrefix}/clientes.html`, color: verifierAccent },
                         { name: 'Control', description: 'Bitacora, responsables y supervision operativa.', icon: 'fa-shield-halved', url_path: `${verifierPrefix}/control.html`, color: 'admin' },
                         { name: 'Configuracion', description: 'Configuracion general permitida para verificacion.', icon: 'fa-gear', url_path: `system/config.html?tenant=${verifierTenant === 'casa_de_piedra' ? 'cp' : 'pm'}`, color: 'admin' },
                     ];
+                    const allowedVerifierCards = await filterDashboardAppsByAssignedModules(verifierCards, userRole, p);
                     grid.innerHTML = buildVerifierDashboardSwitchHtml(p, verifierTenant);
-                    verifierCards.forEach(app => grid.innerHTML += cardHTML(app));
+                    allowedVerifierCards.forEach(app => grid.innerHTML += cardHTML(app));
                     bindVerifierDashboardTenantSwitch(grid, async () => { await showDashboard(currentUser || user); });
                     return;
                 }
-                // Admin o perfiles con ambos tenants: muestra tarjetas de cotizadores; solo admin ve Control/Config.
                 if (isAdmin || (hasPM && hasCP)) {
-                    const cotizadores = [
-                        { name: 'Cotizador - Plaza Mayor', description: 'Acceso al cotizador de Plaza Mayor.', icon: 'fa-store', url_path: 'cotizador/catalog.html', color: 'red', logoUrl: pmLogo },
-                        { name: 'Cotizador - Casa de Piedra', description: 'Acceso al cotizador de Casa de Piedra.', icon: 'fa-gem', url_path: 'cotizadorcp/catalog.html', color: 'cp', logoUrl: cpLogo },
-                    ];
-                    if (isAdmin) {
-                        const adminPreferredTenant = String(p.tenant_default || p.default_tenant || '').toLowerCase().trim();
-                        const adminControlPrefix = adminPreferredTenant === 'casa_de_piedra' ? 'cotizadorcp' : 'cotizador';
-                        grid.className = 'grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 md:gap-6 max-w-7xl mx-auto';
-                        cotizadores.push({ name: 'Control Operativo', description: 'Supervisión independiente de bitácoras, responsables y reportes.', icon: 'fa-shield-halved', url_path: `${adminControlPrefix}/control.html`, color: 'admin' });
-                        cotizadores.push({ name: 'Configuracion', description: 'Panel de administracion: conceptos, impuestos, documentos y plantillas PDF.', icon: 'fa-gear', url_path: 'system/config.html', color: 'admin' });
-                    } else {
-                        grid.className = dualGridClass;
-                    }
-                    cotizadores.forEach(app => grid.innerHTML += cardHTML(app));
+                    await renderTenantSwitchDashboard(grid, p, userRole, buildModules, cardHTML, { includeClients: true, includeAdminTools: isAdmin });
+                    return;
+                }
+
+                // Perfiles con ambos tenants: usamos la vista de switch para elegir sede
+                if (hasPM && hasCP) {
+                    await renderTenantSwitchDashboard(grid, p, userRole, buildModules, cardHTML, { includeClients: true, includeAdminTools: false });
                     return;
                 }
 
                 // Solo Plaza Mayor: muestra módulos individuales con hero central
                 if (hasPM) {
                     grid.innerHTML = heroCardHTML('cotizador', false);
-                    buildModules('cotizador', 'red').forEach(app => grid.innerHTML += cardHTML(app));
+                    (await filterDashboardAppsByAssignedModules(buildModules('cotizador', 'red'), userRole, p)).forEach(app => grid.innerHTML += cardHTML(app));
                     return;
                 }
 
                 // Solo Casa de Piedra: muestra módulos individuales con hero central
                 if (hasCP) {
                     grid.innerHTML = heroCardHTML('cotizadorcp', true);
-                    buildModules('cotizadorcp', 'cp').forEach(app => grid.innerHTML += cardHTML(app));
+                    (await filterDashboardAppsByAssignedModules(buildModules('cotizadorcp', 'cp'), userRole, p)).forEach(app => grid.innerHTML += cardHTML(app));
                     return;
                 }
 
@@ -844,22 +972,22 @@
                 return;
             }
 
-            const profile = preloadedProfile || user || {};
-            const userRole = normalizeDashboardRole(profile?.role || profile?.rol || user?.role || user?.rol || '');
+            const profile = p;
             const userCanOpenControl = canOpenControlFromDashboard(userRole);
             if (userRole === 'verificador') {
                 const verifierTenant = resolveVerifierDashboardTenant(profile);
                 const verifierPrefix = verifierTenant === 'casa_de_piedra' ? 'cotizadorcp' : 'cotizador';
                 const verifierAccent = verifierTenant === 'casa_de_piedra' ? 'cp' : 'red';
                 const verifierModules = [
-                    { name: 'Precios', description: 'Catalogo y ajustes autorizados de la vista seleccionada.', icon: 'fa-solid fa-tags', url_path: `${verifierPrefix}/catalog.html`, color: verifierAccent },
+                    { name: 'Catálogo', description: 'Catálogo y cotización de conceptos.', icon: 'fa-solid fa-cart-shopping', url_path: `${verifierPrefix}/catalog.html`, color: verifierAccent },
                     { name: 'Clientes', description: 'Revision de expedientes, documentos y dictamenes de la vista activa.', icon: 'fa-solid fa-users', url_path: `${verifierPrefix}/clientes.html`, color: verifierAccent },
                     { name: 'Control', description: 'Bitacora, responsables y supervision operativa.', icon: 'fa-solid fa-shield-halved', url_path: `${verifierPrefix}/control.html`, color: 'gray' },
                     { name: 'Configuracion', description: 'Configuracion general permitida para verificacion.', icon: 'fa-solid fa-gear', url_path: `system/config.html?tenant=${verifierTenant === 'casa_de_piedra' ? 'cp' : 'pm'}`, color: 'gray' },
                 ];
+                const allowedVerifierModules = await filterDashboardAppsByAssignedModules(verifierModules, userRole, profile);
                 grid.className = 'grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 md:gap-6 max-w-7xl mx-auto';
                 grid.innerHTML = buildVerifierDashboardSwitchHtml(profile, verifierTenant);
-                verifierModules.forEach(app => {
+                allowedVerifierModules.forEach(app => {
                     const colorKey = app.color || 'gray';
                     const textColor = getTextColorClass(colorKey);
                     const bgColor = getBgColorClass(colorKey);
@@ -883,6 +1011,43 @@
                     </a>`;
                 });
                 bindVerifierDashboardTenantSwitch(grid, async () => { await showDashboard(currentUser || user); });
+                return;
+            }
+
+                if (userRole === 'admin' || (hasPM && hasCP)) {
+                    await renderTenantSwitchDashboard(grid, profile, userRole, buildModules, cardHTML, { includeClients: true, includeAdminTools: userRole === 'admin' });
+                    return;
+                }
+
+            const profileAllowedTenants = Array.isArray(profile?.allowed_tenants)
+                ? profile.allowed_tenants.map(normalizeDashboardTenant).filter(Boolean)
+                : [];
+            if (profileAllowedTenants.includes('plaza_mayor') && profileAllowedTenants.includes('casa_de_piedra')) {
+                await renderTenantSwitchDashboard(grid, profile, userRole, buildModules, (app) => {
+                    const colorKey = app.color || 'gray';
+                    const borderColor = getBorderColorClass(colorKey);
+                    const textColor = getTextColorClass(colorKey);
+                    const bgColor = getBgColorClass(colorKey);
+
+                    return `
+                <a href="${app.url_path || '#'}" class="module-card bg-white rounded-2xl p-6 relative overflow-hidden group cursor-pointer block">
+                    <div class="absolute -right-6 -bottom-6 w-24 h-24 rounded-full ${bgColor} opacity-50 group-hover:scale-150 transition-transform duration-500 ease-out"></div>
+                    <div class="relative z-10 flex flex-col h-full justify-between">
+                        <div class="flex justify-between items-start mb-6">
+                            <div class="module-icon w-12 h-12 rounded-xl ${bgColor} flex items-center justify-center text-xl ${textColor} transition-all duration-300 shadow-sm">
+                                <i class="${app.icon || 'fa-solid fa-cube'}"></i>
+                            </div>
+                            <div class="w-8 h-8 rounded-full border border-gray-100 flex items-center justify-center text-gray-300 group-hover:border-brand-red group-hover:text-brand-red transition-colors bg-white">
+                                <i class="fa-solid fa-arrow-right -rotate-45 group-hover:rotate-0 transition-transform duration-300"></i>
+                            </div>
+                        </div>
+                        <div>
+                            <h3 class="text-xl font-black text-gray-800 mb-2 leading-tight group-hover:text-brand-red transition-colors">${app.name || 'Sin Título'}</h3>
+                            <p class="text-xs text-gray-500 font-medium line-clamp-2 leading-relaxed">${app.description || 'Acceso directo al módulo del sistema.'}</p>
+                        </div>
+                    </div>
+                </a>`;
+                }, { includeClients: true, includeAdminTools: false });
                 return;
             }
 

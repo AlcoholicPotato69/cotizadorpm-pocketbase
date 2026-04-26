@@ -414,17 +414,8 @@
 
     async getProfile(userId) {
       if (!userId) return null;
-      try {
-        const result = await this.collection("app_users").list({
-          perPage: 1,
-          filter: "id = " + escapeFilterValue(userId)
-        });
-        const profile = result && Array.isArray(result.items) ? result.items[0] : null;
-        return normalizeUser(profile);
-      } catch (err) {
-        if (err && err.status === 404) return null;
-        throw err;
-      }
+      const profile = await this.collection("app_users").get(userId);
+      return normalizeUser(profile);
     }
 
     async createFileToken() {

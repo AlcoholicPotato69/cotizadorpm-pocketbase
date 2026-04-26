@@ -21,7 +21,6 @@ const FIN_SCHEMA = __isCP ? 'finanzas_casadepiedra' : ((window.HUB_CONFIG && win
 
 let allClients = [];
 let canManage = false;
-let canCreateClient = false;
 let canVerify = false;
 let canSeeAllDocuments = false;
 let currentClientRole = '';
@@ -42,38 +41,6 @@ const CLIENT_MISSING_FIELD_LABELS = {
   comprobante_domicilio_emitido_el: 'Fecha de comprobante de domicilio',
   dictamen_aprobado: 'Dictamen aprobado/guardado'
 };
-
-function humanizeClientDocumentField(field = '') {
-  return String(field || '')
-    .trim()
-    .replace(/^doc_custom_/, '')
-    .replace(/^doc_/, '')
-    .replace(/_+/g, ' ')
-    .replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
-}
-
-function resolveClientMissingFieldLabel(client, field) {
-  const key = String(field || '').trim();
-  if (!key) return '';
-  if (CLIENT_MISSING_FIELD_LABELS[key]) return CLIENT_MISSING_FIELD_LABELS[key];
-  if (/_fecha_documento$/.test(key)) {
-    const baseField = key.replace(/_fecha_documento$/, '');
-    const requirement = findClientDocumentRequirement(client, baseField);
-    const label = requirement?.label || humanizeClientDocumentField(baseField);
-    return `Fecha del documento: ${label}`;
-  }
-  if (/_aprobado$/.test(key)) {
-    const baseField = key.replace(/_aprobado$/, '');
-    const requirement = findClientDocumentRequirement(client, baseField);
-    const label = requirement?.label || humanizeClientDocumentField(baseField);
-    return `Aprobación administrativa: ${label}`;
-  }
-  if (/^doc_/.test(key)) {
-    const requirement = findClientDocumentRequirement(client, key);
-    return requirement?.label || humanizeClientDocumentField(key);
-  }
-  return key.replace(/_/g, ' ');
-}
 
 function cpClientsViewStateApi() {
   return window.__HUB_VIEW_STATE || null;
@@ -116,7 +83,7 @@ function cpClientsRestoreViewStateAfterRender(state = cpClientsReadViewState()) 
   }, 90);
 }
 
-function normalizeRoleName(value = '') {
+function normalizeRoleName(value='') {
   const raw = String(value || '').trim().toLowerCase();
   if (!raw) return '';
   if (raw === 'administrador' || raw === 'superadmin' || raw === 'super_admin') return 'admin';
@@ -148,7 +115,7 @@ async function fetchClientAccessContext(sessionUser) {
     try {
       const { data, error } = await window.globalPocketBase.from(table).select('*').eq(field, value).maybeSingle();
       if (!error && data) return data;
-    } catch (_) { }
+    } catch (_) {}
     return null;
   };
 
@@ -169,26 +136,26 @@ async function fetchClientAccessContext(sessionUser) {
       : {};
   const perms = (role === 'admin')
     ? {
-      access: true,
-      catalog_view: true,
-      orders_view: true,
-      reports_view: true,
-      clients_view: true,
-      clients_manage: true,
-      clients_verify: true,
-      clients_all_docs: true
-    }
-    : (role === 'verificador')
-      ? {
         access: true,
         catalog_view: true,
         orders_view: true,
-        reports_view: false,
+        reports_view: true,
         clients_view: true,
-        clients_manage: false,
+        clients_manage: true,
         clients_verify: true,
         clients_all_docs: true
       }
+    : (role === 'verificador')
+      ? {
+          access: true,
+          catalog_view: true,
+          orders_view: true,
+          reports_view: false,
+          clients_view: true,
+          clients_manage: false,
+          clients_verify: true,
+          clients_all_docs: true
+        }
       : { ...rawPerms };
   const canVerifyResolved = role === 'admin' || role === 'verificador';
   const canView = role === 'admin'
@@ -228,7 +195,6 @@ function installVerifierTenantNavigation(role) {
   if (normalizeRoleName(role || '') !== 'verificador') return;
   const navContainer = document.querySelector('nav .container');
   if (!navContainer) return;
-  if (navContainer.querySelector('[data-verifier-tenant-switch]')) return;
   navContainer.dataset.verifierTenantNav = 'true';
 
   const currentFile = currentClientPageFile();
@@ -251,17 +217,17 @@ function installVerifierTenantNavigation(role) {
   const switchHtml = allowedTenants.length > 1
     ? `<div class="ml-auto flex items-center gap-1 rounded-full bg-white/10 p-1 shadow-inner backdrop-blur">
         ${allowedTenants.map((tenantSlug) => {
-      const isActive = tenantSlug === currentTenant;
-      const label = tenantSlug === 'casa_de_piedra' ? 'Casa de Piedra' : 'Plaza Mayor';
-      const shortLabel = tenantSlug === 'casa_de_piedra' ? 'CP' : 'PM';
-      const classes = isActive
-        ? 'bg-white text-brand-red shadow-md'
-        : 'text-white/85 hover:bg-white/15';
-      const badgeClass = isActive
-        ? 'bg-brand-red text-white'
-        : 'bg-white/15 text-white';
-      return `<a href="${buildClientTenantPageHref(tenantSlug, currentFile)}" class="${classes} rounded-full px-3 py-1.5 text-[11px] font-black uppercase tracking-wider transition whitespace-nowrap flex items-center gap-2"><span class="${badgeClass} inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px]">${shortLabel}</span><span>${label}</span></a>`;
-    }).join('')}
+          const isActive = tenantSlug === currentTenant;
+          const label = tenantSlug === 'casa_de_piedra' ? 'Casa de Piedra' : 'Plaza Mayor';
+          const shortLabel = tenantSlug === 'casa_de_piedra' ? 'CP' : 'PM';
+          const classes = isActive
+            ? 'bg-white text-brand-red shadow-md'
+            : 'text-white/85 hover:bg-white/15';
+          const badgeClass = isActive
+            ? 'bg-brand-red text-white'
+            : 'bg-white/15 text-white';
+          return `<a href="${buildClientTenantPageHref(tenantSlug, currentFile)}" class="${classes} rounded-full px-3 py-1.5 text-[11px] font-black uppercase tracking-wider transition whitespace-nowrap flex items-center gap-2"><span class="${badgeClass} inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px]">${shortLabel}</span><span>${label}</span></a>`;
+        }).join('')}
       </div>`
     : '<div class="flex-grow"></div>';
 
@@ -284,7 +250,7 @@ function setAdminVerifierMode(enabled) {
   adminVerifierMode = false;
   try {
     localStorage.removeItem(ADMIN_VERIFIER_MODE_STORAGE_KEY);
-  } catch (_) { }
+  } catch (_) {}
 }
 
 function isAdminVerifierModeActive() {
@@ -298,10 +264,10 @@ function renderAdminVerifierModeBox() {
   if (box) box.remove();
 }
 
-function escapeHTML(str = '') {
-  return String(str).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+function escapeHTML(str='') {
+  return String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 }
-function escapeAttr(str = '') {
+function escapeAttr(str='') {
   return String(str)
     .replace(/&/g, '&amp;')
     .replace(/"/g, '&quot;')
@@ -310,186 +276,28 @@ function escapeAttr(str = '') {
     .replace(/\n/g, '&#10;');
 }
 
-function normalize(str = '') { return String(str).toLowerCase().trim(); }
-function formatMoney(v) { return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(parseFloat(v || 0) || 0); }
-function safeArray(v) {
+function normalize(str='') { return String(str).toLowerCase().trim(); }
+function formatMoney(v){ return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(parseFloat(v || 0) || 0); }
+function safeArray(v){
   if (!v) return [];
   if (Array.isArray(v)) return v;
   if (typeof v === 'string') {
-    try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch (e) { return []; }
+    try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch(e){ return []; }
   }
   return [];
 }
-function safeObject(v) {
+function safeObject(v){
   if (!v) return {};
   if (v && typeof v === 'object' && !Array.isArray(v)) return v;
   if (typeof v === 'string') {
     try {
       const p = JSON.parse(v);
       return p && typeof p === 'object' && !Array.isArray(p) ? p : {};
-    } catch (e) { return {}; }
+    } catch(e){ return {}; }
   }
   return {};
 }
-
-const CLIENT_CONTRACT_READY_TAG = 'puede_generar_contrato';
-
-function normalizeClientContractTag(value = '') {
-  const raw = String(value || '').trim().toLowerCase();
-  if (!raw) return '';
-  return raw
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '');
-}
-
-function collectClientContractTags(validation) {
-  const source = safeObject(validation);
-  const out = [];
-  const seen = new Set();
-  const pushTag = (value) => {
-    const tag = normalizeClientContractTag(value);
-    if (!tag || seen.has(tag)) return;
-    seen.add(tag);
-    out.push(tag);
-  };
-  ['contractTags', 'etiquetasContrato', 'etiquetas_contrato'].forEach((field) => {
-    safeArray(source[field]).forEach(pushTag);
-  });
-  pushTag(source.canGenerateContractTag);
-  pushTag(source.contractTag);
-  return out;
-}
-
-function hasClientContractEligibilityMetadata(validation) {
-  const source = safeObject(validation);
-  return [
-    'canGenerateContract',
-    'canGenerateContracts',
-    'canGenerateContractTag',
-    'contractTag',
-    'contractTags',
-    'etiquetasContrato',
-    'etiquetas_contrato'
-  ].some((field) => Object.prototype.hasOwnProperty.call(source, field));
-}
-
-function isClientContractEnabled(validation) {
-  const source = safeObject(validation);
-  if (source.canGenerateContract === true || source.canGenerateContracts === true) return true;
-  return collectClientContractTags(source).includes(CLIENT_CONTRACT_READY_TAG);
-}
-
-function buildLiveClientDictamenStatus(records = []) {
-  const rows = Array.isArray(records) ? records : [];
-  const summary = {
-    saved: false,
-    approved: false,
-    pending: false,
-    rejected: false,
-    total: 0,
-    latestId: '',
-    latestStatus: '',
-    latestApprovedAt: '',
-    latestReviewedAt: ''
-  };
-  let latestTs = 0;
-  rows.forEach((record) => {
-    const fileName = getClientDictamenPdfFileName(record);
-    if (!fileName) return;
-    const meta = getClientDictamenMeta(record);
-    const status = getClientDictamenApprovalStatus(record);
-    const ts = [
-      meta.generated_at,
-      meta.approved_at,
-      meta.reviewed_at,
-      record?.updated_at,
-      record?.updated,
-      record?.created_at,
-      record?.created
-    ].reduce((max, value) => {
-      const parsed = Date.parse(String(value || '').trim());
-      return Number.isNaN(parsed) ? max : Math.max(max, parsed);
-    }, 0);
-    summary.saved = true;
-    summary.total += 1;
-    if (status === 'aprobado') summary.approved = true;
-    else if (status === 'rechazado') summary.rejected = true;
-    else summary.pending = true;
-    if (!summary.latestId || ts >= latestTs) {
-      latestTs = ts;
-      summary.latestId = String(record?.id || '').trim();
-      summary.latestStatus = status;
-      summary.latestApprovedAt = String(meta.approved_at || '').trim();
-      summary.latestReviewedAt = String(meta.reviewed_at || '').trim();
-    }
-  });
-  return summary;
-}
-
-function getClientResolvedDictamenStatus(client) {
-  const validation = getClientValidation(client);
-  const validationDictamen = safeObject(validation.dictamen);
-  const liveDictamen = safeObject(client?.__dictamen_status_live);
-  return {
-    saved:
-      validation.readyForContracts === true ||
-      validation.dictamenGuardado === true ||
-      validationDictamen.saved === true ||
-      liveDictamen.saved === true,
-    approved:
-      validation.dictamenAprobado === true ||
-      validationDictamen.approved === true ||
-      liveDictamen.approved === true,
-    pending:
-      validation.dictamenPendiente === true ||
-      validationDictamen.pending === true ||
-      liveDictamen.pending === true,
-    rejected:
-      validationDictamen.rejected === true ||
-      liveDictamen.rejected === true,
-    total: Math.max(
-      Number(validationDictamen.total || 0) || 0,
-      Number(liveDictamen.total || 0) || 0
-    ),
-    latestStatus: String(liveDictamen.latestStatus || validationDictamen.latestStatus || '').trim()
-  };
-}
-
-async function attachClientsLiveDictamenStatus(clients = []) {
-  const rows = Array.isArray(clients) ? clients : [];
-  const ids = Array.from(new Set(rows.map((client) => String(client?.id || '').trim()).filter(Boolean)));
-  if (!ids.length || !window.tenantPocketBase) return rows;
-  const grouped = {};
-  try {
-    for (let index = 0; index < ids.length; index += 40) {
-      const chunk = ids.slice(index, index + 40);
-      const { data, error } = await window.tenantPocketBase
-        .from('clientes_dictamenes')
-        .select('id,cliente,pdf,metadata,created,created_at,updated,updated_at')
-        .in('cliente', chunk)
-        .order('updated_at', { ascending: false })
-        .limit(Math.max(400, chunk.length * 20));
-      if (error) throw error;
-      (Array.isArray(data) ? data : []).forEach((record) => {
-        const clientId = String(record?.cliente || '').trim();
-        if (!clientId) return;
-        if (!grouped[clientId]) grouped[clientId] = [];
-        grouped[clientId].push(record);
-      });
-    }
-    return rows.map((client) => ({
-      ...client,
-      __dictamen_status_live: buildLiveClientDictamenStatus(grouped[String(client?.id || '').trim()] || [])
-    }));
-  } catch (error) {
-    console.warn('No se pudo adjuntar el estado vivo de dictamenes:', error);
-    return rows;
-  }
-}
-
-function safeDate(v) {
+function safeDate(v){
   const s = normalizeStoredDate(v);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return '--';
   const p = s.split('-');
@@ -550,101 +358,11 @@ const CLIENT_DOC_REQUIREMENTS = [
     dateField: 'constancia_fiscal_emitida_el',
     requirements: [
       'Debe ser PDF oficial del SAT.',
-      'Se puede usar para cotizar durante 30 días a partir de la fecha de emisión detectada en el documento.',
+      'Se puede usar para cotizar durante 30 días a partir de la carga del archivo.',
       'RFC y razón social deben verse completos y legibles.'
     ]
   }
 ];
-const CLIENT_DOC_REQUIREMENTS_CONFIG_KEY = 'client_document_requirements';
-let clientDocumentRequirementsConfig = [];
-let clientDocumentRequirementsConfigLoaded = false;
-
-function normalizeClientDocumentRequirement(item) {
-  const source = item && typeof item === 'object' ? item : {};
-  const field = String(source.field || source.key || '').trim();
-  if (!field) return null;
-  const dateField = source.dateField || source.date_field
-    || (field === 'doc_constancia_fiscal' ? 'constancia_fiscal_emitida_el' : (field === 'doc_comprobante_domicilio' ? 'comprobante_domicilio_emitido_el' : ''));
-  return {
-    field,
-    key: field,
-    label: String(source.label || humanizeClientDocumentField(field)).trim(),
-    dateField: String(dateField || '').trim(),
-    requirements: Array.isArray(source.requirements) ? source.requirements : [],
-    requiredForProfile: source.requiredForProfile !== false,
-    requiredForContract: source.requiredForContract !== false,
-    requiresDate: source.requiresDate === true,
-    allowOmit: source.allowOmit !== false,
-    builtIn: source.builtIn === true,
-    custom: source.custom === true,
-    uploadField: String(source.uploadField || source.upload_field || field).trim(),
-    icon: String(source.icon || 'fa-solid fa-file-lines').trim(),
-    validityMode: String(source.validityMode || source.validity_mode || '').trim(),
-    validityDays: Number(source.validityDays || source.validity_days || 0) || 0,
-    validityMonths: Number(source.validityMonths || source.validity_months || 0) || 0
-  };
-}
-
-function mergeClientDocumentRequirements() {
-  const merged = new Map();
-  Array.from(arguments).forEach((group) => {
-    (Array.isArray(group) ? group : []).forEach((item) => {
-      const normalized = normalizeClientDocumentRequirement(item);
-      if (!normalized) return;
-      const existing = merged.get(normalized.field) || {};
-      merged.set(normalized.field, {
-        ...existing,
-        ...normalized,
-        requirements: normalized.requirements.length ? normalized.requirements : (existing.requirements || [])
-      });
-    });
-  });
-  return Array.from(merged.values());
-}
-
-function extractClientDocumentRequirementsFromConfig(row) {
-  const docs = Array.isArray(row?.valor_json?.documents) ? row.valor_json.documents : [];
-  return docs
-    .filter((item) => item && item.enabled !== false && (item.requiredForProfile !== false || item.requiredForContract !== false))
-    .map(normalizeClientDocumentRequirement)
-    .filter(Boolean);
-}
-
-async function loadClientDocumentRequirementsConfig() {
-  if (clientDocumentRequirementsConfigLoaded) return clientDocumentRequirementsConfig;
-  clientDocumentRequirementsConfigLoaded = true;
-  try {
-    if (!window.tenantPocketBase) return clientDocumentRequirementsConfig;
-    const { data, error } = await window.tenantPocketBase
-      .from('configuracion')
-      .select('id,tenant,clave,valor_json,updated_at')
-      .eq('clave', CLIENT_DOC_REQUIREMENTS_CONFIG_KEY)
-      .order('updated_at', { ascending: false })
-      .limit(20);
-    if (error) throw error;
-    const rows = Array.isArray(data) ? data : (data ? [data] : []);
-    const row = rows.find((item) => String(item?.tenant || '').trim() === CLIENT_TENANT_SLUG) || rows[0] || null;
-    clientDocumentRequirementsConfig = extractClientDocumentRequirementsFromConfig(row);
-  } catch (err) {
-    console.warn('[clientes] No se pudo cargar la configuracion de documentos del cliente:', err);
-    clientDocumentRequirementsConfig = [];
-  }
-  return clientDocumentRequirementsConfig;
-}
-
-function getClientDocumentRequirements(client = null) {
-  const validation = safeObject(client?.expediente_validacion);
-  const fromValidation = Array.isArray(validation.documentRequirements)
-    ? validation.documentRequirements.map(normalizeClientDocumentRequirement).filter(Boolean)
-    : [];
-  return mergeClientDocumentRequirements(CLIENT_DOC_REQUIREMENTS, clientDocumentRequirementsConfig, fromValidation);
-}
-
-function findClientDocumentRequirement(client, field) {
-  const target = String(field || '').trim();
-  return getClientDocumentRequirements(client).find((item) => item.field === target) || null;
-}
-
 const CLIENT_QUOTE_DOC_FIELDS = [
   { field: 'cotizacion_final_file', urlField: 'url_cotizacion_final', label: 'Cotizacion aprobada', fallback: 'cotizacion_aprobada.pdf' },
   { field: 'orden_compra_file', urlField: 'url_orden_compra', label: 'Orden de compra', fallback: 'orden_compra.pdf' },
@@ -661,32 +379,7 @@ const CLIENT_COMPROBANTE_VALIDITY_DAYS = 'calendar_months:3';
 const CLIENT_COMPROBANTE_WARNING_DAYS = 30;
 const CLIENT_COMPROBANTE_CRITICAL_DAYS = 14;
 
-function getClientDocumentValidityConfig(field, client = null) {
-  const requirement = findClientDocumentRequirement(client, field);
-  if (requirement) {
-    if (String(requirement.validityMode || '').toLowerCase() === 'calendar_months' || Number(requirement.validityMonths) > 0) {
-      return {
-        validDays: `calendar_months:${Number(requirement.validityMonths) || 3}`,
-        warningDays: 30,
-        criticalDays: 14
-      };
-    }
-    if (Number(requirement.validityDays) > 0) {
-      const validDays = Math.max(1, Number(requirement.validityDays) || 0);
-      return {
-        validDays,
-        warningDays: Math.min(30, validDays),
-        criticalDays: Math.min(14, validDays)
-      };
-    }
-    if (requirement.requiresDate) {
-      return {
-        validDays: 'date_only',
-        warningDays: 0,
-        criticalDays: 0
-      };
-    }
-  }
+function getClientDocumentValidityConfig(field) {
   if (field === 'doc_constancia_fiscal') {
     return {
       validDays: CLIENT_CONSTANCIA_VALIDITY_DAYS,
@@ -708,22 +401,34 @@ function getClientDocumentValidityConfig(field, client = null) {
   };
 }
 
-function getClientDocumentValidityDays(field, client = null) {
-  return getClientDocumentValidityConfig(field, client).validDays;
+function getClientDocumentValidityDays(field) {
+  return getClientDocumentValidityConfig(field).validDays;
 }
 
 function getClientDocumentValidityReferenceDate(client, field) {
   const validation = safeObject(client?.expediente_validacion);
   const documents = safeObject(validation.documents);
   const currentDoc = safeObject(documents[field]);
-  const validationDate = normalizeStoredDate(currentDoc.fechaDocumento || currentDoc.fecha_documento || currentDoc.validityDate);
+  const states = safeObject(client?.documentos_estado);
+  const currentState = safeObject(states[field]);
+  const activityDate = normalizeStoredDate(
+    currentState.subido_at
+    || currentDoc.subidoAt
+    || currentDoc.subido_at
+    || currentState.aprobado_at
+    || currentDoc.aprobadoAt
+    || currentState.revisado_at
+    || currentDoc.revisadoAt
+    || client?.created_at
+    || client?.created
+  );
   if (field === 'doc_constancia_fiscal') {
-    return getClientValidationDate(client, 'constancia_fiscal_emitida_el') || validationDate;
+    return activityDate || getClientValidationDate(client, 'constancia_fiscal_emitida_el');
   }
   if (field === 'doc_comprobante_domicilio') {
-    return getClientValidationDate(client, 'comprobante_domicilio_emitido_el') || validationDate;
+    return getClientValidationDate(client, 'comprobante_domicilio_emitido_el') || activityDate;
   }
-  return validationDate;
+  return activityDate;
 }
 
 function hasClientDocumentFile(client, field, documents = safeObject(getClientValidation(client).documents)) {
@@ -772,12 +477,6 @@ function calcDocumentValidity(dateValue, validDays = CLIENT_DOC_VALIDITY_DAYS, w
   if (!normalized) return { status: 'missing', daysLeft: null, date: '' };
   const issued = new Date(`${normalized}T00:00:00Z`);
   if (Number.isNaN(issued.getTime())) return { status: 'missing', daysLeft: null, date: '' };
-  if (specialMode === 'date_only') {
-    const now = new Date();
-    const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-    if (issued.getTime() > todayUtc.getTime()) return { status: 'expired', daysLeft: -1, date: normalized, expiry: '', mode: 'date_only' };
-    return { status: 'ok', daysLeft: null, date: normalized, expiry: '', mode: 'date_only' };
-  }
   const safeValidDays = Math.max(0, Number(validDays) || 0);
   const safeWarningDays = Math.max(0, Math.min(safeValidDays, Number(warningDays) || 0));
   const safeCriticalDays = Math.max(0, Math.min(safeWarningDays || safeValidDays, Number(criticalDays) || 0));
@@ -800,9 +499,7 @@ function isDocumentOmitted(docState = {}, validationState = {}) {
     || String(validationState?.estado || '').trim().toLowerCase() === 'omitido';
 }
 
-function canClientDocumentBeOmitted(field = '', client = null) {
-  const req = findClientDocumentRequirement(client || verifCurrentClient || null, field);
-  if (req) return req.allowOmit !== false;
+function canClientDocumentBeOmitted(field = '') {
   return String(field || '').trim() !== 'doc_constancia_fiscal';
 }
 
@@ -911,12 +608,10 @@ function bindClientInfoModal() {
 
 function getDocumentTrafficMeta(label, dateValue, validDays = CLIENT_DOC_VALIDITY_DAYS, warningDays = 30, criticalDays = 14) {
   const traffic = calcDocumentValidity(dateValue, validDays, warningDays, criticalDays);
-  const base = { status: traffic.status, text: `${label}: fecha pendiente`, title: `${label}: falta una fecha legible para calcular vigencia.`, classes: 'bg-slate-100 text-slate-600', icon: 'fa-calendar-xmark' };
-  if (traffic.status === 'expired' && traffic.mode === 'date_only') return { ...base, text: `${label}: fecha inválida`, title: `${label}: la fecha detectada es futura o inválida.`, classes: 'bg-red-100 text-red-700', icon: 'fa-triangle-exclamation' };
+  const base = { status: traffic.status, text: `${label}: sin fecha detectada`, title: `${label}: sin fecha detectada`, classes: 'bg-slate-100 text-slate-600', icon: 'fa-calendar-xmark' };
   if (traffic.status === 'expired') return { ...base, text: `${label}: vencido hace ${Math.abs(traffic.daysLeft)} día(s)`, title: `${label} emitido el ${safeDate(traffic.date)}. Vencido hace ${Math.abs(traffic.daysLeft)} día(s).`, classes: 'bg-red-100 text-red-700', icon: 'fa-circle-xmark' };
   if (traffic.status === 'critical') return { ...base, text: `${label}: vence en ${traffic.daysLeft} día(s)`, title: `${label} emitido el ${safeDate(traffic.date)}. Vence en ${traffic.daysLeft} día(s).`, classes: 'bg-orange-100 text-orange-700', icon: 'fa-triangle-exclamation' };
   if (traffic.status === 'warning') return { ...base, text: `${label}: vence en ${traffic.daysLeft} día(s)`, title: `${label} emitido el ${safeDate(traffic.date)}. Vence en ${traffic.daysLeft} día(s).`, classes: 'bg-amber-100 text-amber-700', icon: 'fa-clock' };
-  if (traffic.status === 'ok' && traffic.mode === 'date_only') return { ...base, text: `${label}: fecha detectada`, title: `${label} fechado el ${safeDate(traffic.date)}.`, classes: 'bg-emerald-100 text-emerald-700', icon: 'fa-circle-check' };
   if (traffic.status === 'ok') return { ...base, text: `${label}: ${traffic.daysLeft} día(s) restantes`, title: `${label} emitido el ${safeDate(traffic.date)}. Vigente por ${traffic.daysLeft} día(s) más.`, classes: 'bg-emerald-100 text-emerald-700', icon: 'fa-circle-check' };
   return base;
 }
@@ -935,13 +630,12 @@ function summarizeClientDocuments(client) {
   const documents = safeObject(validation.documents);
   const estados = safeObject(client?.documentos_estado);
   const rawStatus = String(client?.perfil_estatus || validation.status || '').trim().toLowerCase();
-  const constanciaValidity = getClientDocumentValidityConfig('doc_constancia_fiscal', client);
-  const comprobanteValidity = getClientDocumentValidityConfig('doc_comprobante_domicilio', client);
-  const requirements = getClientDocumentRequirements(client);
+  const constanciaValidity = getClientDocumentValidityConfig('doc_constancia_fiscal');
+  const comprobanteValidity = getClientDocumentValidityConfig('doc_comprobante_domicilio');
   const summary = {
     uploadedCount: 0,
     coveredCount: 0,
-    totalCount: requirements.length,
+    totalCount: CLIENT_DOC_REQUIREMENTS.length,
     missingDocs: [],
     pendingDocs: [],
     rejectedDocs: [],
@@ -966,7 +660,7 @@ function summarizeClientDocuments(client) {
     comprobanteOmitted: false
   };
 
-  requirements.forEach((doc) => {
+  CLIENT_DOC_REQUIREMENTS.forEach((doc) => {
     const docState = safeObject(estados[doc.field]);
     const validationState = safeObject(documents[doc.field]);
     const uploaded = hasClientDocumentFile(client, doc.field, documents);
@@ -974,16 +668,16 @@ function summarizeClientDocuments(client) {
     const refreshMeta = getDocumentRefreshMeta(docState, validationState);
     const status = String(docState.status || validationState.estado || '').trim().toLowerCase();
     const reason = String(docState.motivo || validationState.motivo || '').trim();
-    const traffic = (doc.dateField || doc.requiresDate)
+    const traffic = doc.dateField
       ? (() => {
-        const validity = getClientDocumentValidityConfig(doc.field, client);
-        return calcDocumentValidity(
-          getClientDocumentValidityReferenceDate(client, doc.field),
-          validity.validDays,
-          validity.warningDays,
-          validity.criticalDays
-        );
-      })()
+          const validity = getClientDocumentValidityConfig(doc.field);
+          return calcDocumentValidity(
+            getClientDocumentValidityReferenceDate(client, doc.field),
+            validity.validDays,
+            validity.warningDays,
+            validity.criticalDays
+          );
+        })()
       : null;
 
     if (uploaded || omitted) summary.coveredCount += 1;
@@ -1069,7 +763,7 @@ function getClientValidationMissingFields(client) {
     ? validation.missingFields
     : (Array.isArray(validation.missing_fields) ? validation.missing_fields : []);
   return raw
-    .map((field) => resolveClientMissingFieldLabel(client, field))
+    .map((field) => CLIENT_MISSING_FIELD_LABELS[String(field || '').trim()] || String(field || '').trim().replace(/_/g, ' '))
     .filter(Boolean);
 }
 
@@ -1079,7 +773,7 @@ function getClientContractMissingFields(client) {
     ? validation.contractMissingFields
     : (Array.isArray(validation.contract_missing_fields) ? validation.contract_missing_fields : []);
   return raw
-    .map((field) => resolveClientMissingFieldLabel(client, field))
+    .map((field) => CLIENT_MISSING_FIELD_LABELS[String(field || '').trim()] || String(field || '').trim().replace(/_/g, ' '))
     .filter(Boolean);
 }
 
@@ -1161,12 +855,12 @@ function getClientStatusMeta(client, summary = summarizeClientDocuments(client))
     detail: summary.updatedDocs.length
       ? 'Documento actualizado, pendiente de validación manual.'
       : (summary.pendingDocs.length
-        ? `Hay ${summary.pendingDocs.length} documento(s) en revisión por administración.`
-        : (summary.missingDocs.length
-          ? `Faltan ${summary.missingDocs.length} documento(s) por revisar o cargar.`
-          : (missingFieldLabels.length
-            ? `${summary.coveredCount === summary.totalCount ? 'Documentos aprobados por administración, pero faltan datos del expediente: ' : 'Faltan datos del expediente: '}${missingFieldLabels.join(', ')}.`
-            : 'Pendiente de validación manual.'))),
+          ? `Hay ${summary.pendingDocs.length} documento(s) en revisión por administración.`
+          : (summary.missingDocs.length
+              ? `Faltan ${summary.missingDocs.length} documento(s) por revisar o cargar.`
+              : (missingFieldLabels.length
+                  ? `${summary.coveredCount === summary.totalCount ? 'Documentos aprobados por administración, pero faltan datos del expediente: ' : 'Faltan datos del expediente: '}${missingFieldLabels.join(', ')}.`
+                  : 'Pendiente de validación manual.'))),
     cardColorClass: 'border-amber-400 bg-amber-50',
     tooltip: getClientPendingTooltip(client, summary, missingFieldLabels),
     canQuote: false
@@ -1175,30 +869,19 @@ function getClientStatusMeta(client, summary = summarizeClientDocuments(client))
 
 function getClientContractStatusMeta(client, summary = summarizeClientDocuments(client), quoteStatus = getClientStatusMeta(client, summary)) {
   const validation = getClientValidation(client);
-  const dictamen = getClientResolvedDictamenStatus(client);
   const contractMissing = getClientContractMissingFields(client);
   const quoteReady = quoteStatus.canQuote === true;
-  const hasEligibilityMetadata = hasClientContractEligibilityMetadata(validation);
-  const legacyContractReady =
+  const hasDictamen =
     validation.readyForContracts === true ||
-    validation.dictamenAprobado === true ||
-    validation.dictamenGuardado === true ||
-    dictamen.saved === true ||
-    dictamen.approved === true;
-  const hasContractTag = isClientContractEnabled(validation);
-  const canContract = quoteReady && (hasContractTag || (!hasEligibilityMetadata && legacyContractReady));
+    validation.dictamenAprobado === true;
+  const canContract = quoteReady && hasDictamen;
 
   if (canContract) {
-    const enabledByTag = hasContractTag;
     return {
       label: 'Listo para contrato',
       badgeClass: 'bg-emerald-100 text-emerald-700',
-      detail: enabledByTag
-        ? 'El perfil ya tiene la etiqueta para generar contratos.'
-        : 'Dictamen detectado; el perfil puede generar contratos por compatibilidad.',
-      tooltip: enabledByTag
-        ? 'Expediente validado con la etiqueta que habilita generar contrato.'
-        : 'Solo se usa compatibilidad cuando el perfil no trae metadatos modernos de contrato.',
+      detail: 'Puede generar contratos con este expediente.',
+      tooltip: 'Expediente validado y dictamen disponible para contrato.',
       canContract: true
     };
   }
@@ -1217,9 +900,6 @@ function getClientContractStatusMeta(client, summary = summarizeClientDocuments(
   } else if (validation.dictamenDesactualizado === true) {
     detail = 'El dictamen ya no corresponde al expediente vigente.';
     tooltipLines.push('Genera o aprueba un nuevo dictamen con los documentos actuales.');
-  } else if (hasEligibilityMetadata) {
-    detail = 'El perfil todavia no obtiene la etiqueta para generar contrato.';
-    tooltipLines.push('La opcion se habilita cuando el perfil obtiene la etiqueta "puede_generar_contrato".');
   } else {
     detail = 'Falta guardar o aprobar el dictamen del cliente.';
     tooltipLines.push('Falta guardar o aprobar el dictamen del cliente.');
@@ -1280,7 +960,7 @@ function getAuthToken() {
       const parsed = JSON.parse(raw);
       const token = String(parsed?.token || parsed?.access_token || '').trim();
       if (token) return token;
-    } catch (_) { }
+    } catch (_) {}
   }
   return '';
 }
@@ -1295,7 +975,7 @@ async function fetchServerNowIso() {
     const data = await resp.json();
     const now = String(data?.now || '').trim();
     if (now && !Number.isNaN(new Date(now).getTime())) return now;
-  } catch (_) { }
+  } catch (_) {}
   return new Date().toISOString();
 }
 
@@ -1320,17 +1000,16 @@ async function getSignedFileUrl(collection, recordId, filename) {
   }
 }
 
-async function openClientProfileFile(client, field, label = 'documento') {
+async function openClientProfileFile(client, field, label='documento') {
   if (!canAccessClientDocumentFile(client, field)) {
     return window.showToast?.('Solo un verificador puede abrir documentos pendientes o en revision.', 'error');
   }
-  const docInfo = getVerificationDocState(client, field);
-  const filename = docInfo.fileName || '';
-  const id = String(docInfo.fileRecordId || client?.id || '').trim();
-  const collection = String(docInfo.fileCollection || 'clientes').trim() || 'clientes';
+  const value = client?.[field];
+  const filename = Array.isArray(value) ? value[0] : value;
+  const id = String(client?.id || '').trim();
   if (!id || !filename) return window.showToast?.(`No se encontró ${label}.`, 'error');
   try {
-    const url = await getSignedFileUrl(collection, id, String(filename));
+    const url = await getSignedFileUrl('clientes', id, String(filename));
     if (!url) return window.showToast?.(`No se encontró ${label}.`, 'error');
     window.open(url, '_blank', 'noopener,noreferrer');
   } catch (_) {
@@ -1362,7 +1041,7 @@ function buildClientQuoteFolio(row) {
   return rawId ? `CP-${rawId.slice(0, 6)}` : 'CP-PEND';
 }
 
-function normalizePdfNoteDocType(value = '') {
+function normalizePdfNoteDocType(value='') {
   const raw = normalize(value);
   if (['cotizacion', 'cotización', 'quote', 'borrador', 'draft_quote'].includes(raw)) return 'cotizacion';
   if (['orden', 'order', 'orden_compra', 'purchase_order', 'orden de compra'].includes(raw)) return 'orden';
@@ -1376,7 +1055,7 @@ function getQuotePdfNotes(row, docType) {
   return [];
 }
 
-function formatPdfNoteDate(value = '') {
+function formatPdfNoteDate(value='') {
   const stamp = String(value || '').trim();
   if (!stamp) return 'Sin fecha registrada';
   const parsed = new Date(stamp);
@@ -1445,26 +1124,26 @@ function renderClients(list) {
           <span class="text-[11px] font-semibold break-all leading-5">${escapeHTML(additionalEmails.join(' • '))}</span>
         </div>`
       : '';
-    const constanciaValidity = getClientDocumentValidityConfig('doc_constancia_fiscal', c);
-    const comprobanteValidity = getClientDocumentValidityConfig('doc_comprobante_domicilio', c);
+    const constanciaValidity = getClientDocumentValidityConfig('doc_constancia_fiscal');
+    const comprobanteValidity = getClientDocumentValidityConfig('doc_comprobante_domicilio');
     const constanciaBadgeHtml = documentMeta.constanciaOmitted
       ? buildOmittedBadgeHtml('Constancia')
       : buildTrafficBadgeHtml(
-        'Constancia',
-        getClientDocumentValidityReferenceDate(c, 'doc_constancia_fiscal'),
-        constanciaValidity.validDays,
-        constanciaValidity.warningDays,
-        constanciaValidity.criticalDays
-      );
+          'Constancia',
+          getClientDocumentValidityReferenceDate(c, 'doc_constancia_fiscal'),
+          constanciaValidity.validDays,
+          constanciaValidity.warningDays,
+          constanciaValidity.criticalDays
+        );
     const comprobanteBadgeHtml = documentMeta.comprobanteOmitted
       ? buildOmittedBadgeHtml('Comprobante')
       : buildTrafficBadgeHtml(
-        'Comprobante',
-        getClientDocumentValidityReferenceDate(c, 'doc_comprobante_domicilio'),
-        comprobanteValidity.validDays,
-        comprobanteValidity.warningDays,
-        comprobanteValidity.criticalDays
-      );
+          'Comprobante',
+          getClientDocumentValidityReferenceDate(c, 'doc_comprobante_domicilio'),
+          comprobanteValidity.validDays,
+          comprobanteValidity.warningDays,
+          comprobanteValidity.criticalDays
+        );
     const constanciaHeadline = documentMeta.constanciaOmitted
       ? 'Constancia omitida'
       : (documentMeta.constanciaStatus.status === 'expired'
@@ -1628,13 +1307,12 @@ function renderClients(list) {
 async function loadClients() {
   cpClientsApplyViewStateControls();
   try {
-    await loadClientDocumentRequirementsConfig();
     const { data, error } = await window.tenantPocketBase.from('clientes')
       .select('id,nombre_completo,telefono,correo,correos_adicionales,rfc,telefonos_adicionales,perfil_estatus,perfil_validado,perfil_completo,expediente_validacion,documentos_estado,constancia_fiscal_emitida_el,comprobante_domicilio_emitido_el,doc_acta_constitutiva,doc_ine,doc_comprobante_domicilio,doc_constancia_fiscal,created_at,updated_at')
       .order('nombre_completo', { ascending: true });
 
     if (error) throw error;
-    allClients = await attachClientsLiveDictamenStatus(data || []);
+    allClients = data || [];
     cpClientsRestoringViewState = true;
     applySearch({ skipSave: true });
     cpClientsRestoringViewState = false;
@@ -1660,7 +1338,7 @@ function clearQueuedVerificationClient() {
     url.searchParams.delete('verify');
     const nextUrl = `${url.pathname}${url.search}${url.hash}`;
     window.history.replaceState(window.history.state, '', nextUrl);
-  } catch (_) { }
+  } catch (_) {}
 }
 
 function maybeOpenQueuedVerificationClient() {
@@ -1690,14 +1368,8 @@ function applySearch(options = {}) {
   if (!cpClientsRestoringViewState && options.skipSave !== true) cpClientsSaveViewState();
 }
 
-function openClientModal(client = null) {
-  const isEditing = !!String(client?.id || '').trim();
-  if (isEditing ? !canManage : !canCreateClient) {
-    return window.showToast?.(
-      isEditing ? "No tienes permisos para administrar clientes." : "No tienes permisos para crear clientes.",
-      "error"
-    );
-  }
+function openClientModal(client=null) {
+  if (!canManage) return window.showToast?.("No tienes permisos para administrar clientes.", "error");
   cpClientsSaveViewState({ selectedClientId: String(client?.id || '').trim() });
 
   const idEl = document.getElementById('client-id');
@@ -2008,7 +1680,7 @@ function downloadClientBlob(blob, filename) {
   link.click();
   link.remove();
   setTimeout(() => {
-    try { URL.revokeObjectURL(url); } catch (_) { }
+    try { URL.revokeObjectURL(url); } catch (_) {}
   }, 1500);
 }
 
@@ -2085,15 +1757,14 @@ function buildClientZipManifest(client, quotes, includeQuotes, failures) {
 }
 
 async function addClientPersonalFilesToZip(client, entries, usedPaths, failures) {
-  for (const doc of getClientDocumentRequirements(client)) {
-    const docInfo = getVerificationDocState(client, doc.field);
-    const filename = docInfo.fileName || getFirstClientFileName(client?.[doc.field]);
+  for (const doc of CLIENT_DOC_REQUIREMENTS) {
+    const filename = getFirstClientFileName(client?.[doc.field]);
     if (!filename) continue;
     if (!canAccessClientDocumentFile(client, doc.field)) {
       failures.push({ path: doc.label, error: 'Sin permiso para descargar este documento.' });
       continue;
     }
-    const url = await getSignedFileUrl(docInfo.fileCollection || 'clientes', docInfo.fileRecordId || client.id, filename);
+    const url = await getSignedFileUrl('clientes', client.id, filename);
     const folder = `informacion_personal/${sanitizeZipSegment(doc.label, doc.field)}`;
     await addRemoteZipFile(entries, usedPaths, `${folder}/${basenameFromPath(filename, doc.field)}`, url, failures);
   }
@@ -2231,7 +1902,7 @@ function renderClientHistoryRows(rows) {
   });
 }
 
-function createQuoteDocButton(container, label, icon, action, muted = false) {
+function createQuoteDocButton(container, label, icon, action, muted=false) {
   const wrapper = document.createElement('div');
   wrapper.className = 'flex items-stretch gap-2';
   const btn = document.createElement('button');
@@ -2260,11 +1931,11 @@ async function openClientProfileDocs(client) {
   const profileDocsClientId = String(client.id || '');
   list.dataset.clientDocsClientId = profileDocsClientId;
 
-  createQuoteDocButton(list, `ID del perfil: ${client.id || '--'}`, 'fa-solid fa-fingerprint', () => { }, true);
+  createQuoteDocButton(list, `ID del perfil: ${client.id || '--'}`, 'fa-solid fa-fingerprint', () => {}, true);
   if (buildClientPublicProfileUrl(client)) {
     createQuoteDocButton(list, 'Abrir expediente seguro', 'fa-solid fa-link', () => openClientPublicProfile(client));
   } else {
-    createQuoteDocButton(list, 'Enlace publico no disponible', 'fa-solid fa-link', () => { }, true);
+    createQuoteDocButton(list, 'Enlace publico no disponible', 'fa-solid fa-link', () => {}, true);
   }
 
   const zipPanel = document.createElement('div');
@@ -2292,8 +1963,6 @@ async function openClientProfileDocs(client) {
   });
 
   function clientHasFile(field) {
-    const docInfo = getVerificationDocState(client, field);
-    if (docInfo.uploaded) return true;
     const v = client?.[field];
     if (Array.isArray(v)) return v.filter(Boolean).length > 0;
     return !!String(v || '').trim();
@@ -2309,17 +1978,15 @@ async function openClientProfileDocs(client) {
       return;
     }
     if (clientHasFile(field) && !canAccessClientDocumentFile(client, field)) {
-      createQuoteDocButton(list, `${readyLabel} · visible hasta aprobacion`, icon, () => { }, true);
+      createQuoteDocButton(list, `${readyLabel} · visible hasta aprobacion`, icon, () => {}, true);
       return;
     }
-    createQuoteDocButton(list, missingLabel, icon, () => { }, true);
+    createQuoteDocButton(list, missingLabel, icon, () => {}, true);
   }
 
-  getClientDocumentRequirements(client).forEach((doc) => {
-    const label = doc.label || doc.field;
-    const icon = doc.icon && doc.icon.includes('fa-') ? doc.icon : 'fa-solid fa-file-lines';
-    appendClientDocButton(doc.field, `Ver ${label}`, `${label} pendiente`, icon, label.toLowerCase());
-  });
+  appendClientDocButton('doc_ine', 'Ver INE', 'INE pendiente', 'fa-solid fa-id-card', 'la INE');
+  appendClientDocButton('doc_comprobante_domicilio', 'Ver Comprobante de Domicilio', 'Comprobante de domicilio pendiente', 'fa-solid fa-house-circle-check', 'el comprobante de domicilio');
+  appendClientDocButton('doc_constancia_fiscal', 'Ver Constancia Fiscal', 'Constancia fiscal pendiente', 'fa-solid fa-file-shield', 'la constancia fiscal');
 
   const phones = safeArray(client.telefonos_adicionales).map(v => String(v || '').trim()).filter(Boolean);
   const constanciaStatus = getClientDocumentMeta(client).constanciaStatus;
@@ -2330,8 +1997,8 @@ async function openClientProfileDocs(client) {
   divider.className = 'text-[10px] font-black uppercase text-gray-400 px-1 pt-2';
   divider.innerText = 'Validacion';
   list.appendChild(divider);
-  createQuoteDocButton(list, constanciaValidationLabel, 'fa-solid fa-calendar-check', () => { }, true);
-  createQuoteDocButton(list, phones.length ? `Telefonos adicionales: ${phones.join(', ')}` : 'Sin telefonos adicionales registrados', 'fa-solid fa-phone-volume', () => { }, true);
+  createQuoteDocButton(list, constanciaValidationLabel, 'fa-solid fa-calendar-check', () => {}, true);
+  createQuoteDocButton(list, phones.length ? `Telefonos adicionales: ${phones.join(', ')}` : 'Sin telefonos adicionales registrados', 'fa-solid fa-phone-volume', () => {}, true);
 
   window.openModal?.('client-quote-docs-modal');
 
@@ -2353,7 +2020,7 @@ async function openClientProfileDocs(client) {
   if (list.dataset.clientDocsClientId !== profileDocsClientId) return;
   loadingRow.remove();
   if (!history.length) {
-    createQuoteDocButton(list, 'Sin dictamenes guardados', 'fa-regular fa-clock', () => { }, true);
+    createQuoteDocButton(list, 'Sin dictamenes guardados', 'fa-regular fa-clock', () => {}, true);
     return;
   }
   history.forEach((row) => {
@@ -2371,7 +2038,7 @@ async function fetchLatestClientQuoteRow(quoteId) {
   try {
     const { data, error } = await window.tenantPocketBase.from('cotizaciones').select(cols).eq('id', quoteId).maybeSingle();
     if (!error && data) return data;
-  } catch (_) { }
+  } catch (_) {}
   return clientHistoryRows.find(x => x.id === quoteId) || null;
 }
 
@@ -2388,16 +2055,16 @@ async function openClientQuoteDocs(quoteId) {
   list.innerHTML = '';
 
   if (row.url_cotizacion_final) createQuoteDocButton(list, 'Ver Cotización Aprobada', 'fa-solid fa-file-circle-check', () => openClientStoredDocument(row.url_cotizacion_final));
-  else createQuoteDocButton(list, 'Cotización aprobada no disponible', 'fa-solid fa-file-pen', () => { }, true);
+  else createQuoteDocButton(list, 'Cotización aprobada no disponible', 'fa-solid fa-file-pen', () => {}, true);
 
   if (row.url_orden_compra) createQuoteDocButton(list, 'Ver Orden de Compra', 'fa-solid fa-file-contract', () => openClientStoredDocument(row.url_orden_compra));
-  else createQuoteDocButton(list, 'Orden de compra no disponible', 'fa-solid fa-file-contract', () => { }, true);
+  else createQuoteDocButton(list, 'Orden de compra no disponible', 'fa-solid fa-file-contract', () => {}, true);
 
   if (row.contrato_url) createQuoteDocButton(list, 'Ver Contrato', 'fa-solid fa-file-signature', () => openClientStoredDocument(row.contrato_url));
-  else createQuoteDocButton(list, 'Contrato no disponible', 'fa-solid fa-signature', () => { }, true);
+  else createQuoteDocButton(list, 'Contrato no disponible', 'fa-solid fa-signature', () => {}, true);
 
   if (row.factura_pdf_url) createQuoteDocButton(list, 'Ver Factura PDF', 'fa-solid fa-file-pdf', () => openClientStoredDocument(row.factura_pdf_url));
-  else createQuoteDocButton(list, 'Factura PDF no disponible', 'fa-solid fa-file-invoice-dollar', () => { }, true);
+  else createQuoteDocButton(list, 'Factura PDF no disponible', 'fa-solid fa-file-invoice-dollar', () => {}, true);
 
   if (row.factura_xml_url) createQuoteDocButton(list, 'Descargar XML', 'fa-solid fa-file-code', () => openClientStoredDocument(row.factura_xml_url));
 
@@ -2412,7 +2079,7 @@ async function openClientQuoteDocs(quoteId) {
       if (pth) createQuoteDocButton(list, `Recibo #${i + 1}`, 'fa-solid fa-receipt', () => openClientStoredDocument(pth));
     });
   } else {
-    createQuoteDocButton(list, 'Recibos no disponibles', 'fa-solid fa-receipt', () => { }, true);
+    createQuoteDocButton(list, 'Recibos no disponibles', 'fa-solid fa-receipt', () => {}, true);
   }
 
   createQuoteDocButton(list, 'Abrir en módulo de cotizaciones', 'fa-solid fa-arrow-up-right-from-square', () => {
@@ -2438,7 +2105,7 @@ async function openClientHistory(client) {
 
   const cols = CLIENT_QUOTE_DOC_SELECT_FIELDS;
   const merged = new Map();
-  const mergeRows = (arr = []) => arr.forEach(r => { if (r?.id) merged.set(r.id, r); });
+  const mergeRows = (arr=[]) => arr.forEach(r => { if (r?.id) merged.set(r.id, r); });
   try {
     const qById = await window.tenantPocketBase.from('cotizaciones').select(cols).eq('cliente_id', client.id).order('created_at', { ascending: false }).limit(20);
     if (!qById.error) mergeRows(qById.data || []);
@@ -2450,7 +2117,7 @@ async function openClientHistory(client) {
       const qByName = await window.tenantPocketBase.from('cotizaciones').select(cols).eq('cliente_nombre', client.nombre_completo).order('created_at', { ascending: false }).limit(20);
       if (!qByName.error) mergeRows(qByName.data || []);
     }
-    clientHistoryRows = Array.from(merged.values()).sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+    clientHistoryRows = Array.from(merged.values()).sort((a,b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
     renderClientHistoryRows(clientHistoryRows);
     if (subEl) subEl.innerText = `${clientHistoryRows.length} cotización(es) encontrada(s).`;
   } catch (e) {
@@ -2461,15 +2128,11 @@ async function openClientHistory(client) {
 }
 
 async function saveClient() {
+  if (!canManage) return window.showToast?.("No tienes permisos para administrar clientes.", "error");
+
   const id = (document.getElementById('client-id')?.value || '').trim();
-  if (id ? !canManage : !canCreateClient) {
-    return window.showToast?.(
-      id ? "No tienes permisos para administrar clientes." : "No tienes permisos para crear clientes.",
-      "error"
-    );
-  }
   const nombre = (document.getElementById('client-name')?.value || '').trim();
-  const telefono = (document.getElementById('client-phone')?.value || '').replace(/\D/g, '').trim();
+  const telefono = (document.getElementById('client-phone')?.value || '').replace(/\D/g,'').trim();
   const correo = (document.getElementById('client-email')?.value || '').trim();
   const rfc = (document.getElementById('client-rfc')?.value || '').trim().toUpperCase();
 
@@ -2554,7 +2217,7 @@ async function saveClient() {
 
 document.addEventListener('DOMContentLoaded', async () => {
   if (window.__HUB_LAYOUT_READY && typeof window.__HUB_LAYOUT_READY.then === 'function') {
-    try { await window.__HUB_LAYOUT_READY; } catch (_) { }
+    try { await window.__HUB_LAYOUT_READY; } catch (_) {}
   }
   if (window.__HUB_PAGE_ACCESS_DENIED) return;
   if (!window.PB_CLIENT) return;
@@ -2578,7 +2241,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   adminVerifierMode = false;
   installVerifierTenantNavigation(role);
   canManage = accessCtx.canManage === true;
-  canCreateClient = canManage || accessCtx.canVerify === true;
   canVerify = accessCtx.canVerify === true;
   canSeeAllDocuments = accessCtx.canSeeAllDocuments === true;
   renderAdminVerifierModeBox();
@@ -2594,7 +2256,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     return;
   }
 
-  // Nav hide (compat: si no existe key, NO escondemos)
+// Nav hide (compat: si no existe key, NO escondemos)
   if (role !== 'admin') {
     const navRules = {
       'catalog.html': ('catalog_view' in perms) ? !!perms.catalog_view : true,
@@ -2620,8 +2282,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // UI permissions
   const btnNew = document.getElementById('btn-new-client');
   if (btnNew) {
-    if (!canCreateClient) btnNew.classList.add('hidden');
-    else btnNew.classList.remove('hidden');
+    if (!canManage) btnNew.classList.add('hidden');
     btnNew.addEventListener('click', () => openClientModal(null));
   }
 
@@ -2663,8 +2324,6 @@ function getVerificationDocState(client, field, documents = safeObject(getClient
   const validationState = safeObject(documents[field]);
   const rawFilename = Array.isArray(client?.[field]) ? client[field][0] : client?.[field];
   const fileName = String(rawFilename || validationState.fileName || '').trim();
-  const fileCollection = String(validationState.fileCollection || (rawFilename ? 'clientes' : '') || 'clientes').trim();
-  const fileRecordId = String(validationState.fileRecordId || client?.id || '').trim();
   const uploaded = !!fileName;
   const omittedAllowed = canClientDocumentBeOmitted(field);
   const omitted = omittedAllowed && isDocumentOmitted(docState, validationState);
@@ -2673,7 +2332,7 @@ function getVerificationDocState(client, field, documents = safeObject(getClient
   if (omitted) status = 'omitido';
   const reason = String(docState.motivo || validationState.motivo || '').trim();
   const refreshMeta = getDocumentRefreshMeta(docState, validationState);
-  return { docState, validationState, fileName, fileCollection, fileRecordId, uploaded, omitted, status, reason, ...refreshMeta };
+  return { docState, validationState, fileName, uploaded, omitted, status, reason, ...refreshMeta };
 }
 
 function setVerificationButtonState(button, enabled) {
@@ -2851,7 +2510,7 @@ async function loadClientDictamenPdfStyle() {
       const config = safeObject(row.config_json || row.elements);
       const profiles = safeObject(config.profiles);
       return normalizeClientDictamenPdfStyle(profiles.dictamen || config);
-    } catch (_) { }
+    } catch (_) {}
   }
   return normalizeClientDictamenPdfStyle();
 }
@@ -3130,42 +2789,12 @@ function getClientDictamenStatusMeta(record) {
   };
 }
 
-function isVerificationDictamenField(field = '') {
+function isVerificationDictamenField(field='') {
   return String(field || '').startsWith('__dictamen__:');
 }
 
-function getVerificationDictamenId(field = '') {
+function getVerificationDictamenId(field='') {
   return isVerificationDictamenField(field) ? String(field).slice('__dictamen__:'.length).trim() : '';
-}
-
-function getClientDictamenSortTs(record = {}) {
-  const meta = getClientDictamenMeta(record);
-  return [
-    meta.generated_at,
-    meta.approved_at,
-    meta.reviewed_at,
-    record?.updated_at,
-    record?.updated,
-    record?.created_at,
-    record?.created
-  ].reduce((max, value) => {
-    const parsed = Date.parse(String(value || '').trim());
-    return Number.isNaN(parsed) ? max : Math.max(max, parsed);
-  }, 0);
-}
-
-async function canDeleteClientDictamenRecord(record, client = verifCurrentClient) {
-  if (!canVerify || !record?.id) return false;
-  const meta = getClientDictamenStatusMeta(record);
-  if (meta.status === 'rechazado') return true;
-  const clientId = String(client?.id || record?.cliente || '').trim();
-  if (!clientId) return false;
-  const history = await fetchClientDictamenHistory(clientId, 50);
-  const ordered = history
-    .filter((row) => row?.id && getClientDictamenPdfFileName(row))
-    .sort((a, b) => getClientDictamenSortTs(b) - getClientDictamenSortTs(a));
-  const latest = ordered[0] || null;
-  return !!latest && String(latest.id || '') !== String(record.id || '');
 }
 
 async function openClientDictamenRecord(record) {
@@ -3181,7 +2810,7 @@ function buildClientDictamenDocumentSnapshot(client) {
   const validation = safeObject(getClientValidation(client));
   const documents = safeObject(validation.documents);
   const states = safeObject(client?.documentos_estado);
-  return getClientDocumentRequirements(client).map((item) => {
+  return CLIENT_DOC_REQUIREMENTS.map((item) => {
     const docInfo = getVerificationDocState(client, item.field, documents);
     const reviewMeta = getClientDocumentStateMeta(client, item.field);
     const state = safeObject(states[item.field]);
@@ -3193,7 +2822,7 @@ function buildClientDictamenDocumentSnapshot(client) {
       status: docInfo.status || '',
       omitted: docInfo.omitted === true,
       reason: docInfo.reason || '',
-      validityDate: (item.dateField || item.requiresDate) ? getClientDocumentValidityReferenceDate(client, item.field) : '',
+      validityDate: item.dateField ? getClientDocumentValidityReferenceDate(client, item.field) : '',
       reviewedByName: reviewMeta.reviewedByName || '',
       reviewedAt: reviewMeta.reviewedAt || '',
       updatedAt: String(state.actualizado_at || '').trim(),
@@ -3217,7 +2846,7 @@ async function hashClientDictamenSnapshot(snapshot) {
       const digest = await window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw));
       return Array.from(new Uint8Array(digest)).map(byte => byte.toString(16).padStart(2, '0')).join('');
     }
-  } catch (_) { }
+  } catch (_) {}
   let hash = 0;
   for (let i = 0; i < raw.length; i += 1) hash = ((hash << 5) - hash + raw.charCodeAt(i)) | 0;
   return `fallback-${Math.abs(hash)}`;
@@ -3269,7 +2898,7 @@ function downloadClientDictamenBlob(blob, filename) {
   link.click();
   link.remove();
   setTimeout(() => {
-    try { URL.revokeObjectURL(url); } catch (_) { }
+    try { URL.revokeObjectURL(url); } catch (_) {}
   }, 1500);
 }
 
@@ -3277,13 +2906,9 @@ async function forceClientValidationRefresh(client) {
   const clientId = String(client?.id || '').trim();
   if (!clientId || !window.tenantPocketBase) return null;
   const docStates = safeObject(client?.documentos_estado);
-  const touchAt = new Date().toISOString();
   const { data, error } = await window.tenantPocketBase
     .from('clientes')
-    .update({
-      documentos_estado: { ...docStates },
-      perfil_publico_actualizado_at: touchAt
-    })
+    .update({ documentos_estado: docStates })
     .eq('id', clientId);
   if (error) throw error;
   return Array.isArray(data) ? (data[0] || null) : (data || null);
@@ -3337,7 +2962,7 @@ async function persistClientDictamenSnapshot(client, folio, blob, filename, docu
     .from(CLIENT_DICTAMEN_COLLECTION)
     .insert(form);
   if (error) throw error;
-  try { await forceClientValidationRefresh(client); } catch (_) { }
+  try { await forceClientValidationRefresh(client); } catch (_) {}
   return { saved: true, record: data, documentosHash };
 }
 
@@ -3394,7 +3019,7 @@ async function uploadManualClientDictamen(client, options = {}) {
   try {
     const { data, error } = await window.tenantPocketBase.from(CLIENT_DICTAMEN_COLLECTION).insert(form);
     if (error) throw error;
-    try { await forceClientValidationRefresh(client); } catch (_) { }
+    try { await forceClientValidationRefresh(client); } catch (_) {}
     window.showToast?.('Dictamen manual guardado.', 'success');
     await loadClients();
     const insertedId = String((Array.isArray(data) ? data[0]?.id : data?.id) || '').trim();
@@ -3428,7 +3053,6 @@ function syncVerificationActionPanel(label, options = {}) {
   const omitted = options.omitted === true;
   const allowOmit = options.allowOmit !== false;
   const allowDelete = options.allowDelete !== false;
-  const deleteLabel = String(options.deleteLabel || 'Eliminar documento').trim();
 
   if (actionPanel) actionPanel.classList.remove('hidden');
   if (actionLabel) actionLabel.textContent = `Decisión: ${label || 'Documento'}`;
@@ -3441,10 +3065,6 @@ function syncVerificationActionPanel(label, options = {}) {
   setVerificationButtonState(approveBtn, hasFile && !omitted);
   setVerificationButtonState(rejectBtn, hasFile && !omitted);
   setVerificationButtonState(deleteBtn, hasFile && allowDelete);
-  if (deleteBtn) {
-    deleteBtn.innerHTML = `<i class="fa-solid fa-trash"></i> ${escapeHTML(deleteLabel)}`;
-    deleteBtn.title = allowDelete ? deleteLabel : 'Solo se pueden eliminar dictamenes rechazados o versiones pasadas.';
-  }
 }
 
 function getClientDictamenTenantLabel() {
@@ -3455,7 +3075,7 @@ function getClientDictamenTenantCode() {
   return CLIENT_TENANT_SLUG === 'casa_de_piedra' ? 'CP' : 'PM';
 }
 
-function formatClientDictamenDateTime(value = '') {
+function formatClientDictamenDateTime(value='') {
   const stamp = String(value || '').trim();
   if (!stamp) return 'Sin fecha registrada';
   const parsed = new Date(stamp);
@@ -3498,12 +3118,10 @@ function getClientDictamenStatusLabel(docInfo, traffic) {
 }
 
 function getClientDictamenExpiryText(traffic) {
-  if (!traffic || !traffic.status || traffic.status === 'missing') return 'Fecha pendiente por capturar';
-  if (traffic.mode === 'date_only' && traffic.status === 'expired') return 'Fecha inválida o futura';
+  if (!traffic || !traffic.status || traffic.status === 'missing') return 'Sin vigencia capturada';
   if (traffic.status === 'expired') return `Vencido hace ${Math.abs(traffic.daysLeft)} dia(s)`;
-  if (traffic.mode === 'date_only') return `Fecha detectada: ${safeDate(traffic.date)}`;
   if (typeof traffic.daysLeft === 'number') return `Vence el ${safeDate(traffic.expiry || traffic.date)}`;
-  return 'Fecha pendiente por capturar';
+  return 'Sin vigencia capturada';
 }
 
 function getClientDictamenLegalValue(source, keys, fallback = '') {
@@ -3527,13 +3145,17 @@ function buildClientDictamenLegalData(client, folio) {
   const protocol = safeObject(legal.documentosProtocolizados || legal.documentos_protocolizados || legal.protocolizado || legal.sociedad);
   const attorney = safeObject(legal.apoderados || legal.apoderado || legal.poderes || legal.representante);
   const validation = safeObject(client?.expediente_validacion);
+  const docStates = safeObject(client?.documentos_estado);
+  const actaState = safeObject(docStates.doc_acta_constitutiva);
+  const constanciaState = safeObject(docStates.doc_constancia_fiscal);
+  const comprobanteState = safeObject(docStates.doc_comprobante_domicilio);
   const sociedad = getClientDictamenLegalValue(protocol, ['sociedad', 'razonSocial', 'razon_social', 'cliente'], client?.nombre_completo || '--').toUpperCase();
   const nombreComercial = getClientDictamenLegalValue(attorney, ['nombreComercial', 'nombre_comercial'], sociedad).toUpperCase();
   const domicilio = getClientDictamenLegalValue(protocol, ['domicilio', 'domicilioFiscal', 'domicilio_fiscal'], getClientDictamenLegalValue(validation, ['domicilio', 'domicilioFiscal', 'domicilio_fiscal'], '--')).toUpperCase();
   const ciudad = getClientDictamenLegalValue(protocol, ['ciudad', 'municipio'], getClientDictamenLegalValue(attorney, ['ciudad', 'municipio'], '--')).toUpperCase();
   const folioDocumento = getClientDictamenLegalValue(protocol, ['folio', 'folioMercantil', 'folio_mercantil'], getClientDictamenLegalValue(attorney, ['folio', 'folioMercantil', 'folio_mercantil'], '--'));
-  const fechaDocumento = getClientDictamenLegalValue(protocol, ['fechaDocumento', 'fecha_documento', 'fechaActo', 'fecha_acto'], '');
-  const fechaPoder = getClientDictamenLegalValue(attorney, ['fechaDocumento', 'fecha_documento', 'fechaPoder', 'fecha_poder'], '');
+  const fechaDocumento = getClientDictamenLegalValue(protocol, ['fechaDocumento', 'fecha_documento', 'fechaActo', 'fecha_acto'], normalizeStoredDate(actaState.subido_at || client?.created_at || client?.created));
+  const fechaPoder = getClientDictamenLegalValue(attorney, ['fechaDocumento', 'fecha_documento', 'fechaPoder', 'fecha_poder'], normalizeStoredDate(constanciaState.subido_at || comprobanteState.subido_at || client?.updated_at || client?.updated));
   return {
     sociedad,
     tipoActo: getClientDictamenLegalValue(protocol, ['tipoActo', 'tipo_acto', 'acto'], client?.doc_acta_constitutiva ? 'CONSTITUTIVA' : '--').toUpperCase(),
@@ -3768,41 +3390,9 @@ async function openClientVerificationReport(client) {
 async function deleteVerificationDocument() {
   if (!canVerify || !verifCurrentClient || !verifCurrentDocField) return;
   if (isVerificationDictamenField(verifCurrentDocField)) {
-    const dictamenId = getVerificationDictamenId(verifCurrentDocField);
-    try {
-      const history = await fetchClientDictamenHistory(verifCurrentClient.id, 50);
-      const currentRecord = (verifCurrentDictamenRecord && String(verifCurrentDictamenRecord.id || '') === dictamenId)
-        ? verifCurrentDictamenRecord
-        : history.find((row) => String(row?.id || '') === dictamenId);
-      if (!currentRecord) return window.showToast?.('No se encontro el dictamen seleccionado.', 'error');
-      const allowDelete = await canDeleteClientDictamenRecord(currentRecord, verifCurrentClient);
-      if (!allowDelete) {
-        return window.showToast?.('Solo se pueden eliminar dictamenes rechazados o versiones pasadas.', 'error');
-      }
-      const ok = await confirmModal(`¿Eliminar el dictamen ${currentRecord?.folio || 'seleccionado'}? Esta acción no se puede deshacer.`);
-      if (!ok) return;
-      const { error } = await window.tenantPocketBase.from(CLIENT_DICTAMEN_COLLECTION)
-        .delete()
-        .eq('id', dictamenId);
-      if (error) throw error;
-      try { await forceClientValidationRefresh(verifCurrentClient); } catch (_) { }
-      window.showToast?.('Dictamen eliminado del expediente.', 'success');
-      await loadClients();
-      const refreshed = allClients.find((row) => String(row?.id || '') === String(verifCurrentClient?.id || '')) || verifCurrentClient;
-      openVerificationModal(refreshed);
-      const nextHistory = await fetchClientDictamenHistory(refreshed.id, 50);
-      const nextRecord = nextHistory.find((row) => String(row?.id || '') !== dictamenId) || null;
-      if (nextRecord) await loadVerifDictamen(nextRecord);
-    } catch (error) {
-      console.error(error);
-      window.showToast?.('No se pudo eliminar el dictamen.', 'error');
-    }
-    return;
+    return window.showToast?.('Los dictamenes se validan desde este panel, pero no se eliminan aqui.', 'error');
   }
-  const docConfig = findClientDocumentRequirement(verifCurrentClient, verifCurrentDocField);
-  if (docConfig?.custom) {
-    return window.showToast?.('Los documentos personalizados se reemplazan desde el portal público del cliente.', 'info');
-  }
+  const docConfig = CLIENT_DOC_REQUIREMENTS.find((item) => item.field === verifCurrentDocField);
   const currentDoc = getVerificationDocState(verifCurrentClient, verifCurrentDocField);
   if (!currentDoc.uploaded) {
     window.showToast?.('Este documento ya no tiene un archivo cargado.', 'error');
@@ -3872,7 +3462,7 @@ function openVerificationModal(client) {
   const listContainer = document.getElementById('verif-docs-list');
   listContainer.innerHTML = '';
 
-  getClientDocumentRequirements(client).forEach(item => {
+  CLIENT_DOC_REQUIREMENTS.forEach(item => {
     const docInfo = getVerificationDocState(client, item.field, docs);
     let statusLabel = 'Pendiente';
     let statusColor = 'text-orange-500';
@@ -3899,22 +3489,19 @@ function openVerificationModal(client) {
       statusCss = 'bg-sky-100 text-sky-700';
     }
 
-    const hasDateRequirement = item.dateField || item.requiresDate;
-    const dateBadgeHtml = hasDateRequirement
+    const dateBadgeHtml = item.dateField
       ? `<div class="mt-2 flex flex-wrap gap-2">${docInfo.omitted
-        ? buildOmittedBadgeHtml(item.label.includes('Constancia') ? 'Constancia' : (item.label.includes('Comprobante') ? 'Comprobante' : item.label))
-        : buildTrafficBadgeHtml(
-          item.label.includes('Constancia') ? 'Constancia' : (item.label.includes('Comprobante') ? 'Comprobante' : item.label),
-          getClientDocumentValidityReferenceDate(client, item.field),
-          getClientDocumentValidityDays(item.field, client)
-        )}</div>`
+          ? buildOmittedBadgeHtml(item.label.includes('Constancia') ? 'Constancia' : 'Comprobante')
+          : buildTrafficBadgeHtml(
+              item.label.includes('Constancia') ? 'Constancia' : 'Comprobante',
+              getClientDocumentValidityReferenceDate(client, item.field),
+              getClientDocumentValidityDays(item.field)
+            )}</div>`
       : '';
-    const emittedDateValue = item.dateField ? getClientValidationDate(client, item.dateField) : getClientDocumentValidityReferenceDate(client, item.field);
+    const emittedDateValue = item.dateField ? getClientValidationDate(client, item.dateField) : '';
     const emittedDateHtml = emittedDateValue
       ? `<p class="mt-1 text-[10px] text-gray-400">Fecha detectada: ${escapeHTML(safeDate(emittedDateValue))}</p>`
-      : (hasDateRequirement && docInfo.uploaded && !docInfo.omitted
-        ? '<p class="mt-1 text-[10px] text-amber-600 font-semibold">Falta una fecha legible para calcular la vigencia.</p>'
-        : '');
+      : '';
     const reviewedMeta = getClientDocumentStateMeta(client, item.field);
     const reviewedHtml = reviewedMeta.reviewedByName
       ? `<p class="mt-2 text-[10px] text-gray-500 font-semibold">${escapeHTML((reviewedMeta.status === 'aprobado' || reviewedMeta.omitted ? 'Aprobo' : 'Reviso') + ': ' + reviewedMeta.reviewedByName + (reviewedMeta.reviewedAt ? ' · ' + safeDate(reviewedMeta.reviewedAt) : ''))}</p>`
@@ -3923,9 +3510,9 @@ function openVerificationModal(client) {
       ? `<p class="mt-2 text-[10px] text-red-600 font-semibold">${escapeHTML(docInfo.reason)}</p>`
       : (docInfo.isUpdated
         ? `<p class="mt-2 text-[10px] text-sky-700 font-semibold">${docInfo.updatedFromRejection ? 'Se subió una nueva versión tras el rechazo. Pendiente de revisión.' : 'Se subió una nueva versión. Pendiente de revisión.'}</p>`
-        : (docInfo.omitted
-          ? '<p class="mt-2 text-[10px] text-sky-700 font-semibold">Marcado como omitido por administración.</p>'
-          : ''));
+      : (docInfo.omitted
+        ? '<p class="mt-2 text-[10px] text-sky-700 font-semibold">Marcado como omitido por administración.</p>'
+        : ''));
     const allowOmit = canClientDocumentBeOmitted(item.field);
     const omitControlsHtml = allowOmit
       ? `
@@ -4053,13 +3640,11 @@ async function loadVerifDictamen(record) {
   document.getElementById('verif-preview-iframe').src = '';
   document.getElementById('verif-preview-img').src = '';
 
-  const allowDelete = await canDeleteClientDictamenRecord(record, verifCurrentClient);
   syncVerificationActionPanel(record?.folio || 'Dictamen', {
     uploaded: true,
     omitted: false,
     allowOmit: false,
-    allowDelete,
-    deleteLabel: 'Eliminar dictamen'
+    allowDelete: false
   });
 
   const previewError = document.getElementById('verif-preview-error');
@@ -4128,7 +3713,7 @@ async function loadVerifDoc(field, label, fileName) {
     return;
   }
 
-  const url = await getSignedFileUrl(docInfo.fileCollection || 'clientes', docInfo.fileRecordId || verifCurrentClient.id, effectiveFileName);
+  const url = await getSignedFileUrl('clientes', verifCurrentClient.id, effectiveFileName);
   if (previewDownload) {
     previewDownload.href = url;
     previewDownload.classList.remove('hidden');
@@ -4229,7 +3814,7 @@ async function submitVerifDecision(status, motivo) {
         .update({ documentos_hash: documentosHash, metadata: nextMeta })
         .eq('id', dictamenId);
       if (dictErr) throw dictErr;
-      try { await forceClientValidationRefresh(verifCurrentClient); } catch (_) { }
+      try { await forceClientValidationRefresh(verifCurrentClient); } catch (_) {}
 
       const verb = nextStatus === 'aprobado' ? 'aprobado' : (nextStatus === 'rechazado' ? 'rechazado' : 'actualizado');
       window.showToast?.(`Dictamen ${verb} correctamente`, 'success');
@@ -4271,7 +3856,7 @@ async function submitVerifDecision(status, motivo) {
     window.showToast?.(`Documento ${verb} correctamente`, 'success');
 
     verifCurrentClient = Array.isArray(data) ? (data[0] || verifCurrentClient) : (data || verifCurrentClient);
-    const docConfig = findClientDocumentRequirement(verifCurrentClient, verifCurrentDocField);
+    const docConfig = CLIENT_DOC_REQUIREMENTS.find((item) => item.field === verifCurrentDocField);
     const nextDoc = getVerificationDocState(verifCurrentClient, verifCurrentDocField);
     openVerificationModal(verifCurrentClient);
     if (docConfig) await loadVerifDoc(verifCurrentDocField, docConfig.label, nextDoc.fileName);
@@ -4280,87 +3865,5 @@ async function submitVerifDecision(status, motivo) {
     console.error(e);
     window.showToast?.('No se pudo actualizar el estado del documento.', 'error');
   }
-}
-
-const nextStatus = status === 'aprobado' ? 'aprobado' : (status === 'rechazado' ? 'rechazado' : 'pendiente');
-const baseMeta = getClientDictamenMeta(currentRecord);
-const documentSnapshot = buildClientDictamenDocumentSnapshot(verifCurrentClient);
-const existingSnapshot = Array.isArray(baseMeta.documentos_snapshot) && baseMeta.documentos_snapshot.length ? baseMeta.documentos_snapshot : null;
-const currentDocumentosHash = await hashClientDictamenSnapshot({
-  tenant: CLIENT_TENANT_SLUG,
-  clientId: verifCurrentClient.id,
-  documents: documentSnapshot
-});
-const documentosHash = existingSnapshot
-  ? (String(currentRecord?.documentos_hash || baseMeta.documentos_hash || '').trim() || currentDocumentosHash)
-  : currentDocumentosHash;
-const nextMeta = {
-  ...baseMeta,
-  documentos_hash: documentosHash,
-  documentos_snapshot: existingSnapshot || documentSnapshot,
-  approval_status: nextStatus,
-  approved: nextStatus === 'aprobado',
-  rejected: nextStatus === 'rechazado',
-  reason: nextStatus === 'rechazado' ? motivo : '',
-  reviewed_by: actor,
-  reviewed_at: reviewedAt,
-  approved_by: nextStatus === 'aprobado' ? actor : {},
-  approved_at: nextStatus === 'aprobado' ? reviewedAt : ''
-};
-const { error: dictErr } = await window.tenantPocketBase.from(CLIENT_DICTAMEN_COLLECTION)
-  .update({ documentos_hash: documentosHash, metadata: nextMeta })
-  .eq('id', dictamenId);
-if (dictErr) throw dictErr;
-try { await forceClientValidationRefresh(verifCurrentClient); } catch (_) { }
-
-const verb = nextStatus === 'aprobado' ? 'aprobado' : (nextStatus === 'rechazado' ? 'rechazado' : 'actualizado');
-window.showToast?.(`Dictamen ${verb} correctamente`, 'success');
-await loadClients();
-verifCurrentClient = allClients.find((row) => String(row?.id || '') === String(verifCurrentClient?.id || '')) || verifCurrentClient;
-openVerificationModal(verifCurrentClient);
-const refreshedHistory = await fetchClientDictamenHistory(verifCurrentClient?.id, 50);
-const nextRecord = refreshedHistory.find((row) => String(row?.id || '') === dictamenId);
-if (nextRecord) await loadVerifDictamen(nextRecord);
-return;
-    }
-
-if (status === 'omitido' && !canClientDocumentBeOmitted(verifCurrentDocField)) {
-  window.showToast?.('Este documento no se puede omitir según la configuración actual.', 'error');
-  return;
-}
-
-const estados = safeObject(verifCurrentClient.documentos_estado);
-estados[verifCurrentDocField] = {
-  status,
-  motivo: status === 'rechazado' ? motivo : '',
-  omitido: status === 'omitido',
-  actualizado_at: '',
-  actualizado_desde_rechazo: false,
-  revisado_at: reviewedAt,
-  revisado_por_id: actor.id || '',
-  revisado_por_nombre: actor.name || '',
-  aprobado_at: status === 'aprobado' ? reviewedAt : '',
-  aprobado_por_id: status === 'aprobado' ? (actor.id || '') : '',
-  aprobado_por_nombre: status === 'aprobado' ? (actor.name || '') : ''
-};
-
-const { data, error } = await window.tenantPocketBase.from('clientes')
-  .update({ documentos_estado: estados })
-  .eq('id', verifCurrentClient.id);
-if (error) throw error;
-
-const verb = status === 'aprobado' ? 'aprobado' : (status === 'rechazado' ? 'rechazado' : (status === 'omitido' ? 'omitido' : 'actualizado'));
-window.showToast?.(`Documento ${verb} correctamente`, 'success');
-
-verifCurrentClient = Array.isArray(data) ? (data[0] || verifCurrentClient) : (data || verifCurrentClient);
-const docConfig = findClientDocumentRequirement(verifCurrentClient, verifCurrentDocField);
-const nextDoc = getVerificationDocState(verifCurrentClient, verifCurrentDocField);
-openVerificationModal(verifCurrentClient);
-if (docConfig) await loadVerifDoc(verifCurrentDocField, docConfig.label, nextDoc.fileName);
-await loadClients();
-  } catch (e) {
-  console.error(e);
-  window.showToast?.('No se pudo actualizar el estado del documento.', 'error');
-}
 }
 

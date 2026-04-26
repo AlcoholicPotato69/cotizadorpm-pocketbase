@@ -29,21 +29,50 @@
     try { sessionStorage.removeItem(key); } catch (_) { }
     try { localStorage.removeItem(key); } catch (_) { }
   }
-  function normalizeDateString(v) {
+  const DATE_ONLY_FIELDS = new Set([
+    'fecha',
+    'fecha_inicio',
+    'fecha_fin',
+    'fecha_orden_compra',
+    'fecha_contrato',
+    'fecha_evento',
+    'fecha_documento',
+    'fecha_acto',
+    'fecha_inscripcion',
+    'fecha_poder',
+    'constancia_fiscal_emitida_el',
+    'comprobante_domicilio_emitido_el',
+    'constanciaFiscalEmitidaEl',
+    'comprobanteDomicilioEmitidoEl',
+    'validityDate',
+    'validity_date',
+    'expiryDate',
+    'expiry_date'
+  ]);
+  function shouldNormalizeDateOnly(key) {
+    const raw = String(key || '').trim();
+    if (!raw) return false;
+    if (DATE_ONLY_FIELDS.has(raw)) return true;
+    const snake = raw.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
+    if (DATE_ONLY_FIELDS.has(snake)) return true;
+    return /^fecha_/.test(snake) || /_fecha$/.test(snake);
+  }
+  function normalizeDateString(v, key) {
     const s = String(v || '').trim();
     if (!s) return s;
+    if (!shouldNormalizeDateOnly(key)) return s;
     if (/^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?)$/.test(s)) return s.slice(0, 10);
     if (/^\d{4}-\d{2}-\d{2}T/.test(s)) return s.slice(0, 10);
     return s;
   }
-  function normalizeDeepDates(value) {
-    if (Array.isArray(value)) return value.map(normalizeDeepDates);
+  function normalizeDeepDates(value, key) {
+    if (Array.isArray(value)) return value.map(function (item) { return normalizeDeepDates(item, key); });
     if (value && typeof value === 'object') {
       const out = {};
-      Object.keys(value).forEach(function (k) { out[k] = normalizeDeepDates(value[k]); });
+      Object.keys(value).forEach(function (k) { out[k] = normalizeDeepDates(value[k], k); });
       return out;
     }
-    if (typeof value === 'string') return normalizeDateString(value);
+    if (typeof value === 'string') return normalizeDateString(value, key);
     return value;
   }
   function recordFileName(record, field) {
@@ -62,6 +91,26 @@
     if (s === 'finanzas') return 'plaza_mayor';
     if (s.indexOf('casadepiedra') !== -1) return 'casa_de_piedra';
     return null;
+  }
+  function normalizeRoleSlug(value) {
+    let role = String(value || '').toLowerCase().trim();
+    if (!role) return '';
+    if (typeof role.normalize === 'function') role = role.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    role = role.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    if (role === 'administrador' || role === 'superadmin' || role === 'super_admin') return 'admin';
+    if (role === 'ambos' || role === 'both' || role === 'user' || role === 'usuario') return '';
+    if (role === 'plaza_mayor' || role === 'plazamayor' || role === 'pm' || role === 'finanzas') return 'plaza_mayor';
+    if (role === 'casa_de_piedra' || role === 'casadepiedra' || role === 'cp') return 'casa_de_piedra';
+    return role;
+  }
+  function normalizeTenantSlug(value) {
+    let tenant = String(value || '').toLowerCase().trim();
+    if (!tenant) return '';
+    if (typeof tenant.normalize === 'function') tenant = tenant.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    tenant = tenant.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    if (tenant === 'pm' || tenant === 'plazamayor' || tenant === 'plaza_mayor' || tenant === 'finanzas') return 'plaza_mayor';
+    if (tenant === 'cp' || tenant === 'casadepiedra' || tenant === 'casa_de_piedra') return 'casa_de_piedra';
+    return tenant;
   }
   function errObj(message, extra) {
     const e = Object.assign({ message: message || 'Error' }, extra || {});
@@ -85,9 +134,7 @@
   function mapProfileOut(record) {
     if (!record) return record;
     record = normalizeDeepDates(record);
-    let role = String(record.role || '').toLowerCase().trim();
-    if (role === 'administrador' || role === 'superadmin' || role === 'super_admin') role = 'admin';
-    if (role === 'both' || role === 'ambos' || role === 'user' || role === 'usuario') role = '';
+    let role = normalizeRoleSlug(record.role || '');
     if (role && APP_ROLES.indexOf(role) === -1) role = '';
     const allowedRaw = Array.isArray(record.allowed_tenants)
       ? record.allowed_tenants
@@ -95,7 +142,7 @@
         const parsed = parseJsonFieldValue(record.allowed_tenants);
         return Array.isArray(parsed) ? parsed : [];
       })();
-    let allowed = allowedRaw.filter(Boolean).map(v => String(v).toLowerCase().trim());
+    let allowed = allowedRaw.filter(Boolean).map(v => normalizeTenantSlug(v)).filter(Boolean);
     if (!allowed.length) {
       if (role === 'admin' || role === 'verificador') allowed = ['plaza_mayor', 'casa_de_piedra'];
       else if (role === 'plaza_mayor' || role === 'casa_de_piedra') allowed = [role];
@@ -106,8 +153,8 @@
       username: record.login_username || record.username || '',
       role: role || '',
       allowed_tenants: allowed,
-      tenant_default: record.tenant_default || record.default_tenant || null,
-      default_tenant: record.tenant_default || record.default_tenant || null,
+      tenant_default: normalizeTenantSlug(record.tenant_default || record.default_tenant || null) || null,
+      default_tenant: normalizeTenantSlug(record.tenant_default || record.default_tenant || null) || null,
       created_at: record.created_at || record.created || null,
       updated_at: record.updated_at || record.updated || null,
     };
@@ -418,14 +465,6 @@
     }
     async _findMatchingRecords() {
       const filter = this._buildFilter();
-      if (this.collection === 'app_users' && this.singleMode && this.filters.length === 1 && this.filters[0].op === 'eq' && this.filters[0].field === 'id') {
-        try {
-          return [await fetchOne(this.client.baseUrl, 'app_users', this.filters[0].value)];
-        } catch (e) {
-          if (this.singleMode === 'maybeSingle') return [];
-          throw e;
-        }
-      }
       const list = await fetchRecords(this.client.baseUrl, this.collection, { perPage: this.limitNum || 500, sort: this.sort, filter: filter });
       let items = list.items || [];
       if (this.limitNum) items = items.slice(0, this.limitNum);

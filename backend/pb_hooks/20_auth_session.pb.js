@@ -175,6 +175,19 @@
       e.response.header().set("Referrer-Policy", "same-origin");
     }
 
+    function normalizeTenantValue(value) {
+      const safe = String(value || "").trim().toLowerCase();
+      if (safe === "pm" || safe === "plaza mayor" || safe === "plaza_mayor") return "plaza_mayor";
+      if (safe === "cp" || safe === "casa de piedra" || safe === "casa_de_piedra") return "casa_de_piedra";
+      return safe;
+    }
+
+    function normalizeRoleValue(value) {
+      const safe = normalizeTenantValue(value).replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
+      if (safe === "administrador" || safe === "superadmin" || safe === "super_admin") return "admin";
+      return safe;
+    }
+
     function normalizeAllowedTenants(record) {
       const raw = record?.get("allowed_tenants");
       let list = [];
@@ -187,11 +200,11 @@
       }
       list = list
         .map(function (item) {
-          return String(item || "").trim().toLowerCase();
+          return normalizeTenantValue(item);
         })
         .filter(Boolean);
 
-      const role = String(record?.getString("role") || "").trim().toLowerCase();
+      const role = normalizeRoleValue(record?.getString("role") || "");
       if (!list.length) {
         if (role === "admin" || role === "verificador") list = ["plaza_mayor", "casa_de_piedra"];
         else if (role === "plaza_mayor" || role === "casa_de_piedra") list = [role];
@@ -211,10 +224,10 @@
             (email ? email.split("@")[0] : "") ||
             ""
         ).trim(),
-        role: String(record.getString("role") || "").trim().toLowerCase() || "",
+        role: normalizeRoleValue(record.getString("role") || "") || "",
         allowed_tenants: normalizeAllowedTenants(record),
-        tenant_default: record.get("tenant_default") || null,
-        default_tenant: record.get("tenant_default") || null
+        tenant_default: normalizeTenantValue(record.get("tenant_default") || "") || null,
+        default_tenant: normalizeTenantValue(record.get("tenant_default") || "") || null
       };
     }
 
@@ -343,6 +356,19 @@
       e.response.header().set("Referrer-Policy", "same-origin");
     }
 
+    function normalizeTenantValue(value) {
+      const safe = String(value || "").trim().toLowerCase();
+      if (safe === "pm" || safe === "plaza mayor" || safe === "plaza_mayor") return "plaza_mayor";
+      if (safe === "cp" || safe === "casa de piedra" || safe === "casa_de_piedra") return "casa_de_piedra";
+      return safe;
+    }
+
+    function normalizeRoleValue(value) {
+      const safe = normalizeTenantValue(value).replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
+      if (safe === "administrador" || safe === "superadmin" || safe === "super_admin") return "admin";
+      return safe;
+    }
+
     function normalizeAllowedTenants(record) {
       const raw = record?.get("allowed_tenants");
       let list = [];
@@ -355,11 +381,11 @@
       }
       list = list
         .map(function (item) {
-          return String(item || "").trim().toLowerCase();
+          return normalizeTenantValue(item);
         })
         .filter(Boolean);
 
-      const role = String(record?.getString("role") || "").trim().toLowerCase();
+      const role = normalizeRoleValue(record?.getString("role") || "");
       if (!list.length) {
         if (role === "admin" || role === "verificador") list = ["plaza_mayor", "casa_de_piedra"];
         else if (role === "plaza_mayor" || role === "casa_de_piedra") list = [role];
@@ -379,10 +405,10 @@
             (email ? email.split("@")[0] : "") ||
             ""
         ).trim(),
-        role: String(record.getString("role") || "").trim().toLowerCase() || "",
+        role: normalizeRoleValue(record.getString("role") || "") || "",
         allowed_tenants: normalizeAllowedTenants(record),
-        tenant_default: record.get("tenant_default") || null,
-        default_tenant: record.get("tenant_default") || null
+        tenant_default: normalizeTenantValue(record.get("tenant_default") || "") || null,
+        default_tenant: normalizeTenantValue(record.get("tenant_default") || "") || null
       };
     }
 
@@ -489,6 +515,19 @@
       e.response.header().set("Referrer-Policy", "same-origin");
     }
 
+    function normalizeTenantValue(value) {
+      const safe = String(value || "").trim().toLowerCase();
+      if (safe === "pm" || safe === "plaza mayor" || safe === "plaza_mayor") return "plaza_mayor";
+      if (safe === "cp" || safe === "casa de piedra" || safe === "casa_de_piedra") return "casa_de_piedra";
+      return safe;
+    }
+
+    function normalizeRoleValue(value) {
+      const safe = normalizeTenantValue(value).replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
+      if (safe === "administrador" || safe === "superadmin" || safe === "super_admin") return "admin";
+      return safe;
+    }
+
     function normalizeAllowedTenants(record) {
       const raw = record?.get("allowed_tenants");
       let list = [];
@@ -501,11 +540,11 @@
       }
       list = list
         .map(function (item) {
-          return String(item || "").trim().toLowerCase();
+          return normalizeTenantValue(item);
         })
         .filter(Boolean);
 
-      const role = String(record?.getString("role") || "").trim().toLowerCase();
+      const role = normalizeRoleValue(record?.getString("role") || "");
       if (!list.length) {
         if (role === "admin" || role === "verificador") list = ["plaza_mayor", "casa_de_piedra"];
         else if (role === "plaza_mayor" || role === "casa_de_piedra") list = [role];
@@ -525,10 +564,10 @@
             (email ? email.split("@")[0] : "") ||
             ""
         ).trim(),
-        role: String(record.getString("role") || "").trim().toLowerCase() || "",
+        role: normalizeRoleValue(record.getString("role") || "") || "",
         allowed_tenants: normalizeAllowedTenants(record),
-        tenant_default: record.get("tenant_default") || null,
-        default_tenant: record.get("tenant_default") || null
+        tenant_default: normalizeTenantValue(record.get("tenant_default") || "") || null,
+        default_tenant: normalizeTenantValue(record.get("tenant_default") || "") || null
       };
     }
 

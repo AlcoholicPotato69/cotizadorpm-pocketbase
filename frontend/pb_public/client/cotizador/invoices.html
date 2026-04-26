@@ -8,14 +8,14 @@
     <title>Facturación - Plaza Mayor</title>
     
     <link rel="preload" as="script" href="../../assets/libs/js/tailwindcss.js">
-    <script src="../../assets/libs/js/tailwindcss.js"></script>
-    <link rel="preload" as="style" href="../../assets/libs/css/all.min.css">
-    <link rel="stylesheet" href="../../assets/libs/css/all.min.css">
-    <script src="../js/hub-config.js"></script>
-    <script src="../services/pb-core.js"></script>
-    <script src="../services/_shared.js"></script>
-    <script src="../services/auth.js"></script>
-    <script src="../services/pb-client.js"></script>
+    <script src="../../assets/libs/js/tailwindcss.js?v=20260426-v3-digital-calendar"></script>
+    <link rel="preload" as="style" href="../../assets/libs/css/all.min.css?v=20260426-v3-digital-calendar">
+    <link rel="stylesheet" href="../../assets/libs/css/all.min.css?v=20260426-v3-digital-calendar">
+    <script src="../js/hub-config.js?v=20260426-v3-digital-calendar"></script>
+    <script src="../services/pb-core.js?v=20260426-v3-digital-calendar"></script>
+    <script src="../services/_shared.js?v=20260426-v3-digital-calendar"></script>
+    <script src="../services/auth.js?v=20260426-v3-digital-calendar"></script>
+    <script src="../services/pb-client.js?v=20260426-v3-digital-calendar"></script>
     
     <script>
         tailwind.config = { theme: { extend: { colors: { brand: { red: '#D32F2F', dark: '#1a1a1a', gray: '#f3f4f6' } } } } }
@@ -35,15 +35,15 @@
         .pdf-frame { width: 100%; height: 100%; border: none; background: #525659; }
     </style>
     <!-- Local Animations -->
-    <link rel="preload" as="style" href="../../assets/libs/css/animate.min.css">
-    <link rel="stylesheet" href="../../assets/libs/css/animate.min.css">
+    <link rel="preload" as="style" href="../../assets/libs/css/animate.min.css?v=20260426-v3-digital-calendar">
+    <link rel="stylesheet" href="../../assets/libs/css/animate.min.css?v=20260426-v3-digital-calendar">
     <link rel="icon" type="image/png" href="../assets/img/logo.png">
 </head>
 <body class="bg-brand-gray text-gray-800 flex flex-col min-h-screen relative">
     <div id="toast-container" class="fixed bottom-5 right-5 z-[10000] flex flex-col gap-2 pointer-events-none"></div>
     
     <script>const TENANT_SCHEMA='finanzas';</script>
-  <script src="../js/layout.js"></script>
+  <script src="../js/layout.js?v=20260426-v3-digital-calendar"></script>
     
     <nav class="bg-brand-red shadow-lg sticky top-16 z-40 border-t border-red-800">
         <div class="container mx-auto px-4 flex h-14 items-center text-white gap-2 overflow-x-auto no-scrollbar">
@@ -184,7 +184,7 @@
         </div>
     </div>
 
-    <script src="invoices.js"></script>
+    <script src="invoices.js?v=20260426-v3-digital-calendar"></script>
 </body>
 </html>
 

@@ -1851,6 +1851,12 @@ function renderSelectedRangeEvent() {
 }
 async function fetchBlockedRangesForSpace(spaceId) {
     const sid = String(spaceId || '');
+    const space = allSpaces.find(s => String(s.id) === sid);
+    if (space) {
+        const b2b = getCatalogSpaceB2bConfig(space);
+        const isDigitalMedia = normalizePmDigitalMediaConfig(b2b.digital_media || b2b.digitalMedia || b2b.medio_digital || {}).enabled;
+        if (isDigitalMedia) return [];
+    }
     if (!sid) return [];
     const { data, error } = await window.tenantPocketBase
         .from('cotizaciones')
@@ -2167,7 +2173,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const profile = authCtx?.profile || await pmResolveCurrentUserProfile(session.user);
     const cachedRole = String(localStorage.getItem('hub_user_cache_role') || '').trim().toLowerCase();
-    const userRole = String(profile?.role || profile?.rol || cachedRole).toLowerCase().trim();
+    let userRole = String(profile?.role || profile?.rol || cachedRole).toLowerCase().trim();
+    if (typeof userRole.normalize === 'function') userRole = userRole.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    userRole = userRole.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    if (userRole === 'plazamayor' || userRole === 'pm' || userRole === 'finanzas') userRole = 'plaza_mayor';
+    if (userRole === 'casadepiedra' || userRole === 'cp') userRole = 'casa_de_piedra';
+    if (userRole === 'administrador' || userRole === 'superadmin' || userRole === 'super_admin') userRole = 'admin';
     const roleHasAccess = (userRole === 'admin') || (userRole === 'plaza_mayor') || (userRole === 'verificador');
     const roleDefaultPerms = { access: true, orders_view: true, reports_view: true, clients_view: true, clients_manage: true };
 
@@ -2353,7 +2364,13 @@ function renderSpaces(list) {
     list.forEach(s => {
         let adjustedBase = parseFloat(s.precio_base);
         const adjustmentType = normalizeCatalogAdjustmentType(s.ajuste_tipo);
+        const b2bConfig = getCatalogSpaceB2bConfig(s);
+        const isDigitalMedia = normalizePmDigitalMediaConfig(b2bConfig.digital_media || b2bConfig.digitalMedia || b2bConfig.medio_digital || {}).enabled;
+
         let badgeHTML = '';
+        if (isDigitalMedia) {
+            badgeHTML += `<div class="absolute top-2 right-2 bg-blue-500 text-white text-[10px] font-bold px-2 py-1 rounded shadow-md z-30 flex items-center gap-1"><i class="fa-solid fa-desktop"></i> Digital</div>`;
+        }
         const taxDetails = getSpaceTaxDetails(s);
         const taxPriceLabel = taxDetails.length === 1 ? taxDetails[0].nombre : 'Impuestos';
         const infoRowsHtml = renderCatalogSpaceInfoRows(s);
@@ -2361,12 +2378,12 @@ function renderSpaces(list) {
 
         if (adjustmentType === 'aumento') {
             adjustedBase += s.precio_base * (s.ajuste_porcentaje / 100);
-            badgeHTML = `<div class="absolute top-2 left-2 bg-green-500 text-white text-[10px] font-bold px-2 py-1 rounded shadow-md z-10 flex items-center gap-1"><i class="fa-solid fa-arrow-trend-up"></i> +${s.ajuste_porcentaje}%</div>`;
+            badgeHTML += `<div class="absolute top-2 left-2 bg-green-500 text-white text-[10px] font-bold px-2 py-1 rounded shadow-md z-10 flex items-center gap-1"><i class="fa-solid fa-arrow-trend-up"></i> +${s.ajuste_porcentaje}%</div>`;
         }
         if (adjustmentType === 'descuento') {
             const discountPct = normalizeCatalogAdjustmentPercent(adjustmentType, s.ajuste_porcentaje);
             adjustedBase -= s.precio_base * (discountPct / 100);
-            badgeHTML = `<div class="absolute top-2 left-2 bg-red-500 text-white text-[10px] font-bold px-2 py-1 rounded shadow-md z-10 flex items-center gap-1"><i class="fa-solid fa-tag"></i> -${discountPct}%</div>`;
+            badgeHTML += `<div class="absolute top-2 left-2 bg-red-500 text-white text-[10px] font-bold px-2 py-1 rounded shadow-md z-10 flex items-center gap-1"><i class="fa-solid fa-tag"></i> -${discountPct}%</div>`;
         }
 
         let totalTax = 0;
@@ -2450,10 +2467,10 @@ function renderSpaces(list) {
                      onmouseenter="window.startCardCarousel(this)" 
                      onmouseleave="window.stopCardCarousel(this)">
                     <div class="h-48 bg-gray-200 relative overflow-hidden">
-                        ${editBtn}${badgeHTML}
                         <div class="carousel-container absolute inset-0 transition-transform duration-700 group-hover:scale-110">
                             ${imgsHtml}
                         </div>
+                        ${editBtn}${badgeHTML}
                         <div class="absolute bottom-3 left-4 text-white z-10 pointer-events-none">
                             <p class="text-[10px] font-bold uppercase tracking-wider bg-brand-red px-2 py-0.5 rounded inline-block mb-1">${s.tipo}</p>
                             <h3 class="font-bold text-lg leading-tight shadow-black drop-shadow-md">${s.nombre}</h3>

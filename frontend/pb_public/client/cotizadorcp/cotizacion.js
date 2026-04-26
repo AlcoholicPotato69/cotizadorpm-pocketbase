@@ -952,6 +952,14 @@ function normalizeCpDigitalMediaConfig(value = {}) {
         pixel_height: pixelHeight
     };
 }
+
+function __cpIsDigitalMediaSpace(spaceOrId) {
+    const space = typeof spaceOrId === 'string' ? allSpaces.find(s => String(s.id) === spaceOrId) : spaceOrId;
+    if (!space) return false;
+    const b2b = getCpSpaceB2bConfig(space);
+    return normalizeCpDigitalMediaConfig(b2b.digital_media || b2b.digitalMedia || b2b.medio_digital || {}).enabled;
+}
+
 function getCpSpaceDigitalMediaConfig(space) {
     const b2b = getCpSpaceB2bConfig(space);
     return normalizeCpDigitalMediaConfig(b2b.digital_media || b2b.digitalMedia || b2b.medio_digital || {});
@@ -1429,7 +1437,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     const profile = await __cpResolveCurrentUserProfile(session.user);
     const cachedRole = String(localStorage.getItem('hub_user_cache_role') || '').trim().toLowerCase();
-    const userRole = String(profile?.role || profile?.rol || cachedRole).toLowerCase().trim();
+    let userRole = String(profile?.role || profile?.rol || cachedRole).toLowerCase().trim();
+    if (typeof userRole.normalize === 'function') userRole = userRole.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    userRole = userRole.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    if (userRole === 'casadepiedra' || userRole === 'cp') userRole = 'casa_de_piedra';
+    if (userRole === 'plazamayor' || userRole === 'pm' || userRole === 'finanzas') userRole = 'plaza_mayor';
+    if (userRole === 'administrador' || userRole === 'superadmin' || userRole === 'super_admin') userRole = 'admin';
     const roleHasAccess = (userRole === 'admin') || (userRole === 'casa_de_piedra') || (userRole === 'verificador');
     if (userRole === 'admin' || userRole === 'verificador') myPermissions = { access: true, catalog_manage: true };
     else if (roleHasAccess) myPermissions = { access: true, catalog_manage: false };
@@ -2336,6 +2349,11 @@ function __cpDayKey(dateStr) {
     return keys[d.getDay()] || '';
 }
 function __cpIsBlockedDate(space, dateStr, guests) {
+    if (space) {
+        const b2b = getCpSpaceB2bConfig(space);
+        const isDigitalMedia = normalizeCpDigitalMediaConfig(b2b.digital_media || b2b.digitalMedia || b2b.medio_digital || {}).enabled;
+        if (isDigitalMedia) return false;
+    }
     const dayKey = __cpDayKey(dateStr);
     let blocked = [];
     try { blocked = typeof space?.dias_bloqueados === 'string' ? JSON.parse(space.dias_bloqueados) : (space?.dias_bloqueados || []); } catch (e) { blocked = []; }
@@ -2350,6 +2368,8 @@ function __cpIsPremontajeBlockedDate(space, dateStr) {
     return Array.isArray(blockedP) && blockedP.includes(dayKey);
 }
 function __cpCfgHasBlockedDates(cfg) {
+    // DIGITAL MEDIA: never has blocked dates
+    if (cfg?.spaceId && __cpIsDigitalMediaSpace(cfg.spaceId)) return false;
     const space = __cpGetSpaceById(cfg?.spaceId);
     if (!space) return false;
     const guests = parseInt(cfg?.guests, 10) || 1;
@@ -2904,13 +2924,13 @@ window.pickQuoteDate = async function (ds) {
     const cfg = __cpGetActiveCfg();
     const space = __cpGetSpaceById(cfg?.spaceId);
     const guests = parseInt(cfg?.guests, 10) || 1;
-    if (__CP_DATE_PICKER_STATE.reserved?.has(ds)) return window.showToast(`La fecha ${window.safeFormatDate(ds)} ya está ocupada para este espacio.`, 'error');
+    if (__CP_DATE_PICKER_STATE.reserved?.has(ds) && !__cpIsDigitalMediaSpace(cfg?.spaceId)) return window.showToast(`La fecha ${window.safeFormatDate(ds)} ya está ocupada para este espacio.`, 'error');
     if (space && __cpIsBlockedDate(space, ds, guests)) return window.showToast(`La fecha ${window.safeFormatDate(ds)} está bloqueada para ese espacio.`, 'error');
     const state = __CP_DATE_PICKER_STATE;
     if (__cpIsPublicidadCfg(space) && cfg && !cfg.customPermanence) {
         const bounds = __cpGetMonthBounds(ds);
         const range = __cpDatesBetween(bounds.start, bounds.end);
-        const clash = range.find(d => __CP_DATE_PICKER_STATE.reserved?.has(d));
+        const clash = __cpIsDigitalMediaSpace(cfg?.spaceId) ? null : range.find(d => __CP_DATE_PICKER_STATE.reserved?.has(d));
         if (clash) return window.showToast(`El periodo automático incluye fecha ocupada: ${window.safeFormatDate(clash)}.`, 'error');
         const blocked = space ? range.find(d => __cpIsBlockedDate(space, d, guests)) : '';
         if (blocked) return window.showToast(`El periodo automático incluye fecha bloqueada: ${window.safeFormatDate(blocked)}.`, 'error');
@@ -2926,7 +2946,7 @@ window.pickQuoteDate = async function (ds) {
         state.start = ds;
     } else {
         const range = __cpDatesBetween(state.start, ds);
-        const clash = range.find(d => __CP_DATE_PICKER_STATE.reserved?.has(d));
+        const clash = __cpIsDigitalMediaSpace(cfg?.spaceId) ? null : range.find(d => __CP_DATE_PICKER_STATE.reserved?.has(d));
         if (clash) return window.showToast(`El rango incluye fecha ocupada: ${window.safeFormatDate(clash)}.`, 'error');
         if (space) {
             const blocked = range.find(d => __cpIsBlockedDate(space, d, guests));
@@ -2964,11 +2984,16 @@ function __cpBuildReservationsMap(rows) {
         });
     };
     (rows || []).forEach(order => {
+        // DIGITAL MEDIA: skip reservation tracking for digital spaces
+        const primarySid = order.espacio_id || '';
+        if (primarySid && __cpIsDigitalMediaSpace(primarySid)) return;
         const orderBlocksIndefinitely = __cpQuoteBlocksIndefinitely(order);
         const details = __cpSafeArray(order.espacios_detalle);
         if (details.length) {
             details.forEach(item => {
                 const sid = item.espacio_id || item.space_id;
+                // DIGITAL MEDIA: skip reservation tracking for digital spaces
+                if (sid && __cpIsDigitalMediaSpace(sid)) return;
                 const eventDates = __cpSafeArray(item.fechas_evento).map(__cpNormalizeDate).filter(Boolean);
                 if (eventDates.length) eventDates.forEach(d => addDate(sid, d));
                 else addRange(
@@ -3009,6 +3034,8 @@ async function __cpEvalAvailability(force = false) {
     __cpQuoteSpaces.forEach(cfg => {
         const sid = String(cfg.spaceId);
         const reserved = map.get(sid) || new Set();
+        // DIGITAL MEDIA: always available for digital spaces
+        if (__cpIsDigitalMediaSpace(sid)) { bySpace[sid] = { available: true, conflicts: [] }; return; }
         const needed = [...__cpDatesBetween(cfg.startDate, cfg.endDate), ...__cpSafeArray(cfg.premontajeDates).map(__cpNormalizeDate).filter(Boolean)];
         const conflicts = __cpCfgBlocksIndefinitely(cfg)
             ? Array.from(reserved).filter((date) => date >= String(cfg.startDate || '')).sort()

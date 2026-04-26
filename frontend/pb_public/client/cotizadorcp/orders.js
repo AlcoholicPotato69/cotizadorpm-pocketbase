@@ -95,12 +95,13 @@ async function loadClientProfilesForOrderModal() {
         }
 
         sel.onchange = () => {
-            const id = sel.value; if (!id) { if (hid) hid.value = ''; return; }
+            const id = sel.value; if (!id) { if (hid) hid.value = ''; __cpSyncOrderApprovalControls(); return; }
             const c = orderClientProfilesById[id]; if (!c) return;
             if (!__cpIsOrderClientProfileReady(c)) {
                 if (hid) hid.value = '';
                 sel.value = '';
                 window.showToast?.('Este perfil aun no tiene expediente validado. Usa captura manual o pide al cliente completar su expediente.', 'info');
+                __cpSyncOrderApprovalControls();
                 return;
             }
             if (hid) hid.value = id;
@@ -108,13 +109,19 @@ async function loadClientProfilesForOrderModal() {
             if (document.getElementById('oed-phone')) document.getElementById('oed-phone').value = (c.telefono || '');
             if (document.getElementById('oed-email')) document.getElementById('oed-email').value = (c.correo || '');
             if (document.getElementById('fiscal-rfc-re')) document.getElementById('fiscal-rfc-re').value = (c.rfc || '');
+            __cpSyncOrderApprovalControls();
         };
-        const clearAssoc = () => { if (sel.value) sel.value = ''; if (hid) hid.value = ''; };
+        const clearAssoc = () => {
+            if (sel.value) sel.value = '';
+            if (hid) hid.value = '';
+            __cpSyncOrderApprovalControls();
+        };
         ['oed-client', 'oed-phone', 'oed-email', 'fiscal-rfc-re'].forEach(id => { const el = document.getElementById(id); if (el) el.addEventListener('input', clearAssoc); });
         window.HUB_CLIENT_PROFILE_HOVER?.bindSelect?.(sel, () => {
             const selectedId = String(sel?.value || hid?.value || '').trim();
             return selectedId ? (orderClientProfilesById[selectedId] || null) : null;
         }, { tenant: 'casa_de_piedra' });
+        __cpSyncOrderApprovalControls();
     } catch (e) { console.warn("No se pudo cargar clientes", e); }
 }
 
@@ -157,6 +164,65 @@ function __cpApplyOrderClientProfileSelection(order = {}) {
     sel.value = profileId || '';
     if (hid) hid.value = profileId || '';
     return profileId;
+}
+
+function __cpReadLiveOrderClientSnapshot() {
+    return {
+        cliente_id: String(document.getElementById('oed-client-id')?.value || '').trim(),
+        cliente_nombre: String(document.getElementById('oed-client')?.value || '').trim(),
+        cliente_email: String(document.getElementById('oed-email')?.value || '').trim(),
+        cliente_rfc: String(document.getElementById('fiscal-rfc-re')?.value || '').trim()
+    };
+}
+
+function __cpResolveCurrentOrderClientProfile(order = {}) {
+    const selectedId = String(
+        document.getElementById('oed-client-id')?.value
+        || document.getElementById('oed-client-profile')?.value
+        || ''
+    ).trim();
+    if (selectedId && orderClientProfilesById[selectedId]) return orderClientProfilesById[selectedId];
+    const profileId = __cpResolveOrderClientProfileId({
+        ...(order && typeof order === 'object' ? order : {}),
+        ...__cpReadLiveOrderClientSnapshot()
+    });
+    return profileId ? (orderClientProfilesById[profileId] || null) : null;
+}
+
+function __cpGetOrderApprovalGuard(order = {}) {
+    const clientProfile = __cpResolveCurrentOrderClientProfile(order);
+    if (!clientProfile) {
+        return {
+            canApprove: false,
+            clientProfile: null,
+            reason: 'No puedes aprobar la cotizacion hasta asociar un perfil de cliente.'
+        };
+    }
+    if (!__cpIsOrderClientProfileReady(clientProfile)) {
+        return {
+            canApprove: false,
+            clientProfile,
+            reason: 'No puedes aprobar la cotizacion hasta que el expediente del cliente este completo, vigente y aprobado.'
+        };
+    }
+    return { canApprove: true, clientProfile, reason: '' };
+}
+
+function __cpSyncOrderApprovalControls(order = currentPreviewOrder || {}) {
+    const guard = __cpGetOrderApprovalGuard(order);
+    const currentStatus = String(order?.status || currentPreviewOrder?.status || '').toLowerCase();
+    const isLocked = ['aprobada', 'finalizada'].includes(currentStatus);
+    const statusSel = document.getElementById('oed-status');
+    if (statusSel) {
+        const approvalOption = Array.from(statusSel.options || []).find((opt) => String(opt.value || '').toLowerCase() === 'aprobada');
+        if (approvalOption) approvalOption.disabled = !guard.canApprove && !isLocked;
+        if (!guard.canApprove && !isLocked && String(statusSel.value || '').toLowerCase() === 'aprobada') {
+            statusSel.value = 'pendiente';
+        }
+        if (!isLocked) statusSel.title = guard.canApprove ? '' : guard.reason;
+    }
+    if (typeof __orderApplyStatusVisual === 'function') __orderApplyStatusVisual();
+    return guard;
 }
 function __orderNormalizeTaxIds(value) {
     return window.parseIds(value)
@@ -2744,6 +2810,10 @@ window.processSaveOrder = async function (options = {}) {
         const approvalTransition = nextStatus === 'aprobada' && prevStatus !== 'aprobada' && prevStatus !== 'finalizada';
         const convenioTransition = nextStatus === 'finalizada' && __orderIsConvenioOrder({ ...currentPreviewOrder, ...formData });
         const orderId = String(document.getElementById('oed-id')?.value || currentPreviewOrder?.id || '').trim();
+        if (approvalTransition) {
+            const approvalGuard = __cpGetOrderApprovalGuard(formData);
+            if (!approvalGuard.canApprove) throw new Error(approvalGuard.reason);
+        }
         if (!orderId) throw new Error('Cotización inválida.');
         if (!formData.numero_orden) {
             const sourceId = String(currentPreviewOrder?.id || orderId);
@@ -6168,6 +6238,7 @@ window.getOrderHTML = function (o, type) {
 
     let rentalRows = ''; let rentalTotal = 0;
     const detailSpaces = parseSpacesDetail(o.espacios_detalle);
+    const orderIsPublicidad = __orderIsPublicidadSpace(space || { tipo: o.espacio_tipo || o.tipo || '' }) || detailSpaces.some(sp => __orderIsPublicidadSpace(__orderFindCatalogSpace(sp.espacio_id || sp.space_id) || { tipo: sp.espacio_tipo || sp.tipo || '' }));
     // Resuelve personas por concepto usando (1) el propio concepto, (2) el espacio ligado o (3) el fallback global.
     const __orderParsePeople = (value) => {
         const parsed = parseInt(value, 10);
@@ -6203,7 +6274,7 @@ window.getOrderHTML = function (o, type) {
     };
     const __orderBuildTaxRows = (subtotal, activeTaxIds, storedTaxTotal = 0) => {
         const rows = [
-            `<tr><td class="py-1 px-3 text-[10px] font-bold text-gray-500 text-right" colspan="4">Subtotal</td><td class="py-1 px-3 text-right text-xs font-bold text-gray-800">${__orderFormatMoneyHtml(subtotal)}</td></tr>`
+            `<tr><td class="py-1 px-3 text-[10px] font-bold text-gray-500 text-right" colspan="${orderIsPublicidad ? '4' : '2'}">Subtotal</td><td class="py-1 px-3 text-right text-xs font-bold text-gray-800">${__orderFormatMoneyHtml(subtotal)}</td></tr>`
         ];
         const resolvedTaxes = parseIds(activeTaxIds)
             .map((tid) => __orderResolveTaxRecord(tid))
@@ -6228,10 +6299,10 @@ window.getOrderHTML = function (o, type) {
                 if (storedTaxTotal > 0 && index < resolvedTaxes.length - 1) {
                     remainingStoredTax = __orderRoundMoney(remainingStoredTax - amount);
                 }
-                rows.push(`<tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="4">${__cpSafeHtml(entry.name)}${entry.percentage > 0 ? ` (${entry.percentage}%)` : ''}</td><td class="py-1 px-3 text-right text-xs text-red-500 font-bold">${__orderFormatMoneyHtml(amount, { prefix: '+' })}</td></tr>`);
+                rows.push(`<tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="${orderIsPublicidad ? '4' : '2'}">${__cpSafeHtml(entry.name)}${entry.percentage > 0 ? ` (${entry.percentage}%)` : ''}</td><td class="py-1 px-3 text-right text-xs text-red-500 font-bold">${__orderFormatMoneyHtml(amount, { prefix: '+' })}</td></tr>`);
             });
         } else if (storedTaxTotal > 0) {
-            rows.push(`<tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="4">IVA</td><td class="py-1 px-3 text-right text-xs text-red-500 font-bold">${__orderFormatMoneyHtml(storedTaxTotal, { prefix: '+' })}</td></tr>`);
+            rows.push(`<tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="${orderIsPublicidad ? '4' : '2'}">IVA</td><td class="py-1 px-3 text-right text-xs text-red-500 font-bold">${__orderFormatMoneyHtml(storedTaxTotal, { prefix: '+' })}</td></tr>`);
         }
 
         return rows.join('');
@@ -6258,13 +6329,13 @@ window.getOrderHTML = function (o, type) {
                 rentalTotal += breakdown.total;
                 convenioBaseTotal += breakdown.total;
                 breakdown.details.forEach((day, idx) => {
-                    rentalRows += `<tr><td class="py-2 px-3 align-top text-[11px] text-gray-700 leading-snug break-words"><span class="font-bold">${__orderEscapeHtml(identity.nombre)}</span> - Renta ${day.dayName}${(idx === 0 && identity.clave) ? `<br><span class="text-[9px] text-gray-400 italic">${__orderEscapeHtml(identity.clave)}</span>` : ''}</td><td class="py-2 px-3 text-center text-[10px] text-gray-400">--</td><td class="py-2 px-3 text-center text-[10px] text-gray-400">--</td><td class="py-2 px-3 text-left text-[10px] text-gray-500">${__orderBuildDateCellHtml(day.date, '', sid)}</td><td class="py-2 px-3 text-right font-bold text-[11px] text-gray-700">${__orderFormatMoneyHtml(day.price)}</td></tr>`;
+                    rentalRows += `<tr><td class="py-2 px-3 align-top text-[11px] text-gray-700 leading-snug break-words"><span class="font-bold">${__orderEscapeHtml(identity.nombre)}</span> - Renta ${day.dayName}${(idx === 0 && identity.clave) ? `<br><span class="text-[9px] text-gray-400 italic">${__orderEscapeHtml(identity.clave)}</span>` : ''}</td>${orderIsPublicidad ? '<td class="py-2 px-3 text-center text-[10px] text-gray-400">--</td><td class="py-2 px-3 text-center text-[10px] text-gray-400">--</td>' : ''}<td class="py-2 px-3 text-left text-[10px] text-gray-500">${__orderBuildDateCellHtml(day.date, '', sid)}</td><td class="py-2 px-3 text-right font-bold text-[11px] text-gray-700">${__orderFormatMoneyHtml(day.price)}</td></tr>`;
                 });
             } else {
                 rentalTotal += detailSubtotal;
                 convenioBaseTotal += detailSubtotal;
                 const amountCellHtml = isConvenio ? '' : `<td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${__orderFormatMoneyHtml(detailSubtotal)}</td>`;
-                rentalRows += `<tr><td class="py-2 px-3 align-top break-words">${__orderRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__orderEscapeHtml(detailValue)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${measureCellHtml}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${detailDateLabel}</td>${amountCellHtml}</tr>`;
+                rentalRows += `<tr><td class="py-2 px-3 align-top break-words">${__orderRenderSpaceCell(identity)}</td>${orderIsPublicidad ? `<td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__orderEscapeHtml(detailValue)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${measureCellHtml}</td>` : ''}<td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${detailDateLabel}</td>${amountCellHtml}</tr>`;
             }
         });
     } else if (space && o.fecha_inicio && o.fecha_fin) {
@@ -6275,12 +6346,12 @@ window.getOrderHTML = function (o, type) {
             rentalTotal = parseFloat(o?.desglose_precios?.subtotal_antes_impuestos || o?.precio_final || space?.precio_base || 0) || 0;
             convenioBaseTotal = rentalTotal;
             const amountCellHtml = isConvenio ? '' : `<td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${__orderFormatMoneyHtml(rentalTotal)}</td>`;
-            rentalRows = `<tr><td class="py-2 px-3 align-top break-words">${__orderRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__orderEscapeHtml(detailValue)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${measureCellHtml}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__orderBlocksIndefinitely(o) ? `${window.safeFormatDate(o.fecha_inicio)}<br>Indefinido` : __orderBuildDateCellHtml(window.safeFormatDate(o.fecha_inicio), window.safeFormatDate(o.fecha_fin), space.id || o.espacio_id)}</td>${amountCellHtml}</tr>`;
+            rentalRows = `<tr><td class="py-2 px-3 align-top break-words">${__orderRenderSpaceCell(identity)}</td>${orderIsPublicidad ? `<td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__orderEscapeHtml(detailValue)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${measureCellHtml}</td>` : ''}<td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__orderBlocksIndefinitely(o) ? `${window.safeFormatDate(o.fecha_inicio)}<br>Indefinido` : __orderBuildDateCellHtml(window.safeFormatDate(o.fecha_inicio), window.safeFormatDate(o.fecha_fin), space.id || o.espacio_id)}</td>${amountCellHtml}</tr>`;
         } else {
             const dayBreakdown = calculateDayByDayTotal(space, o.fecha_inicio, o.fecha_fin, guests);
             rentalTotal = dayBreakdown.total;
             convenioBaseTotal = rentalTotal;
-            dayBreakdown.details.forEach((day, idx) => { rentalRows += `<tr><td class="py-2 px-3 align-top text-[11px] text-gray-700 leading-snug break-words"><span class="font-bold">${__orderEscapeHtml(identity.nombre)}</span> - Renta ${day.dayName}${idx === 0 && identity.clave ? `<br><span class="text-[9px] text-gray-400 italic">${__orderEscapeHtml(identity.clave)}</span>` : ''}</td><td class="py-2 px-3 text-center text-[10px] text-gray-400">--</td><td class="py-2 px-3 text-center text-[10px] text-gray-400">--</td><td class="py-2 px-3 text-left text-[10px] text-gray-500">${__orderBuildDateCellHtml(day.date, '', space.id || o.espacio_id)}</td><td class="py-2 px-3 text-right font-bold text-[11px] text-gray-700">${__orderFormatMoneyHtml(day.price)}</td></tr>`; });
+            dayBreakdown.details.forEach((day, idx) => { rentalRows += `<tr><td class="py-2 px-3 align-top text-[11px] text-gray-700 leading-snug break-words"><span class="font-bold">${__orderEscapeHtml(identity.nombre)}</span> - Renta ${day.dayName}${idx === 0 && identity.clave ? `<br><span class="text-[9px] text-gray-400 italic">${__orderEscapeHtml(identity.clave)}</span>` : ''}</td>${orderIsPublicidad ? '<td class="py-2 px-3 text-center text-[10px] text-gray-400">--</td><td class="py-2 px-3 text-center text-[10px] text-gray-400">--</td>' : ''}<td class="py-2 px-3 text-left text-[10px] text-gray-500">${__orderBuildDateCellHtml(day.date, '', space.id || o.espacio_id)}</td><td class="py-2 px-3 text-right font-bold text-[11px] text-gray-700">${__orderFormatMoneyHtml(day.price)}</td></tr>`; });
         }
     } else {
         const basePrice = parseFloat(space ? space.precio_base : 0) || 0;
@@ -6290,7 +6361,7 @@ window.getOrderHTML = function (o, type) {
         rentalTotal = basePrice;
         convenioBaseTotal = basePrice;
         const amountCellHtml = isConvenio ? '' : `<td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${__orderFormatMoneyHtml(basePrice)}</td>`;
-        rentalRows = `<tr><td class="py-2 px-3 align-top break-words">${__orderRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__orderEscapeHtml(detailValue)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${measureCellHtml}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__orderBlocksIndefinitely(o) ? `${window.safeFormatDate(o.fecha_inicio)}<br>Indefinido` : __orderBuildDateCellHtml(window.safeFormatDate(o.fecha_inicio), window.safeFormatDate(o.fecha_fin), o.espacio_id)}</td>${amountCellHtml}</tr>`;
+        rentalRows = `<tr><td class="py-2 px-3 align-top break-words">${__orderRenderSpaceCell(identity)}</td>${orderIsPublicidad ? `<td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__orderEscapeHtml(detailValue)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${measureCellHtml}</td>` : ''}<td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__orderBlocksIndefinitely(o) ? `${window.safeFormatDate(o.fecha_inicio)}<br>Indefinido` : __orderBuildDateCellHtml(window.safeFormatDate(o.fecha_inicio), window.safeFormatDate(o.fecha_fin), o.espacio_id)}</td>${amountCellHtml}</tr>`;
     }
 
     let runningSubtotal = rentalTotal; let rowsHtml = rentalRows;
@@ -6324,10 +6395,10 @@ window.getOrderHTML = function (o, type) {
             ? '---'
             : __orderFormatMoneyHtml(amount, { prefix: sign });
         const amountCellHtml = isConvenio ? '' : `<td class="py-2 px-3 text-right text-[13px] font-medium text-gray-600">${amountCell}</td>`;
-        rowsHtml += `<tr><td class="py-2 px-3 align-top text-[13px] font-medium text-gray-600 leading-snug break-words">${conceptLabel}</td><td class="py-2 px-3"></td><td class="py-2 px-3"></td><td class="py-2 px-3 text-left text-[10px] text-gray-500">${conceptDateHtml}</td>${amountCellHtml}</tr>`;
+        rowsHtml += `<tr><td class="py-2 px-3 align-top text-[13px] font-medium text-gray-600 leading-snug break-words">${conceptLabel}</td>${orderIsPublicidad ? '<td class="py-2 px-3"></td><td class="py-2 px-3"></td>' : ''}<td class="py-2 px-3 text-left text-[10px] text-gray-500">${conceptDateHtml}</td>${amountCellHtml}</tr>`;
     });
 
-    if (o.tipo_ajuste && o.tipo_ajuste !== 'ninguno') { let val = parseFloat(o.valor_ajuste); let displayAmount = val; if (o.ajuste_es_porcentaje) { displayAmount = runningSubtotal * (val / 100); } const sign = o.tipo_ajuste === 'descuento' ? '-' : '+'; if (o.tipo_ajuste === 'descuento') runningSubtotal -= displayAmount; else runningSubtotal += displayAmount; const amountCellHtml = isConvenio ? '' : `<td class="py-2 px-3 text-right font-bold text-[12px] text-gray-600">${__orderFormatMoneyHtml(displayAmount, { prefix: sign })}</td>`; rowsHtml += `<tr class="bg-gray-50"><td class="py-2 px-3 italic text-[12px] text-gray-500">Ajuste Global</td><td></td><td></td><td></td>${amountCellHtml}</tr>`; }
+    if (o.tipo_ajuste && o.tipo_ajuste !== 'ninguno') { let val = parseFloat(o.valor_ajuste); let displayAmount = val; if (o.ajuste_es_porcentaje) { displayAmount = runningSubtotal * (val / 100); } const sign = o.tipo_ajuste === 'descuento' ? '-' : '+'; if (o.tipo_ajuste === 'descuento') runningSubtotal -= displayAmount; else runningSubtotal += displayAmount; const amountCellHtml = isConvenio ? '' : `<td class="py-2 px-3 text-right font-bold text-[12px] text-gray-600">${__orderFormatMoneyHtml(displayAmount, { prefix: sign })}</td>`; rowsHtml += `<tr class="bg-gray-50"><td class="py-2 px-3 italic text-[12px] text-gray-500">Ajuste Global</td>${orderIsPublicidad ? '<td></td><td></td>' : ''}<td></td>${amountCellHtml}</tr>`; }
     const __orderTableRows = (String(rowsHtml).match(/<tr\b/gi) || []).length;
     const __orderTableChars = String(rowsHtml).replace(/<[^>]+>/g, '').length;
     let __orderDensityLevel = 0;
@@ -6347,13 +6418,21 @@ window.getOrderHTML = function (o, type) {
     // generico, la tabla y el resumen tambien deben quedar sin montos visibles.
     const totalsBlock = isConvenio
         ? ''
-        : `<div class="cp-pdf-summary flex justify-end mb-2 pr-4" data-base-resource="summary"><div class="cp-pdf-summary-table-wrap"><table class="w-full border-collapse">${taxRows}<tr><td class="pt-2 border-t-2 border-gray-800 align-middle text-right" colspan="4"><span class="text-[10px] font-bold uppercase text-gray-500 mr-2">Total Neto</span></td><td class="pt-2 border-t-2 border-gray-800 align-middle text-right"><span class="text-xl font-black text-gray-900">${__orderFormatMoneyHtml(pricing.total)}</span></td></tr></table></div></div>`;
+        : `<div class="cp-pdf-summary flex justify-end mb-2 pr-4" data-base-resource="summary"><div class="cp-pdf-summary-table-wrap"><table class="w-full border-collapse">${taxRows}<tr><td class="pt-2 border-t-2 border-gray-800 align-middle text-right" colspan="${orderIsPublicidad ? '4' : '2'}"><span class="text-[10px] font-bold uppercase text-gray-500 mr-2">Total Neto</span></td><td class="pt-2 border-t-2 border-gray-800 align-middle text-right"><span class="text-xl font-black text-gray-900">${__orderFormatMoneyHtml(pricing.total)}</span></td></tr></table></div></div>`;
     const tableColGroupHtml = isConvenio
-        ? `<colgroup><col style="width:42%;"><col style="width:18%;"><col style="width:16%;"><col style="width:24%;"></colgroup>`
-        : `<colgroup><col style="width:38%;"><col style="width:14%;"><col style="width:12%;"><col style="width:14%;"><col style="width:22%;"></colgroup>`;
+        ? (orderIsPublicidad
+            ? `<colgroup><col style="width:42%;"><col style="width:18%;"><col style="width:16%;"><col style="width:24%;"></colgroup>`
+            : `<colgroup><col style="width:70%;"><col style="width:30%;"></colgroup>`)
+        : (orderIsPublicidad
+            ? `<colgroup><col style="width:38%;"><col style="width:14%;"><col style="width:12%;"><col style="width:14%;"><col style="width:22%;"></colgroup>`
+            : `<colgroup><col style="width:48%;"><col style="width:24%;"><col style="width:28%;"></colgroup>`);
     const tableHeadHtml = isConvenio
-        ? `<thead class="cp-pdf-table-head bg-gray-100 text-sm font-black text-gray-500 uppercase"><tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">${__cpSafeHtml(detailColumnLabel)}</th><th class="py-2 px-3 text-center">Medidas / Duración</th><th class="py-2 px-3 text-center rounded-r">Fecha</th></tr></thead>`
-        : `<thead class="cp-pdf-table-head bg-gray-100 text-sm font-black text-gray-500 uppercase"><tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">${__cpSafeHtml(detailColumnLabel)}</th><th class="py-2 px-3 text-center">Medidas / Duración</th><th class="py-2 px-3 text-center">Fecha</th><th class="py-2 px-3 text-right rounded-r">Importe</th></tr></thead>`;
+        ? (orderIsPublicidad
+            ? `<thead class="cp-pdf-table-head bg-gray-100 text-sm font-black text-gray-500 uppercase"><tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">${__cpSafeHtml(detailColumnLabel)}</th><th class="py-2 px-3 text-center">Medidas / Duración</th><th class="py-2 px-3 text-center rounded-r">Fecha</th></tr></thead>`
+            : `<thead class="cp-pdf-table-head bg-gray-100 text-sm font-black text-gray-500 uppercase"><tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center rounded-r">Fecha</th></tr></thead>`)
+        : (orderIsPublicidad
+            ? `<thead class="cp-pdf-table-head bg-gray-100 text-sm font-black text-gray-500 uppercase"><tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">${__cpSafeHtml(detailColumnLabel)}</th><th class="py-2 px-3 text-center">Medidas / Duración</th><th class="py-2 px-3 text-center">Fecha</th><th class="py-2 px-3 text-right rounded-r">Importe</th></tr></thead>`
+            : `<thead class="cp-pdf-table-head bg-gray-100 text-sm font-black text-gray-500 uppercase"><tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">Fecha</th><th class="py-2 px-3 text-right rounded-r">Importe</th></tr></thead>`);
     const convenioTableHideTag = isConvenio
         ? `<style>.cp-pdf-root .cp-pdf-hide-convenio-amounts tbody tr>td:last-child{display:none!important;}</style>`
         : '';
@@ -6769,6 +6848,14 @@ function __orderDayKey(dateStr) {
     return keys[d.getDay()] || '';
 }
 function __orderIsBlockedDate(space, dateStr, guests) {
+    if (space) {
+        try {
+            const b2b = typeof space.config_b2b === 'string' ? JSON.parse(space.config_b2b) : space.config_b2b || {};
+            const dm = b2b.digital_media || b2b.digitalMedia || b2b.medio_digital || {};
+            const isDigitalMedia = !!(dm.enabled ?? dm.activo ?? dm.es_digital);
+            if (isDigitalMedia) return false;
+        } catch(e) {}
+    }
     let blocked = [];
     try { blocked = typeof space?.dias_bloqueados === 'string' ? JSON.parse(space.dias_bloqueados) : (space?.dias_bloqueados || []); } catch (e) { blocked = []; }
     const dayKey = __orderDayKey(dateStr);
@@ -7243,10 +7330,12 @@ function __orderDescribePublicityPricingRule(cfgLike = {}, space = null, baseOve
     const manualValue = Math.max(0, parseFloat(cfgLike?.customBasePrice || 0) || 0);
     const resultBase = Math.max(0, parseFloat(baseOverride ?? __orderResolveDisplayedBase(cfgLike, space || {})) || 0);
     if (cfgLike?.convenioEnabled) {
+        const isCustom = cfgLike?.customPermanence || (cfgLike?.endDate && days !== 30);
+        const bloqueoValue = isCustom ? `Personalizado (${days} días)` : 'Automático (30 días)';
         return {
             modeLabel: 'Convenio',
             detailRows: [
-                { label: 'Bloqueo del espacio', value: 'Indefinido' },
+                { label: 'Bloqueo del espacio', value: bloqueoValue },
                 { label: 'Tratos de convenio', value: `${__orderGetConvenioConcepts(cfgLike).length} registrado(s)` }
             ],
             explanation: `El espacio queda bloqueado al precio base del catálogo: ${__orderFormatMoneyMx(resultBase)}.`
@@ -7301,10 +7390,12 @@ function __orderDescribePublicityPricingRule(cfgLike = {}, space = null, baseOve
     const manualValue = Math.max(0, parseFloat(cfgLike?.customBasePrice || 0) || 0);
     const resultBase = Math.max(0, parseFloat(baseOverride ?? __orderResolveDisplayedBase(cfgLike, space || {})) || 0);
     if (cfgLike?.convenioEnabled) {
+        const isCustom = cfgLike?.customPermanence || (cfgLike?.endDate && days !== 30);
+        const bloqueoValue = isCustom ? `Personalizado (${days} días)` : 'Automático (30 días)';
         return {
             modeLabel: 'Convenio',
             detailRows: [
-                { label: 'Bloqueo del espacio', value: 'Indefinido' },
+                { label: 'Bloqueo del espacio', value: bloqueoValue },
                 { label: 'Tratos de convenio', value: `${__orderGetConvenioConcepts(cfgLike).length} registrado(s)` }
             ],
             explanation: `El espacio queda bloqueado al precio base del catalogo: ${__orderFormatMoneyMx(resultBase)}.`
@@ -10975,6 +11066,8 @@ window.openOrderEditModal = async function (id) {
         saveBtn.disabled = true;
         saveBtn.classList.add('opacity-60');
         saveBtn.title = __orderReadOnlyMessage();
+    } else if (!isReadOnly) {
+        __cpSyncOrderApprovalControls(order);
     }
 
     window.renderConceptsList();
@@ -11056,6 +11149,11 @@ window.attemptSaveOrder = function () {
         return window.showToast(`${sp?.nombre || conflictCfg.spaceId} está ocupado ${conflictDate ? '(' + window.safeFormatDate(conflictDate) + ')' : ''}.`, "error");
     }
     if (newStatus === 'aprobada') {
+        const approvalGuard = __cpGetOrderApprovalGuard(currentPreviewOrder);
+        if (!approvalGuard.canApprove) {
+            __cpSyncOrderApprovalControls(currentPreviewOrder);
+            return window.showToast(approvalGuard.reason, 'error');
+        }
         const missing = [];
         if (!document.getElementById('oed-client').value) missing.push("Nombre Cliente");
         if (!document.getElementById('oed-email').value) missing.push("Email");

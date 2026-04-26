@@ -133,7 +133,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
     }
     const { data: profile } = await window.globalPocketBase.from('app_users').select('*').eq('id', session.user.id).single();
-    const __role = String(profile.role || '').toLowerCase().trim();
+    let __role = String(profile.role || '').toLowerCase().trim();
+    if (typeof __role.normalize === 'function') __role = __role.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    __role = __role.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    if (__role === 'plazamayor' || __role === 'pm' || __role === 'finanzas') __role = 'plaza_mayor';
+    if (__role === 'casadepiedra' || __role === 'cp') __role = 'casa_de_piedra';
+    if (__role === 'administrador' || __role === 'superadmin' || __role === 'super_admin') __role = 'admin';
     const __roleHasAccess = (__role === 'admin') || (__role === 'plaza_mayor');
 
     const roleDefaultPerms = {
@@ -529,20 +534,6 @@ window.saveAllColors = async function () {
         const modal = document.getElementById('color-modal');
         if (modal) modal.classList.add('hidden');
         if (typeof window.closeModal === 'function') window.closeModal('color-modal');
-    } catch (e) { console.error(e); window.showToast("Error al guardar colores", "error"); } finally { if (btn) { btn.disabled = false; btn.innerText = "Guardar Cambios"; } }
-}
-
-window.addConceptRow = function () { }
-window.removeConceptRow = function () { }
-function renderConceptsList() { }
-function autoGenerateOrderNum() { }
-function parseIds(v) { if (!v) return []; if (Array.isArray(v)) return v; if (typeof v === 'string') { try { const parsed = JSON.parse(v); return Array.isArray(parsed) ? parsed : []; } catch (e) { return v.split(',').map(x => x.trim()).filter(Boolean); } } return []; }
-
-
-
-
-
-if (typeof window.closeModal === 'function') window.closeModal('color-modal');
     } catch (e) { console.error(e); window.showToast("Error al guardar colores", "error"); } finally { if (btn) { btn.disabled = false; btn.innerText = "Guardar Cambios"; } }
 }
 
