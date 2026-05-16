@@ -883,7 +883,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (profileRes?.data?.role) profileData = profileRes.data;
         } catch (_) {}
     }
-    myPermissions = resolvePermissions(profileData, layoutAuth);
+    const isAdmin = rbac?.isAdmin ? rbac.isAdmin() : layoutAuth?.isAdmin === true;
+        const resolved = resolvePermissions(profileData, layoutAuth);
+        myPermissions = {
+            access: isAdmin || resolved.access,
+            orders_edit: isAdmin || resolved.orders_edit
+        };
     if (!myPermissions.access) {
         window.showToast?.('No tienes permisos para entrar al calendario.', 'error');
         return;

@@ -941,13 +941,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             : ((profile?.effective_permissions && typeof profile.effective_permissions === 'object')
                 ? profile.effective_permissions
                 : {}));
+    const isAdmin = rbac?.isAdmin ? rbac.isAdmin() : layoutAuth?.isAdmin === true;
     myPermissions = {
-        access: rbac?.can ? rbac.can('access') : rawPerms.access === true,
-        orders_view: rbac?.can ? rbac.can('orders_view') : rawPerms.orders_view === true,
-        reports_view: rbac?.can ? rbac.can('reports_view') : rawPerms.reports_view === true,
-        clients_view: rbac?.can ? rbac.can('clients_view') : rawPerms.clients_view === true,
-        clients_manage: rbac?.can ? rbac.can('clients_manage') : rawPerms.clients_manage === true,
-        catalog_manage: rbac?.can ? rbac.can('catalog_manage') : rawPerms.catalog_manage === true
+        access: isAdmin || (rbac?.can ? rbac.can('access') : rawPerms.access === true),
+        orders_view: isAdmin || (rbac?.can ? rbac.can('orders_view') : rawPerms.orders_view === true),
+        reports_view: isAdmin || (rbac?.can ? rbac.can('reports_view') : rawPerms.reports_view === true),
+        clients_view: isAdmin || (rbac?.can ? rbac.can('clients_view') : rawPerms.clients_view === true),
+        clients_manage: isAdmin || (rbac?.can ? rbac.can('clients_manage') : rawPerms.clients_manage === true),
+        catalog_manage: isAdmin || (rbac?.can ? rbac.can('catalog_manage') : rawPerms.catalog_manage === true)
     };
     if (!myPermissions.access) return window.showToast?.('No tienes permisos.', 'error');
     if (myPermissions.catalog_manage && IS_CATALOG_ADMIN_PAGE) { const btn = document.getElementById('btn-new-space'); if (btn) btn.classList.remove('hidden'); }
