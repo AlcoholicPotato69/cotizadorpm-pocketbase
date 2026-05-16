@@ -555,8 +555,8 @@ const FIN_SCHEMA = __isCP ? 'finanzas_casadepiedra' : ((window.HUB_CONFIG && win
 const __pLogo = (window.location.pathname || '') + ' ' + (window.location.href || '');
 const __isCPLogo = /\/cotizadorcp(\/|$)/.test(window.location.pathname || '') || __pLogo.includes('cotizadorcp');
 const LOGO_URL = __isCPLogo
-  ? ((window.HUB_CONFIG && (window.HUB_CONFIG.companyLogoUrlCP || window.HUB_CONFIG.cpLogoUrl)) || '../../assets/logocp.png')
-  : ((window.HUB_CONFIG && window.HUB_CONFIG.companyLogoUrl) || '../../assets/logo.png');
+  ? ((window.HUB_CONFIG && (window.HUB_CONFIG.companyLogoUrlCP || window.HUB_CONFIG.cpLogoUrl)) || '../public/assets/logocp.png')
+  : ((window.HUB_CONFIG && window.HUB_CONFIG.companyLogoUrl) || '../public/assets/logo.png');
 let CP_PDF_LETTERHEAD_URL = (window.HUB_CONFIG && (window.HUB_CONFIG.cpPdfLetterheadUrl || window.HUB_CONFIG.pdfLetterheadCasaPiedraUrl)) || '../public/assets/img/cp-letterhead-default.png';
 const RECEIPT_PAGE_WIDTH_PX = 816;
 const RECEIPT_PAGE_HEIGHT_PX = 1056;
@@ -613,7 +613,7 @@ const LETTERHEAD_PATH = 'membretes_pdf';
 const CFG_TEMPLATE_DEFAULT_KEY = 'contract_template_default';
 const CFG_REGULATION_TEMPLATE_DEFAULT_KEY = 'reglamento_template_default';
 const CFG_LETTERHEAD_KEY = 'pdf_letterhead_path';
-const PDFJS_WORKER_PATH = '../../assets/libs/js/pdf.worker.min.js';
+const PDFJS_WORKER_PATH = '../public/assets/libs/js/pdf.worker.min.js';
 const __CP_CONTRACT_TEMPLATE_LETTERHEAD_STORAGE_KEY = 'cp_contract_template_letterhead_enabled';
 let __contractsActiveTemplateFile = '';
 let __contractsTemplateTextPositions = {};
@@ -2701,25 +2701,23 @@ function __contractsReadPdfStyleControls() {
 function __contractsSetPdfStyleConfig(style, options = {}) {
     const opts = options && typeof options === 'object' ? options : {};
     __contractsPdfStyleState = __contractsNormalizePdfStyle(style);
-    __contractsSaveEditorDraft(__contractsPdfStyleState);
+    if (__contractsIsAdminProfile()) __contractsSaveEditorDraft(__contractsPdfStyleState);
     if (opts.applyToDom !== false) __contractsApplyPdfStyleToLivePreview(opts);
 }
 
-function __contractsResolveCurrentUserRole() {
-    const candidates = [
-        window.currentUserProfile?.role,
-        window.currentUserProfile?.record?.role,
-        window.currentUserProfile?.profile?.role
-    ];
-    for (const candidate of candidates) {
-        const safe = String(candidate || '').trim().toLowerCase();
-        if (safe) return safe;
-    }
-    return '';
-}
-
 function __contractsIsAdminProfile() {
-    return __contractsResolveCurrentUserRole() === 'admin';
+    const rbac = window.HUB_RBAC || null;
+    if (rbac?.canAny) return rbac.canAny(['pdf_layout_manage', 'config_manage']);
+    const authCtx = window.__HUB_AUTH_CONTEXT || {};
+    const perms = (authCtx.permissions && typeof authCtx.permissions === 'object')
+        ? authCtx.permissions
+        : ((window.currentUserProfile?.effective_permissions && typeof window.currentUserProfile.effective_permissions === 'object')
+            ? window.currentUserProfile.effective_permissions
+            : {});
+    if (authCtx.isAdmin === true) return true;
+    if (Object.prototype.hasOwnProperty.call(perms || {}, 'pdf_layout_manage')) return perms.pdf_layout_manage === true;
+    if (Object.prototype.hasOwnProperty.call(perms || {}, 'config_manage')) return perms.config_manage === true;
+    return false;
 }
 
 async function __contractsLoadCurrentUserProfile(user) {
@@ -2784,7 +2782,6 @@ async function __contractsLoadCurrentUserProfile(user) {
     );
     if (role) {
         merged.role = role;
-        localStorage.setItem('hub_user_cache_role', role);
     }
     if (!merged.username) merged.username = appUser?.username || appUser?.login_username || fallback?.username || fallback?.email?.split('@')[0] || '';
     return merged;
@@ -4151,7 +4148,8 @@ async function __contractsBuildPlanAnnexPages(order, spaces) {
     for (let index = 0; index < spaces.length; index += 1) {
         const space = spaces[index] || {};
         const spaceType = __contractsNormalizeSpaceTag(space?.tipo || space?.espacio_tipo || space?.space_type || space?.__detail?.espacio_tipo || '');
-        if (spaceType && spaceType !== 'publicidad') continue;
+        const isAdvertising = spaceType === 'publicidad' || spaceType === 'digital' || spaceType === 'letrero' || spaceType === 'activacion';
+        if (!isAdvertising) continue;
         const fileName = String(space?.plano_geografico_file || space?.plano_geografico || '').trim();
         const fileUrl = String(space?.plano_geografico_url || '').trim();
         const title = `Plano geográfico - ${space?.nombre || space?.espacio_nombre || `Espacio ${index + 1}`}`;
@@ -4708,13 +4706,22 @@ window.loadSelectedTemplate = async function() {
         text = __contractsTransparentPdfHtml(text);
 
         if (__contractsIsTemplateLetterheadEnabled()) {
-            text = __contractsWrapLetterheadPage(text, {
-                baseWidth: CP_CONTRACTS_CONTENT_BASE_WIDTH_PX,
-                baseHeight: __contractsContentBaseHeightPx()
-            });
-        }
+        text = __contractsWrapLetterheadPage(text, {
+            baseWidth: CP_CONTRACTS_CONTENT_BASE_WIDTH_PX,
+            baseHeight: __contractsContentBaseHeightPx()
+        });
+    }
 
-        setContractPreviewSrcdoc(text);
+    const spaces = await __contractsLoadOrderSpaceRecords(selectedOrder);
+    const planPages = await __contractsBuildPlanAnnexPages(selectedOrder, spaces);
+    const regulationPages = await __contractsBuildRegulationAnnexPages(selectedOrder, spaces);
+    let annexHtml = [...planPages, ...regulationPages].join('');
+    annexHtml = annexHtml.replace('class="contract-annex-page"', 'class="contract-annex-page" style="page-break-before: auto;"');
+    text += annexHtml;
+    
+    text = `<div id="pdf-export-wrapper" style="width:816px; margin:0 auto; background:#ffffff;">${text}</div>`;
+
+    setContractPreviewSrcdoc(text);
         setTimeout(window.adjustPreviewScale, 50);
         setTimeout(() => __contractsPdfMarginGuideController?.refresh(), 90);
     } catch (_) {
@@ -4861,23 +4868,38 @@ window.generateContractPdf = async function () {
         await window.loadSelectedTemplate();
         const doc = iframe && iframe.contentDocument;
         if (!doc?.body) throw new Error('No hay contrato cargado.');
-        const spaces = await __contractsLoadOrderSpaceRecords(selectedOrder);
-        const planPages = await __contractsBuildPlanAnnexPages(selectedOrder, spaces);
-        const regulationPages = await __contractsBuildRegulationAnnexPages(selectedOrder, spaces);
-        const hiddenContainer = document.getElementById('receipt-pdf-render');
-        hiddenContainer.innerHTML = __contractsBuildPrintableContractFragment(doc, { annexPages: [...planPages, ...regulationPages] });
-        const element = hiddenContainer;
-        await new Promise((resolve) => setTimeout(resolve, 700));
-        const fileName = `Contrato_${contractNum}_${Date.now()}.pdf`;
-        const pdfBlob = await html2pdf().set({
-            margin: 0,
-            filename: fileName,
-            image: { type: 'jpeg', quality: 0.98 },
-            html2canvas: { scale: 2, useCORS: true, scrollY: 0 },
-            jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' },
-            pagebreak: { mode: ['css', 'legacy'] }
-        }).from(element).output('blob');
-        hiddenContainer.innerHTML = '';
+        const renderIframe = document.getElementById('contract-preview-iframe');
+    const renderDoc = renderIframe.contentDocument;
+    const exportWrapper = renderDoc.getElementById('pdf-export-wrapper');
+    
+    if (!exportWrapper) throw new Error("No se encontró el contenedor de exportación en el iframe.");
+
+    // Crear contenedor temporal para clonar y limpiar
+    const captureContainer = document.createElement('div');
+    captureContainer.innerHTML = exportWrapper.outerHTML;
+    
+    // Limpiar highlights en el clon
+    captureContainer.querySelectorAll('.var-highlight').forEach(node => {
+        const textNode = document.createTextNode(node.textContent);
+        node.parentNode.replaceChild(textNode, node);
+    });
+
+    const element = captureContainer.firstElementChild;
+    document.body.appendChild(captureContainer);
+    captureContainer.style.position = 'absolute';
+    captureContainer.style.left = '-9999px';
+
+    const fileName = `Contrato_${contractNum}_${Date.now()}.pdf`;
+    const pdfBlob = await html2pdf().set({
+        margin: 0,
+        filename: fileName,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true, scrollY: 0 },
+        jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' },
+        pagebreak: { mode: ['css', 'legacy'] }
+    }).from(element).output('blob');
+    
+    document.body.removeChild(captureContainer);
         const path = `${selectedOrder.id}/${Date.now()}_contrato_generado.pdf`;
         const { error: upErr } = await window.globalPocketBase.storage.from(TEMPLATE_BUCKET).upload(path, pdfBlob);
         if (upErr) throw upErr;
@@ -5169,6 +5191,7 @@ function getReceiptHTML(isVisual = false) {
         </div>`;
     return wrapStyledReceipt(receiptRaw, extraPages);
 }
+
 
 
 

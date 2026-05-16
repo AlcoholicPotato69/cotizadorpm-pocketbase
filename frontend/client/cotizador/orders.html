@@ -7,25 +7,26 @@
     <meta name="robots" content="noindex, nofollow">
     <title>Cotizaciones - Plaza Mayor</title>
     
-    <link rel="preload" as="script" href="../../assets/libs/js/tailwindcss.js">
-    <script src="../../assets/libs/js/tailwindcss.js?v=20260426-v3-digital-calendar"></script>
-    <link rel="preload" as="style" href="../../assets/libs/css/all.min.css?v=20260426-v3-digital-calendar">
-    <link rel="stylesheet" href="../../assets/libs/css/all.min.css?v=20260426-v3-digital-calendar">
+    <link rel="preload" as="script" href="../public/assets/libs/js/tailwindcss.js">
+    <script src="../public/assets/libs/js/tailwindcss.js?v=20260427-v1-contracts-fix"></script>
+    <link rel="preload" as="style" href="../public/assets/libs/css/all.min.css?v=20260427-v1-contracts-fix">
+    <link rel="stylesheet" href="../public/assets/libs/css/all.min.css?v=20260427-v1-contracts-fix">
     
-    <script src="../js/hub-config.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../services/pb-core.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../services/_shared.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../services/auth.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../services/clientes.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../services/conceptos.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../services/configuracion.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../services/impuestos.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../services/espacios.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../services/cotizaciones.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../services/documentos.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../services/pb-client.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../../assets/libs/js/html2pdf.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../../assets/libs/js/chart.js?v=20260426-v3-digital-calendar"></script>
+    <script src="../js/hub-config.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../services/server-date-service.js?v=20260427-v2-server-dates"></script>
+    <script src="../services/pb-core.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../services/_shared.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../services/auth.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../services/clientes.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../services/conceptos.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../services/configuracion.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../services/impuestos.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../services/espacios.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../services/cotizaciones.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../services/documentos.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../services/pb-client.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../public/assets/libs/js/html2pdf.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../public/assets/libs/js/chart.js?v=20260427-v1-contracts-fix"></script>
     
     <script>tailwind.config = { theme: { extend: { colors: { brand: { red: '#D32F2F', dark: '#1a1a1a', gray: '#f3f4f6' } } } } }</script>
     <style>
@@ -42,13 +43,13 @@
         input:read-only { background-color: #f9fafb; color: #6b7280; cursor: not-allowed; }
     </style>
     <!-- Local Animations -->
-    <link rel="preload" as="style" href="../../assets/libs/css/animate.min.css?v=20260426-v3-digital-calendar">
-    <link rel="stylesheet" href="../../assets/libs/css/animate.min.css?v=20260426-v3-digital-calendar">
-    <link rel="icon" type="image/png" href="../assets/img/logo.png">
+    <link rel="preload" as="style" href="../public/assets/libs/css/animate.min.css?v=20260427-v1-contracts-fix">
+    <link rel="stylesheet" href="../public/assets/libs/css/animate.min.css?v=20260427-v1-contracts-fix">
+    <link rel="icon" type="image/png" href="../public/assets/img/logo.png">
 </head>
 <body class="bg-brand-gray text-gray-800 flex flex-col min-h-screen">
     <script>const TENANT_SCHEMA='finanzas';</script>
-    <script src="../js/layout.js?v=20260426-v3-digital-calendar"></script>
+    <script src="../js/layout.js?v=20260427-v1-contracts-fix"></script>
     
     <nav class="bg-brand-red shadow-lg sticky top-16 z-30 border-t border-red-700 transition-all duration-300">
         <div class="container mx-auto px-4 flex h-14 items-center text-white gap-2 overflow-x-auto no-scrollbar">
@@ -521,10 +522,11 @@
         </div>
     </div>
     <div id="toast-container" class="fixed top-20 right-4 z-[10000] flex flex-col items-end pointer-events-none"></div>
-    <script src="../js/pdf-editor-hitbox.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../js/pdf-margin-guides.js?v=20260426-v3-digital-calendar"></script>
-<script src="orders.js?v=20260426-v3-digital-calendar"></script>
+    <script src="../js/pdf-editor-hitbox.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../js/pdf-margin-guides.js?v=20260427-v1-contracts-fix"></script>
+<script src="orders.js?v=20260427-v1-contracts-fix"></script>
 </body>
 </html>
+
 
 

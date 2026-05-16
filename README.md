@@ -45,7 +45,7 @@ La ruta recomendada de producción es separar responsabilidades:
 
 - PocketBase sirve backend, API y dashboard administrativo.
 - Los HTML se sirven por fuera de PocketBase, normalmente desde Nginx con la carpeta `production\deploy\nginx-site\`.
-- `frontend\pb_public\` queda como espejo/compatibilidad histórica, pero no es el destino recomendado de despliegue.
+- El frontend canónico para ejecución y despliegue es `frontend\client\` (sin espejos duplicados).
 
 Puntos clave:
 

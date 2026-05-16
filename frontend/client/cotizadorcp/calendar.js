@@ -354,18 +354,22 @@ async function initClients() {
     return true;
 }
 
-function resolvePermissions(profile) {
-    let role = String(profile?.role || '').toLowerCase().trim();
-    if (typeof role.normalize === 'function') role = role.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    role = role.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-    if (role === 'casadepiedra' || role === 'cp') role = 'casa_de_piedra';
-    if (role === 'plazamayor' || role === 'pm' || role === 'finanzas') role = 'plaza_mayor';
-    if (role === 'administrador' || role === 'superadmin' || role === 'super_admin') role = 'admin';
-    const roleHasAccess = role === 'admin' || role === 'casa_de_piedra';
-    if (role === 'admin' || roleHasAccess) return { access: true, orders_edit: true };
+function resolvePermissions(profile, layoutAuth = null) {
+    const rbac = window.HUB_RBAC || null;
+    const rawPerms = rbac?.getPermissions
+        ? rbac.getPermissions()
+        : ((layoutAuth?.permissions && typeof layoutAuth.permissions === 'object')
+            ? layoutAuth.permissions
+            : ((profile?.effective_permissions && typeof profile.effective_permissions === 'object')
+                ? profile.effective_permissions
+                : {}));
     return {
-        access: !!profile?.app_metadata?.finanzas?.permissions?.access,
-        orders_edit: !!profile?.app_metadata?.finanzas?.permissions?.orders_edit
+        access: rbac?.can ? rbac.can('access') : rawPerms.access === true,
+        orders_view: rbac?.can ? rbac.can('orders_view') : rawPerms.orders_view === true,
+        orders_edit: rbac?.can ? rbac.can('orders_edit') : rawPerms.orders_edit === true,
+        reports_view: rbac?.can ? rbac.can('reports_view') : rawPerms.reports_view === true,
+        clients_view: rbac?.can ? rbac.can('clients_view') : rawPerms.clients_view === true,
+        clients_manage: rbac?.can ? rbac.can('clients_manage') : rawPerms.clients_manage === true
     };
 }
 
@@ -850,17 +854,36 @@ document.addEventListener('DOMContentLoaded', async () => {
     const ok = await initClients();
     if (!ok) return;
 
-    const authCtx = window.HUB_SESSION?.ensureAuth
-        ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, redirectOnFail: true })
-        : await window.PB_SERVICES.auth.bootstrap({ schema: FIN_SCHEMA });
-    const session = authCtx?.session || null;
+    // Use layout auth context as primary source (already resolved by layout.js)
+    const layoutAuth = window.__HUB_AUTH_CONTEXT || window.__HUB_LAYOUT_AUTH_STATE || null;
+    let session = layoutAuth?.session || null;
+    if (!session?.user) {
+        const authCtx = window.HUB_SESSION?.ensureAuth
+            ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, redirectOnFail: true })
+            : await window.PB_SERVICES.auth.bootstrap({ schema: FIN_SCHEMA });
+        session = authCtx?.session || null;
+    }
     if (!session?.user) {
         window.showToast?.('No se encontró una sesión válida. Evitando recarga automática.', 'error');
         return;
     }
 
-    const profileRes = await window.globalPocketBase.from('app_users').select('*').eq('id', session.user.id).maybeSingle();
-    myPermissions = resolvePermissions(profileRes.data || {});
+    // Build profile for resolvePermissions using layout auth role as primary
+    let profileData = { ...(session.user || {}) };
+    const layoutRole = String(
+        layoutAuth?.role
+        || layoutAuth?.profile?.role
+        || session?.user?.role
+        || ''
+    ).trim();
+    if (layoutRole) profileData.role = layoutRole;
+    if (!profileData.role) {
+        try {
+            const profileRes = await window.globalPocketBase.from('app_users').select('*').eq('id', session.user.id).maybeSingle();
+            if (profileRes?.data?.role) profileData = profileRes.data;
+        } catch (_) {}
+    }
+    myPermissions = resolvePermissions(profileData, layoutAuth);
     if (!myPermissions.access) {
         window.showToast?.('No tienes permisos para entrar al calendario.', 'error');
         return;
@@ -886,6 +909,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     searchInput?.addEventListener('input', applyFilters);
     applyFilters();
 });
+
 
 
 

@@ -76,7 +76,7 @@
   }
 
   function buildSampleClient(source) {
-    const now = new Date().toISOString();
+    const now = (window.__serverDateService ? window.__serverDateService.nowISO() : new Date().toISOString());
     const yesterday = new Date(Date.now() - 86400000).toISOString();
     const sourceClient = source && typeof source === "object" ? source : {};
     return {
@@ -90,7 +90,7 @@
       doc_ine: "ine_representante_ejemplo.pdf",
       doc_comprobante_domicilio: "comprobante_domicilio_ejemplo.pdf",
       doc_constancia_fiscal: "constancia_fiscal_ejemplo.pdf",
-      constancia_fiscal_emitida_el: new Date().toISOString().slice(0, 10),
+      constancia_fiscal_emitida_el: (window.__serverDateService ? window.__serverDateService.todayISO() : new Date().toISOString().slice(0, 10)),
       comprobante_domicilio_emitido_el: new Date(Date.now() - 12 * 86400000).toISOString().slice(0, 10),
       documentos_estado: {
         doc_acta_constitutiva: { status: "aprobado", subido_at: yesterday, revisado_at: now, aprobado_at: now, revisado_por_nombre: "Validador de Prueba", aprobado_por_nombre: "Validador de Prueba" },
@@ -298,7 +298,7 @@
       CLIENT_RFC: safeString(getActiveClient(state) && getActiveClient(state).rfc),
       FOLIO: safeString(state.folio),
       DOC_TITLE: safeString(state.style.content && state.style.content.dictamenTitle),
-      TODAY: new Date().toLocaleDateString("es-MX")
+      TODAY: (window.__serverDateService ? window.__serverDateService.todayLocale("es-MX") : new Date().toLocaleDateString("es-MX"))
     };
     return resources
       .filter(function (resource) { return resource.enabled; })

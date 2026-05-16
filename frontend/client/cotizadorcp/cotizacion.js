@@ -227,10 +227,6 @@ function getValidatedClientProfiles() {
     return clientProfiles.filter((client) => isQuoteClientProfileReady(client));
 }
 
-function isQuickQuoteModeEnabled() {
-    return !!document.getElementById('cli-quick-quote')?.checked;
-}
-
 function fillQuoteClientFields(client = {}) {
     const nameEl = document.getElementById('cli-name');
     const phoneEl = document.getElementById('cli-phone');
@@ -261,14 +257,13 @@ function getSelectedQuoteClientProfile() {
     if (!selectedId) return null;
     const selected = clientProfilesById[selectedId] || null;
     if (!selected) return null;
-    if (!isQuoteClientProfileReady(selected) && !isQuickQuoteModeEnabled()) return null;
     if (hiddenIdEl) hiddenIdEl.value = selectedId;
     return selected;
 }
 
 function buildQuoteClientSnapshot() {
     const selectedProfile = getSelectedQuoteClientProfile();
-    if (selectedProfile && !isQuickQuoteModeEnabled()) {
+    if (selectedProfile) {
         fillQuoteClientFields(selectedProfile);
         return {
             id: String(selectedProfile.id || '').trim(),
@@ -288,34 +283,34 @@ function buildQuoteClientSnapshot() {
 }
 
 function syncQuoteClientEntryMode() {
-    const validatedProfiles = getValidatedClientProfiles();
-    const hasValidatedProfiles = validatedProfiles.length > 0;
-    const quickMode = isQuickQuoteModeEnabled();
+    const hasProfiles = clientProfiles.length > 0;
     const selectEl = document.getElementById('cli-select');
     const hintEl = document.getElementById('cli-profile-hint');
     const manualWrap = document.getElementById('cli-manual-fields');
-    const quickRow = document.getElementById('cli-quick-quote-row');
 
     if (manualWrap) {
-        const hideManualFields = !quickMode;
-        manualWrap.classList.toggle('hidden', hideManualFields);
-        manualWrap.style.display = hideManualFields ? 'none' : '';
-        manualWrap.setAttribute('aria-hidden', hideManualFields ? 'true' : 'false');
+        manualWrap.classList.remove('hidden');
+        manualWrap.style.display = '';
+        manualWrap.setAttribute('aria-hidden', 'false');
     }
-    if (quickRow) quickRow.classList.remove('hidden');
     if (selectEl) {
-        selectEl.disabled = !hasValidatedProfiles || quickMode;
+        selectEl.disabled = !hasProfiles;
         selectEl.classList.toggle('opacity-60', selectEl.disabled);
         selectEl.classList.toggle('cursor-not-allowed', selectEl.disabled);
     }
 
     if (hintEl) {
-        if (!hasValidatedProfiles) hintEl.textContent = 'No hay perfiles completos disponibles. Captura los datos y se creará un perfil pendiente automáticamente.';
-        else if (quickMode) hintEl.textContent = 'Cotización rápida activa: al generar se creará un perfil nuevo pendiente para completar su expediente después.';
-        else hintEl.textContent = 'Selecciona un perfil completo. Si el cliente aún no existe, activa cotización rápida.';
+        const selected = getSelectedQuoteClientProfile();
+        if (selected) {
+            hintEl.textContent = isQuoteClientProfileReady(selected)
+                ? 'Perfil seleccionado: listo para validación de contrato.'
+                : 'Perfil seleccionado: la cotización puede guardarse, pero el contrato seguirá bloqueado hasta validación.';
+        } else if (hasProfiles) {
+            hintEl.textContent = 'Puedes asignar un perfil existente o capturar manualmente y continuar sin perfil.';
+        } else {
+            hintEl.textContent = 'No hay perfiles registrados. Puedes capturar manualmente y continuar sin perfil.';
+        }
     }
-    if (hintEl && quickMode) hintEl.textContent = 'Cotizacion rapida activa: al generar se creara un perfil nuevo pendiente para completar su expediente despues.';
-    if (hintEl && !quickMode && !hasValidatedProfiles) hintEl.textContent = 'No hay perfiles completos disponibles. Activa cotizacion rapida para capturar los datos y crear un perfil pendiente.';
 }
 
 function bindQuoteClientFieldListeners() {
@@ -330,59 +325,12 @@ function bindQuoteClientFieldListeners() {
     });
 }
 
-function bindQuoteClientModeToggle() {
-    const quickCheckbox = document.getElementById('cli-quick-quote');
-    if (!quickCheckbox || quickCheckbox.dataset.quoteQuickBound === '1') return;
-    quickCheckbox.dataset.quoteQuickBound = '1';
-    const syncMode = () => { window.toggleQuoteQuickClientMode(); };
-    quickCheckbox.addEventListener('change', syncMode);
-    quickCheckbox.addEventListener('input', syncMode);
-    quickCheckbox.addEventListener('click', () => {
-        window.setTimeout(syncMode, 0);
-    });
-}
-window.toggleQuoteQuickClientMode = function () {
-    const quickCheckbox = document.getElementById('cli-quick-quote');
-    if (!quickCheckbox) return;
-    if (quickCheckbox.checked) clearQuoteClientAssociation({ clearFields: true });
-    else clearQuoteClientAssociation({ clearFields: true });
-    syncQuoteClientEntryMode();
-};
-
-async function createQuickQuoteClientProfile(cli) {
-    const payload = {
-        tenant: CP_TENANT_SLUG,
-        nombre_completo: String(cli?.name || '').trim(),
-        telefono: String(cli?.phone || '').trim(),
-        correo: String(cli?.email || '').trim().toLowerCase() || null,
-        rfc: String(cli?.rfc || '').trim().toUpperCase() || null,
-        perfil_origen: 'cotizacion_rapida',
-        perfil_estatus: 'pendiente_expediente',
-        perfil_validado: false,
-        perfil_completo: false
-    };
-    const { data, error } = await window.tenantPocketBase.from('clientes').insert(payload);
-    if (error) throw error;
-    const created = Array.isArray(data) ? (data[0] || null) : (data || null);
-    const createdId = String(created?.id || '').trim();
-    if (!createdId) throw new Error('No se pudo crear el perfil rápido del cliente.');
-    clientProfiles.push(created || { ...payload, id: createdId });
-    clientProfilesById[createdId] = created || { ...payload, id: createdId };
-    const hiddenIdEl = document.getElementById('cli-id');
-    if (hiddenIdEl) hiddenIdEl.value = createdId;
-    return createdId;
-}
-
 async function resolveQuoteClientId(cli) {
     const selectedProfile = getSelectedQuoteClientProfile();
     if (selectedProfile) return String(selectedProfile.id || '').trim();
     const hiddenIdEl = document.getElementById('cli-id');
     const existingId = String(hiddenIdEl?.value || '').trim();
-    if (existingId && isQuickQuoteModeEnabled()) return existingId;
-    if (!isQuickQuoteModeEnabled()) {
-        throw new Error('Selecciona un perfil completo o activa cotización rápida.');
-    }
-    return createQuickQuoteClientProfile(cli);
+    return existingId || '';
 }
 
 async function loadClientProfilesForQuoteModal() {
@@ -390,26 +338,22 @@ async function loadClientProfilesForQuoteModal() {
     try {
         const { data, error } = await window.tenantPocketBase.from('clientes').select('id,nombre_completo,telefono,telefonos_adicionales,correo,rfc,perfil_completo,perfil_validado,perfil_estatus,documentos_estado,expediente_validacion,constancia_fiscal_emitida_el,comprobante_domicilio_emitido_el,doc_ine,doc_comprobante_domicilio,doc_constancia_fiscal,created_at,created').order('nombre_completo', { ascending: true });
         if (error) throw error; clientProfiles = (data || []).slice().sort((a, b) => { const aReady = isQuoteClientProfileReady(a) ? 1 : 0; const bReady = isQuoteClientProfileReady(b) ? 1 : 0; if (aReady !== bReady) return bReady - aReady; return String(a?.nombre_completo || '').localeCompare(String(b?.nombre_completo || ''), 'es'); }); clientProfilesById = {}; clientProfiles.forEach(c => clientProfilesById[c.id] = c);
-        const validatedProfiles = getValidatedClientProfiles();
-        sel.innerHTML = '<option value="">' + (validatedProfiles.length ? '— Selecciona un perfil completo —' : '— Sin perfiles completos disponibles —') + '</option>' + validatedProfiles.map(c => `<option value="${c.id}">${(c.nombre_completo || '').toUpperCase()} • COMPLETO</option>`).join('');
+        sel.innerHTML = '<option value="">— Sin perfil asignado —</option>' + clientProfiles.map(c => `<option value="${c.id}">${(c.nombre_completo || '').toUpperCase()} • ${isQuoteClientProfileReady(c) ? 'LISTO' : 'PENDIENTE'}</option>`).join('');
         sel.onchange = () => {
             const id = sel.value;
-            const quickCheckbox = document.getElementById('cli-quick-quote');
             if (!id) {
                 if (hid) hid.value = '';
-                if (!isQuickQuoteModeEnabled()) clearQuoteClientFields();
+                clearQuoteClientFields();
                 syncQuoteClientEntryMode();
                 return;
             }
             const c = clientProfilesById[id];
             if (!c) return;
-            if (quickCheckbox?.checked) quickCheckbox.checked = false;
             if (hid) hid.value = id;
             fillQuoteClientFields(c);
             syncQuoteClientEntryMode();
         };
         bindQuoteClientFieldListeners();
-        bindQuoteClientModeToggle();
         window.HUB_CLIENT_PROFILE_HOVER?.bindSelect?.(sel, () => {
             const selectedId = String(sel?.value || hid?.value || '').trim();
             return selectedId ? (clientProfilesById[selectedId] || null) : null;
@@ -663,7 +607,7 @@ function findCpQuoteTaxRecord(taxId, space = null) {
 async function ensureCpQuoteManageSession(actionLabel = 'guardar cambios') {
     try {
         const authCtx = window.HUB_SESSION?.ensureAuth
-            ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, allowCachedUser: false, redirectOnFail: true, forceRefresh: true })
+            ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, redirectOnFail: true, forceRefresh: true })
             : { session: await window.PB_SERVICES.auth.ensureFreshSession({ schema: FIN_SCHEMA, allowStaleOnError: false, forceRefresh: true }) };
         if (authCtx?.session?.user) return true;
     } catch (_) { }
@@ -945,7 +889,7 @@ function normalizeCpDigitalMediaConfig(value = {}) {
     const pixelHeight = normalizeCpMeasureValue(source.pixel_height ?? source.pixeles_alto ?? source.alto_px);
     return {
         enabled,
-        media_type: rawType.includes('video') ? 'video' : 'imagen',
+        media_type: rawType.includes('imagen') && rawType.includes('video') ? 'imagen_video' : (rawType.includes('video') ? 'video' : 'imagen'),
         duration_value: durationValue,
         duration_unit: unit === 'minutos' ? 'minutos' : 'segundos',
         pixel_width: pixelWidth,
@@ -965,7 +909,9 @@ function getCpSpaceDigitalMediaConfig(space) {
     return normalizeCpDigitalMediaConfig(b2b.digital_media || b2b.digitalMedia || b2b.medio_digital || {});
 }
 function formatCpDigitalMediaType(value) {
-    return normalizeCpDigitalMediaConfig(value).media_type === 'video' ? 'Video' : 'Imagen';
+    const t = normalizeCpDigitalMediaConfig(value).media_type;
+    if (t === 'imagen_video') return 'Imagen / Video';
+    return t === 'video' ? 'Video' : 'Imagen';
 }
 function formatCpDigitalMediaPixels(value) {
     const cfg = normalizeCpDigitalMediaConfig(value);
@@ -1255,7 +1201,29 @@ function syncCpQuoteConvenioUi(cfg = __cpGetActiveCfg()) {
     syncCpQuoteConvenioCatalogSelect();
     renderCpQuoteConvenioItems();
 }
-window.safeFormatDate = function (dateStr) { if (!dateStr) return '--'; const parts = dateStr.split('-'); if (parts.length !== 3) return dateStr; return `${parts[2]}/${parts[1]}/${parts[0]}`; };
+window.safeFormatDate = function (dateStr) {
+    if (!dateStr) return '--';
+    const raw = String(dateStr).trim();
+    const normalized = raw.replace('T', ' ').replace('Z', '');
+    const match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?/);
+    if (match) {
+        const [, year, month, day, hh, mm, ss] = match;
+        const formattedDate = `${day}/${month}/${year}`;
+        if (!hh || !mm) return formattedDate;
+        return `${formattedDate} ${hh}:${mm}:${ss || '00'}`;
+    }
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) return raw;
+    const day = String(parsed.getDate()).padStart(2, '0');
+    const month = String(parsed.getMonth() + 1).padStart(2, '0');
+    const year = String(parsed.getFullYear());
+    const hh = String(parsed.getHours()).padStart(2, '0');
+    const mm = String(parsed.getMinutes()).padStart(2, '0');
+    const ss = String(parsed.getSeconds()).padStart(2, '0');
+    const formattedDate = `${day}/${month}/${year}`;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return formattedDate;
+    return `${formattedDate} ${hh}:${mm}:${ss}`;
+};
 
 async function __cpResolveQuoteActorAudit() {
     let actorId = '';
@@ -1436,24 +1404,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
     }
     const profile = await __cpResolveCurrentUserProfile(session.user);
-    const cachedRole = String(localStorage.getItem('hub_user_cache_role') || '').trim().toLowerCase();
-    let userRole = String(profile?.role || profile?.rol || cachedRole).toLowerCase().trim();
-    if (typeof userRole.normalize === 'function') userRole = userRole.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    userRole = userRole.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-    if (userRole === 'casadepiedra' || userRole === 'cp') userRole = 'casa_de_piedra';
-    if (userRole === 'plazamayor' || userRole === 'pm' || userRole === 'finanzas') userRole = 'plaza_mayor';
-    if (userRole === 'administrador' || userRole === 'superadmin' || userRole === 'super_admin') userRole = 'admin';
-    const roleHasAccess = (userRole === 'admin') || (userRole === 'casa_de_piedra') || (userRole === 'verificador');
-    if (userRole === 'admin' || userRole === 'verificador') myPermissions = { access: true, catalog_manage: true };
-    else if (roleHasAccess) myPermissions = { access: true, catalog_manage: false };
-    else {
-        const profilePerms = profile?.app_metadata?.finanzas?.permissions;
-        if (profilePerms && typeof profilePerms === 'object') {
-            myPermissions = { access: true, catalog_manage: false, ...profilePerms, catalog_manage: !!profilePerms.catalog_manage };
-        } else {
-            myPermissions = { access: true, catalog_manage: false };
-        }
-    }
+    const layoutAuth = window.__HUB_AUTH_CONTEXT || authCtx || null;
+    const rbac = window.HUB_RBAC || null;
+    const rawPerms = rbac?.getPermissions
+        ? rbac.getPermissions()
+        : ((layoutAuth?.permissions && typeof layoutAuth.permissions === 'object')
+            ? layoutAuth.permissions
+            : ((profile?.effective_permissions && typeof profile.effective_permissions === 'object')
+                ? profile.effective_permissions
+                : {}));
+    myPermissions = {
+        access: rbac?.can ? rbac.can('access') : rawPerms.access === true,
+        orders_view: rbac?.can ? rbac.can('orders_view') : rawPerms.orders_view === true,
+        reports_view: rbac?.can ? rbac.can('reports_view') : rawPerms.reports_view === true,
+        clients_view: rbac?.can ? rbac.can('clients_view') : rawPerms.clients_view === true,
+        clients_manage: rbac?.can ? rbac.can('clients_manage') : rawPerms.clients_manage === true,
+        catalog_manage: rbac?.can ? rbac.can('catalog_manage') : rawPerms.catalog_manage === true
+    };
     if (!myPermissions.access) return window.showToast?.('No tienes permisos.', 'error');
     if (myPermissions.catalog_manage && IS_CATALOG_ADMIN_PAGE) { const btn = document.getElementById('btn-new-space'); if (btn) btn.classList.remove('hidden'); }
     cpQuoteApplyViewStateControls();
@@ -1532,6 +1499,21 @@ function renderSpaces(list) {
         const inQuote = IS_QUOTE_PAGE && Array.isArray(__cpQuoteSpaces) && __cpQuoteSpaces.some(x => String(x.spaceId) === String(s.id));
         const isActiveQuote = IS_QUOTE_PAGE && String(__cpActiveSpaceId || '') === String(s.id);
         if (IS_QUOTE_PAGE) {
+            const b2bConfig = getCpSpaceB2bConfig(s);
+            const isDigitalMedia = normalizeCpDigitalMediaConfig(b2bConfig.digital_media || b2bConfig.digitalMedia || b2bConfig.medio_digital || {}).enabled;
+            
+            let badgeHTML = '';
+            if (isDigitalMedia) {
+                badgeHTML += `<div class="absolute top-2 right-2 bg-blue-500 text-white text-[10px] font-bold px-2 py-1 rounded shadow-md z-30 flex items-center gap-1"><i class="fa-solid fa-desktop"></i> Digital</div>`;
+            }
+            if (adjustmentType === 'aumento') {
+                badgeHTML += `<div class="absolute top-2 left-2 bg-green-500 text-white text-[10px] font-bold px-2 py-1 rounded shadow-md z-10 flex items-center gap-1"><i class="fa-solid fa-arrow-trend-up"></i> +${s.ajuste_porcentaje}%</div>`;
+            }
+            if (adjustmentType === 'descuento') {
+                const discountPct = normalizeCpQuoteAdjustmentPercent(adjustmentType, s.ajuste_porcentaje);
+                badgeHTML += `<div class="absolute top-2 left-2 bg-red-500 text-white text-[10px] font-bold px-2 py-1 rounded shadow-md z-10 flex items-center gap-1"><i class="fa-solid fa-tag"></i> -${discountPct}%</div>`;
+            }
+
             const cardState = isActiveQuote
                 ? 'border-emerald-400 ring-2 ring-emerald-300 bg-emerald-50'
                 : (inQuote ? (isPublicidadCard ? 'border-red-200 ring-1 ring-red-100 bg-red-50/60' : 'border-yellow-300 ring-1 ring-yellow-200 bg-yellow-50') : 'border-gray-200 bg-white');
@@ -1541,8 +1523,9 @@ function renderSpaces(list) {
             const powerOffBtn = inQuote
                 ? `<button type="button" onclick="event.stopPropagation(); window.powerOffQuoteSpace('${s.id}')" class="px-2 py-1 rounded border border-gray-200 bg-white text-[9px] font-black uppercase text-gray-600 hover:text-red-600">Desactivar</button>`
                 : '';
-            g.innerHTML += `<div onclick="window.toggleQuoteSpaceCard('${s.id}')" class="rounded-xl border ${cardState} p-4 shadow-sm transition hover:shadow-md cursor-pointer">
-                <div class="mb-3">
+            g.innerHTML += `<div onclick="window.toggleQuoteSpaceCard('${s.id}')" class="rounded-xl border ${cardState} p-4 shadow-sm transition hover:shadow-md cursor-pointer relative overflow-hidden">
+                ${badgeHTML}
+                <div class="mb-3 mt-4">
                     <p class="text-sm font-black text-gray-800 uppercase leading-tight">${s.nombre}</p>
                     <p class="text-[10px] font-mono text-gray-400 mt-1">${s.clave || '--'}</p>
                 </div>
@@ -1569,7 +1552,7 @@ function renderSpaces(list) {
         }
 
         let allUrls = []; try { if (s.imagen_url && typeof s.imagen_url === 'string' && s.imagen_url.startsWith('[')) allUrls = JSON.parse(s.imagen_url); else if (s.imagen_url) allUrls = [s.imagen_url]; } catch (e) { }
-        if (allUrls.length === 0) allUrls = ['../../assets/img/placeholder_cp.png'];
+        if (allUrls.length === 0) allUrls = ['../public/assets/img/placeholder_cp.png'];
 
         let eTags = []; try { eTags = typeof s.etiquetas === 'string' ? JSON.parse(s.etiquetas) : (s.etiquetas || []); } catch (e) { }
         let tagsHtml = ''; if (eTags.length > 0) tagsHtml = `<div class="flex gap-1 mb-2 flex-wrap">${eTags.map(t => `<span class="bg-gray-100 text-gray-500 border border-gray-200 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase">${t}</span>`).join('')}</div>`;
@@ -1634,7 +1617,7 @@ window.openPreviewCardModal = function (id) {
     if (!s) return;
     const previewBadges = renderCpPreviewBadges(s);
     let allUrls = []; try { if (s.imagen_url && typeof s.imagen_url === 'string' && s.imagen_url.startsWith('[')) allUrls = JSON.parse(s.imagen_url); else if (s.imagen_url) allUrls = [s.imagen_url]; } catch (e) { }
-    if (allUrls.length === 0) allUrls = ['../../assets/img/placeholder_cp.png'];
+    if (allUrls.length === 0) allUrls = ['../public/assets/img/placeholder_cp.png'];
 
     const modal = document.createElement('div');
     modal.className = 'fixed inset-0 bg-black/90 z-[1000] flex items-center justify-center p-4 backdrop-blur-md animate-enter';
@@ -2055,19 +2038,11 @@ window.generatePDF = async function () {
         }
     }
 
-    if (!isQuickQuoteModeEnabled() && !getSelectedQuoteClientProfile()) {
-        return window.showToast('Selecciona un perfil completo o activa cotización rápida.', 'error');
-    }
     const cli = buildQuoteClientSnapshot();
     if (!cli.name) return window.showToast("Falta nombre del cliente", "error");
     const phoneRegex = /^\d{10}$/;
     if (!phoneRegex.test(cli.phone)) return window.showToast("El teléfono debe tener 10 dígitos numéricos.", "error");
-    let quoteClientId = '';
-    try {
-        quoteClientId = await resolveQuoteClientId(cli);
-    } catch (error) {
-        return window.showToast(error?.message || 'No se pudo preparar el perfil del cliente.', 'error');
-    }
+    const quoteClientId = await resolveQuoteClientId(cli);
 
     const today = __cpTodayISO();
     const invalidPastCfg = __cpQuoteSpaces.find(cfg => cfg.startDate < today || cfg.endDate < today);
@@ -2247,7 +2222,7 @@ function __cpSafeObject(v) {
     return {};
 }
 function __cpNormalizeDate(v) { const s = String(v || '').trim(); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : ''; }
-function __cpTodayISO() { return new Date().toISOString().split('T')[0]; }
+function __cpTodayISO() { return window.__serverDateService.todayISO(); }
 function __cpMonthLabel(year, month) { return new Date(year, month, 1).toLocaleDateString('es-MX', { month: 'long', year: 'numeric' }); }
 function __cpDateIsPast(ds) { const d = __cpNormalizeDate(ds); return !!d && d < __cpTodayISO(); }
 function __cpConvenioCovered(baseValue, deliveredValue, balanceValue = undefined) {
@@ -2664,7 +2639,7 @@ function __cpSetHeader(space) {
     document.getElementById('q-key').innerText = space.clave || '--';
     let modalImg = space.imagen_url || '';
     if (typeof modalImg === 'string' && modalImg.startsWith('[')) { try { modalImg = JSON.parse(modalImg)[0]; } catch (e) { } }
-    document.getElementById('q-img').src = modalImg || '../../assets/img/no-image.svg';
+    document.getElementById('q-img').src = modalImg || '../public/assets/img/no-image.svg';
 }
 function __cpRenderHorario(space, selectedValue = '') {
     const b2b = __cpB2B(space);
@@ -3482,7 +3457,6 @@ function __cpResetQuoteWorkspaceForm() {
     document.getElementById('cli-email').value = '';
     const cliSel = document.getElementById('cli-select'); if (cliSel) cliSel.value = '';
     const cliId = document.getElementById('cli-id'); if (cliId) cliId.value = '';
-    const quickQuote = document.getElementById('cli-quick-quote'); if (quickQuote) quickQuote.checked = false;
     loadClientProfilesForQuoteModal();
     document.getElementById('avail-msg').classList.add('hidden');
     document.getElementById('btn-generate').disabled = true;
@@ -3782,19 +3756,11 @@ window.generatePDF = async function () {
     if (missingConvenio) return window.showToast(`Agrega al menos un trato de convenio para ${missingConvenio.spaceName}.`, 'error');
     const uncoveredConvenio = spaces.find((sp) => !!sp.convenioEnabled && !__cpConvenioCovered(sp.baseValue, sp.convenioValue, sp.total));
     if (uncoveredConvenio) return window.showToast(`El convenio de ${uncoveredConvenio.spaceName} debe cubrir al menos el valor total del espacio.`, 'error');
-    if (!isQuickQuoteModeEnabled() && !getSelectedQuoteClientProfile()) {
-        return window.showToast('Selecciona un perfil completo o activa cotización rápida.', 'error');
-    }
     const cli = buildQuoteClientSnapshot();
     if (!cli.name) return window.showToast("Falta nombre del cliente", "error");
     const phoneRegex = /^\d{10}$/;
     if (!phoneRegex.test(cli.phone)) return window.showToast("El teléfono debe tener 10 dígitos numéricos.", "error");
-    let quoteClientId = '';
-    try {
-        quoteClientId = await resolveQuoteClientId(cli);
-    } catch (error) {
-        return window.showToast(error?.message || 'No se pudo preparar el perfil del cliente.', 'error');
-    }
+    const quoteClientId = await resolveQuoteClientId(cli);
     if (!spaces.length) return window.showToast("No hay espacios configurados.", "error");
     const quoteNameInput = document.getElementById('q-quote-name');
     const quoteNameRaw = (quoteNameInput?.value || '').trim();
@@ -3974,3 +3940,4 @@ window.generatePDF = async function () {
     const targetUrl = createdQuoteId ? `order_detail.html?quote=${encodeURIComponent(createdQuoteId)}` : 'orders.html';
     setTimeout(() => { __cpNavigateSafely(targetUrl); }, 900);
 }
+

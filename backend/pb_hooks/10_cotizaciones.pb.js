@@ -286,11 +286,6 @@
     return clientRecord;
   }
 
-  function isQuickQuoteClientProfile(clientRecord) {
-    if (!clientRecord) return false;
-    return sanitizeText(clientRecord.getString("perfil_origen"), 40).toLowerCase() === "cotizacion_rapida";
-  }
-
   function syncQuoteClientSnapshot(record) {
     var clientRecord = resolveQuoteClientRecord(record);
     if (!clientRecord) return;
@@ -361,8 +356,6 @@
     if (tenant && clientTenant && tenant !== clientTenant) {
       throw new BadRequestError("El perfil del cliente no pertenece al tenant de esta cotizacion.");
     }
-    // Los perfiles creados desde cotizacion rapida deben poder cotizar antes de completar expediente.
-    if (isQuickQuoteClientProfile(clientRecord)) return;
     var readiness = resolveCurrentClientReadiness(clientRecord);
     if (!readiness.readyForQuotes) {
       throw new BadRequestError("El expediente del cliente debe estar completo, vigente y aprobado antes de generar cotizaciones.");
@@ -684,6 +677,16 @@
     clearSensitivePublicFields: clearSensitivePublicFields,
     enforcePublicThrottle: enforcePublicThrottle
   };
+
+  function enforceQuotePermission(event, action, message) {
+    var rbac = require(`${__hooks}/rbac_shared.js`);
+    return rbac.authorizeOrThrow(event, action, {
+      tenant: event && event.record ? event.record.get("tenant") : "",
+      targetType: "cotizaciones",
+      targetId: String(event && event.record ? (event.record.get("id") || "") : "").trim(),
+      message: message || "No tienes permisos para modificar esta cotizacion."
+    });
+  }
 
   // ─── HOOK: Crear Cotización ─────────────────────────────────────────────────
 
@@ -1068,59 +1071,6 @@
       return clientRecord;
     }
 
-    function isQuickQuoteClientProfileLocal(clientRecord) {
-      if (!clientRecord) return false;
-      return sanitizeText(clientRecord.getString("perfil_origen"), 40).toLowerCase() === "cotizacion_rapida";
-    }
-
-    function ensureQuickQuoteClientProfileLocal(record) {
-      var existingRecord = resolveQuoteClientRecordLocal(record);
-      if (existingRecord) return existingRecord;
-
-      var tenant = sanitizeText(record.getString("tenant"), 40).toLowerCase();
-      if (tenant !== "plaza_mayor" && tenant !== "casa_de_piedra") return null;
-
-      var clientName = sanitizeText(record.getString("cliente_nombre"), 255);
-      var clientEmail = normalizeEmailLocal(record.getString("cliente_email"));
-      var clientPhone = normalizePhoneLocal(record.getString("cliente_telefono")) || normalizePhoneLocal(record.getString("cliente_contacto"));
-      var clientRfc = sanitizeText(record.getString("cliente_rfc"), 40).toUpperCase();
-      if (!clientName && !clientEmail && !clientPhone) return null;
-
-      var collection = null;
-      try {
-        collection = $app.findCollectionByNameOrId("clientes");
-      } catch (_) {
-        collection = null;
-      }
-      if (!collection) return null;
-
-      try {
-        var clientRecord = new Record(collection);
-        clientRecord.set("tenant", tenant);
-        clientRecord.set("nombre_completo", clientName || clientEmail || clientPhone || "Cliente rapido");
-        if (clientPhone) clientRecord.set("telefono", clientPhone);
-        if (clientEmail) clientRecord.set("correo", clientEmail);
-        if (clientRfc) clientRecord.set("rfc", clientRfc);
-        clientRecord.set("perfil_origen", "cotizacion_rapida");
-        clientRecord.set("perfil_estatus", "pendiente_expediente");
-        clientRecord.set("perfil_validado", false);
-        clientRecord.set("perfil_completo", false);
-        $app.save(clientRecord);
-        var createdId = sanitizeText(clientRecord.get("id"), 64).replace(/[^a-zA-Z0-9]/g, "");
-        if (createdId) record.set("cliente_id", createdId);
-        return clientRecord;
-      } catch (clientCreateErr) {
-        var fallbackRecord = findQuoteClientFallbackRecordLocal(record, tenant);
-        if (fallbackRecord) {
-          var fallbackId = sanitizeText(fallbackRecord.get("id"), 64).replace(/[^a-zA-Z0-9]/g, "");
-          if (fallbackId) record.set("cliente_id", fallbackId);
-          return fallbackRecord;
-        }
-        console.log("[cotizaciones create] No se pudo crear perfil rapido:", String(clientCreateErr));
-        throw new BadRequestError("No se pudo crear el perfil rapido del cliente para esta cotizacion.");
-      }
-    }
-
     function syncQuoteClientSnapshotLocal(record) {
       var clientRecord = resolveQuoteClientRecordLocal(record);
       if (!clientRecord) return;
@@ -1318,8 +1268,6 @@
       if (tenant && clientTenant && tenant !== clientTenant) {
         throw new BadRequestError("El perfil del cliente no pertenece al tenant de esta cotizacion.");
       }
-      // Los perfiles creados desde cotizacion rapida deben poder cotizar antes de completar expediente.
-      if (isQuickQuoteClientProfileLocal(clientRecord)) return;
       var readiness = resolveCurrentClientReadinessLocal(clientRecord);
       if (!readiness.readyForQuotes) {
         throw new BadRequestError("El expediente del cliente debe estar completo, vigente y aprobado antes de generar cotizaciones.");
@@ -1371,9 +1319,7 @@
     function ensureClientReadyForQuoteApprovalLocal(record) {
       var clientRecord = resolveQuoteClientRecordLocal(record);
       var clientId = sanitizeText(clientRecord ? clientRecord.get("id") : record.getString("cliente_id"), 64).replace(/[^a-zA-Z0-9]/g, "");
-      if (!clientId) {
-        throw new BadRequestError("No puedes aprobar la cotizacion sin un perfil de cliente asociado.");
-      }
+      if (!clientId) return;
       if (!clientRecord) {
         throw new BadRequestError("No se encontro el perfil de cliente asociado a la cotizacion.");
       }
@@ -1496,6 +1442,10 @@
       return e.next();
     }
 
+    if (e.auth) {
+      enforceQuotePermission(e, "orders_edit", "No tienes permisos para crear cotizaciones.");
+    }
+
     // ── Solicitud pública (sin autenticación) ──
     if (!e.auth) {
       // Forzar status pendiente para todas las solicitudes públicas
@@ -1603,9 +1553,7 @@
       }
     }
 
-    ensureQuickQuoteClientProfileLocal(e.record);
     syncQuoteClientSnapshotLocal(e.record);
-    ensureClientReadyForQuoteLocal(e.record);
     ensureQuoteFinancials(e.record);
     enforceQuoteDiscountLimitLocal(e.record);
     if (quoteApprovalTransitionRequestedLocal(e.record, null)) {
@@ -1629,6 +1577,7 @@
     if (e.hasSuperuserAuth && e.hasSuperuserAuth()) {
       return e.next();
     }
+    enforceQuotePermission(e, "orders_edit", "No tienes permisos para editar cotizaciones.");
     function stripTagsLocal(v) {
       return String(v || "").replace(/<[^>]*>/g, "");
     }
@@ -1775,54 +1724,6 @@
         return fallbackRecord;
       }
       return clientRecord;
-    }
-
-    function ensureQuickQuoteClientProfileLocal(record) {
-      var existingRecord = resolveQuoteClientRecordLocal(record);
-      if (existingRecord) return existingRecord;
-
-      var tenant = sanitizeText(record.getString("tenant"), 40).toLowerCase();
-      if (tenant !== "plaza_mayor" && tenant !== "casa_de_piedra") return null;
-
-      var clientName = sanitizeText(record.getString("cliente_nombre"), 255);
-      var clientEmail = normalizeEmailLocal(record.getString("cliente_email"));
-      var clientPhone = normalizePhoneLocal(record.getString("cliente_telefono")) || normalizePhoneLocal(record.getString("cliente_contacto"));
-      var clientRfc = sanitizeText(record.getString("cliente_rfc"), 40).toUpperCase();
-      if (!clientName && !clientEmail && !clientPhone) return null;
-
-      var collection = null;
-      try {
-        collection = $app.findCollectionByNameOrId("clientes");
-      } catch (_) {
-        collection = null;
-      }
-      if (!collection) return null;
-
-      try {
-        var clientRecord = new Record(collection);
-        clientRecord.set("tenant", tenant);
-        clientRecord.set("nombre_completo", clientName || clientEmail || clientPhone || "Cliente rapido");
-        if (clientPhone) clientRecord.set("telefono", clientPhone);
-        if (clientEmail) clientRecord.set("correo", clientEmail);
-        if (clientRfc) clientRecord.set("rfc", clientRfc);
-        clientRecord.set("perfil_origen", "cotizacion_rapida");
-        clientRecord.set("perfil_estatus", "pendiente_expediente");
-        clientRecord.set("perfil_validado", false);
-        clientRecord.set("perfil_completo", false);
-        $app.save(clientRecord);
-        var createdId = sanitizeText(clientRecord.get("id"), 64).replace(/[^a-zA-Z0-9]/g, "");
-        if (createdId) record.set("cliente_id", createdId);
-        return clientRecord;
-      } catch (clientCreateErr) {
-        var fallbackRecord = findQuoteClientFallbackRecordLocal(record, tenant);
-        if (fallbackRecord) {
-          var fallbackId = sanitizeText(fallbackRecord.get("id"), 64).replace(/[^a-zA-Z0-9]/g, "");
-          if (fallbackId) record.set("cliente_id", fallbackId);
-          return fallbackRecord;
-        }
-        console.log("[cotizaciones update] No se pudo crear perfil rapido:", String(clientCreateErr));
-        throw new BadRequestError("No se pudo crear el perfil rapido del cliente para esta cotizacion.");
-      }
     }
 
     function syncQuoteClientSnapshotLocal(record) {
@@ -2055,9 +1956,7 @@
     function ensureClientReadyForQuoteApprovalLocal(record) {
       var clientRecord = resolveQuoteClientRecordLocal(record);
       var clientId = sanitizeText(clientRecord ? clientRecord.get("id") : record.getString("cliente_id"), 64).replace(/[^a-zA-Z0-9]/g, "");
-      if (!clientId) {
-        throw new BadRequestError("No puedes aprobar la cotizacion sin un perfil de cliente asociado.");
-      }
+      if (!clientId) return;
       if (!clientRecord) {
         throw new BadRequestError("No se encontro el perfil de cliente asociado a la cotizacion.");
       }
@@ -2176,7 +2075,6 @@
     }
 
     var original = e && e.record && typeof e.record.originalCopy === "function" ? e.record.originalCopy() : null;
-    ensureQuickQuoteClientProfileLocal(e.record);
     syncQuoteClientSnapshotLocal(e.record);
     if (quoteFinancialFieldsTouchedLocal(e.record, original)) {
       enforceQuoteDiscountLimitLocal(e.record);
@@ -2187,6 +2085,12 @@
     if (contractFieldsTouchedLocal(e.record, original)) {
       ensureClientReadyForContractLocal(e.record);
     }
+    e.next();
+  }, "cotizaciones");
+
+  onRecordDeleteRequest(function (e) {
+    if (e.hasSuperuserAuth && e.hasSuperuserAuth()) return e.next();
+    enforceQuotePermission(e, "quotes_delete", "No tienes permisos para eliminar cotizaciones.");
     e.next();
   }, "cotizaciones");
 

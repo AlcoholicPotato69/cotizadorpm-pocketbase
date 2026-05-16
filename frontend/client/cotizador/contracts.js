@@ -610,7 +610,7 @@ const LETTERHEAD_PATH = 'membretes_pdf';
 const CFG_TEMPLATE_DEFAULT_KEY = 'contract_template_default';
 const CFG_REGULATION_TEMPLATE_DEFAULT_KEY = 'reglamento_template_default';
 const CFG_LETTERHEAD_KEY = 'pdf_letterhead_path';
-const PDFJS_WORKER_PATH = '../../assets/libs/js/pdf.worker.min.js';
+const PDFJS_WORKER_PATH = '../public/assets/libs/js/pdf.worker.min.js';
 const __PM_CONTRACT_TEMPLATE_LETTERHEAD_STORAGE_KEY = 'pm_contract_template_letterhead_enabled';
 let __pmContractsActiveTemplateFile = '';
 let __pmContractsTemplateTextPositions = {};
@@ -2753,25 +2753,23 @@ function __pmContractsReadPdfStyleControls() {
 function __pmContractsSetPdfStyleConfig(style, options = {}) {
     const opts = options && typeof options === 'object' ? options : {};
     __pmContractsPdfStyleState = __pmContractsNormalizePdfStyle(style);
-    __pmContractsSaveEditorDraft(__pmContractsPdfStyleState);
+    if (__pmContractsIsAdminProfile()) __pmContractsSaveEditorDraft(__pmContractsPdfStyleState);
     if (opts.applyToDom !== false) __pmContractsApplyPdfStyleToLivePreview(opts);
 }
 
-function __pmContractsResolveCurrentUserRole() {
-    const candidates = [
-        window.currentUserProfile?.role,
-        window.currentUserProfile?.record?.role,
-        window.currentUserProfile?.profile?.role
-    ];
-    for (const candidate of candidates) {
-        const safe = String(candidate || '').trim().toLowerCase();
-        if (safe) return safe;
-    }
-    return '';
-}
-
 function __pmContractsIsAdminProfile() {
-    return __pmContractsResolveCurrentUserRole() === 'admin';
+    const rbac = window.HUB_RBAC || null;
+    if (rbac?.canAny) return rbac.canAny(['pdf_layout_manage', 'config_manage']);
+    const authCtx = window.__HUB_AUTH_CONTEXT || {};
+    const perms = (authCtx.permissions && typeof authCtx.permissions === 'object')
+        ? authCtx.permissions
+        : ((window.currentUserProfile?.effective_permissions && typeof window.currentUserProfile.effective_permissions === 'object')
+            ? window.currentUserProfile.effective_permissions
+            : {});
+    if (authCtx.isAdmin === true) return true;
+    if (Object.prototype.hasOwnProperty.call(perms || {}, 'pdf_layout_manage')) return perms.pdf_layout_manage === true;
+    if (Object.prototype.hasOwnProperty.call(perms || {}, 'config_manage')) return perms.config_manage === true;
+    return false;
 }
 
 async function __pmContractsLoadCurrentUserProfile(user) {
@@ -2836,7 +2834,6 @@ async function __pmContractsLoadCurrentUserProfile(user) {
     );
     if (role) {
         merged.role = role;
-        localStorage.setItem('hub_user_cache_role', role);
     }
     if (!merged.username) merged.username = appUser?.username || appUser?.login_username || fallback?.username || fallback?.email?.split('@')[0] || '';
     return merged;
@@ -4283,6 +4280,9 @@ async function __pmContractsBuildPlanAnnexPages(order, spaces) {
     const missing = [];
     for (let index = 0; index < spaces.length; index += 1) {
         const space = spaces[index] || {};
+        const spaceType = String(space?.tipo || space?.espacio_tipo || space?.space_type || space?.__detail?.espacio_tipo || '').toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+        const isAdvertising = spaceType === 'publicidad' || spaceType === 'digital' || spaceType === 'letrero' || spaceType === 'activacion';
+        if (!isAdvertising) continue;
         const fileName = String(space?.plano_geografico_file || space?.plano_geografico || '').trim();
         const fileUrl = String(space?.plano_geografico_url || '').trim();
         const title = `Plano geográfico - ${space?.nombre || space?.espacio_nombre || `Espacio ${index + 1}`}`;
@@ -4817,10 +4817,19 @@ window.loadSelectedTemplate = async function() {
 
         if (__pmContractsIsTemplateLetterheadEnabled()) {
             text = __pmContractsWrapLetterheadPage(text, {
-                baseWidth: PM_CONTRACTS_CONTENT_BASE_WIDTH_PX,
+                baseWidth: __PMCONTRACTS_CONTENT_BASE_WIDTH_PX,
                 baseHeight: __pmContractsContentBaseHeightPx()
             });
         }
+
+        const spaces = await __pmContractsLoadOrderSpaceRecords(selectedOrder);
+        const planPages = await __pmContractsBuildPlanAnnexPages(selectedOrder, spaces);
+        const regulationPages = await __pmContractsBuildRegulationAnnexPages(selectedOrder, spaces);
+        let annexHtml = [...planPages, ...regulationPages].join('');
+        annexHtml = annexHtml.replace('class="contract-annex-page"', 'class="contract-annex-page" style="page-break-before: auto;"');
+        text += annexHtml;
+        
+        text = `<div id="pdf-export-wrapper" style="width:816px; margin:0 auto; background:#ffffff;">${text}</div>`;
 
         setContractPreviewSrcdoc(text);
         setTimeout(window.adjustPreviewScale, 50);
@@ -4969,13 +4978,27 @@ window.generateContractPdf = async function () {
         await window.loadSelectedTemplate();
         const doc = iframe && iframe.contentDocument;
         if (!doc?.body) throw new Error('No hay contrato cargado.');
-        const spaces = await __pmContractsLoadOrderSpaceRecords(selectedOrder);
-        const planPages = await __pmContractsBuildPlanAnnexPages(selectedOrder, spaces);
-        const regulationPages = await __pmContractsBuildRegulationAnnexPages(selectedOrder, spaces);
-        const hiddenContainer = document.getElementById('receipt-pdf-render');
-        hiddenContainer.innerHTML = __pmContractsBuildPrintableContractFragment(doc, { annexPages: [...planPages, ...regulationPages] });
-        const element = hiddenContainer;
-        await new Promise((resolve) => setTimeout(resolve, 700));
+        const renderIframe = document.getElementById('contract-preview-iframe');
+        const renderDoc = renderIframe.contentDocument;
+        const exportWrapper = renderDoc.getElementById('pdf-export-wrapper');
+        
+        if (!exportWrapper) throw new Error("No se encontró el contenedor de exportación en el iframe.");
+
+        // Crear contenedor temporal para clonar y limpiar
+        const captureContainer = document.createElement('div');
+        captureContainer.innerHTML = exportWrapper.outerHTML;
+        
+        // Limpiar highlights en el clon
+        captureContainer.querySelectorAll('.var-highlight').forEach(node => {
+            const textNode = document.createTextNode(node.textContent);
+            node.parentNode.replaceChild(textNode, node);
+        });
+
+        const element = captureContainer.firstElementChild;
+        document.body.appendChild(captureContainer); // Need it in DOM temporarily for html2pdf? Actually html2pdf supports off-DOM, but let's be safe.
+        captureContainer.style.position = 'absolute';
+        captureContainer.style.left = '-9999px';
+
         const fileName = `Contrato_${contractNum}_${Date.now()}.pdf`;
         const pdfBlob = await html2pdf().set({
             margin: 0,
@@ -4985,7 +5008,8 @@ window.generateContractPdf = async function () {
             jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' },
             pagebreak: { mode: ['css', 'legacy'] }
         }).from(element).output('blob');
-        hiddenContainer.innerHTML = '';
+        
+        document.body.removeChild(captureContainer);
         const path = `${selectedOrder.id}/${Date.now()}_contrato_generado.pdf`;
         const { error: upErr } = await window.globalPocketBase.storage.from(TEMPLATE_BUCKET).upload(path, pdfBlob);
         if (upErr) throw upErr;
@@ -5282,6 +5306,7 @@ function getReceiptHTML(isVisual = false) {
 
     return wrapStyledReceipt(receiptRaw, extraPages);
 }
+
 
 
 

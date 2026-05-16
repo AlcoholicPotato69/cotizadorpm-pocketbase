@@ -10,14 +10,15 @@
   <title>Configuración Finanzas - Admin</title>
 
   <!-- Local assets -->
-  <link rel="preload" as="script" href="../../assets/libs/js/tailwindcss.js">
-  <script src="../../assets/libs/js/tailwindcss.js?v=20260426-v3-digital-calendar"></script>
-  <link rel="preload" as="style" href="../../assets/libs/css/all.min.css?v=20260426-v3-digital-calendar">
-  <link rel="stylesheet" href="../../assets/libs/css/all.min.css?v=20260426-v3-digital-calendar">
+  <link rel="preload" as="script" href="../public/assets/libs/js/tailwindcss.js?v=20260426-v3-digital-calendar">
+  <script src="../public/assets/libs/js/tailwindcss.js?v=20260426-v3-digital-calendar"></script>
+  <link rel="preload" as="style" href="../public/assets/libs/css/all.min.css?v=20260426-v3-digital-calendar">
+  <link rel="stylesheet" href="../public/assets/libs/css/all.min.css?v=20260426-v3-digital-calendar">
 
   <!-- PocketBase + Hub config + Layout (fijo para que SI renderice layout) -->
   <script src="../services/pb-client.js?v=20260426-v3-digital-calendar"></script>
   <script src="../js/hub-config.js?v=20260426-v3-digital-calendar"></script>
+    <script src="../services/server-date-service.js?v=20260427-v2-server-dates"></script>
   <script>
     window.__HUB_SYSTEM_PAGE_MANAGES_AUTH = true;
   </script>
@@ -113,6 +114,54 @@
       color: var(--tenant-primary, #D32F2F);
       border-color: #fff;
       box-shadow: 0 10px 24px -10px rgba(0, 0, 0, 0.45);
+    }
+
+    .users-subtab {
+      border: 1px solid #e5e7eb;
+      background: #f9fafb;
+      color: #6b7280;
+      padding: 10px 14px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      transition: all .25s ease;
+    }
+
+    .users-subtab:hover {
+      border-color: #d1d5db;
+      background: #fff;
+      color: #374151;
+    }
+
+    .users-subtab.is-active {
+      background: #111827;
+      border-color: #111827;
+      color: #fff;
+      box-shadow: 0 8px 18px -12px rgba(17, 24, 39, .8);
+    }
+
+    .help-q {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 14px;
+      height: 14px;
+      border-radius: 999px;
+      background: #e5e7eb;
+      color: #4b5563;
+      font-size: 9px;
+      font-weight: 900;
+      margin-left: 4px;
+      cursor: help;
+      vertical-align: middle;
+      line-height: 1;
+    }
+
+    .help-q:hover {
+      background: #111827;
+      color: #fff;
     }
 
     .tenant-chip {
@@ -239,8 +288,8 @@
     }
   </style>
   <!-- Local Animations -->
-  <link rel="preload" as="style" href="../../assets/libs/css/animate.min.css?v=20260426-v3-digital-calendar">
-  <link rel="stylesheet" href="../../assets/libs/css/animate.min.css?v=20260426-v3-digital-calendar">
+  <link rel="preload" as="style" href="../public/assets/libs/css/animate.min.css?v=20260426-v3-digital-calendar">
+  <link rel="stylesheet" href="../public/assets/libs/css/animate.min.css?v=20260426-v3-digital-calendar">
 </head>
 
 <body class="bg-brand-gray text-gray-800 flex flex-col min-h-screen tenant-pm">
@@ -860,37 +909,107 @@
             <div class="w-8 h-8 rounded-full bg-brand-red/10 text-brand-red flex items-center justify-center text-sm">
               <i class="fa-solid fa-users"></i>
             </div>
-            Gestión de Usuarios Administrativos
+            Administración de Usuarios y Roles
           </h2>
           <p class="text-[11px] sm:text-xs text-gray-500 font-bold mt-1">
-            Revisión y edición de todos los usuarios registrados en el panel
+            Gestiona usuarios, roles y permisos desde pestañas separadas y modales.
           </p>
         </div>
-        <button type="button" onclick="window.openUserModal()"
-          class="shrink-0 bg-brand-red text-white hover:bg-red-700 transition px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider shadow-sm hover:shadow-md flex items-center gap-2">
-          <i class="fa-solid fa-user-plus"></i> Añadir Usuario
-        </button>
       </div>
-      <div class="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
-        <div class="overflow-x-auto">
-          <table class="w-full text-left border-collapse min-w-[700px]">
-            <thead>
-              <tr class="bg-gray-50/80 border-b border-gray-100">
-                <th class="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-gray-400">Usuario</th>
-                <th class="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-gray-400">Rol</th>
-                <th class="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-gray-400">Sede Principal</th>
-                <th class="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-gray-400">Permisos de Acceso
-                </th>
-                <th class="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-gray-400 text-center w-24">
-                  Acciones</th>
-              </tr>
-            </thead>
-            <tbody id="users-tbody" class="divide-y divide-gray-100/60 text-xs text-gray-700">
-              <tr>
-                <td colspan="5" class="py-8 text-center text-gray-400 font-bold italic">Cargando usuarios...</td>
-              </tr>
-            </tbody>
-          </table>
+
+      <div class="bg-white rounded-3xl border border-gray-100 shadow-sm p-2 mb-6">
+        <div class="flex flex-wrap gap-2">
+          <button type="button" id="users-tab-users" class="users-subtab is-active" onclick="window.setUsersTab('users')">
+            <i class="fa-solid fa-table-list mr-1"></i> Usuarios
+          </button>
+          <button type="button" id="users-tab-roles" class="users-subtab" onclick="window.setUsersTab('roles')">
+            <i class="fa-solid fa-shield-halved mr-1"></i> Roles y Permisos
+          </button>
+        </div>
+      </div>
+
+      <div id="users-panel-users" class="space-y-4">
+        <div
+          class="bg-white rounded-3xl border border-gray-100 shadow-sm p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <div class="text-[10px] font-black uppercase tracking-wider text-gray-400">Usuarios</div>
+            <div class="text-sm font-black text-gray-800">Tabla de usuarios de la plataforma</div>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <button type="button" onclick="window.loadUsers()"
+              class="bg-gray-100 text-gray-700 hover:bg-gray-200 transition px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider shadow-sm flex items-center gap-2">
+              <i class="fa-solid fa-rotate"></i> Actualizar
+            </button>
+            <button type="button" id="btn-user-add" onclick="window.openUserModal()"
+              class="bg-brand-red text-white hover:bg-red-700 transition px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider shadow-sm hover:shadow-md flex items-center gap-2">
+              <i class="fa-solid fa-user-plus"></i> Añadir Usuario
+            </button>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse min-w-[700px]">
+              <thead>
+                <tr class="bg-gray-50/80 border-b border-gray-100">
+                  <th class="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-gray-400">Usuario</th>
+                  <th class="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-gray-400">Roles</th>
+                  <th class="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-gray-400">Sede Principal</th>
+                  <th class="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-gray-400">Permisos de Acceso
+                  </th>
+                  <th class="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-gray-400 text-center w-24">
+                    Acciones</th>
+                </tr>
+              </thead>
+              <tbody id="users-tbody" class="divide-y divide-gray-100/60 text-xs text-gray-700">
+                <tr>
+                  <td colspan="5" class="py-8 text-center text-gray-400 font-bold italic">Cargando usuarios...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div id="users-panel-roles" class="hidden space-y-4">
+        <div
+          class="bg-white rounded-3xl border border-gray-100 shadow-sm p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <div class="text-[10px] font-black uppercase tracking-wider text-gray-400">RBAC</div>
+            <div class="text-sm font-black text-gray-800">Roles y permisos por tenant</div>
+            <div class="text-xs text-gray-500 mt-1">Abre un rol para editar todos sus permisos con checkbox.</div>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <button type="button" id="btn-rbac-refresh"
+              class="bg-gray-100 text-gray-700 hover:bg-gray-200 transition px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider shadow-sm flex items-center gap-2">
+              <i class="fa-solid fa-rotate"></i> Actualizar
+            </button>
+            <button type="button" id="btn-role-add" onclick="window.openRoleModal()"
+              class="bg-brand-red text-white hover:bg-red-700 transition px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider shadow-sm hover:shadow-md flex items-center gap-2">
+              <i class="fa-solid fa-plus"></i> Nuevo Rol
+            </button>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse min-w-[760px]">
+              <thead>
+                <tr class="bg-gray-50/80 border-b border-gray-100">
+                  <th class="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-gray-400">Rol</th>
+                  <th class="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-gray-400">Slug</th>
+                  <th class="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-gray-400">Descripción</th>
+                  <th class="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-gray-400">Permisos Activos</th>
+                  <th class="py-3 px-4 text-[10px] font-black uppercase tracking-widest text-gray-400 text-center">Editar</th>
+                </tr>
+              </thead>
+              <tbody id="roles-tbody" class="divide-y divide-gray-100/60 text-xs text-gray-700">
+                <tr>
+                  <td colspan="5" class="py-8 text-center text-gray-400 font-bold italic">Cargando roles...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
@@ -900,7 +1019,7 @@
   <div id="modal-user"
     class="fixed inset-0 bg-black/60 z-[100] hidden items-center justify-center p-4 backdrop-blur-sm transition-opacity opacity-0">
     <div
-      class="bg-white rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col scale-95 transition-transform duration-300"
+      class="bg-white rounded-3xl w-full max-w-6xl shadow-2xl overflow-hidden flex flex-col scale-95 transition-transform duration-300"
       id="modal-user-content">
       <div class="bg-gray-50/80 px-6 py-4 flex justify-between items-center border-b border-gray-100">
         <h3 class="font-black text-gray-800 tracking-tight flex items-center gap-2">
@@ -948,16 +1067,11 @@
             campos arriba. Déjalos en blanco para conservarla.</p>
           <hr class="border-gray-100 my-2">
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div class="space-y-1">
-              <label class="block text-[10px] font-black uppercase text-brand-red tracking-wider">Rol de Sistema <span
+            <div class="space-y-2 bg-gray-50 p-4 rounded-xl border border-gray-100">
+              <label class="block text-[10px] font-black uppercase text-brand-red tracking-wider">Roles de Sistema <span
                   class="text-red-500">*</span></label>
-              <select id="user-role" required
-                class="w-full text-sm font-bold bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 outline-none focus:border-brand-red focus:bg-white transition text-gray-700 cursor-pointer">
-                <option value="admin">Administrador Global</option>
-                <option value="plaza_mayor">Agente Plaza Mayor</option>
-                <option value="casa_de_piedra">Agente Casa Piedra</option>
-                <option value="verificador">Verificador</option>
-              </select>
+              <div id="user-role-list" class="grid grid-cols-1 sm:grid-cols-2 gap-2"></div>
+              <p class="text-[10px] text-gray-500 font-semibold">Puedes asignar más de un rol al mismo usuario.</p>
             </div>
             <div class="space-y-1">
               <label class="block text-[10px] font-black uppercase text-brand-red tracking-wider">Sede Principal <span
@@ -985,6 +1099,32 @@
               </label>
             </div>
           </div>
+          <div class="space-y-2 mt-4 bg-gray-50 p-4 rounded-xl border border-gray-100">
+            <label class="block text-[10px] font-black uppercase text-gray-500 tracking-wider">Permisos por usuario
+              (checkbox): heredados por rol + adicionales/denegaciones</label>
+            <p class="text-[10px] text-gray-500 font-semibold">
+              "Heredado" = lo que ya viene de sus roles. "Extra" = permiso adicional manual. "Bloquear" = quitar permiso aunque el rol lo tenga.
+            </p>
+            <div class="overflow-x-auto">
+              <table class="min-w-[1180px] w-full text-xs border-separate border-spacing-0">
+                <thead>
+                  <tr class="text-[10px] uppercase tracking-wider text-gray-400 border-b border-gray-200">
+                    <th class="py-2 text-left font-black">Permiso</th>
+                    <th class="py-2 text-left font-black">Descripción</th>
+                    <th class="py-2 text-center font-black whitespace-nowrap">Her. PM<span class="help-q" title="Permiso heredado desde roles en Plaza Mayor. Verde=otorgado, Rojo=bloqueado por rol.">?</span></th>
+                    <th class="py-2 text-center font-black whitespace-nowrap">Her. CP<span class="help-q" title="Permiso heredado desde roles en Casa de Piedra. Verde=otorgado, Rojo=bloqueado por rol.">?</span></th>
+                    <th class="py-2 text-center font-black whitespace-nowrap">Extra G<span class="help-q" title="Otorga manualmente este permiso en ambos tenants.">?</span></th>
+                    <th class="py-2 text-center font-black whitespace-nowrap">Bloq. G<span class="help-q" title="Bloquea manualmente este permiso en ambos tenants (tiene prioridad).">?</span></th>
+                    <th class="py-2 text-center font-black whitespace-nowrap">Extra PM<span class="help-q" title="Otorga manualmente este permiso solo para Plaza Mayor.">?</span></th>
+                    <th class="py-2 text-center font-black whitespace-nowrap">Bloq. PM<span class="help-q" title="Bloquea manualmente este permiso solo para Plaza Mayor.">?</span></th>
+                    <th class="py-2 text-center font-black whitespace-nowrap">Extra CP<span class="help-q" title="Otorga manualmente este permiso solo para Casa de Piedra.">?</span></th>
+                    <th class="py-2 text-center font-black whitespace-nowrap">Bloq. CP<span class="help-q" title="Bloquea manualmente este permiso solo para Casa de Piedra.">?</span></th>
+                  </tr>
+                </thead>
+                <tbody id="user-override-permission-matrix"></tbody>
+              </table>
+            </div>
+          </div>
         </form>
       </div>
       <div class="bg-gray-50 border-t border-gray-100 p-4 flex justify-end gap-3 rounded-b-3xl shrink-0">
@@ -998,6 +1138,116 @@
     </div>
   </div>
 
+  <!-- Modal Roles y Permisos -->
+  <div id="modal-role"
+    class="fixed inset-0 bg-black/60 z-[110] hidden items-center justify-center p-4 backdrop-blur-sm transition-opacity opacity-0">
+    <div
+      class="bg-white rounded-3xl w-full max-w-7xl shadow-2xl overflow-hidden flex flex-col scale-95 transition-transform duration-300"
+      id="modal-role-content">
+      <div class="bg-gray-50/80 px-6 py-4 flex justify-between items-center border-b border-gray-100">
+        <h3 class="font-black text-gray-800 tracking-tight flex items-center gap-2">
+          <div class="w-6 h-6 rounded-full bg-brand-red text-white flex items-center justify-center text-[10px]">
+            <i class="fa-solid fa-shield-halved"></i>
+          </div>
+          <span>Editar Rol y Permisos</span>
+        </h3>
+        <button type="button" onclick="window.closeRoleModal()"
+          class="w-8 h-8 rounded-full bg-white border border-gray-200 text-gray-400 hover:text-brand-red hover:border-brand-red flex items-center justify-center transition focus:outline-none">
+          <i class="fa-solid fa-times"></i>
+        </button>
+      </div>
+      <div class="p-6 overflow-y-auto max-h-[74vh] custom-scroll space-y-4">
+        <select id="rbac-role-select" class="hidden"></select>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div>
+            <label class="block text-[10px] font-black uppercase tracking-wider text-gray-400 mb-1">Slug</label>
+            <input id="rbac-role-slug" type="text" placeholder="ej: gestor_catalogo"
+              class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-brand-red text-sm font-bold">
+          </div>
+          <div>
+            <label class="block text-[10px] font-black uppercase tracking-wider text-gray-400 mb-1">Nombre</label>
+            <input id="rbac-role-name" type="text" placeholder="Nombre visible"
+              class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-brand-red text-sm font-bold">
+          </div>
+          <div>
+            <label class="block text-[10px] font-black uppercase tracking-wider text-gray-400 mb-1">Descripción</label>
+            <input id="rbac-role-desc" type="text" placeholder="Descripción breve"
+              class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:bg-white focus:border-brand-red text-sm font-bold">
+          </div>
+        </div>
+        <div class="rounded-2xl border border-gray-100 bg-gray-50 p-3">
+          <div class="text-[10px] font-black uppercase tracking-wider text-gray-400 mb-2">Permisos del rol por
+            checkbox</div>
+          <p class="text-[10px] text-gray-500 font-semibold mb-2">
+            "Permitir" otorga el permiso. "Bloquear" lo revoca (tiene prioridad). "Global" aplica a todos los tenants.
+          </p>
+          <div class="overflow-x-auto">
+            <table class="min-w-[980px] w-full text-xs">
+              <thead>
+                <tr class="text-[10px] uppercase tracking-wider text-gray-400 border-b border-gray-200">
+                  <th class="py-2 text-left font-black">Permiso</th>
+                  <th class="py-2 text-left font-black">Descripción</th>
+                  <th class="py-2 text-center font-black whitespace-nowrap">Perm. G<span class="help-q" title="Otorga este permiso globalmente para todos los tenants.">?</span></th>
+                  <th class="py-2 text-center font-black whitespace-nowrap">Bloq. G<span class="help-q" title="Bloquea este permiso globalmente (deny tiene prioridad).">?</span></th>
+                  <th class="py-2 text-center font-black whitespace-nowrap">Perm. PM<span class="help-q" title="Otorga este permiso solo en Plaza Mayor.">?</span></th>
+                  <th class="py-2 text-center font-black whitespace-nowrap">Bloq. PM<span class="help-q" title="Bloquea este permiso solo en Plaza Mayor.">?</span></th>
+                  <th class="py-2 text-center font-black whitespace-nowrap">Perm. CP<span class="help-q" title="Otorga este permiso solo en Casa de Piedra.">?</span></th>
+                  <th class="py-2 text-center font-black whitespace-nowrap">Bloq. CP<span class="help-q" title="Bloquea este permiso solo en Casa de Piedra.">?</span></th>
+                </tr>
+              </thead>
+              <tbody id="rbac-role-permission-matrix"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="rounded-2xl border border-gray-100 p-3">
+          <div class="text-[10px] font-black uppercase tracking-wider text-gray-400 mb-2">Permisos core</div>
+          <div id="rbac-core-permissions" class="grid grid-cols-1 md:grid-cols-2 gap-2"></div>
+        </div>
+      </div>
+      <div class="bg-gray-50 border-t border-gray-100 p-4 flex justify-end gap-3 rounded-b-3xl shrink-0">
+        <button type="button" id="btn-rbac-role-new"
+          class="bg-gray-100 text-gray-700 py-2.5 px-4 rounded-xl font-bold text-xs uppercase hover:bg-gray-200 transition">Nuevo</button>
+        <button type="button" id="btn-rbac-role-delete"
+          class="bg-red-50 text-red-600 py-2.5 px-4 rounded-xl font-bold text-xs uppercase hover:bg-red-100 transition">Eliminar</button>
+        <button type="button" id="btn-rbac-role-save"
+          class="bg-brand-red text-white py-2.5 px-4 rounded-xl font-bold text-xs uppercase hover:bg-red-700 transition">Guardar rol</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Confirmación Admin -->
+  <div id="modal-admin-password"
+    class="fixed inset-0 bg-black/60 z-[120] hidden items-center justify-center p-4 backdrop-blur-sm transition-opacity opacity-0">
+    <div id="modal-admin-password-content"
+      class="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col scale-95 transition-transform duration-300">
+      <div class="bg-gray-50/80 px-6 py-4 flex justify-between items-center border-b border-gray-100">
+        <h3 class="font-black text-gray-800 tracking-tight flex items-center gap-2">
+          <div class="w-6 h-6 rounded-full bg-brand-red text-white flex items-center justify-center text-[10px]">
+            <i class="fa-solid fa-shield-halved"></i>
+          </div>
+          <span id="admin-password-modal-title">Confirmar Admin</span>
+        </h3>
+        <button type="button" onclick="window.closeAdminPasswordModal()"
+          class="w-8 h-8 rounded-full bg-white border border-gray-200 text-gray-400 hover:text-brand-red hover:border-brand-red flex items-center justify-center transition focus:outline-none">
+          <i class="fa-solid fa-times"></i>
+        </button>
+      </div>
+      <div class="p-6 space-y-3">
+        <p id="admin-password-modal-message" class="text-sm text-gray-600 font-semibold">Ingresa tu contraseña de admin para continuar.</p>
+        <input type="password" id="admin-password-modal-input" placeholder="Contraseña de admin"
+          class="w-full text-sm font-bold bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 outline-none focus:border-brand-red focus:bg-white transition" />
+      </div>
+      <div class="bg-gray-50 border-t border-gray-100 p-4 flex justify-end gap-3 rounded-b-3xl shrink-0">
+        <button type="button" onclick="window.closeAdminPasswordModal()"
+          class="px-5 py-2 rounded-xl text-xs font-black text-gray-500 hover:bg-gray-200 transition tracking-wider uppercase">Cancelar</button>
+        <button type="button" id="btn-admin-password-confirm"
+          class="bg-brand-red text-white px-6 py-2 rounded-xl text-xs font-black hover:bg-red-700 transition tracking-wider uppercase shadow flex items-center gap-2">
+          <i class="fa-solid fa-check"></i> Confirmar
+        </button>
+      </div>
+    </div>
+  </div>
+
   <script>
     let pmPocketBase = null;
     let cpPocketBase = null;
@@ -1006,7 +1256,13 @@
     let isAdminUser = false;
     let isVerifierUser = false;
     let canEditConfigUser = false;
+    let canAccessUsersModule = false;
+    let canManageUsersModule = false;
+    let canManageRolesModule = false;
+    let canManagePermissionsModule = false;
+    let rbacEffectivePermissions = {};
     let resolvedConfigRole = '';
+    let usersActiveTab = 'users';
     let currentView = 'v_concepts';
     let currentTenant = 'pm'; // pm | cp
     function resolveInitialTenantFromQuery() {
@@ -1517,7 +1773,7 @@
       return {
         tenant: getCurrentConfigTenant(),
         version: 2,
-        updated_at: new Date().toISOString(),
+        updated_at: (window.__serverDateService ? window.__serverDateService.nowISO() : new Date().toISOString()),
         profiles: ensurePdfEditorProfiles(pdfEditorProfiles),
         templates: normalizePdfEditorTemplates(pdfEditorTemplates)
       };
@@ -2886,7 +3142,7 @@
         clave: CFG_CLIENT_DOC_REQUIREMENTS_KEY,
         valor_json: {
           documents: docs,
-          updated_at: new Date().toISOString()
+          updated_at: (window.__serverDateService ? window.__serverDateService.nowISO() : new Date().toISOString())
         }
       };
       const { error } = await getDB().from('configuracion').upsert(payload, { onConflict: 'tenant,clave' });
@@ -3063,7 +3319,7 @@
         valor_json: {
           file_name: fileName,
           path: `${meta.path}/${fileName}`,
-          updated_at: new Date().toISOString()
+          updated_at: (window.__serverDateService ? window.__serverDateService.nowISO() : new Date().toISOString())
         }
       };
       const { error } = await getDB().from('configuracion').upsert(payload, { onConflict: 'tenant,clave' });
@@ -3085,7 +3341,7 @@
         valor_json: {
           file_name: fileName,
           path: `${DOC_LETTERHEAD_PATH}/${fileName}`,
-          updated_at: new Date().toISOString()
+          updated_at: (window.__serverDateService ? window.__serverDateService.nowISO() : new Date().toISOString())
         }
       };
       const { error } = await getDB().from('configuracion').upsert(payload, { onConflict: 'tenant,clave' });
@@ -3217,7 +3473,7 @@
           tenant: getCurrentConfigTenant(),
           clave: 'premontaje_pct',
           valor_num: val,
-          valor_json: { value: val, percent: val, updated_at: new Date().toISOString() }
+          valor_json: { value: val, percent: val, updated_at: (window.__serverDateService ? window.__serverDateService.nowISO() : new Date().toISOString()) }
         };
         const { error } = await db.from('configuracion').upsert(payload, { onConflict: 'tenant,clave' });
         if (error) throw error;
@@ -3252,7 +3508,7 @@
             mode,
             value: val,
             allow_custom: !!customEl?.checked,
-            updated_at: new Date().toISOString()
+            updated_at: (window.__serverDateService ? window.__serverDateService.nowISO() : new Date().toISOString())
           }
         };
         const { error } = await db.from('configuracion').upsert(payload, { onConflict: 'tenant,clave' });
@@ -3285,14 +3541,46 @@
       }
     }
 
-    function readAnyStoredAuthState() {
-      const keys = ['pb_native_auth_v1', 'pb_compat_auth_v1', 'pb_auth'];
-      for (const key of keys) {
-        const parsed = readUsers1StoredAuthState(key);
-        if (parsed && typeof parsed === 'object') return parsed;
+      function readAnyStoredAuthState() {
+        const keys = ['pb_native_auth_v1', 'pb_compat_auth_v1', 'pb_auth'];
+        for (const key of keys) {
+          const parsed = readUsers1StoredAuthState(key);
+          if (parsed && typeof parsed === 'object') return parsed;
+        }
+        return null;
       }
-      return null;
-    }
+
+      function normalizeAuthTokenCandidate(value) {
+        const raw = String(value || '').trim();
+        if (!raw) return '';
+        if (raw.toLowerCase().startsWith('bearer ')) {
+          return String(raw.slice(7) || '').trim();
+        }
+        return raw;
+      }
+
+      function readAuthTokenCandidates() {
+        const out = [];
+        const seen = new Set();
+        const add = (value) => {
+          const token = normalizeAuthTokenCandidate(value);
+          if (!token || seen.has(token)) return;
+          seen.add(token);
+          out.push(token);
+        };
+        const keys = ['pb_native_auth_v1', 'pb_compat_auth_v1', 'pb_auth'];
+        keys.forEach((key) => {
+          const parsed = readUsers1StoredAuthState(key);
+          if (!parsed || typeof parsed !== 'object') return;
+          add(parsed.token);
+          add(parsed.access_token);
+          add(parsed?.session?.token);
+          add(parsed?.data?.token);
+        });
+        add(window.__HUB_AUTH_CONTEXT?.session?.token);
+        add(window.__HUB_AUTH_CONTEXT?.token);
+        return out;
+      }
 
     function collectUsers1RoleCandidates(...groups) {
       const out = [];
@@ -3335,11 +3623,11 @@
     }
 
     async function resolveConfigAccess() {
-      isAdminUser = await requireAdmin();
+      await requireAdmin();
       const hintedRole = resolvedConfigRole || getConfigRoleHints();
       isVerifierUser = !isAdminUser && hintedRole === 'verificador';
       canEditConfigUser = isAdminUser || isVerifierUser;
-      return canEditConfigUser;
+      return canEditConfigUser || canAccessUsersModule;
     }
 
     function getUsersAdminClient() {
@@ -3371,129 +3659,49 @@
 
     async function requireAdmin() {
       resolvedConfigRole = '';
-      const layoutCtx = getResolvedLayoutAuthContext();
-      if (layoutCtx?.isAdmin === true && layoutCtx?.canAccessCurrentRoute !== false) {
-        try { localStorage.setItem('hub_user_cache_role', 'admin'); } catch (_) { }
-        resolvedConfigRole = 'admin';
-        return true;
-      }
+      isAdminUser = false;
+      canAccessUsersModule = false;
+      canManageUsersModule = false;
+      canManageRolesModule = false;
+      canManagePermissionsModule = false;
+      rbacEffectivePermissions = {};
 
-      const cachedRole = normalizeAdminRole(localStorage.getItem('hub_user_cache_role'));
-
-      const authState = readAnyStoredAuthState();
-      const authStateHasToken = !!String(authState?.token || authState?.access_token || '').trim();
-      const profileHints = [
-        window.currentUserProfile,
-        window.currentUserProfile?.app_user,
-        window.currentUserProfile?.profile,
-        window.__HUB_AUTH_CONTEXT?.profile,
-        window.__HUB_AUTH_CONTEXT?.user
-      ].filter(Boolean);
-      const hintedRoles = collectUsers1RoleCandidates(
-        profileHints.map(item => item?.role),
-        profileHints.map(item => item?.record?.role),
-        profileHints.map(item => item?.app_metadata?.role),
-        profileHints.map(item => item?.metadata?.role)
-      );
-      if (hintedRoles.includes('admin')) {
-        resolvedConfigRole = 'admin';
-        if (layoutCtx?.canAccessCurrentRoute !== false && (layoutCtx?.user || layoutCtx?.profile)) {
+      const applyEffective = (effective) => {
+        const safe = effective && typeof effective === 'object' ? effective : {};
+        const perms = safe.permissions && typeof safe.permissions === 'object' ? safe.permissions : {};
+        rbacEffectivePermissions = perms;
+        isAdminUser = safe.is_admin === true;
+        canManageUsersModule = perms.users_manage === true || isAdminUser;
+        canManageRolesModule = perms.roles_manage === true || isAdminUser;
+        canManagePermissionsModule = perms.permissions_manage === true || isAdminUser;
+        canAccessUsersModule = canManageUsersModule || canManageRolesModule || canManagePermissionsModule;
+        if (isAdminUser) {
+          resolvedConfigRole = 'admin';
           try { localStorage.setItem('hub_user_cache_role', 'admin'); } catch (_) { }
-          return true;
         }
-      }
+      };
 
-      const sb = getUsersAdminClient();
-      if (!sb) return false;
-
-      let session = null;
-      try {
-        const sessionResp = await sb.auth.getSession();
-        session = sessionResp?.data?.session || sessionResp?.session || null;
-      } catch (_) { }
-
-      let sessionUser = session?.user || null;
-      if (!sessionUser) {
-        try {
-          const userResp = await sb.auth.getUser();
-          sessionUser = userResp?.data?.user || userResp?.user || null;
-        } catch (_) { }
-      }
-      const hasLiveSession = !!sessionUser;
-
-      const identitySources = [
-        sessionUser,
-        ...profileHints,
-        ...(hasLiveSession || authStateHasToken ? [authState?.user, authState?.record] : [])
-      ].filter(Boolean);
-
-      const userRoleCandidates = collectUsers1RoleCandidates(
-        [
-          ...identitySources.map(item => item?.role),
-          ...identitySources.map(item => item?.record?.role),
-          ...identitySources.map(item => item?.profile?.role),
-          ...identitySources.map(item => item?.app_metadata?.role),
-          ...identitySources.map(item => item?.metadata?.role)
-        ]
-      );
-
-      if (userRoleCandidates.includes('admin') && (hasLiveSession || authStateHasToken)) {
-        localStorage.setItem('hub_user_cache_role', 'admin');
-        resolvedConfigRole = 'admin';
-        return true;
+      const layoutCtx = getResolvedLayoutAuthContext();
+      const layoutEffective = layoutCtx?.effective
+        || layoutCtx?.user?.effective
+        || null;
+      if (layoutEffective) applyEffective(layoutEffective);
+      if (!layoutEffective) {
+        const layoutPerms = layoutCtx?.permissions
+          || layoutCtx?.user?.permissions
+          || layoutCtx?.user?.effective_permissions
+          || {};
+        const layoutIsAdmin = layoutCtx?.isAdmin === true || normalizeAdminRole(layoutCtx?.user?.role) === 'admin';
+        applyEffective({ is_admin: layoutIsAdmin, permissions: layoutPerms });
       }
 
       try {
-        const idCandidates = [...new Set([
-          ...identitySources.map(item => String(item?.id || item?.record?.id || '').trim()),
-          String(authState?.user?.id || '').trim(),
-          String(authState?.record?.id || '').trim()
-        ].filter(Boolean))];
-        const emailCandidates = [...new Set([
-          ...identitySources.map(item => String(item?.email || item?.record?.email || '').trim().toLowerCase()),
-          String(authState?.user?.email || '').trim().toLowerCase(),
-          String(authState?.record?.email || '').trim().toLowerCase()
-        ].filter(Boolean))];
-        const usernameCandidates = [...new Set([
-          ...identitySources.map(item => String(item?.username || item?.login_username || item?.record?.username || item?.record?.login_username || '').trim()),
-          String(authState?.user?.username || '').trim(),
-          String(authState?.user?.login_username || '').trim(),
-          String(authState?.record?.username || '').trim(),
-          String(authState?.record?.login_username || '').trim()
-        ].filter(Boolean))];
-
-        const lookupByField = async (table, field, values) => {
-          for (const value of values) {
-            try {
-              const { data, error } = await sb
-                .from(table)
-                .select('id, role, username, email, allowed_tenants, tenant_default')
-                .eq(field, value)
-                .maybeSingle();
-              if (error) continue;
-              if (data) return data;
-            } catch (_) { }
-          }
-          return null;
-        };
-
-        let appUser = await lookupByField('app_users', 'id', idCandidates);
-        if (!appUser) appUser = await lookupByField('app_users', 'email', emailCandidates);
-        if (!appUser) appUser = await lookupByField('app_users', 'username', usernameCandidates);
-
-        const resolvedRole = normalizeAdminRole(
-          appUser?.role
-          || sessionUser?.role
-          || sessionUser?.record?.role
-        );
-        if (resolvedRole) {
-          localStorage.setItem('hub_user_cache_role', resolvedRole);
-          resolvedConfigRole = resolvedRole;
-        }
-        return resolvedRole === 'admin';
-      } catch (_) { }
-      if (cachedRole && hasLiveSession) resolvedConfigRole = cachedRole;
-      return false;
+        const effectiveResp = await rbacRequest('/api/hub/rbac/effective');
+        applyEffective(effectiveResp?.effective || {});
+        return isAdminUser;
+      } catch (_) {
+        return isAdminUser;
+      }
     }
 
     function showAdminAccessDenied() {
@@ -3513,12 +3721,12 @@
               <i class="fa-solid fa-shield-halved"></i>
             </div>
             <p style="margin:0 0 12px;font-size:11px;font-weight:900;letter-spacing:.3em;text-transform:uppercase;color:#fca5a5;">Acceso restringido</p>
-            <h1 style="margin:0 0 12px;font-size:28px;line-height:1.15;font-weight:900;color:#fff;">Solo Admin o Verificador pueden entrar aquí</h1>
-            <p style="margin:0 auto 22px;max-width:520px;font-size:14px;line-height:1.7;color:#cbd5e1;">Tu sesión no pudo validarse como <span style="display:inline-block;padding:2px 8px;border-radius:999px;background:rgba(30,41,59,.92);border:1px solid rgba(148,163,184,.28);font-weight:800;color:#fecaca;">admin</span> o <span style="display:inline-block;padding:2px 8px;border-radius:999px;background:rgba(30,41,59,.92);border:1px solid rgba(148,163,184,.28);font-weight:800;color:#bbf7d0;">verificador</span>, por lo que esta pantalla queda protegida para evitar cambios no autorizados.</p>
+            <h1 style="margin:0 0 12px;font-size:28px;line-height:1.15;font-weight:900;color:#fff;">No tienes permisos para esta pantalla</h1>
+            <p style="margin:0 auto 22px;max-width:520px;font-size:14px;line-height:1.7;color:#cbd5e1;">Tu sesión no tiene permisos RBAC suficientes para acceder a este panel de configuración.</p>
             <div style="display:flex;justify-content:center;">
               <p id="admin-denied-back-msg" style="margin:0;display:inline-flex;align-items:center;gap:10px;border-radius:999px;border:1px solid rgba(148,163,184,.2);background:rgba(30,41,59,.88);padding:11px 18px;font-size:12px;font-weight:800;color:#e2e8f0;">
                 <i class="fa-solid fa-rotate-left" style="color:#93c5fd;"></i>
-                <span>Valida que tu usuario tenga rol admin o verificador para continuar.</span>
+                <span>Solicita a un administrador que te otorgue los permisos necesarios.</span>
               </p>
             </div>
             <div style="margin-top:18px;display:flex;justify-content:center;">
@@ -3546,6 +3754,12 @@
       });
       const matBtn = document.getElementById('menu-materials');
       if (matBtn) matBtn.classList.toggle('is-active', currentView === 'v_materials');
+    }
+
+    function hasViewAccess(viewId) {
+      const safeView = String(viewId || '').trim();
+      if (safeView === 'v_users') return canAccessUsersModule === true;
+      return canEditConfigUser === true;
     }
 
     function paintTenantUI() {
@@ -3612,7 +3826,14 @@
       const btnCpConvSave = document.getElementById('btn-cp-conv-save');
       if (btnCpConvSave) btnCpConvSave.disabled = !hasConfigEditAccess();
       const usersMenu = document.getElementById('menu-users');
-      if (usersMenu) usersMenu.classList.toggle('hidden', !isAdminUser);
+      if (usersMenu) usersMenu.classList.toggle('hidden', !canAccessUsersModule);
+
+      const coreMenuIds = ['menu-concepts', 'menu-taxes', 'menu-docs', 'menu-cp-settings', 'menu-materials'];
+      coreMenuIds.forEach((menuId) => {
+        const node = document.getElementById(menuId);
+        if (!node) return;
+        node.classList.toggle('hidden', !canEditConfigUser);
+      });
     }
 
     window.setTenant = async (t) => {
@@ -3625,12 +3846,19 @@
       resetCptForm();
       resetTaxForm();
       paintTenantUI();
-      await loadPremontajePct();
-      await loadHoraExtraCfg();
+      if (canEditConfigUser) {
+        await loadPremontajePct();
+        await loadHoraExtraCfg();
+      }
       await switchView(currentView);
     };
 
     window.switchView = async (viewId) => {
+      if (!hasViewAccess(viewId)) {
+        _toast('No tienes permiso para acceder a este módulo.', 'error');
+        window.location.replace('../index.html');
+        return;
+      }
       currentView = viewId;
       paintViewMenu();
       document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
@@ -3641,12 +3869,12 @@
       if (viewId === 'v_taxes') await loadTaxesConfig();
       if (viewId === 'v_docs') await loadDocsConfig();
       if (viewId === 'v_users') {
-        if (!isAdminUser) {
-          currentView = 'v_concepts';
-          paintViewMenu();
-          document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
-          document.getElementById('v_concepts')?.classList.remove('hidden');
-          return _toast("La administración de usuarios solo está disponible para Admin.", "error");
+        if (!canAccessUsersModule) return;
+        if (typeof window.setUsersTab === 'function') {
+          const initialTab = canManageUsersModule
+            ? (usersActiveTab || 'users')
+            : (canManageRolesModule || canManagePermissionsModule ? 'roles' : 'users');
+          window.setUsersTab(initialTab);
         }
         await loadUsers();
       }
@@ -3667,8 +3895,10 @@
     };
 
     window.refreshCurrent = async () => {
-      await loadPremontajePct();
-      await loadHoraExtraCfg();
+      if (canEditConfigUser) {
+        await loadPremontajePct();
+        await loadHoraExtraCfg();
+      }
       await switchView(currentView);
     };
 
@@ -3922,7 +4152,7 @@
       }
       window.pbClient = window.pbClient || window.globalPocketBase;
 
-      // 1) Guard de acceso para admin/verificador
+      // 1) Guard de acceso por permisos RBAC
       const canAccessConfig = await resolveConfigAccess();
       if (!canAccessConfig) {
         showAdminAccessDenied();
@@ -3942,8 +4172,10 @@
       currentTenant = resolveInitialTenantFromQuery();
       activePocketBase = currentTenant === 'cp' ? cpPocketBase : pmPocketBase;
       paintTenantUI();
-      await loadPremontajePct();
-      await loadHoraExtraCfg();
+      if (canEditConfigUser) {
+        await loadPremontajePct();
+        await loadHoraExtraCfg();
+      }
 
       // ====== MATERIALES PM CRUD ======
       let __materialItems = [];
@@ -4369,88 +4601,1007 @@
         renderCpConveniosList();
       };
 
-      // --- LOGICA DE USUARIOS ---
+      // --- LOGICA DE USUARIOS / ROLES RBAC ---
+      const RBAC_TENANTS = Object.freeze(['plaza_mayor', 'casa_de_piedra']);
+      const APP_USER_ROLE_PRIORITY = Object.freeze(['admin', 'verificador', 'plaza_mayor', 'casa_de_piedra']);
+      const APP_USER_LEGACY_ROLE_PRIORITY = Object.freeze(['admin', 'verificador', 'plaza_mayor', 'casa_de_piedra', 'user']);
+      const APP_USER_ROLE_COLORS = Object.freeze({
+        admin: 'bg-red-100 text-red-700',
+        plaza_mayor: 'bg-blue-100 text-blue-700',
+        casa_de_piedra: 'bg-amber-100 text-amber-700',
+        verificador: 'bg-emerald-100 text-emerald-700',
+        alta_clientes: 'bg-indigo-100 text-indigo-700'
+      });
+      const RBAC_PERMISSION_DESCRIPTIONS = Object.freeze({
+        access: 'Permite acceder al tenant y navegar módulos protegidos.',
+        catalog_view: 'Permite ver el catálogo sin editarlo.',
+        catalog_manage: 'Permite modificar catálogo, imágenes, descripciones y estructura.',
+        orders_view: 'Permite ver cotizaciones y órdenes existentes.',
+        orders_edit: 'Permite crear y editar cotizaciones y órdenes.',
+        quotes_delete: 'Permite eliminar cotizaciones.',
+        contracts_view: 'Permite visualizar contratos generados.',
+        contracts_generate: 'Permite generar contratos.',
+        receipts_view: 'Permite ver recibos.',
+        invoices_view: 'Permite ver facturas.',
+        reports_view: 'Permite ver reportes del sistema.',
+        clients_view: 'Permite consultar clientes.',
+        clients_manage: 'Permite editar información de clientes.',
+        clients_create: 'Permite dar de alta nuevos clientes.',
+        clients_verify: 'Permite aprobar documentos de clientes para desbloquear contratos.',
+        clients_all_docs: 'Permite ver todos los documentos de clientes.',
+        control_view: 'Permite acceder al panel de control y movimientos.',
+        pdf_layout_manage: 'Permite editar plantillas y layout PDF.',
+        config_manage: 'Permite editar configuración general.',
+        users_manage: 'Permite gestionar usuarios.',
+        roles_manage: 'Permite gestionar roles.',
+        permissions_manage: 'Permite gestionar permisos.'
+      });
+
       let allUsers = [];
-      window.loadUsers = async function () {
+      let rbacCatalog = { mode: 'shadow', core_permissions: {}, roles: [] };
+      let rbacRoleMapById = new Map();
+      let rbacRoleMapBySlug = new Map();
+      let editingRoleId = '';
+      let adminPasswordModalResolver = null;
+
+      function normalizeRoleToken(value) {
+        const safe = String(value || '').trim().toLowerCase();
+        return safe || '';
+      }
+
+      function parseJsonSafe(raw, fallback = {}) {
+        if (!raw) return fallback;
+        if (typeof raw === 'object') return raw;
+        try {
+          const parsed = JSON.parse(raw);
+          return parsed && typeof parsed === 'object' ? parsed : fallback;
+        } catch (_) {
+          return fallback;
+        }
+      }
+
+      function parseCommaList(raw) {
+        return String(raw || '')
+          .split(/[\n,]/g)
+          .map((item) => String(item || '').trim().toLowerCase())
+          .filter(Boolean)
+          .filter((item, idx, arr) => arr.indexOf(item) === idx);
+      }
+
+      function csvFromList(values) {
+        return (Array.isArray(values) ? values : []).join(', ');
+      }
+
+      function readAuthToken() {
+        return readAuthTokenCandidates()[0] || '';
+      }
+
+      function readRuntimeAuthTokens() {
+        const out = [];
+        const seen = new Set();
+        const add = (value) => {
+          const token = normalizeAuthTokenCandidate(value);
+          if (!token || seen.has(token)) return;
+          seen.add(token);
+          out.push(token);
+        };
+        add(window.globalPocketBase?.authStore?.token);
+        add(window.pbClient?.authStore?.token);
+        add(window.tenantPocketBase?.authStore?.token);
+        add(window.pmPocketBase?.authStore?.token);
+        add(window.cpPocketBase?.authStore?.token);
+        return out;
+      }
+
+      function mergeTokenCandidates(...groups) {
+        const out = [];
+        const seen = new Set();
+        groups.forEach((group) => {
+          if (!Array.isArray(group)) return;
+          group.forEach((value) => {
+            const token = normalizeAuthTokenCandidate(value);
+            if (!token || seen.has(token)) return;
+            seen.add(token);
+            out.push(token);
+          });
+        });
+        return out;
+      }
+
+      async function refreshRbacTokenCandidates() {
+        if (!window.PB_SERVICES?.auth?.getSession) return [];
+        try {
+          await window.PB_SERVICES.auth.getSession({ forceRefresh: false });
+        } catch (_) { }
+        return mergeTokenCandidates(readAuthTokenCandidates(), readRuntimeAuthTokens());
+      }
+
+      function getRbacApiBase() {
+        const explicit = String(window.HUB_CONFIG?.pocketbaseUrl || '').trim();
+        if (explicit) return explicit.replace(/\/+$/, '');
+        return String(window.location.origin || '').replace(/\/+$/, '');
+      }
+
+      async function rbacRequest(path, options = {}) {
+        const cfg = { method: 'GET', ...options };
+        const requestUrl = `${getRbacApiBase()}${path}`;
+        const requestHeaders = { ...(cfg.headers || {}) };
+        const rawBody = cfg.body;
+        const isCrossOrigin = (() => {
+          try {
+            const reqOrigin = new URL(requestUrl, window.location.href).origin;
+            const curOrigin = String(window.location.origin || '').trim();
+            return reqOrigin !== curOrigin;
+          } catch (_) {
+            return true;
+          }
+        })();
+        const isFormData = typeof FormData !== 'undefined' && rawBody instanceof FormData;
+        const isPlainBodyObject = !!rawBody && typeof rawBody === 'object' && !isFormData;
+        const requestBody = (() => {
+          if (!isPlainBodyObject) return rawBody;
+          if (!isCrossOrigin) return JSON.stringify(rawBody);
+          const params = new URLSearchParams();
+          Object.keys(rawBody).forEach((key) => {
+            const value = rawBody[key];
+            if (value === undefined || value === null) return;
+            if (typeof value === 'object') params.append(String(key), JSON.stringify(value));
+            else params.append(String(key), String(value));
+          });
+          return params;
+        })();
+        const defaultCredentials = cfg.credentials || (isCrossOrigin ? 'omit' : 'include');
+        if (isPlainBodyObject && !isCrossOrigin && !requestHeaders['Content-Type']) {
+          requestHeaders['Content-Type'] = 'application/json';
+        }
+
+        const runFetch = async (headers, credentialsMode = defaultCredentials) => {
+          let response = null;
+          try {
+            response = await fetch(requestUrl, {
+              method: cfg.method || 'GET',
+              headers,
+              body: requestBody,
+              credentials: credentialsMode,
+              cache: 'no-store'
+            });
+          } catch (fetchError) {
+            return { response: null, data: {}, fetchError };
+          }
+          const data = await response.json().catch(() => ({}));
+          return { response, data, fetchError: null };
+        };
+
+        const buildError = (response, data, fetchError = null) => {
+          const message = fetchError
+            ? String(fetchError?.message || 'No se pudo conectar con el backend RBAC.')
+            : String(data?.message || data?.error || `HTTP ${response?.status || 500}`);
+          const err = new Error(message);
+          err.status = Number(response?.status || 0);
+          err.data = data;
+          err.response = { status: err.status, data, fetchError };
+          if (fetchError) err.cause = fetchError;
+          return err;
+        };
+
+        const tryWithTokenList = async (tokens) => {
+          let lastAuthError = null;
+          for (let idx = 0; idx < tokens.length; idx += 1) {
+            const token = tokens[idx];
+            const authVariants = [token, `Bearer ${token}`];
+            for (let j = 0; j < authVariants.length; j += 1) {
+              const authorization = authVariants[j];
+              const headers = { ...requestHeaders, Authorization: authorization };
+              const { response, data, fetchError } = await runFetch(headers, defaultCredentials);
+              if (fetchError) {
+                lastAuthError = buildError(response, data, fetchError);
+                continue;
+              }
+              if (response.ok && data?.ok !== false) return data;
+              const err = buildError(response, data);
+              const authError = response.status === 401 || response.status === 403;
+              if (authError) {
+                lastAuthError = err;
+                continue;
+              }
+              throw err;
+            }
+          }
+          if (lastAuthError) throw lastAuthError;
+          throw new Error('No se pudo autenticar la solicitud RBAC.');
+        };
+        const fallback = await runFetch(requestHeaders, defaultCredentials);
+        if (!fallback.fetchError && fallback.response?.ok && fallback.data?.ok !== false) return fallback.data;
+        const fallbackError = buildError(fallback.response, fallback.data, fallback.fetchError);
+
+        const canUseAuthHeader = cfg.useAuthHeader !== false;
+        if (!canUseAuthHeader) throw fallbackError;
+
+        let tokens = mergeTokenCandidates(readAuthTokenCandidates(), readRuntimeAuthTokens());
+        if (!tokens.length) tokens = await refreshRbacTokenCandidates();
+
+        if (tokens.length) {
+          try {
+            return await tryWithTokenList(tokens);
+          } catch (tokenErr) {
+            throw tokenErr;
+          }
+        }
+
+        throw fallbackError;
+      }
+
+      function setAdminPasswordModalVisible(show) {
+        const modal = document.getElementById('modal-admin-password');
+        const content = document.getElementById('modal-admin-password-content');
+        if (!modal || !content) return;
+        if (show) {
+          modal.classList.remove('hidden');
+          modal.classList.add('flex');
+          requestAnimationFrame(() => {
+            modal.classList.remove('opacity-0');
+            content.classList.remove('scale-95');
+          });
+          return;
+        }
+        modal.classList.add('opacity-0');
+        content.classList.add('scale-95');
+        setTimeout(() => {
+          modal.classList.remove('flex');
+          modal.classList.add('hidden');
+        }, 250);
+      }
+
+      function resolveAdminPasswordModal(value) {
+        const resolver = adminPasswordModalResolver;
+        adminPasswordModalResolver = null;
+        if (typeof resolver === 'function') resolver(String(value || ''));
+      }
+
+      function requestAdminPassword(options = {}) {
+        const title = String(options?.title || 'Confirmar contraseña Admin').trim();
+        const message = String(options?.message || 'Ingresa tu contraseña de admin para continuar.').trim();
+        const confirmLabel = String(options?.confirmLabel || 'Confirmar').trim();
+        const titleEl = document.getElementById('admin-password-modal-title');
+        const messageEl = document.getElementById('admin-password-modal-message');
+        const inputEl = document.getElementById('admin-password-modal-input');
+        const confirmBtn = document.getElementById('btn-admin-password-confirm');
+        if (!inputEl || !confirmBtn || !titleEl || !messageEl) {
+          return Promise.resolve('');
+        }
+        if (typeof adminPasswordModalResolver === 'function') {
+          resolveAdminPasswordModal('');
+        }
+        titleEl.innerText = title;
+        messageEl.innerText = message;
+        confirmBtn.innerHTML = `<i class="fa-solid fa-check"></i> ${escapePdfEditorHtml(confirmLabel)}`;
+        inputEl.value = '';
+        return new Promise((resolve) => {
+          adminPasswordModalResolver = resolve;
+          setAdminPasswordModalVisible(true);
+          setTimeout(() => inputEl.focus(), 30);
+        });
+      }
+
+      window.closeAdminPasswordModal = function () {
+        setAdminPasswordModalVisible(false);
+        resolveAdminPasswordModal('');
+      };
+
+      window.confirmAdminPasswordModal = function () {
+        const inputEl = document.getElementById('admin-password-modal-input');
+        const password = String(inputEl?.value || '').trim();
+        if (!password) {
+          showToast('Ingresa la contraseña de admin para continuar.', 'error');
+          inputEl?.focus();
+          return;
+        }
+        setAdminPasswordModalVisible(false);
+        resolveAdminPasswordModal(password);
+      };
+
+      function rebuildRoleMaps() {
+        rbacRoleMapById = new Map();
+        rbacRoleMapBySlug = new Map();
+        const list = Array.isArray(rbacCatalog.roles) ? rbacCatalog.roles : [];
+        list.forEach((role) => {
+          const id = String(role?.id || '').trim();
+          const slug = normalizeRoleToken(role?.slug || role?.name);
+          if (id) rbacRoleMapById.set(id, role);
+          if (slug) rbacRoleMapBySlug.set(slug, role);
+        });
+      }
+
+      function getRoleEntryByToken(token) {
+        const safe = String(token || '').trim();
+        if (!safe) return null;
+        return rbacRoleMapById.get(safe) || rbacRoleMapBySlug.get(normalizeRoleToken(safe)) || null;
+      }
+
+      function roleLabelByToken(token) {
+        const role = getRoleEntryByToken(token);
+        if (!role) return String(token || '').trim();
+        return String(role.name || role.slug || token).trim();
+      }
+
+      function roleSlugByToken(token) {
+        const role = getRoleEntryByToken(token);
+        if (!role) return normalizeRoleToken(token);
+        return normalizeRoleToken(role.slug || role.name);
+      }
+
+      function renderCorePermissionsList() {
+        const container = document.getElementById('rbac-core-permissions');
+        if (!container) return;
+        const entries = corePermissionEntries();
+        if (!entries.length) {
+          container.innerHTML = '<div class="text-xs text-gray-400 italic">No se encontraron permisos core.</div>';
+          return;
+        }
+        container.innerHTML = entries.map(({ label, description }) => `
+          <div class="p-3 rounded-xl border border-gray-100 bg-gray-50">
+            <div class="text-[11px] font-black text-gray-800">${escapePdfEditorHtml(label)}</div>
+            <div class="text-[11px] text-gray-500 mt-1">${escapePdfEditorHtml(description)}</div>
+          </div>
+        `).join('');
+      }
+
+      function countEffectiveAllowedPermissions(role) {
+        const state = normalizeRolePermissionState(role);
+        const allow = new Set();
+        const deny = new Set();
+        state.global.allow.forEach((key) => allow.add(key));
+        state.tenants.plaza_mayor.allow.forEach((key) => allow.add(key));
+        state.tenants.casa_de_piedra.allow.forEach((key) => allow.add(key));
+        state.global.deny.forEach((key) => deny.add(key));
+        state.tenants.plaza_mayor.deny.forEach((key) => deny.add(key));
+        state.tenants.casa_de_piedra.deny.forEach((key) => deny.add(key));
+        let active = 0;
+        allow.forEach((key) => {
+          if (!deny.has(key)) active += 1;
+        });
+        return active;
+      }
+
+      function renderRoleRows() {
+        const tbody = document.getElementById('roles-tbody');
+        if (!tbody) return;
+        const canEditRoles = canManageRolesModule || canManagePermissionsModule || isAdminUser;
+        const roles = Array.isArray(rbacCatalog.roles) ? [...rbacCatalog.roles] : [];
+        roles.sort((a, b) => String(a.name || a.slug || '').localeCompare(String(b.name || b.slug || '')));
+        if (!roles.length) {
+          tbody.innerHTML = '<tr><td colspan="5" class="py-8 text-center text-gray-400 font-bold italic">No hay roles registrados.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = roles.map((role) => {
+          const roleId = String(role.id || '').trim();
+          const label = String(role.name || role.slug || roleId).trim();
+          const slug = String(role.slug || '').trim();
+          const description = String(role.description || '').trim();
+          const activePerms = countEffectiveAllowedPermissions(role);
+          return `
+            <tr class="hover:bg-gray-50/50 transition border-b border-gray-100 last:border-0">
+              <td class="py-3 px-4">
+                <div class="text-xs font-black text-gray-800">${escapePdfEditorHtml(label)}</div>
+              </td>
+              <td class="py-3 px-4"><code class="text-[11px] font-black text-gray-600">${escapePdfEditorHtml(slug || '-')}</code></td>
+              <td class="py-3 px-4 text-xs text-gray-500">${escapePdfEditorHtml(description || 'Sin descripción')}</td>
+              <td class="py-3 px-4 text-xs font-black text-gray-700">${activePerms}</td>
+              <td class="py-3 px-4 text-center">
+                <button type="button" ${canEditRoles ? `onclick="window.openRoleModal('${escapePdfEditorHtml(roleId)}')"` : 'disabled title="Solo lectura"'} class="w-8 h-8 rounded-lg bg-gray-100 text-gray-500 hover:bg-brand-red hover:text-white transition focus:outline-none shadow-sm ${canEditRoles ? '' : 'opacity-50 cursor-not-allowed hover:bg-gray-100 hover:text-gray-500'}">
+                  <i class="fa-solid fa-pen"></i>
+                </button>
+              </td>
+            </tr>
+          `;
+        }).join('');
+      }
+
+      function setUsersTabState(tab) {
+        const wantsRoles = tab === 'roles';
+        const canOpenRoles = canManageRolesModule || canManagePermissionsModule || isAdminUser;
+        const safeTab = wantsRoles && canOpenRoles ? 'roles' : 'users';
+        usersActiveTab = safeTab;
+        const usersBtn = document.getElementById('users-tab-users');
+        const rolesBtn = document.getElementById('users-tab-roles');
+        const usersPanel = document.getElementById('users-panel-users');
+        const rolesPanel = document.getElementById('users-panel-roles');
+        const addUserBtn = document.getElementById('btn-user-add');
+        const addRoleBtn = document.getElementById('btn-role-add');
+        const roleSaveBtn = document.getElementById('btn-rbac-role-save');
+        const roleDeleteBtn = document.getElementById('btn-rbac-role-delete');
+        const roleNewBtn = document.getElementById('btn-rbac-role-new');
+        if (rolesBtn) rolesBtn.classList.toggle('hidden', !canOpenRoles);
+        if (usersBtn) usersBtn.classList.toggle('hidden', !canManageUsersModule && canOpenRoles);
+        if (addUserBtn) addUserBtn.classList.toggle('hidden', !canManageUsersModule);
+        if (addRoleBtn) addRoleBtn.classList.toggle('hidden', !canOpenRoles);
+        if (roleSaveBtn) roleSaveBtn.classList.toggle('hidden', !canOpenRoles);
+        if (roleDeleteBtn) roleDeleteBtn.classList.toggle('hidden', !canOpenRoles);
+        if (roleNewBtn) roleNewBtn.classList.toggle('hidden', !canOpenRoles);
+        usersBtn?.classList.toggle('is-active', safeTab === 'users');
+        rolesBtn?.classList.toggle('is-active', safeTab === 'roles');
+        usersPanel?.classList.toggle('hidden', safeTab !== 'users');
+        rolesPanel?.classList.toggle('hidden', safeTab !== 'roles');
+      }
+
+      window.setUsersTab = function (tab) {
+        const safeTab = String(tab || '').trim().toLowerCase();
+        if (safeTab === 'roles' && !(canManageRolesModule || canManagePermissionsModule || isAdminUser)) {
+          showToast('No tienes permisos para gestionar roles.', 'error');
+          return;
+        }
+        setUsersTabState(tab);
+      };
+
+      window.openRoleModal = function (token = '') {
+        if (!(canManageRolesModule || canManagePermissionsModule || isAdminUser)) {
+          showToast('No tienes permisos para editar roles.', 'error');
+          return;
+        }
+        const safe = String(token || '').trim();
+        const role = safe ? getRoleEntryByToken(safe) : null;
+        if (role) {
+          editingRoleId = String(role.id || '').trim();
+          loadRoleIntoEditor(role);
+        } else {
+          resetRoleEditor();
+        }
+        const modal = document.getElementById('modal-role');
+        const content = document.getElementById('modal-role-content');
+        if (!modal || !content) return;
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+        setTimeout(() => {
+          modal.classList.remove('opacity-0');
+          content.classList.remove('scale-95');
+          document.getElementById('rbac-role-slug')?.focus();
+        }, 10);
+      };
+
+      window.closeRoleModal = function () {
+        const modal = document.getElementById('modal-role');
+        const content = document.getElementById('modal-role-content');
+        if (!modal || !content) return;
+        modal.classList.add('opacity-0');
+        content.classList.add('scale-95');
+        setTimeout(() => {
+          modal.classList.remove('flex');
+          modal.classList.add('hidden');
+        }, 250);
+      };
+
+      function renderRoleEditorSelect() {
+        const select = document.getElementById('rbac-role-select');
+        if (!select) return;
+        const roles = Array.isArray(rbacCatalog.roles) ? [...rbacCatalog.roles] : [];
+        roles.sort((a, b) => String(a.name || a.slug || '').localeCompare(String(b.name || b.slug || '')));
+        const current = editingRoleId;
+        select.innerHTML = '<option value="">Nuevo rol...</option>' + roles.map((role) => {
+          const id = String(role.id || '').trim();
+          const label = String(role.name || role.slug || id).trim();
+          return `<option value="${escapePdfEditorHtml(id)}">${escapePdfEditorHtml(label)}</option>`;
+        }).join('');
+        if (current) select.value = current;
+      }
+
+      function corePermissionEntries() {
+        const core = rbacCatalog.core_permissions || {};
+        return Object.keys(core).sort().map((key) => ({
+          key,
+          label: String(core[key] || key.replace(/_/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase())),
+          description: String(RBAC_PERMISSION_DESCRIPTIONS[key] || 'Permiso operativo del sistema.')
+        }));
+      }
+
+      function uniquePermissionValues(values) {
+        const source = Array.isArray(values) ? values : [];
+        const normalized = source
+          .map((item) => String(item || '').trim().toLowerCase())
+          .filter(Boolean);
+        return normalized.filter((item, idx) => normalized.indexOf(item) === idx);
+      }
+
+      function normalizePermissionPair(raw) {
+        const source = raw && typeof raw === 'object' ? raw : {};
+        return {
+          allow: uniquePermissionValues(source.allow),
+          deny: uniquePermissionValues(source.deny)
+        };
+      }
+
+      function normalizeRolePermissionState(entry) {
+        const role = entry && typeof entry === 'object' ? entry : {};
+        return {
+          global: normalizePermissionPair(role.global),
+          tenants: {
+            plaza_mayor: normalizePermissionPair(role?.byTenant?.plaza_mayor),
+            casa_de_piedra: normalizePermissionPair(role?.byTenant?.casa_de_piedra)
+          }
+        };
+      }
+
+      function normalizeUserOverrideState(overrides) {
+        const source = overrides && typeof overrides === 'object' ? overrides : {};
+        return {
+          global: normalizePermissionPair(source.global),
+          tenants: {
+            plaza_mayor: normalizePermissionPair(source?.tenants?.plaza_mayor),
+            casa_de_piedra: normalizePermissionPair(source?.tenants?.casa_de_piedra)
+          }
+        };
+      }
+
+      function collectRoleInheritedPermissions(roleIds) {
+        const selected = Array.isArray(roleIds) ? roleIds.map((item) => String(item || '').trim()).filter(Boolean) : [];
+        const out = { plaza_mayor: {}, casa_de_piedra: {} };
+        for (const tenant of RBAC_TENANTS) {
+          const allow = {};
+          const deny = {};
+          selected.forEach((token) => {
+            const role = getRoleEntryByToken(token);
+            if (!role) return;
+            const global = normalizePermissionPair(role.global);
+            const byTenant = normalizePermissionPair(role?.byTenant?.[tenant]);
+            global.allow.forEach((perm) => { allow[perm] = true; });
+            global.deny.forEach((perm) => { deny[perm] = true; });
+            byTenant.allow.forEach((perm) => { allow[perm] = true; });
+            byTenant.deny.forEach((perm) => { deny[perm] = true; });
+          });
+          corePermissionEntries().forEach(({ key }) => {
+            if (deny[key]) {
+              out[tenant][key] = 'deny';
+            } else if (allow[key]) {
+              out[tenant][key] = 'allow';
+            } else {
+              out[tenant][key] = 'none';
+            }
+          });
+        }
+        return out;
+      }
+
+      function renderRolePermissionMatrix(stateInput) {
+        const tbody = document.getElementById('rbac-role-permission-matrix');
+        if (!tbody) return;
+        const state = normalizeRolePermissionState(stateInput);
+        const entries = corePermissionEntries();
+        if (!entries.length) {
+          tbody.innerHTML = '<tr><td colspan="8" class="py-3 text-center text-gray-400 italic">Sin permisos core disponibles.</td></tr>';
+          return;
+        }
+        const html = entries.map(({ key, label, description }) => {
+          const gAllow = state.global.allow.includes(key);
+          const gDeny = state.global.deny.includes(key);
+          const pmAllow = state.tenants.plaza_mayor.allow.includes(key);
+          const pmDeny = state.tenants.plaza_mayor.deny.includes(key);
+          const cpAllow = state.tenants.casa_de_piedra.allow.includes(key);
+          const cpDeny = state.tenants.casa_de_piedra.deny.includes(key);
+          return `
+            <tr class="border-b border-gray-100 last:border-0">
+              <td class="py-2 pr-2 align-top">
+                <div class="text-[12px] font-black text-gray-800">${escapePdfEditorHtml(label)}</div>
+              </td>
+              <td class="py-2 pr-2 align-top text-[11px] text-gray-500">${escapePdfEditorHtml(description)}</td>
+              <td class="py-2 text-center"><input type="checkbox" data-role-perm="1" data-perm-key="${escapePdfEditorHtml(key)}" data-scope="global" data-mode="allow" ${gAllow ? 'checked' : ''} class="accent-brand-red w-4 h-4 rounded cursor-pointer" /></td>
+              <td class="py-2 text-center"><input type="checkbox" data-role-perm="1" data-perm-key="${escapePdfEditorHtml(key)}" data-scope="global" data-mode="deny" ${gDeny ? 'checked' : ''} class="accent-brand-red w-4 h-4 rounded cursor-pointer" /></td>
+              <td class="py-2 text-center"><input type="checkbox" data-role-perm="1" data-perm-key="${escapePdfEditorHtml(key)}" data-scope="plaza_mayor" data-mode="allow" ${pmAllow ? 'checked' : ''} class="accent-brand-red w-4 h-4 rounded cursor-pointer" /></td>
+              <td class="py-2 text-center"><input type="checkbox" data-role-perm="1" data-perm-key="${escapePdfEditorHtml(key)}" data-scope="plaza_mayor" data-mode="deny" ${pmDeny ? 'checked' : ''} class="accent-brand-red w-4 h-4 rounded cursor-pointer" /></td>
+              <td class="py-2 text-center"><input type="checkbox" data-role-perm="1" data-perm-key="${escapePdfEditorHtml(key)}" data-scope="casa_de_piedra" data-mode="allow" ${cpAllow ? 'checked' : ''} class="accent-brand-red w-4 h-4 rounded cursor-pointer" /></td>
+              <td class="py-2 text-center"><input type="checkbox" data-role-perm="1" data-perm-key="${escapePdfEditorHtml(key)}" data-scope="casa_de_piedra" data-mode="deny" ${cpDeny ? 'checked' : ''} class="accent-brand-red w-4 h-4 rounded cursor-pointer" /></td>
+            </tr>
+          `;
+        }).join('');
+        tbody.innerHTML = html;
+      }
+
+      function readRolePermissionStateFromMatrix() {
+        const state = {
+          global: { allow: [], deny: [] },
+          tenants: {
+            plaza_mayor: { allow: [], deny: [] },
+            casa_de_piedra: { allow: [], deny: [] }
+          }
+        };
+        const rows = Array.from(document.querySelectorAll('input[data-role-perm="1"]:checked'));
+        rows.forEach((input) => {
+          const perm = String(input.getAttribute('data-perm-key') || '').trim().toLowerCase();
+          const scope = String(input.getAttribute('data-scope') || '').trim().toLowerCase();
+          const mode = String(input.getAttribute('data-mode') || '').trim().toLowerCase();
+          if (!perm || (mode !== 'allow' && mode !== 'deny')) return;
+          if (scope === 'global') state.global[mode].push(perm);
+          else if (scope === 'plaza_mayor' || scope === 'casa_de_piedra') state.tenants[scope][mode].push(perm);
+        });
+        state.global.allow = uniquePermissionValues(state.global.allow);
+        state.global.deny = uniquePermissionValues(state.global.deny);
+        state.tenants.plaza_mayor.allow = uniquePermissionValues(state.tenants.plaza_mayor.allow);
+        state.tenants.plaza_mayor.deny = uniquePermissionValues(state.tenants.plaza_mayor.deny);
+        state.tenants.casa_de_piedra.allow = uniquePermissionValues(state.tenants.casa_de_piedra.allow);
+        state.tenants.casa_de_piedra.deny = uniquePermissionValues(state.tenants.casa_de_piedra.deny);
+        return state;
+      }
+
+      function renderUserPermissionOverrideMatrix(roleIds, overridesInput) {
+        const tbody = document.getElementById('user-override-permission-matrix');
+        if (!tbody) return;
+        const overrides = normalizeUserOverrideState(overridesInput);
+        const inherited = collectRoleInheritedPermissions(roleIds);
+        const entries = corePermissionEntries();
+        if (!entries.length) {
+          tbody.innerHTML = '<tr><td colspan="10" class="py-3 text-center text-gray-400 italic">Sin permisos core disponibles.</td></tr>';
+          return;
+        }
+        const html = entries.map(({ key, label, description }) => {
+          const gAllow = overrides.global.allow.includes(key);
+          const gDeny = overrides.global.deny.includes(key);
+          const pmAllow = overrides.tenants.plaza_mayor.allow.includes(key);
+          const pmDeny = overrides.tenants.plaza_mayor.deny.includes(key);
+          const cpAllow = overrides.tenants.casa_de_piedra.allow.includes(key);
+          const cpDeny = overrides.tenants.casa_de_piedra.deny.includes(key);
+          const inheritedPmState = String(inherited?.plaza_mayor?.[key] || 'none');
+          const inheritedCpState = String(inherited?.casa_de_piedra?.[key] || 'none');
+          const inheritedPm = inheritedPmState !== 'none';
+          const inheritedCp = inheritedCpState !== 'none';
+          const inheritedPmClass = inheritedPmState === 'deny'
+            ? 'accent-red-500'
+            : (inheritedPmState === 'allow' ? 'accent-green-600' : 'accent-blue-500');
+          const inheritedCpClass = inheritedCpState === 'deny'
+            ? 'accent-red-500'
+            : (inheritedCpState === 'allow' ? 'accent-green-600' : 'accent-amber-500');
+          const inheritedPmTitle = inheritedPmState === 'deny'
+            ? 'Bloqueado por rol en Plaza Mayor.'
+            : (inheritedPmState === 'allow' ? 'Permitido por rol en Plaza Mayor.' : 'Sin herencia de rol en Plaza Mayor.');
+          const inheritedCpTitle = inheritedCpState === 'deny'
+            ? 'Bloqueado por rol en Casa de Piedra.'
+            : (inheritedCpState === 'allow' ? 'Permitido por rol en Casa de Piedra.' : 'Sin herencia de rol en Casa de Piedra.');
+          return `
+            <tr class="border-b border-gray-100 last:border-0">
+              <td class="py-2 pr-2 align-top">
+                <div class="text-[12px] font-black text-gray-800">${escapePdfEditorHtml(label)}</div>
+              </td>
+              <td class="py-2 pr-2 align-top text-[11px] text-gray-500">${escapePdfEditorHtml(description)}</td>
+              <td class="py-2 text-center"><input type="checkbox" disabled title="${escapePdfEditorHtml(inheritedPmTitle)}" ${inheritedPm ? 'checked' : ''} class="${inheritedPmClass} w-4 h-4 rounded cursor-not-allowed opacity-80" /></td>
+              <td class="py-2 text-center"><input type="checkbox" disabled title="${escapePdfEditorHtml(inheritedCpTitle)}" ${inheritedCp ? 'checked' : ''} class="${inheritedCpClass} w-4 h-4 rounded cursor-not-allowed opacity-80" /></td>
+              <td class="py-2 text-center"><input type="checkbox" data-user-perm="1" data-perm-key="${escapePdfEditorHtml(key)}" data-scope="global" data-mode="allow" ${gAllow ? 'checked' : ''} class="accent-brand-red w-4 h-4 rounded cursor-pointer" /></td>
+              <td class="py-2 text-center"><input type="checkbox" data-user-perm="1" data-perm-key="${escapePdfEditorHtml(key)}" data-scope="global" data-mode="deny" ${gDeny ? 'checked' : ''} class="accent-brand-red w-4 h-4 rounded cursor-pointer" /></td>
+              <td class="py-2 text-center"><input type="checkbox" data-user-perm="1" data-perm-key="${escapePdfEditorHtml(key)}" data-scope="plaza_mayor" data-mode="allow" ${pmAllow ? 'checked' : ''} class="accent-brand-red w-4 h-4 rounded cursor-pointer" /></td>
+              <td class="py-2 text-center"><input type="checkbox" data-user-perm="1" data-perm-key="${escapePdfEditorHtml(key)}" data-scope="plaza_mayor" data-mode="deny" ${pmDeny ? 'checked' : ''} class="accent-brand-red w-4 h-4 rounded cursor-pointer" /></td>
+              <td class="py-2 text-center"><input type="checkbox" data-user-perm="1" data-perm-key="${escapePdfEditorHtml(key)}" data-scope="casa_de_piedra" data-mode="allow" ${cpAllow ? 'checked' : ''} class="accent-brand-red w-4 h-4 rounded cursor-pointer" /></td>
+              <td class="py-2 text-center"><input type="checkbox" data-user-perm="1" data-perm-key="${escapePdfEditorHtml(key)}" data-scope="casa_de_piedra" data-mode="deny" ${cpDeny ? 'checked' : ''} class="accent-brand-red w-4 h-4 rounded cursor-pointer" /></td>
+            </tr>
+          `;
+        }).join('');
+        tbody.innerHTML = html;
+      }
+
+      function loadRoleIntoEditor(role) {
+        const entry = role && typeof role === 'object' ? role : null;
+        document.getElementById('rbac-role-slug').value = entry?.slug || '';
+        document.getElementById('rbac-role-name').value = entry?.name || '';
+        document.getElementById('rbac-role-desc').value = entry?.description || '';
+        renderRolePermissionMatrix(normalizeRolePermissionState(entry));
+      }
+
+      function resetRoleEditor() {
+        editingRoleId = '';
+        const select = document.getElementById('rbac-role-select');
+        if (select) select.value = '';
+        loadRoleIntoEditor(null);
+      }
+
+      function rolePayloadFromEditor() {
+        const state = readRolePermissionStateFromMatrix();
+        return {
+          id: editingRoleId || '',
+          slug: String(document.getElementById('rbac-role-slug')?.value || '').trim(),
+          name: String(document.getElementById('rbac-role-name')?.value || '').trim(),
+          description: String(document.getElementById('rbac-role-desc')?.value || '').trim(),
+          active: true,
+          system_role: false,
+          permissions_global: {
+            allow: state.global.allow,
+            deny: state.global.deny
+          },
+          permissions_tenant_overrides: {
+            plaza_mayor: {
+              allow: state.tenants.plaza_mayor.allow,
+              deny: state.tenants.plaza_mayor.deny
+            },
+            casa_de_piedra: {
+              allow: state.tenants.casa_de_piedra.allow,
+              deny: state.tenants.casa_de_piedra.deny
+            }
+          }
+        };
+      }
+
+      async function loadRbacCatalog(force = false) {
+        if (!canAccessUsersModule) return;
+        if (!force && Array.isArray(rbacCatalog.roles) && rbacCatalog.roles.length) return;
+        const data = await rbacRequest('/api/hub/rbac/catalog');
+        rbacCatalog = {
+          mode: String(data?.mode || 'shadow'),
+          core_permissions: data?.core_permissions || {},
+          roles: Array.isArray(data?.roles) ? data.roles : []
+        };
+        rebuildRoleMaps();
+        renderCorePermissionsList();
+        renderRoleRows();
+        renderRoleEditorSelect();
+        renderRolePermissionMatrix(null);
+        renderUserPermissionOverrideMatrix(getSelectedUserRoleIds(), readUserOverridesFromForm());
+        if (editingRoleId) {
+          const role = getRoleEntryByToken(editingRoleId);
+          if (role) loadRoleIntoEditor(role);
+          else resetRoleEditor();
+        }
+      }
+
+      function readTenantBadge(tenant) {
+        if (tenant === 'plaza_mayor') return '<span class="inline-block px-2 py-0.5 bg-blue-50 text-blue-600 rounded text-[9px] font-bold">PM</span>';
+        if (tenant === 'casa_de_piedra') return '<span class="inline-block px-2 py-0.5 bg-amber-50 text-amber-600 rounded text-[9px] font-bold">CP</span>';
+        return escapePdfEditorHtml(String(tenant || '').trim());
+      }
+
+      function readUserMeta(record) {
+        return parseJsonSafe(record?.app_metadata, {});
+      }
+
+      function resolveUserRoleIds(record) {
+        const user = record && typeof record === 'object' ? record : {};
+        const meta = readUserMeta(user);
+        const roleIdsRaw = Array.isArray(meta?.rbac?.role_ids) ? meta.rbac.role_ids : [];
+        const byRecord = Array.isArray(user.role_ids) ? user.role_ids : [];
+        const fromLegacy = Array.isArray(meta.roles) ? meta.roles : [];
+        const fromSingle = user.role ? [user.role] : [];
+        const source = [...roleIdsRaw, ...byRecord, ...fromLegacy, ...fromSingle].map((item) => String(item || '').trim()).filter(Boolean);
+        return source.filter((item, idx) => source.indexOf(item) === idx);
+      }
+
+      function resolveUserRoleSlugs(record) {
+        return resolveUserRoleIds(record)
+          .map((token) => roleSlugByToken(token))
+          .filter(Boolean)
+          .filter((item, idx, arr) => arr.indexOf(item) === idx);
+      }
+
+      function resolvePrimaryRole(roleSlugs, fallback = 'plaza_mayor') {
+        const list = Array.isArray(roleSlugs) ? roleSlugs : [];
+        for (const item of APP_USER_ROLE_PRIORITY) {
+          if (list.includes(item)) return item;
+        }
+        return String(fallback || 'plaza_mayor').trim().toLowerCase() === 'casa_de_piedra' ? 'casa_de_piedra' : 'plaza_mayor';
+      }
+
+      function resolveLegacyRoleForStorage(roleSlugs, defaultTenant = 'plaza_mayor') {
+        const list = Array.isArray(roleSlugs)
+          ? roleSlugs.map((item) => normalizeRoleToken(item)).filter(Boolean)
+          : [];
+        for (const item of APP_USER_LEGACY_ROLE_PRIORITY) {
+          if (list.includes(item)) return item;
+        }
+        return String(defaultTenant || '').trim().toLowerCase() === 'casa_de_piedra' ? 'casa_de_piedra' : 'plaza_mayor';
+      }
+
+      function normalizeLoginUsernameSeed(value) {
+        let safe = String(value || '').trim();
+        if (!safe) return '';
+        safe = safe.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        safe = safe.toLowerCase().replace(/[^a-z0-9._-]+/g, '_').replace(/^_+|_+$/g, '');
+        return safe;
+      }
+
+      function buildUniqueLoginUsername(rawName, rawEmail, currentUserId = '') {
+        const currentId = String(currentUserId || '').trim();
+        const displayName = String(rawName || '').trim();
+        const emailPrefix = String(rawEmail || '').split('@')[0] || '';
+        const baseSeed = displayName || normalizeLoginUsernameSeed(emailPrefix) || 'usuario';
+        const taken = new Set(
+          (Array.isArray(allUsers) ? allUsers : [])
+            .filter((row) => String(row?.id || '').trim() !== currentId)
+            .map((row) => String(row?.login_username || row?.username || '').trim().toLowerCase())
+            .filter(Boolean)
+        );
+        const lowerBase = baseSeed.toLowerCase();
+        if (!taken.has(lowerBase)) return baseSeed;
+        let suffix = 2;
+        while (suffix < 10000) {
+          const candidate = `${baseSeed} (${suffix})`;
+          if (!taken.has(candidate.toLowerCase())) return candidate;
+          suffix += 1;
+        }
+        return `${baseSeed}_${Date.now()}`;
+      }
+
+      function normalizeAllowedTenants(values, defaultTenant) {
+        const source = Array.isArray(values) ? values : [];
+        const normalized = source
+          .map((item) => String(item || '').trim().toLowerCase())
+          .filter((item) => item === 'plaza_mayor' || item === 'casa_de_piedra');
+        const out = normalized.filter((item, idx) => normalized.indexOf(item) === idx);
+        const safeDefault = String(defaultTenant || '').trim().toLowerCase();
+        if (safeDefault === 'plaza_mayor' || safeDefault === 'casa_de_piedra') {
+          if (!out.includes(safeDefault)) out.push(safeDefault);
+        }
+        return out;
+      }
+
+      function renderRoleBadges(roleIds) {
+        const list = Array.isArray(roleIds) ? roleIds : [];
+        if (!list.length) return '<span class="text-gray-400 italic">Sin rol</span>';
+        return list.map((token) => {
+          const slug = roleSlugByToken(token);
+          const label = roleLabelByToken(token);
+          const color = APP_USER_ROLE_COLORS[slug] || 'bg-gray-100 text-gray-600';
+          return `<span class="inline-block px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wider ${color}">${escapePdfEditorHtml(label)}</span>`;
+        }).join(' ');
+      }
+
+      function renderUserRoleSelector(selectedRoleIds) {
+        const holder = document.getElementById('user-role-list');
+        if (!holder) return;
+        const selected = Array.isArray(selectedRoleIds) ? selectedRoleIds.map((item) => String(item || '').trim()) : [];
+        const currentOverrides = readUserOverridesFromForm();
+        const roles = Array.isArray(rbacCatalog.roles) ? [...rbacCatalog.roles] : [];
+        roles.sort((a, b) => String(a.name || a.slug || '').localeCompare(String(b.name || b.slug || '')));
+        if (!roles.length) {
+          holder.innerHTML = '<div class="text-xs text-red-500 font-bold">No hay roles RBAC disponibles. Crea uno arriba.</div>';
+          renderUserPermissionOverrideMatrix(selected, currentOverrides);
+          return;
+        }
+        holder.innerHTML = roles.map((role) => {
+          const id = String(role.id || '').trim();
+          const slug = String(role.slug || '').trim();
+          const label = String(role.name || slug || id).trim();
+          const checked = selected.includes(id) || selected.includes(slug);
+          return `
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" name="user-role-id" value="${escapePdfEditorHtml(id)}" ${checked ? 'checked' : ''} class="accent-brand-red w-4 h-4 rounded cursor-pointer" />
+              <span class="text-xs font-bold text-gray-700">${escapePdfEditorHtml(label)}</span>
+            </label>
+          `;
+        }).join('');
+        renderUserPermissionOverrideMatrix(selected, currentOverrides);
+      }
+
+      function getSelectedUserRoleIds() {
+        return Array.from(document.querySelectorAll('input[name="user-role-id"]:checked'))
+          .map((input) => String(input?.value || '').trim())
+          .filter(Boolean)
+          .filter((item, idx, arr) => arr.indexOf(item) === idx);
+      }
+
+      function readUserOverridesFromForm() {
+        const state = normalizeUserOverrideState({});
+        const rows = Array.from(document.querySelectorAll('input[data-user-perm="1"]:checked'));
+        rows.forEach((input) => {
+          const perm = String(input.getAttribute('data-perm-key') || '').trim().toLowerCase();
+          const scope = String(input.getAttribute('data-scope') || '').trim().toLowerCase();
+          const mode = String(input.getAttribute('data-mode') || '').trim().toLowerCase();
+          if (!perm || (mode !== 'allow' && mode !== 'deny')) return;
+          if (scope === 'global') state.global[mode].push(perm);
+          else if (scope === 'plaza_mayor' || scope === 'casa_de_piedra') state.tenants[scope][mode].push(perm);
+        });
+        state.global.allow = uniquePermissionValues(state.global.allow);
+        state.global.deny = uniquePermissionValues(state.global.deny);
+        state.tenants.plaza_mayor.allow = uniquePermissionValues(state.tenants.plaza_mayor.allow);
+        state.tenants.plaza_mayor.deny = uniquePermissionValues(state.tenants.plaza_mayor.deny);
+        state.tenants.casa_de_piedra.allow = uniquePermissionValues(state.tenants.casa_de_piedra.allow);
+        state.tenants.casa_de_piedra.deny = uniquePermissionValues(state.tenants.casa_de_piedra.deny);
+        return state;
+      }
+
+      function writeUserOverridesToForm(overrides) {
+        const normalized = normalizeUserOverrideState(overrides);
+        renderUserPermissionOverrideMatrix(getSelectedUserRoleIds(), normalized);
+      }
+
+      function toggleExclusivePermissionCheckbox(input, marker) {
+        const source = input && typeof input === 'object' ? input : null;
+        if (!source || !source.checked) return;
+        const perm = String(source.getAttribute('data-perm-key') || '').trim().toLowerCase();
+        const scope = String(source.getAttribute('data-scope') || '').trim().toLowerCase();
+        const mode = String(source.getAttribute('data-mode') || '').trim().toLowerCase();
+        if (!perm || !scope || !mode) return;
+        const opposite = mode === 'allow' ? 'deny' : 'allow';
+        const selector = `input[${marker}="1"][data-perm-key="${perm}"][data-scope="${scope}"][data-mode="${opposite}"]`;
+        document.querySelectorAll(selector).forEach((node) => {
+          if (node !== source) node.checked = false;
+        });
+      }
+
+      function syncUserRoleTenantControls() {
+        const defaultTenantEl = document.getElementById('user-default-tenant');
+        const allowedPmEl = document.getElementById('user-allowed-pm');
+        const allowedCpEl = document.getElementById('user-allowed-cp');
+        if (!defaultTenantEl || !allowedPmEl || !allowedCpEl) return;
+        const safeDefault = String(defaultTenantEl.value || '').trim().toLowerCase();
+        if (safeDefault === 'plaza_mayor') {
+          if (!allowedPmEl.checked) allowedPmEl.checked = true;
+        } else if (safeDefault === 'casa_de_piedra') {
+          if (!allowedCpEl.checked) allowedCpEl.checked = true;
+        }
+      }
+
+      window.loadUsers = async function (opts = {}) {
+        const throwOnError = opts && opts.throwOnError === true;
         const tbody = document.getElementById('users-tbody');
         tbody.innerHTML = '<tr><td colspan="5" class="py-8 text-center text-gray-400 font-bold italic"><i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Cargando...</td></tr>';
         try {
+          await loadRbacCatalog(true);
           const pb = getUsersAdminClient();
           if (!pb) throw new Error('No se pudo inicializar PocketBase.');
-          const { data: records, error } = await pb.from('app_users').select('*').order('login_username', { ascending: true }).limit(100);
+          const { data: records, error } = await pb.from('app_users').select('*').order('login_username', { ascending: true }).limit(300);
+          if (error) throw error;
+          allUsers = Array.isArray(records) ? records : [];
 
-          if (error) {
-            throw error;
-          }
-          allUsers = records || [];
-
-          if (allUsers.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" class="py-8 text-center text-gray-400 font-bold italic">No hay usuarios registrados (o la lista volvió vacía).</td></tr>';
+          if (!allUsers.length) {
+            tbody.innerHTML = '<tr><td colspan="5" class="py-8 text-center text-gray-400 font-bold italic">No hay usuarios registrados.</td></tr>';
             return;
           }
 
+          const currentUserId = readUsers1StoredAuthState('pb_native_auth_v1')?.user?.id || '';
           let html = '';
-          const roleLabels = { 'admin': 'Admin', 'plaza_mayor': 'Agente PM', 'casa_de_piedra': 'Agente CP', 'verificador': 'Verificador' };
-          const roleColors = { 'admin': 'bg-red-100 text-red-700', 'plaza_mayor': 'bg-blue-100 text-blue-700', 'casa_de_piedra': 'bg-amber-100 text-amber-700', 'verificador': 'bg-emerald-100 text-emerald-700' };
-
-          records.forEach(u => {
-            const rLabel = roleLabels[u.role] || u.role;
-            const rColor = roleColors[u.role] || 'bg-gray-100 text-gray-600';
-
-            let tenDefault = 'N/A';
-            if (u.tenant_default === 'plaza_mayor') tenDefault = 'Plaza Mayor';
-            if (u.tenant_default === 'casa_de_piedra') tenDefault = 'Casa de Piedra';
-
-            let allowedTenants = Array.isArray(u.allowed_tenants) ? u.allowed_tenants.slice() : [];
-            if (!allowedTenants.length && u.role === 'verificador') allowedTenants = ['plaza_mayor', 'casa_de_piedra'];
-            let allowed = allowedTenants.map(t => {
-              if (t === 'plaza_mayor') return '<span class="inline-block px-2 py-0.5 bg-blue-50 text-blue-600 rounded text-[9px] font-bold">PM</span>';
-              if (t === 'casa_de_piedra') return '<span class="inline-block px-2 py-0.5 bg-amber-50 text-amber-600 rounded text-[9px] font-bold">CP</span>';
-              return t;
-            }).join(' ');
+          const canEditUsers = canManageUsersModule || isAdminUser;
+          allUsers.forEach((user) => {
+            const roleIds = resolveUserRoleIds(user);
+            const roleBadges = renderRoleBadges(roleIds);
+            const roleSlugs = resolveUserRoleSlugs(user);
+            const primaryRole = resolvePrimaryRole(roleSlugs, user.role || user.tenant_default);
+            const tenantDefault = String(user.tenant_default || '').trim().toLowerCase()
+              || (primaryRole === 'casa_de_piedra' ? 'casa_de_piedra' : 'plaza_mayor');
+            const tenDefaultLabel = tenantDefault === 'casa_de_piedra' ? 'Casa de Piedra' : 'Plaza Mayor';
+            const allowedTenants = normalizeAllowedTenants(user.allowed_tenants, tenantDefault);
+            const allowed = allowedTenants.map((tenant) => readTenantBadge(tenant)).join(' ');
 
             html += `
-                <tr class="hover:bg-gray-50/50 transition border-b border-gray-100 last:border-0">
-                  <td class="py-3 px-4">
-                    <div class="font-black text-gray-800 text-xs">${u.login_username || 'Sin Nombre'}</div>
-                    <div class="text-[10px] text-gray-400 font-bold">${u.email}</div>
-                  </td>
-                  <td class="py-3 px-4">
-                    <span class="px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wider ${rColor}">${rLabel}</span>
-                  </td>
-                  <td class="py-3 px-4 text-xs font-bold text-gray-600">${tenDefault}</td>
-                  <td class="py-3 px-4 flex gap-1 flex-wrap">${allowed || '<span class="text-gray-400 italic">Ninguno</span>'}</td>
-                  <td class="py-3 px-4 text-center items-center gap-1">
-                    <button type="button" onclick="window.editUser('${u.id}')" class="w-8 h-8 rounded-lg bg-gray-100 text-gray-500 hover:bg-brand-red hover:text-white transition focus:outline-none shadow-sm">
-                      <i class="fa-solid fa-pen"></i>
-                    </button>
-                    ${u.id !== (readUsers1StoredAuthState('pb_native_auth_v1')?.user?.id || '') ? `
-                    <button type="button" onclick="window.deleteUser('${u.id}')" class="w-8 h-8 rounded-lg bg-gray-100 text-gray-500 hover:bg-red-600 hover:text-white mt-1 sm:mt-0 sm:ml-1 transition focus:outline-none shadow-sm">
-                      <i class="fa-solid fa-trash"></i>
-                    </button>
-                    ` : ''}
-                  </td>
-                </tr>
-             `;
+              <tr class="hover:bg-gray-50/50 transition border-b border-gray-100 last:border-0">
+                <td class="py-3 px-4">
+                  <div class="font-black text-gray-800 text-xs">${escapePdfEditorHtml(user.login_username || user.username || 'Sin Nombre')}</div>
+                  <div class="text-[10px] text-gray-400 font-bold">${escapePdfEditorHtml(user.email || '')}</div>
+                </td>
+                <td class="py-3 px-4 flex gap-1 flex-wrap">${roleBadges}</td>
+                <td class="py-3 px-4 text-xs font-bold text-gray-600">${tenDefaultLabel}</td>
+                <td class="py-3 px-4 flex gap-1 flex-wrap">${allowed || '<span class="text-gray-400 italic">Ninguno</span>'}</td>
+                <td class="py-3 px-4 text-center items-center gap-1">
+                  <button type="button" ${canEditUsers ? `onclick="window.editUser('${user.id}')"` : 'disabled title="Solo lectura"'} class="w-8 h-8 rounded-lg bg-gray-100 text-gray-500 hover:bg-brand-red hover:text-white transition focus:outline-none shadow-sm ${canEditUsers ? '' : 'opacity-50 cursor-not-allowed hover:bg-gray-100 hover:text-gray-500'}">
+                    <i class="fa-solid fa-pen"></i>
+                  </button>
+                  ${canEditUsers && user.id !== currentUserId ? `
+                  <button type="button" onclick="window.deleteUser('${user.id}')" class="w-8 h-8 rounded-lg bg-gray-100 text-gray-500 hover:bg-red-600 hover:text-white mt-1 sm:mt-0 sm:ml-1 transition focus:outline-none shadow-sm">
+                    <i class="fa-solid fa-trash"></i>
+                  </button>
+                  ` : ''}
+                </td>
+              </tr>
+            `;
           });
           tbody.innerHTML = html;
         } catch (e) {
           const message = String(e?.message || e || 'Error desconocido');
           tbody.innerHTML = `<tr><td colspan="5" class="py-8 text-center text-red-500 font-bold">No se pudo cargar el listado de usuarios: ${escapePdfEditorHtml(message)}</td></tr>`;
           showToast('No se pudo cargar usuarios: ' + message, 'error');
+          if (throwOnError) throw e;
         }
       };
 
       window.openUserModal = function () {
+        if (!(canManageUsersModule || isAdminUser)) {
+          showToast('No tienes permisos para gestionar usuarios.', 'error');
+          return;
+        }
         document.getElementById('user-id').value = '';
         document.getElementById('form-user').reset();
+        document.getElementById('user-default-tenant').value = 'plaza_mayor';
+        document.getElementById('user-allowed-pm').checked = true;
+        document.getElementById('user-allowed-cp').checked = false;
         document.getElementById('modal-user-title-text').innerText = 'Añadir Usuario Nuevo';
         document.getElementById('user-pwd-hint').classList.add('hidden');
         document.getElementById('pwd-req').classList.remove('hidden');
         document.getElementById('pwdc-req').classList.remove('hidden');
-
         document.getElementById('user-password').required = true;
         document.getElementById('user-passwordConfirm').required = true;
+        writeUserOverridesToForm({});
+        renderUserRoleSelector([]);
         syncUserRoleTenantControls();
 
         const modal = document.getElementById('modal-user');
@@ -4460,6 +5611,7 @@
         setTimeout(() => {
           modal.classList.remove('opacity-0');
           mcontent.classList.remove('scale-95');
+          document.getElementById('user-email')?.focus();
         }, 10);
       };
 
@@ -4475,22 +5627,31 @@
       };
 
       window.editUser = function (id) {
-        const user = allUsers.find(u => u.id === id);
+        if (!(canManageUsersModule || isAdminUser)) {
+          showToast('No tienes permisos para gestionar usuarios.', 'error');
+          return;
+        }
+        const user = allUsers.find((item) => item.id === id);
         if (!user) return;
 
         window.openUserModal();
+        const roleIds = resolveUserRoleIds(user);
+        const roleSlugs = resolveUserRoleSlugs(user);
+        const primaryRole = resolvePrimaryRole(roleSlugs, user.role);
+        const defaultTenant = String(user.tenant_default || '').trim().toLowerCase()
+          || (primaryRole === 'casa_de_piedra' ? 'casa_de_piedra' : 'plaza_mayor');
+        const allowedTenants = normalizeAllowedTenants(user.allowed_tenants, defaultTenant);
+        const meta = readUserMeta(user);
+        const overrides = meta?.rbac?.user_overrides || {};
 
         document.getElementById('user-id').value = user.id;
         document.getElementById('user-email').value = user.email || '';
         document.getElementById('user-name').value = user.login_username || user.username || '';
-        document.getElementById('user-role').value = ['admin', 'plaza_mayor', 'casa_de_piedra', 'verificador'].includes(user.role) ? user.role : 'plaza_mayor';
-        document.getElementById('user-default-tenant').value = user.tenant_default || 'plaza_mayor';
-
-        const editAllowedTenants = Array.isArray(user.allowed_tenants) && user.allowed_tenants.length
-          ? user.allowed_tenants
-          : ((user.role === 'verificador') ? ['plaza_mayor', 'casa_de_piedra'] : []);
-        document.getElementById('user-allowed-pm').checked = editAllowedTenants.includes('plaza_mayor');
-        document.getElementById('user-allowed-cp').checked = editAllowedTenants.includes('casa_de_piedra');
+        document.getElementById('user-default-tenant').value = defaultTenant;
+        document.getElementById('user-allowed-pm').checked = allowedTenants.includes('plaza_mayor');
+        document.getElementById('user-allowed-cp').checked = allowedTenants.includes('casa_de_piedra');
+        renderUserRoleSelector(roleIds);
+        writeUserOverridesToForm(overrides);
 
         document.getElementById('modal-user-title-text').innerText = 'Editar Usuario';
         document.getElementById('user-pwd-hint').classList.remove('hidden');
@@ -4501,119 +5662,304 @@
         syncUserRoleTenantControls();
       };
 
-      function syncUserRoleTenantControls() {
-        const roleEl = document.getElementById('user-role');
-        const defaultTenantEl = document.getElementById('user-default-tenant');
-        const allowedPmEl = document.getElementById('user-allowed-pm');
-        const allowedCpEl = document.getElementById('user-allowed-cp');
-        if (!roleEl || !defaultTenantEl || !allowedPmEl || !allowedCpEl) return;
-
-        const role = String(roleEl.value || '').trim().toLowerCase();
-        const isVerifier = role === 'verificador';
-
-        if (isVerifier) {
-          allowedPmEl.checked = true;
-          allowedCpEl.checked = true;
-          allowedPmEl.disabled = true;
-          allowedCpEl.disabled = true;
-          defaultTenantEl.disabled = true;
-          if (!String(defaultTenantEl.value || '').trim()) defaultTenantEl.value = 'plaza_mayor';
+      window.deleteUser = async function (id) {
+        if (!(canManageUsersModule || isAdminUser)) {
+          showToast('No tienes permisos para eliminar usuarios.', 'error');
           return;
         }
-
-        allowedPmEl.disabled = false;
-        allowedCpEl.disabled = false;
-        defaultTenantEl.disabled = false;
-      }
-
-      document.getElementById('user-role')?.addEventListener('change', syncUserRoleTenantControls);
-
-      window.deleteUser = async function (id) {
-        if (!confirm('¿Estás seguro de que deseas eliminar este usuario definitivamente?')) return;
+        const user = allUsers.find((row) => row.id === id);
+        if (!user) return;
+        const userLabel = String(user.login_username || user.username || user.email || 'usuario').trim();
+        if (!confirm(`¿Eliminar al usuario "${user.login_username || user.username || user.email}"?`)) return;
+        const adminPassword = await requestAdminPassword({
+          title: 'Eliminar usuario',
+          message: 'Ingresa tu contraseña de admin para eliminar este usuario.',
+          confirmLabel: 'Eliminar'
+        });
+        if (!adminPassword) return;
         try {
-          const { error } = await getDB().from('app_users').delete().eq('id', id);
-          if (error) throw error;
-          showToast('Usuario eliminado con éxito', 'success');
-          await loadUsers();
+          await rbacRequest('/api/hub/rbac/users/delete', {
+            method: 'POST',
+            body: { user_id: id, password: adminPassword }
+          });
+          await loadUsers({ throwOnError: true });
+          showToast(`Usuario eliminado correctamente: ${userLabel}.`, 'success');
         } catch (e) {
-          showToast('Error al eliminar usuario: ' + (e.message || e), 'error');
+          showToast('Error al eliminar usuario: ' + (e?.message || e), 'error');
         }
       };
 
       window.saveUser = async function (e) {
         e.preventDefault();
+        if (!(canManageUsersModule || isAdminUser)) {
+          showToast('No tienes permisos para modificar usuarios.', 'error');
+          return;
+        }
         const btn = document.getElementById('btn-save-user');
 
-        const id = document.getElementById('user-id').value;
-        const email = document.getElementById('user-email').value;
-        const name = document.getElementById('user-name').value;
-        const pass = document.getElementById('user-password').value;
-        const passC = document.getElementById('user-passwordConfirm').value;
-        const role = document.getElementById('user-role').value;
-        const defaultTenant = document.getElementById('user-default-tenant').value;
+        const id = String(document.getElementById('user-id').value || '').trim();
+        const email = String(document.getElementById('user-email').value || '').trim();
+        const name = String(document.getElementById('user-name').value || '').trim();
+        const pass = String(document.getElementById('user-password').value || '');
+        const passC = String(document.getElementById('user-passwordConfirm').value || '');
+        const defaultTenant = String(document.getElementById('user-default-tenant').value || '').trim().toLowerCase();
+        const roleIds = getSelectedUserRoleIds();
+        if (!roleIds.length) return showToast('Selecciona al menos un rol para el usuario.', 'error');
 
-        let allowed = [];
-        if (role === 'admin' || role === 'verificador') {
-          allowed = ['plaza_mayor', 'casa_de_piedra'];
-        } else {
-          if (document.getElementById('user-allowed-pm').checked) allowed.push('plaza_mayor');
-          if (document.getElementById('user-allowed-cp').checked) allowed.push('casa_de_piedra');
-        }
-        if (allowed.length === 0 && role !== 'verificador') allowed.push(defaultTenant); // fallback safe
+        const selectedAllowed = [];
+        if (document.getElementById('user-allowed-pm').checked) selectedAllowed.push('plaza_mayor');
+        if (document.getElementById('user-allowed-cp').checked) selectedAllowed.push('casa_de_piedra');
+        const allowed = normalizeAllowedTenants(selectedAllowed, defaultTenant || 'plaza_mayor');
+        const roleSlugs = roleIds.map((token) => roleSlugByToken(token)).filter(Boolean);
+        const legacyRole = resolveLegacyRoleForStorage(roleSlugs, defaultTenant || 'plaza_mayor');
+        const resolvedLoginUsername = buildUniqueLoginUsername(name, email, id);
+        const userOverrides = readUserOverridesFromForm();
 
+        if (!email) return showToast('El correo electrónico es obligatorio.', 'error');
         if (pass || passC || !id) {
-          if (pass !== passC) {
-            return showToast('Las contraseñas no coinciden', 'error');
-          }
-          if (pass.length < 8) {
-            return showToast('La contraseña debe tener al menos 8 caracteres', 'error');
-          }
+          if (pass !== passC) return showToast('Las contraseñas no coinciden.', 'error');
+          if (pass.length < 8) return showToast('La contraseña debe tener al menos 8 caracteres.', 'error');
         }
-
-        const data = {
-          email: email,
-          login_username: name,
-          role: role,
-          tenant_default: defaultTenant,
-          allowed_tenants: allowed
-        };
-
-        if (pass) {
-          data.password = pass;
-          data.passwordConfirm = passC;
-        }
+        const adminPassword = await requestAdminPassword({
+          title: id ? 'Actualizar usuario' : 'Crear usuario',
+          message: 'Ingresa tu contraseña de admin para guardar los cambios del usuario.',
+          confirmLabel: 'Guardar'
+        });
+        if (!adminPassword) return;
 
         btn.disabled = true;
         const originalText = btn.innerHTML;
         btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Guardando...';
+        let changesCommitted = false;
 
         try {
           const pb = getDB();
-          let result;
-          if (id) {
-            result = await pb.from('app_users').update(data).eq('id', id);
-            if (result.error) throw result.error;
-            showToast('Usuario actualizado', 'success');
-          } else {
-            result = await pb.from('app_users').insert(data);
-            if (result.error) throw result.error;
-            showToast('Usuario creado exitosamente', 'success');
+          let userId = id;
+          let createdNow = false;
+          const existingRecord = id ? allUsers.find((item) => item.id === id) : null;
+          const appMetadata = parseJsonSafe(existingRecord?.app_metadata, {});
+          appMetadata.roles = roleSlugs;
+          appMetadata.role_primary = legacyRole;
+
+          const userPayload = {
+            email: email,
+            login_username: resolvedLoginUsername,
+            role: legacyRole,
+            tenant_default: defaultTenant || 'plaza_mayor',
+            allowed_tenants: allowed,
+            app_metadata: appMetadata
+          };
+          if (pass) {
+            userPayload.password = pass;
+            userPayload.passwordConfirm = passC;
           }
+
+          if (userId) {
+            const result = await pb.from('app_users').update(userPayload).eq('id', userId);
+            if (result?.error) throw result.error;
+          } else {
+            const result = await pb.from('app_users').insert(userPayload);
+            if (result?.error) throw result.error;
+            userId = result?.data?.id || result?.id || '';
+            if (!userId) throw new Error('No se pudo resolver el ID del usuario recién creado.');
+            createdNow = true;
+          }
+
+          try {
+            await rbacRequest('/api/hub/rbac/users/access', {
+              method: 'POST',
+              body: {
+                user_id: userId,
+                role_ids: roleIds,
+                user_overrides: userOverrides,
+                tenant_default: defaultTenant || 'plaza_mayor',
+                allowed_tenants: allowed,
+                primary_role: legacyRole,
+                password: adminPassword
+              }
+            });
+            changesCommitted = true;
+          } catch (rbacErr) {
+            if (createdNow) {
+              try {
+                await pb.from('app_users').delete().eq('id', userId);
+              } catch (_) {
+                // noop: solo intento de rollback
+              }
+            }
+            throw rbacErr;
+          }
+          await loadUsers({ throwOnError: true });
           window.closeUserModal();
-          await loadUsers();
-        } catch (_) {
-          showToast("No se pudo guardar el usuario. Verifica los campos e intenta nuevamente.", "error");
+          showToast(userId === id ? `Usuario actualizado correctamente: ${email}.` : `Usuario creado correctamente: ${email}.`, 'success');
+        } catch (err) {
+          if (changesCommitted && Number(err?.status || 0) === 401) {
+            showToast('Los cambios se guardaron, pero tu sesión fue invalidada. Inicia sesión nuevamente.', 'error');
+            window.closeUserModal();
+            return;
+          }
+          const details = err?.response?.data || err?.data || null;
+          const emailCode = String(details?.data?.email?.code || '').trim().toLowerCase();
+          if (emailCode === 'validation_not_unique') {
+            showToast('Ese correo ya está utilizado por otro usuario. Usa otro correo.', 'error');
+            document.getElementById('user-email')?.focus();
+            return;
+          }
+          const detailText = details ? ` | Detalle: ${JSON.stringify(details)}` : '';
+          showToast('No se pudo guardar el usuario: ' + (err?.message || err) + detailText, 'error');
         } finally {
           btn.disabled = false;
           btn.innerHTML = originalText;
         }
       };
 
+      async function saveRoleFromEditor() {
+        if (!(canManageRolesModule || canManagePermissionsModule || isAdminUser)) {
+          showToast('No tienes permisos para editar roles.', 'error');
+          return;
+        }
+        const password = await requestAdminPassword({
+          title: 'Guardar rol',
+          message: 'Ingresa tu contraseña de admin para guardar este rol.',
+          confirmLabel: 'Guardar rol'
+        });
+        if (!password) return;
+        const payload = rolePayloadFromEditor();
+        if (!payload.slug) return showToast('El slug del rol es obligatorio.', 'error');
+        if (!payload.name) payload.name = payload.slug;
+        let roleSaved = false;
+        try {
+          await rbacRequest('/api/hub/rbac/roles/upsert', {
+            method: 'POST',
+            body: { ...payload, password }
+          });
+          roleSaved = true;
+          await loadRbacCatalog(true);
+          const fresh = Array.isArray(rbacCatalog.roles) ? rbacCatalog.roles.find((role) => String(role.slug || '').trim() === payload.slug) : null;
+          editingRoleId = String(fresh?.id || editingRoleId || '').trim();
+          renderRoleEditorSelect();
+          if (fresh) loadRoleIntoEditor(fresh);
+          await loadUsers({ throwOnError: true });
+          showToast('Rol guardado correctamente.', 'success');
+        } catch (e) {
+          if (roleSaved && Number(e?.status || 0) === 401) {
+            showToast('El rol se guardó, pero tu sesión fue invalidada. Inicia sesión nuevamente.', 'error');
+            return;
+          }
+          showToast('No se pudo guardar el rol: ' + (e?.message || e), 'error');
+        }
+      }
+
+      async function deleteRoleFromEditor() {
+        if (!(canManageRolesModule || canManagePermissionsModule || isAdminUser)) {
+          showToast('No tienes permisos para eliminar roles.', 'error');
+          return;
+        }
+        if (!editingRoleId) return showToast('Selecciona un rol para eliminar.', 'error');
+        if (!confirm('¿Eliminar este rol? Asegúrate de que no tenga usuarios asignados.')) return;
+        const password = await requestAdminPassword({
+          title: 'Eliminar rol',
+          message: 'Ingresa tu contraseña de admin para eliminar este rol.',
+          confirmLabel: 'Eliminar rol'
+        });
+        if (!password) return;
+        let roleDeleted = false;
+        try {
+          await rbacRequest('/api/hub/rbac/roles/delete', {
+            method: 'POST',
+            body: { id: editingRoleId, password }
+          });
+          roleDeleted = true;
+          resetRoleEditor();
+          await loadRbacCatalog(true);
+          await loadUsers({ throwOnError: true });
+          showToast('Rol eliminado correctamente.', 'success');
+        } catch (e) {
+          if (roleDeleted && Number(e?.status || 0) === 401) {
+            showToast('El rol se eliminó, pero tu sesión fue invalidada. Inicia sesión nuevamente.', 'error');
+            return;
+          }
+          showToast('No se pudo eliminar el rol: ' + (e?.message || e), 'error');
+        }
+      }
+
+      document.getElementById('user-default-tenant')?.addEventListener('change', syncUserRoleTenantControls);
+      document.getElementById('user-role-list')?.addEventListener('change', () => {
+        const currentOverrides = readUserOverridesFromForm();
+        renderUserPermissionOverrideMatrix(getSelectedUserRoleIds(), currentOverrides);
+        syncUserRoleTenantControls();
+      });
+      document.getElementById('rbac-role-permission-matrix')?.addEventListener('change', (event) => {
+        toggleExclusivePermissionCheckbox(event?.target, 'data-role-perm');
+      });
+      document.getElementById('user-override-permission-matrix')?.addEventListener('change', (event) => {
+        toggleExclusivePermissionCheckbox(event?.target, 'data-user-perm');
+      });
+      document.getElementById('btn-rbac-refresh')?.addEventListener('click', async () => {
+        await loadRbacCatalog(true);
+        showToast('Catálogo RBAC actualizado.', 'success');
+      });
+      document.getElementById('btn-rbac-role-new')?.addEventListener('click', () => resetRoleEditor());
+      document.getElementById('rbac-role-select')?.addEventListener('change', (e) => {
+        const value = String(e?.target?.value || '').trim();
+        editingRoleId = value;
+        const role = getRoleEntryByToken(value);
+        loadRoleIntoEditor(role);
+      });
+      document.getElementById('btn-rbac-role-save')?.addEventListener('click', async () => {
+        await saveRoleFromEditor();
+      });
+      document.getElementById('btn-rbac-role-delete')?.addEventListener('click', async () => {
+        await deleteRoleFromEditor();
+      });
+      document.getElementById('btn-admin-password-confirm')?.addEventListener('click', () => {
+        window.confirmAdminPasswordModal();
+      });
+      document.getElementById('admin-password-modal-input')?.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          window.confirmAdminPasswordModal();
+        } else if (event.key === 'Escape') {
+          event.preventDefault();
+          window.closeAdminPasswordModal();
+        }
+      });
+      document.getElementById('modal-admin-password')?.addEventListener('click', (event) => {
+        if (event.target?.id === 'modal-admin-password') window.closeAdminPasswordModal();
+      });
+      document.getElementById('modal-user')?.addEventListener('click', (event) => {
+        if (event.target?.id === 'modal-user') window.closeUserModal();
+      });
+      document.getElementById('modal-role')?.addEventListener('click', (event) => {
+        if (event.target?.id === 'modal-role') window.closeRoleModal();
+      });
+      document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape') return;
+        const adminModal = document.getElementById('modal-admin-password');
+        if (adminModal && !adminModal.classList.contains('hidden')) {
+          window.closeAdminPasswordModal();
+          return;
+        }
+        const roleModal = document.getElementById('modal-role');
+        if (roleModal && !roleModal.classList.contains('hidden')) {
+          window.closeRoleModal();
+          return;
+        }
+        const userModal = document.getElementById('modal-user');
+        if (userModal && !userModal.classList.contains('hidden')) {
+          window.closeUserModal();
+        }
+      });
+
       // default view
-      await switchView('v_concepts');
+      const initialView = canEditConfigUser
+        ? 'v_concepts'
+        : (canAccessUsersModule ? 'v_users' : 'v_concepts');
+      await switchView(initialView);
     });
   </script>
 
 </body>
 
 </html>
+

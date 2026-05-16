@@ -154,7 +154,7 @@ function fillCpCatalogQuoteClientFields(client = {}) {
     if (rfcEl) rfcEl.value = client?.rfc || '';
 }
 
-// Limpia la relacion con un perfil para que la captura manual se trate como perfil rapido.
+// Limpia la relacion con un perfil para conservar la captura manual sin asignacion.
 function clearCpCatalogQuoteClientAssociation(options = {}) {
     const selectEl = document.getElementById('cli-select');
     const hiddenIdEl = document.getElementById('cli-id');
@@ -169,7 +169,7 @@ function buildCpCatalogQuoteClientSnapshot() {
     const selectEl = document.getElementById('cli-select');
     const selectedId = String(hiddenIdEl?.value || selectEl?.value || '').trim();
     const selectedProfile = selectedId ? (clientProfilesById[selectedId] || null) : null;
-    if (selectedProfile && isCpCatalogQuoteProfileReady(selectedProfile)) {
+    if (selectedProfile) {
         fillCpCatalogQuoteClientFields(selectedProfile);
         return {
             id: selectedId,
@@ -188,63 +188,13 @@ function buildCpCatalogQuoteClientSnapshot() {
     };
 }
 
-function findCpCatalogExistingClientProfile(cli = {}) {
-    const targetEmail = String(cli?.email || '').trim().toLowerCase();
-    const targetRfc = String(cli?.rfc || '').trim().toUpperCase();
-    const targetName = String(cli?.name || '').trim().toLowerCase();
-    return clientProfiles.find((candidate) => {
-        const candidateEmail = String(candidate?.correo || '').trim().toLowerCase();
-        const candidateRfc = String(candidate?.rfc || '').trim().toUpperCase();
-        const candidateName = String(candidate?.nombre_completo || '').trim().toLowerCase();
-        if (targetEmail && candidateEmail && candidateEmail === targetEmail) return true;
-        if (targetRfc && candidateRfc && candidateRfc === targetRfc) return true;
-        if (targetName && candidateName && candidateName === targetName) return true;
-        return false;
-    }) || null;
-}
-
-// Crea o reutiliza el perfil pendiente que respalda la captura manual del catalogo CP.
-async function createCpCatalogQuickQuoteClientProfile(cli) {
-    const existing = findCpCatalogExistingClientProfile(cli);
-    if (existing?.id) {
-        const hiddenIdEl = document.getElementById('cli-id');
-        if (hiddenIdEl) hiddenIdEl.value = String(existing.id || '').trim();
-        return String(existing.id || '').trim();
-    }
-    const payload = {
-        tenant: CP_TENANT_SLUG,
-        nombre_completo: String(cli?.name || '').trim(),
-        telefono: String(cli?.phone || '').trim(),
-        correo: String(cli?.email || '').trim().toLowerCase() || null,
-        rfc: String(cli?.rfc || '').trim().toUpperCase() || null,
-        perfil_origen: 'cotizacion_rapida',
-        perfil_estatus: 'pendiente_expediente',
-        perfil_validado: false,
-        perfil_completo: false
-    };
-    const { data, error } = await window.tenantPocketBase.from('clientes').insert(payload);
-    if (error) throw error;
-    const created = Array.isArray(data) ? (data[0] || null) : (data || null);
-    const createdId = String(created?.id || '').trim();
-    if (!createdId) throw new Error('No se pudo crear el perfil rápido del cliente.');
-    clientProfiles.push(created || { ...payload, id: createdId });
-    clientProfilesById[createdId] = created || { ...payload, id: createdId };
-    const hiddenIdEl = document.getElementById('cli-id');
-    if (hiddenIdEl) hiddenIdEl.value = createdId;
-    return createdId;
-}
-
 async function resolveCpCatalogQuoteClientId(cli) {
     const hiddenIdEl = document.getElementById('cli-id');
     const existingId = String(hiddenIdEl?.value || '').trim();
-    if (existingId) return existingId;
-    if (!String(cli?.name || '').trim()) {
-        throw new Error('Captura el nombre del cliente antes de generar la cotización.');
-    }
-    return createCpCatalogQuickQuoteClientProfile(cli);
+    return existingId || '';
 }
 
-// Carga perfiles listos para cotizar, pero permite captura manual con creacion automatica de perfil pendiente.
+// Carga perfiles existentes para asignacion opcional en cotizacion.
 async function loadClientProfilesForQuoteModal() {
     const sel = document.getElementById('cli-select');
     const hid = document.getElementById('cli-id');
@@ -263,23 +213,18 @@ async function loadClientProfilesForQuoteModal() {
         });
         clientProfilesById = {};
         clientProfiles.forEach((client) => { clientProfilesById[client.id] = client; });
-        sel.innerHTML = '<option value="">— Capturar manualmente —</option>' + clientProfiles
+        sel.innerHTML = '<option value="">— Sin perfil asignado —</option>' + clientProfiles
             .map((client) => `<option value="${client.id}">${(client.nombre_completo || '').toUpperCase()} • ${isCpCatalogQuoteProfileReady(client) ? 'LISTO' : 'PENDIENTE'}</option>`)
             .join('');
         sel.onchange = () => {
             const id = sel.value;
             if (!id) {
                 if (hid) hid.value = '';
+                fillCpCatalogQuoteClientFields({});
                 return;
             }
             const selected = clientProfilesById[id];
             if (!selected) return;
-            if (!isCpCatalogQuoteProfileReady(selected)) {
-                if (hid) hid.value = '';
-                sel.value = '';
-                window.showToast?.('Este perfil aun no tiene permiso vigente para cotizar. Usa captura manual y se generara un perfil pendiente automaticamente.', 'info');
-                return;
-            }
             if (hid) hid.value = id;
             fillCpCatalogQuoteClientFields(selected);
         };
@@ -457,7 +402,7 @@ async function cpEnsureCatalogManageSession(actionLabel = 'guardar cambios') {
     if (!IS_CATALOG_ADMIN_PAGE) return true;
     try {
         const authCtx = window.HUB_SESSION?.ensureAuth
-            ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, allowCachedUser: false, redirectOnFail: true, forceRefresh: true })
+            ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, redirectOnFail: true, forceRefresh: true })
             : { session: await window.PB_SERVICES.auth.ensureFreshSession({ schema: FIN_SCHEMA, allowStaleOnError: false, forceRefresh: true }) };
         const session = authCtx?.session || null;
         if (session?.user) return true;
@@ -748,7 +693,7 @@ function normalizeCpDigitalMediaConfig(value = {}) {
     const pixelHeight = normalizeCpMeasureValue(source.pixel_height ?? source.pixeles_alto ?? source.alto_px);
     return {
         enabled,
-        media_type: rawType.includes('video') ? 'video' : 'imagen',
+        media_type: rawType.includes('imagen') && rawType.includes('video') ? 'imagen_video' : (rawType.includes('video') ? 'video' : 'imagen'),
         duration_value: durationValue,
         duration_unit: unit === 'minutos' ? 'minutos' : 'segundos',
         pixel_width: pixelWidth,
@@ -760,7 +705,9 @@ function getCpSpaceDigitalMediaConfig(space) {
     return normalizeCpDigitalMediaConfig(b2b.digital_media || b2b.digitalMedia || b2b.medio_digital || {});
 }
 function formatCpDigitalMediaType(value) {
-    return normalizeCpDigitalMediaConfig(value).media_type === 'video' ? 'Video' : 'Imagen';
+    const t = normalizeCpDigitalMediaConfig(value).media_type;
+    if (t === 'imagen_video') return 'Imagen / Video';
+    return t === 'video' ? 'Video' : 'Imagen';
 }
 function formatCpDigitalMediaPixels(value) {
     const cfg = normalizeCpDigitalMediaConfig(value);
@@ -885,7 +832,29 @@ function renderCpCardInfoRows(space) {
 function renderCpPreviewBadges(space) {
     return getCpCardInfoRows(space).map((row) => row.html ? '' : `<span class="px-2 py-1 rounded-full bg-white/15 text-white font-bold">${row.label}: ${row.value}</span>`).join('');
 }
-window.safeFormatDate = function (dateStr) { if (!dateStr) return '--'; const parts = dateStr.split('-'); if (parts.length !== 3) return dateStr; return `${parts[2]}/${parts[1]}/${parts[0]}`; };
+window.safeFormatDate = function (dateStr) {
+    if (!dateStr) return '--';
+    const raw = String(dateStr).trim();
+    const normalized = raw.replace('T', ' ').replace('Z', '');
+    const match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?/);
+    if (match) {
+        const [, year, month, day, hh, mm, ss] = match;
+        const formattedDate = `${day}/${month}/${year}`;
+        if (!hh || !mm) return formattedDate;
+        return `${formattedDate} ${hh}:${mm}:${ss || '00'}`;
+    }
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) return raw;
+    const day = String(parsed.getDate()).padStart(2, '0');
+    const month = String(parsed.getMonth() + 1).padStart(2, '0');
+    const year = String(parsed.getFullYear());
+    const hh = String(parsed.getHours()).padStart(2, '0');
+    const mm = String(parsed.getMinutes()).padStart(2, '0');
+    const ss = String(parsed.getSeconds()).padStart(2, '0');
+    const formattedDate = `${day}/${month}/${year}`;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return formattedDate;
+    return `${formattedDate} ${hh}:${mm}:${ss}`;
+};
 function getPremontajePct() { const n = parseFloat(__cpPremontajePct); return Number.isFinite(n) && n >= 0 ? n : 25; }
 function getSpaceMaxCapacity(space) {
     let rules = [];
@@ -963,24 +932,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
     }
     const profile = authCtx?.profile || await cpResolveCurrentUserProfile(session.user);
-    const cachedRole = String(localStorage.getItem('hub_user_cache_role') || '').trim().toLowerCase();
-    let userRole = String(profile?.role || profile?.rol || cachedRole).toLowerCase().trim();
-    if (typeof userRole.normalize === 'function') userRole = userRole.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    userRole = userRole.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-    if (userRole === 'casadepiedra' || userRole === 'cp') userRole = 'casa_de_piedra';
-    if (userRole === 'plazamayor' || userRole === 'pm' || userRole === 'finanzas') userRole = 'plaza_mayor';
-    if (userRole === 'administrador' || userRole === 'superadmin' || userRole === 'super_admin') userRole = 'admin';
-    const roleHasAccess = (userRole === 'admin') || (userRole === 'casa_de_piedra') || (userRole === 'verificador');
-    if (userRole === 'admin' || userRole === 'verificador') myPermissions = { access: true, catalog_manage: true };
-    else if (roleHasAccess) myPermissions = { access: true, catalog_manage: false };
-    else {
-        const profilePerms = profile?.app_metadata?.finanzas?.permissions;
-        if (profilePerms && typeof profilePerms === 'object') {
-            myPermissions = { access: true, catalog_manage: false, ...profilePerms, catalog_manage: !!profilePerms.catalog_manage };
-        } else {
-            myPermissions = { access: true, catalog_manage: false };
-        }
-    }
+    const layoutAuth = window.__HUB_AUTH_CONTEXT || authCtx || null;
+    const rbac = window.HUB_RBAC || null;
+    const rawPerms = rbac?.getPermissions
+        ? rbac.getPermissions()
+        : ((layoutAuth?.permissions && typeof layoutAuth.permissions === 'object')
+            ? layoutAuth.permissions
+            : ((profile?.effective_permissions && typeof profile.effective_permissions === 'object')
+                ? profile.effective_permissions
+                : {}));
+    myPermissions = {
+        access: rbac?.can ? rbac.can('access') : rawPerms.access === true,
+        orders_view: rbac?.can ? rbac.can('orders_view') : rawPerms.orders_view === true,
+        reports_view: rbac?.can ? rbac.can('reports_view') : rawPerms.reports_view === true,
+        clients_view: rbac?.can ? rbac.can('clients_view') : rawPerms.clients_view === true,
+        clients_manage: rbac?.can ? rbac.can('clients_manage') : rawPerms.clients_manage === true,
+        catalog_manage: rbac?.can ? rbac.can('catalog_manage') : rawPerms.catalog_manage === true
+    };
     if (!myPermissions.access) return window.showToast?.('No tienes permisos.', 'error');
     if (myPermissions.catalog_manage && IS_CATALOG_ADMIN_PAGE) { const btn = document.getElementById('btn-new-space'); if (btn) btn.classList.remove('hidden'); }
     cpCatalogApplyViewStateControls();
@@ -1045,7 +1013,7 @@ function renderSpaces(list) {
         const taxOnlyAmount = finalPrice - adjustedBase;
         const priceDisplay = buildCpCatalogPriceDisplay(adjustedBase, taxOnlyAmount, finalPrice, taxPriceLabel);
         let allUrls = []; try { if (s.imagen_url && typeof s.imagen_url === 'string' && s.imagen_url.startsWith('[')) allUrls = JSON.parse(s.imagen_url); else if (s.imagen_url) allUrls = [s.imagen_url]; } catch (e) { }
-        if (allUrls.length === 0) allUrls = ['../../assets/img/placeholder_cp.png'];
+        if (allUrls.length === 0) allUrls = ['../public/assets/img/placeholder_cp.png'];
 
         let eTags = []; try { eTags = typeof s.etiquetas === 'string' ? JSON.parse(s.etiquetas) : (s.etiquetas || []); } catch (e) { }
         let tagsHtml = ''; if (eTags.length > 0) { tagsHtml = `<div class="flex gap-1 mb-2 flex-wrap">` + eTags.map(t => `<span class="bg-gray-100 text-gray-500 border border-gray-200 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase">${t}</span>`).join('') + `</div>`; }
@@ -1121,7 +1089,7 @@ window.openPreviewCardModal = function (id) {
     if (!s) return;
     const previewBadges = renderCpPreviewBadges(s);
     let allUrls = []; try { if (s.imagen_url && typeof s.imagen_url === 'string' && s.imagen_url.startsWith('[')) allUrls = JSON.parse(s.imagen_url); else if (s.imagen_url) allUrls = [s.imagen_url]; } catch (e) { }
-    if (allUrls.length === 0) allUrls = ['../../assets/img/placeholder_cp.png'];
+    if (allUrls.length === 0) allUrls = ['../public/assets/img/placeholder_cp.png'];
 
     const modal = document.createElement('div');
     modal.id = 'preview-card-modal';
@@ -1480,12 +1448,7 @@ window.generatePDF = async function () {
 
     const cli = buildCpCatalogQuoteClientSnapshot();
     if (!cli.name) return window.showToast("Falta nombre del cliente", "error"); const phoneRegex = /^\d{10}$/; if (!phoneRegex.test(cli.phone)) return window.showToast("El teléfono debe tener 10 dígitos numéricos.", "error");
-    let quoteClientId = '';
-    try {
-        quoteClientId = await resolveCpCatalogQuoteClientId(cli);
-    } catch (clientErr) {
-        return window.showToast(clientErr?.message || 'No se pudo preparar el perfil del cliente.', 'error');
-    }
+    const quoteClientId = await resolveCpCatalogQuoteClientId(cli);
 
     window.updateQuoteCalculation(); const guests = parseInt(document.getElementById('q-guests').value) || 1;
     let b2b = {}; try { b2b = typeof currentSpace.config_b2b === 'string' ? JSON.parse(currentSpace.config_b2b) : (currentSpace.config_b2b || {}); } catch (ex) { }
@@ -1609,7 +1572,7 @@ function __cpSetHeader(space) {
     document.getElementById('q-key').innerText = space.clave || '--';
     let modalImg = space.imagen_url || '';
     if (typeof modalImg === 'string' && modalImg.startsWith('[')) { try { modalImg = JSON.parse(modalImg)[0]; } catch (e) { } }
-    document.getElementById('q-img').src = modalImg || '../../assets/img/no-image.svg';
+    document.getElementById('q-img').src = modalImg || '../public/assets/img/no-image.svg';
 }
 function __cpRenderHorario(space, selectedValue = '') {
     const b2b = __cpB2B(space);
@@ -1969,12 +1932,7 @@ window.generatePDF = async function () {
     if (!cli.name) return window.showToast("Falta nombre del cliente", "error");
     const phoneRegex = /^\d{10}$/;
     if (!phoneRegex.test(cli.phone)) return window.showToast("El teléfono debe tener 10 dígitos numéricos.", "error");
-    let quoteClientId = '';
-    try {
-        quoteClientId = await resolveCpCatalogQuoteClientId(cli);
-    } catch (clientErr) {
-        return window.showToast(clientErr?.message || 'No se pudo preparar el perfil del cliente.', 'error');
-    }
+    const quoteClientId = await resolveCpCatalogQuoteClientId(cli);
     if (!spaces.length) return window.showToast("No hay espacios configurados.", "error");
     const quoteNameInput = document.getElementById('q-quote-name');
     const quoteNameRaw = (quoteNameInput?.value || '').trim();
@@ -2020,4 +1978,5 @@ window.generatePDF = async function () {
     const targetUrl = createdQuoteId ? `order_detail.html?quote=${encodeURIComponent(createdQuoteId)}` : 'orders.html';
     setTimeout(() => { cpNavigateSafely(targetUrl); }, 900);
 }
+
 

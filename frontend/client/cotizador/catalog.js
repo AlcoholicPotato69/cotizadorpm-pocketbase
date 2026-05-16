@@ -21,6 +21,32 @@ function normalizeQuoteDateValue(value) {
     return '';
 }
 
+if (typeof window.safeFormatDate !== 'function') {
+    window.safeFormatDate = function (dateStr) {
+        if (!dateStr) return '--';
+        const raw = String(dateStr).trim();
+        const normalized = raw.replace('T', ' ').replace('Z', '');
+        const match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?/);
+        if (match) {
+            const [, year, month, day, hh, mm, ss] = match;
+            const formattedDate = `${day}/${month}/${year}`;
+            if (!hh || !mm) return formattedDate;
+            return `${formattedDate} ${hh}:${mm}:${ss || '00'}`;
+        }
+        const parsed = new Date(raw);
+        if (Number.isNaN(parsed.getTime())) return raw;
+        const day = String(parsed.getDate()).padStart(2, '0');
+        const month = String(parsed.getMonth() + 1).padStart(2, '0');
+        const year = String(parsed.getFullYear());
+        const hh = String(parsed.getHours()).padStart(2, '0');
+        const mm = String(parsed.getMinutes()).padStart(2, '0');
+        const ss = String(parsed.getSeconds()).padStart(2, '0');
+        const formattedDate = `${day}/${month}/${year}`;
+        if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return formattedDate;
+        return `${formattedDate} ${hh}:${mm}:${ss}`;
+    };
+}
+
 function normalizeQuotePhoneValue(value) {
     const digits = String(value || '').replace(/\D+/g, '').slice(-10);
     return digits.length === 10 ? digits : '';
@@ -227,10 +253,6 @@ function getValidatedClientProfiles() {
     return clientProfiles.filter((client) => isQuoteClientProfileReady(client));
 }
 
-function isQuickQuoteModeEnabled() {
-    return !!document.getElementById('cli-quick-quote')?.checked;
-}
-
 function fillQuoteClientFields(client = {}) {
     const nameEl = document.getElementById('cli-name');
     const phoneEl = document.getElementById('cli-phone');
@@ -261,14 +283,13 @@ function getSelectedQuoteClientProfile() {
     if (!selectedId) return null;
     const selected = clientProfilesById[selectedId] || null;
     if (!selected) return null;
-    if (!isQuoteClientProfileReady(selected) && !isQuickQuoteModeEnabled()) return null;
     if (hiddenIdEl) hiddenIdEl.value = selectedId;
     return selected;
 }
 
 function buildQuoteClientSnapshot() {
     const selectedProfile = getSelectedQuoteClientProfile();
-    if (selectedProfile && !isQuickQuoteModeEnabled()) {
+    if (selectedProfile) {
         fillQuoteClientFields(selectedProfile);
         return {
             id: String(selectedProfile.id || '').trim(),
@@ -288,34 +309,34 @@ function buildQuoteClientSnapshot() {
 }
 
 function syncQuoteClientEntryMode() {
-    const validatedProfiles = getValidatedClientProfiles();
-    const hasValidatedProfiles = validatedProfiles.length > 0;
-    const quickMode = isQuickQuoteModeEnabled();
+    const hasProfiles = clientProfiles.length > 0;
     const selectEl = document.getElementById('cli-select');
     const hintEl = document.getElementById('cli-profile-hint');
     const manualWrap = document.getElementById('cli-manual-fields');
-    const quickRow = document.getElementById('cli-quick-quote-row');
 
     if (manualWrap) {
-        const hideManualFields = !quickMode;
-        manualWrap.classList.toggle('hidden', hideManualFields);
-        manualWrap.style.display = hideManualFields ? 'none' : '';
-        manualWrap.setAttribute('aria-hidden', hideManualFields ? 'true' : 'false');
+        manualWrap.classList.remove('hidden');
+        manualWrap.style.display = '';
+        manualWrap.setAttribute('aria-hidden', 'false');
     }
-    if (quickRow) quickRow.classList.remove('hidden');
     if (selectEl) {
-        selectEl.disabled = !hasValidatedProfiles || quickMode;
+        selectEl.disabled = !hasProfiles;
         selectEl.classList.toggle('opacity-60', selectEl.disabled);
         selectEl.classList.toggle('cursor-not-allowed', selectEl.disabled);
     }
 
     if (hintEl) {
-        if (!hasValidatedProfiles) hintEl.textContent = 'No hay perfiles completos disponibles. Captura los datos y se creará un perfil pendiente automáticamente.';
-        else if (quickMode) hintEl.textContent = 'Cotización rápida activa: al generar se creará un perfil nuevo pendiente para completar su expediente después.';
-        else hintEl.textContent = 'Selecciona un perfil completo. Si el cliente aún no existe, activa cotización rápida.';
+        const selected = getSelectedQuoteClientProfile();
+        if (selected) {
+            hintEl.textContent = isQuoteClientProfileReady(selected)
+                ? 'Perfil seleccionado: listo para validación de contrato.'
+                : 'Perfil seleccionado: la cotización puede guardarse, pero el contrato seguirá bloqueado hasta validación.';
+        } else if (hasProfiles) {
+            hintEl.textContent = 'Puedes asignar un perfil existente o capturar manualmente y continuar sin perfil.';
+        } else {
+            hintEl.textContent = 'No hay perfiles registrados. Puedes capturar manualmente y continuar sin perfil.';
+        }
     }
-    if (hintEl && quickMode) hintEl.textContent = 'Cotizacion rapida activa: al generar se creara un perfil nuevo pendiente para completar su expediente despues.';
-    if (hintEl && !quickMode && !hasValidatedProfiles) hintEl.textContent = 'No hay perfiles completos disponibles. Activa cotizacion rapida para capturar los datos y crear un perfil pendiente.';
 }
 
 function bindQuoteClientFieldListeners() {
@@ -330,59 +351,12 @@ function bindQuoteClientFieldListeners() {
     });
 }
 
-function bindQuoteClientModeToggle() {
-    const quickCheckbox = document.getElementById('cli-quick-quote');
-    if (!quickCheckbox || quickCheckbox.dataset.quoteQuickBound === '1') return;
-    quickCheckbox.dataset.quoteQuickBound = '1';
-    const syncMode = () => { window.toggleQuoteQuickClientMode(); };
-    quickCheckbox.addEventListener('change', syncMode);
-    quickCheckbox.addEventListener('input', syncMode);
-    quickCheckbox.addEventListener('click', () => {
-        window.setTimeout(syncMode, 0);
-    });
-}
-window.toggleQuoteQuickClientMode = function () {
-    const quickCheckbox = document.getElementById('cli-quick-quote');
-    if (!quickCheckbox) return;
-    if (quickCheckbox.checked) clearQuoteClientAssociation({ clearFields: true });
-    else clearQuoteClientAssociation({ clearFields: true });
-    syncQuoteClientEntryMode();
-};
-
-async function createQuickQuoteClientProfile(cli) {
-    const payload = {
-        tenant: PM_TENANT_SLUG,
-        nombre_completo: String(cli?.name || '').trim(),
-        telefono: String(cli?.phone || '').trim(),
-        correo: String(cli?.email || '').trim().toLowerCase() || null,
-        rfc: String(cli?.rfc || '').trim().toUpperCase() || null,
-        perfil_origen: 'cotizacion_rapida',
-        perfil_estatus: 'pendiente_expediente',
-        perfil_validado: false,
-        perfil_completo: false
-    };
-    const { data, error } = await window.tenantPocketBase.from('clientes').insert(payload);
-    if (error) throw error;
-    const created = Array.isArray(data) ? (data[0] || null) : (data || null);
-    const createdId = String(created?.id || '').trim();
-    if (!createdId) throw new Error('No se pudo crear el perfil rápido del cliente.');
-    clientProfiles.push(created || { ...payload, id: createdId });
-    clientProfilesById[createdId] = created || { ...payload, id: createdId };
-    const hiddenIdEl = document.getElementById('cli-id');
-    if (hiddenIdEl) hiddenIdEl.value = createdId;
-    return createdId;
-}
-
 async function resolveQuoteClientId(cli) {
     const selectedProfile = getSelectedQuoteClientProfile();
     if (selectedProfile) return String(selectedProfile.id || '').trim();
     const hiddenIdEl = document.getElementById('cli-id');
     const existingId = String(hiddenIdEl?.value || '').trim();
-    if (existingId && isQuickQuoteModeEnabled()) return existingId;
-    if (!isQuickQuoteModeEnabled()) {
-        throw new Error('Selecciona un perfil completo o activa cotización rápida.');
-    }
-    return createQuickQuoteClientProfile(cli);
+    return existingId || '';
 }
 
 async function loadClientProfilesForQuoteModal() {
@@ -406,31 +380,26 @@ async function loadClientProfilesForQuoteModal() {
         });
         clientProfilesById = {};
         clientProfiles.forEach(c => clientProfilesById[c.id] = c);
-        const validatedProfiles = getValidatedClientProfiles();
-
-        sel.innerHTML = '<option value="">' + (validatedProfiles.length ? '— Selecciona un perfil completo —' : '— Sin perfiles completos disponibles —') + '</option>' + validatedProfiles
-            .map(c => `<option value="${c.id}">${(c.nombre_completo || '').toUpperCase()} • COMPLETO</option>`)
+        sel.innerHTML = '<option value="">— Sin perfil asignado —</option>' + clientProfiles
+            .map(c => `<option value="${c.id}">${(c.nombre_completo || '').toUpperCase()} • ${isQuoteClientProfileReady(c) ? 'LISTO' : 'PENDIENTE'}</option>`)
             .join('');
 
         sel.onchange = () => {
             const id = sel.value;
-            const quickCheckbox = document.getElementById('cli-quick-quote');
             if (!id) {
                 if (hid) hid.value = '';
-                if (!isQuickQuoteModeEnabled()) clearQuoteClientFields();
+                clearQuoteClientFields();
                 syncQuoteClientEntryMode();
                 return;
             }
             const c = clientProfilesById[id];
             if (!c) return;
-            if (quickCheckbox?.checked) quickCheckbox.checked = false;
             if (hid) hid.value = id;
             fillQuoteClientFields(c);
             syncQuoteClientEntryMode();
         };
 
         bindQuoteClientFieldListeners();
-        bindQuoteClientModeToggle();
         window.HUB_CLIENT_PROFILE_HOVER?.bindSelect?.(sel, () => {
             const selectedId = String(sel?.value || hid?.value || '').trim();
             return selectedId ? (clientProfilesById[selectedId] || null) : null;
@@ -790,7 +759,7 @@ async function pmEnsureCatalogManageSession(actionLabel = 'guardar cambios') {
     if (!IS_PM_CATALOG_ADMIN_PAGE) return true;
     try {
         const authCtx = window.HUB_SESSION?.ensureAuth
-            ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, allowCachedUser: false, redirectOnFail: true, forceRefresh: true })
+            ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, redirectOnFail: true, forceRefresh: true })
             : { session: await window.PB_SERVICES.auth.ensureFreshSession({ schema: FIN_SCHEMA, allowStaleOnError: false, forceRefresh: true }) };
         const session = authCtx?.session || null;
         if (session?.user) return true;
@@ -1102,6 +1071,12 @@ function catalogSpaceHasTag(space, term) {
 function isCatalogAdvertisingSpace(space) {
     return catalogSpaceHasTag(space, 'publicidad');
 }
+function pmIsDigitalMediaSpace(spaceOrId) {
+    const space = typeof spaceOrId === 'string' ? allSpaces.find(s => String(s.id) === spaceOrId) : spaceOrId;
+    if (!space) return false;
+    const b2b = getCatalogSpaceB2bConfig(space);
+    return normalizePmDigitalMediaConfig(b2b.digital_media || b2b.digitalMedia || b2b.medio_digital || {}).enabled;
+}
 function isCatalogLocalLikeSpace(space) {
     return catalogSpaceHasTag(space, 'local') || catalogSpaceHasTag(space, 'isla') || catalogSpaceHasTag(space, 'espacio');
 }
@@ -1244,7 +1219,7 @@ function normalizePmDigitalMediaConfig(value = {}) {
     const pixelHeight = normalizeSpaceMeasureValue(source.pixel_height ?? source.pixeles_alto ?? source.alto_px);
     return {
         enabled,
-        media_type: rawType.includes('video') ? 'video' : 'imagen',
+        media_type: rawType.includes('imagen') && rawType.includes('video') ? 'imagen_video' : (rawType.includes('video') ? 'video' : 'imagen'),
         duration_value: durationValue,
         duration_unit: unit === 'minutos' ? 'minutos' : 'segundos',
         pixel_width: pixelWidth,
@@ -1252,7 +1227,9 @@ function normalizePmDigitalMediaConfig(value = {}) {
     };
 }
 function formatPmDigitalMediaType(value) {
-    return normalizePmDigitalMediaConfig(value).media_type === 'video' ? 'Video' : 'Imagen';
+    const t = normalizePmDigitalMediaConfig(value).media_type;
+    if (t === 'imagen_video') return 'Imagen / Video';
+    return t === 'video' ? 'Video' : 'Imagen';
 }
 function formatPmDigitalMediaPixels(value) {
     const cfg = normalizePmDigitalMediaConfig(value);
@@ -2172,45 +2149,36 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     const profile = authCtx?.profile || await pmResolveCurrentUserProfile(session.user);
-    const cachedRole = String(localStorage.getItem('hub_user_cache_role') || '').trim().toLowerCase();
-    let userRole = String(profile?.role || profile?.rol || cachedRole).toLowerCase().trim();
-    if (typeof userRole.normalize === 'function') userRole = userRole.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    userRole = userRole.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-    if (userRole === 'plazamayor' || userRole === 'pm' || userRole === 'finanzas') userRole = 'plaza_mayor';
-    if (userRole === 'casadepiedra' || userRole === 'cp') userRole = 'casa_de_piedra';
-    if (userRole === 'administrador' || userRole === 'superadmin' || userRole === 'super_admin') userRole = 'admin';
-    const roleHasAccess = (userRole === 'admin') || (userRole === 'plaza_mayor') || (userRole === 'verificador');
-    const roleDefaultPerms = { access: true, orders_view: true, reports_view: true, clients_view: true, clients_manage: true };
-
-    if (userRole === 'admin' || userRole === 'verificador') myPermissions = { ...roleDefaultPerms, catalog_manage: true };
-    else if (roleHasAccess) myPermissions = { ...roleDefaultPerms, catalog_manage: false };
-    else {
-        const profilePerms = profile?.app_metadata?.finanzas?.permissions;
-        if (profilePerms && typeof profilePerms === 'object') {
-            myPermissions = {
-                ...roleDefaultPerms,
-                ...profilePerms,
-                catalog_manage: !!profilePerms.catalog_manage
-            };
-        } else {
-            myPermissions = { ...roleDefaultPerms, catalog_manage: false };
-        }
-    }
+    const layoutAuth = window.__HUB_AUTH_CONTEXT || authCtx || null;
+    const rbac = window.HUB_RBAC || null;
+    const rawPerms = rbac?.getPermissions
+        ? rbac.getPermissions()
+        : ((layoutAuth?.permissions && typeof layoutAuth.permissions === 'object')
+            ? layoutAuth.permissions
+            : ((profile?.effective_permissions && typeof profile.effective_permissions === 'object')
+                ? profile.effective_permissions
+                : {}));
+    myPermissions = {
+        access: rbac?.can ? rbac.can('access') : rawPerms.access === true,
+        orders_view: rbac?.can ? rbac.can('orders_view') : rawPerms.orders_view === true,
+        reports_view: rbac?.can ? rbac.can('reports_view') : rawPerms.reports_view === true,
+        clients_view: rbac?.can ? rbac.can('clients_view') : rawPerms.clients_view === true,
+        clients_manage: rbac?.can ? rbac.can('clients_manage') : rawPerms.clients_manage === true,
+        catalog_manage: rbac?.can ? rbac.can('catalog_manage') : rawPerms.catalog_manage === true
+    };
 
     if (!myPermissions.access) return window.showToast?.('No tienes permisos para acceder al Catálogo.', 'error');
 
-    if (userRole !== 'admin') {
-        const navRules = {
-            'orders.html': ('orders_view' in myPermissions) ? !!myPermissions.orders_view : true,
-            'cotizacion.html': ('orders_view' in myPermissions) ? !!myPermissions.orders_view : true,
-            'reports.html': ('reports_view' in myPermissions) ? !!myPermissions.reports_view : true,
-            'clientes.html': (('clients_view' in myPermissions) || ('clients_manage' in myPermissions))
-                ? (!!myPermissions.clients_view || !!myPermissions.clients_manage) : true
-        };
-        Object.keys(navRules).forEach(page => {
-            if (!navRules[page]) { const link = document.querySelector(`a[href="${page}"]`); if (link) link.classList.add('hidden'); }
-        });
-    }
+    const navRules = {
+        'orders.html': ('orders_view' in myPermissions) ? !!myPermissions.orders_view : false,
+        'cotizacion.html': ('orders_view' in myPermissions) ? !!myPermissions.orders_view : false,
+        'reports.html': ('reports_view' in myPermissions) ? !!myPermissions.reports_view : false,
+        'clientes.html': (('clients_view' in myPermissions) || ('clients_manage' in myPermissions))
+            ? (!!myPermissions.clients_view || !!myPermissions.clients_manage) : false
+    };
+    Object.keys(navRules).forEach(page => {
+        if (!navRules[page]) { const link = document.querySelector(`a[href="${page}"]`); if (link) link.classList.add('hidden'); }
+    });
 
     if (myPermissions.catalog_manage && IS_PM_CATALOG_ADMIN_PAGE) document.getElementById('btn-new-space')?.classList.remove('hidden');
     pmCatalogApplyViewStateControls();
@@ -2399,7 +2367,7 @@ function renderSpaces(list) {
         const priceDisplay = buildCatalogPriceDisplay(adjustedBase, taxOnlyAmount, finalPrice, taxPriceLabel);
 
         let allUrls = []; try { if (s.imagen_url && typeof s.imagen_url === 'string' && s.imagen_url.startsWith('[')) allUrls = JSON.parse(s.imagen_url); else if (s.imagen_url) allUrls = [s.imagen_url]; } catch (e) { }
-        if (allUrls.length === 0) allUrls = ['../../assets/img/no-image.svg'];
+        if (allUrls.length === 0) allUrls = ['../public/assets/img/no-image.svg'];
 
         // RENDER DE ETIQUETAS EN ADMIN
         let eTags = [];
@@ -2433,8 +2401,9 @@ function renderSpaces(list) {
             const powerOffBtn = inQuote
                 ? `<button type="button" onclick="event.stopPropagation(); window.powerOffQuoteSpace('${sid}')" class="px-2 py-1 rounded border border-gray-200 bg-white text-[9px] font-black uppercase text-gray-600 hover:text-red-600">Desactivar</button>`
                 : '';
-            g.innerHTML += `<div data-space-card="1" data-space-id="${s.id}" onclick="window.toggleQuoteSpaceCard('${sid}')" class="rounded-xl border ${cardState} p-4 shadow-sm transition hover:shadow-md cursor-pointer">
-                <div class="mb-3">
+            g.innerHTML += `<div data-space-card="1" data-space-id="${s.id}" onclick="window.toggleQuoteSpaceCard('${sid}')" class="rounded-xl border ${cardState} p-4 shadow-sm transition hover:shadow-md cursor-pointer relative overflow-hidden">
+                ${badgeHTML}
+                <div class="mb-3 mt-4">
                     <p class="text-sm font-black text-gray-800 uppercase leading-tight">${s.nombre}</p>
                     <p class="text-[10px] font-mono text-gray-400 mt-1">${s.clave || '--'}</p>
                 </div>
@@ -2516,7 +2485,7 @@ window.openPreviewCardModal = function (id) {
     if (!s) return;
     const previewBadges = renderCatalogPreviewBadges(s);
     let allUrls = []; try { if (s.imagen_url && typeof s.imagen_url === 'string' && s.imagen_url.startsWith('[')) allUrls = JSON.parse(s.imagen_url); else if (s.imagen_url) allUrls = [s.imagen_url]; } catch (e) { }
-    if (allUrls.length === 0) allUrls = ['../../assets/img/no-image.svg'];
+    if (allUrls.length === 0) allUrls = ['../public/assets/img/no-image.svg'];
 
     const modal = document.createElement('div');
     modal.className = 'fixed inset-0 bg-black/90 z-[1000] flex items-center justify-center p-4 backdrop-blur-md animate-enter';
@@ -2968,7 +2937,6 @@ window.toggleQuoteSpaceCard = function (spaceId) {
         document.getElementById('cli-email').value = '';
         const cliSel = document.getElementById('cli-select'); if (cliSel) cliSel.value = '';
         const cliId = document.getElementById('cli-id'); if (cliId) cliId.value = '';
-        const quickQuote = document.getElementById('cli-quick-quote'); if (quickQuote) quickQuote.checked = false;
         const quoteName = document.getElementById('q-quote-name'); if (quoteName) quoteName.value = '';
         loadClientProfilesForQuoteModal();
     }
@@ -3034,7 +3002,6 @@ window.openQuoteModal = function (id) {
     document.getElementById('cli-name').value = ''; document.getElementById('cli-rfc').value = ''; document.getElementById('cli-phone').value = ''; document.getElementById('cli-email').value = '';
     const cliSel = document.getElementById('cli-select'); if (cliSel) cliSel.value = '';
     const cliId = document.getElementById('cli-id'); if (cliId) cliId.value = '';
-    const quickQuote = document.getElementById('cli-quick-quote'); if (quickQuote) quickQuote.checked = false;
     loadClientProfilesForQuoteModal();
     const avail = document.getElementById('avail-msg'); if (avail) avail.classList.add('hidden');
     const btnGenerate = document.getElementById('btn-generate'); if (btnGenerate) btnGenerate.disabled = true;
@@ -3047,9 +3014,6 @@ window.generatePDF = async function () {
     const availabilityOk = await window.checkAvailability();
     if (!availabilityOk) return window.showToast("Hay espacios con conflicto de fechas o datos incompletos.", "error");
 
-    if (!isQuickQuoteModeEnabled() && !getSelectedQuoteClientProfile()) {
-        return window.showToast('Selecciona un perfil completo o activa cotización rápida.', 'error');
-    }
     const cli = buildQuoteClientSnapshot();
     if (!cli.name) return window.showToast("Falta nombre del cliente", "error");
 
@@ -3057,12 +3021,7 @@ window.generatePDF = async function () {
     if (!phoneRegex.test(cli.phone)) return window.showToast("El teléfono debe tener 10 dígitos numéricos.", "error");
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(cli.email)) return window.showToast("El correo electrónico no es válido.", "error");
-    let quoteClientId = '';
-    try {
-        quoteClientId = await resolveQuoteClientId(cli);
-    } catch (error) {
-        return window.showToast(error?.message || 'No se pudo preparar el perfil del cliente.', 'error');
-    }
+    const quoteClientId = await resolveQuoteClientId(cli);
 
     let spaces = [];
     if (isQuoteWorkspacePage()) {
@@ -3291,6 +3250,8 @@ window.checkAvailability = async function () {
     const conflicts = [];
     (targets || []).forEach(item => {
         const sid = String(item.space.id);
+        // DIGITAL MEDIA: always available for digital spaces
+        if (pmIsDigitalMediaSpace(sid)) return;
         const s = toDateISO(item.cfg.startDate);
         const e = toDateISO(item.cfg.endDate);
         (data || []).forEach(order => {
@@ -3363,6 +3324,7 @@ window.askDeleteSpace = async function () {
         }
     });
 }
+
 
 
 

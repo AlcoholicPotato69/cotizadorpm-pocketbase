@@ -6,19 +6,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="robots" content="noindex, nofollow">
     <title>Clientes - Plaza Mayor</title>
-    <link rel="preload" as="script" href="../../assets/libs/js/tailwindcss.js">
-    <script src="../../assets/libs/js/tailwindcss.js?v=20260426-v3-digital-calendar"></script>
-    <link rel="preload" as="style" href="../../assets/libs/css/all.min.css?v=20260426-v3-digital-calendar">
-    <link rel="stylesheet" href="../../assets/libs/css/all.min.css?v=20260426-v3-digital-calendar">
-    <script src="../../assets/libs/js/chart.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../../assets/libs/js/html2pdf.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../js/hub-config.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../services/pb-core.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../services/_shared.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../services/auth.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../services/pb-client.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../js/pdf-editor-hitbox.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../js/dictamen-generator.js?v=20260426-v3-digital-calendar"></script>
+    <link rel="preload" as="script" href="../public/assets/libs/js/tailwindcss.js">
+    <script src="../public/assets/libs/js/tailwindcss.js?v=20260427-v1-contracts-fix"></script>
+    <link rel="preload" as="style" href="../public/assets/libs/css/all.min.css?v=20260427-v1-contracts-fix">
+    <link rel="stylesheet" href="../public/assets/libs/css/all.min.css?v=20260427-v1-contracts-fix">
+    <script src="../public/assets/libs/js/chart.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../public/assets/libs/js/html2pdf.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../js/hub-config.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../services/server-date-service.js?v=20260427-v2-server-dates"></script>
+    <script src="../services/pb-core.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../services/_shared.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../services/auth.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../services/pb-client.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../js/pdf-editor-hitbox.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../js/dictamen-generator.js?v=20260427-v1-contracts-fix"></script>
     <script>tailwind.config = { theme: { extend: { colors: { brand: { red: '#D32F2F', dark: '#1a1a1a', gray: '#f3f4f6' } } } } }</script>
     <style>
         body { font-family: 'Segoe UI', sans-serif; background-color: #f3f4f6; }
@@ -30,14 +31,14 @@
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
     <!-- Local Animations -->
-    <link rel="preload" as="style" href="../../assets/libs/css/animate.min.css?v=20260426-v3-digital-calendar">
-    <link rel="stylesheet" href="../../assets/libs/css/animate.min.css?v=20260426-v3-digital-calendar">
-    <link rel="icon" type="image/png" href="../assets/img/logo.png">
+    <link rel="preload" as="style" href="../public/assets/libs/css/animate.min.css?v=20260427-v1-contracts-fix">
+    <link rel="stylesheet" href="../public/assets/libs/css/animate.min.css?v=20260427-v1-contracts-fix">
+    <link rel="icon" type="image/png" href="../public/assets/img/logo.png">
 </head>
 <body class="bg-brand-gray text-gray-800 flex flex-col min-h-screen relative">
     <div id="toast-container" class="fixed bottom-5 right-5 z-[10000] flex flex-col gap-2 pointer-events-none"></div>
     <script>const TENANT_SCHEMA='finanzas';</script>
-    <script src="../js/layout.js?v=20260426-v3-digital-calendar"></script>
+    <script src="../js/layout.js?v=20260427-v1-contracts-fix"></script>
 
     <nav class="bg-brand-red shadow-lg sticky top-16 z-40 border-t border-red-800">
         <div class="container mx-auto px-4 flex h-14 items-center text-white gap-2 overflow-x-auto no-scrollbar">
@@ -323,15 +324,6 @@
             <!-- Action Panel for selected doc -->
             <div id="verif-action-panel" class="p-4 border-t border-gray-200 bg-gray-50 hidden flex-col gap-3">
                 <p class="text-xs font-bold text-gray-700 uppercase" id="verif-action-doc-label">Decisión: Documento</p>
-                <label class="flex items-start justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-left">
-                    <span class="min-w-0">
-                        <span class="block text-[11px] font-black uppercase tracking-wide text-amber-900">Omitir documento</span>
-                        <span class="block mt-1 text-[10px] font-semibold leading-4 text-amber-800/80">Úsalo cuando este requisito no aplique para el cliente. Se marcará como validado sin bloquear el expediente.</span>
-                    </span>
-                    <input id="verif-omit-toggle" type="checkbox" class="mt-1 h-4 w-4 accent-brand-red shrink-0">
-                </label>
-                <p id="verif-omit-note" class="hidden text-[10px] font-semibold text-amber-700">Documento omitido. Ya no contará como faltante para validar el expediente.</p>
-
                 <div class="flex gap-2">
                     <button id="btn-verif-approve" class="flex-1 bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-600 hover:text-white transition rounded-xl py-2 px-3 text-xs font-bold flex items-center justify-center gap-2">
                         <i class="fa-solid fa-check"></i> Aprobar
@@ -368,6 +360,7 @@
         </div>
     </div>
 </div>
-<script src="clientes.js?v=20260426-v3-digital-calendar"></script>
+<script src="clientes.js?v=20260427-v1-contracts-fix"></script>
 </body>
 </html>
+

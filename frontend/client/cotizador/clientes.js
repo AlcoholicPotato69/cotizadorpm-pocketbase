@@ -14,6 +14,7 @@ const FIN_SCHEMA = (window.HUB_CONFIG && window.HUB_CONFIG.finanzasSchema) || 'f
 
 let allClients = [];
 let canManage = false;
+let canCreate = false;
 let canVerify = false;
 let canSeeAllDocuments = false;
 let currentClientRole = '';
@@ -22,6 +23,7 @@ let pendingVerificationClientId = '';
 let clientHistoryRows = [];
 let activeHistoryClient = null;
 let pmClientsRestoringViewState = false;
+let cachedClientDocumentRequirementsConfig = [];
 const PM_CLIENTS_VIEW_STATE_SCOPE = 'pm_clients';
 const CLIENT_TENANT_SLUG = 'plaza_mayor';
 const ADMIN_VERIFIER_MODE_STORAGE_KEY = `hub_admin_verifier_mode_${CLIENT_TENANT_SLUG}`;
@@ -86,16 +88,29 @@ function normalizeRoleName(value='') {
 function deriveClientAccessFromLayout() {
   const authCtx = window.__HUB_AUTH_CONTEXT || null;
   if (!authCtx?.session?.user) return null;
-  const perms = (authCtx.permissions && typeof authCtx.permissions === 'object') ? authCtx.permissions : {};
+  const rbac = window.HUB_RBAC || null;
+  const perms = (authCtx.permissions && typeof authCtx.permissions === 'object')
+    ? authCtx.permissions
+    : ((authCtx.profile?.effective_permissions && typeof authCtx.profile.effective_permissions === 'object')
+      ? authCtx.profile.effective_permissions
+      : {});
   const role = normalizeRoleName(authCtx.role || authCtx.profile?.role || '');
-  const verifyEnabled = authCtx.isAdmin === true || role === 'admin' || role === 'verificador';
+  const verifyEnabled = rbac?.can ? rbac.can('clients_verify') : (authCtx.isAdmin === true || perms.clients_verify === true);
+  const canManage = rbac?.can ? rbac.can('clients_manage') : (authCtx.isAdmin === true || perms.clients_manage === true);
+  const canCreate = rbac?.canAny
+    ? rbac.canAny(['clients_create', 'clients_manage'])
+    : (authCtx.isAdmin === true || perms.clients_create === true || perms.clients_manage === true);
+  const canView = rbac?.canAny
+    ? rbac.canAny(['clients_view', 'clients_manage', 'clients_verify', 'clients_create'])
+    : (authCtx.isAdmin === true || verifyEnabled || perms.clients_view === true || perms.clients_manage === true || perms.clients_create === true);
   return {
     role,
     perms,
-    canView: authCtx.isAdmin === true || verifyEnabled || perms.clients_view === true || perms.clients_manage === true,
-    canManage: authCtx.isAdmin === true || perms.clients_manage === true,
+    canView,
+    canManage,
+    canCreate,
     canVerify: verifyEnabled,
-    canSeeAllDocuments: verifyEnabled || perms.clients_all_docs === true
+    canSeeAllDocuments: rbac?.canAny ? rbac.canAny(['clients_all_docs', 'clients_verify']) : (verifyEnabled || perms.clients_all_docs === true)
   };
 }
 
@@ -123,47 +138,27 @@ async function fetchClientAccessContext(sessionUser) {
     || sessionUser?.rol
     || ''
   );
-  const rawPerms =
-    (appUser?.app_metadata?.finanzas?.permissions && typeof appUser.app_metadata.finanzas.permissions === 'object')
-      ? appUser.app_metadata.finanzas.permissions
-      : {};
-  const perms = (role === 'admin')
-    ? {
-        access: true,
-        catalog_view: true,
-        orders_view: true,
-        reports_view: true,
-        clients_view: true,
-        clients_manage: true,
-        clients_verify: true,
-        clients_all_docs: true
-      }
-    : (role === 'verificador')
-      ? {
-          access: true,
-          catalog_view: true,
-          orders_view: true,
-          reports_view: false,
-          clients_view: true,
-          clients_manage: false,
-          clients_verify: true,
-          clients_all_docs: true
-        }
-      : { ...rawPerms };
-  const canVerifyResolved = role === 'admin' || role === 'verificador';
-  const canView = role === 'admin'
-    || role === 'verificador'
-    || perms.clients_view === true
-    || perms.clients_manage === true
-    || perms.clients_verify === true;
-  const canManageResolved = role === 'admin' || perms.clients_manage === true;
+  const perms = (appUser?.effective_permissions && typeof appUser.effective_permissions === 'object')
+    ? appUser.effective_permissions
+    : {};
+  const rbac = window.HUB_RBAC || null;
+  const isAdminByContext = rbac?.isAdmin ? rbac.isAdmin() : (window.__HUB_AUTH_CONTEXT?.isAdmin === true);
+  const canVerifyResolved = rbac?.can ? rbac.can('clients_verify') : (isAdminByContext || perms.clients_verify === true);
+  const canView = rbac?.canAny
+    ? rbac.canAny(['clients_view', 'clients_manage', 'clients_verify', 'clients_create'])
+    : (isAdminByContext || perms.clients_view === true || perms.clients_manage === true || perms.clients_verify === true || perms.clients_create === true);
+  const canManageResolved = rbac?.can ? rbac.can('clients_manage') : (isAdminByContext || perms.clients_manage === true);
+  const canCreateResolved = rbac?.canAny
+    ? rbac.canAny(['clients_create', 'clients_manage'])
+    : (isAdminByContext || perms.clients_create === true || perms.clients_manage === true);
   return {
     role,
     perms,
     canView,
     canManage: canManageResolved,
+    canCreate: canCreateResolved,
     canVerify: canVerifyResolved,
-    canSeeAllDocuments: canVerifyResolved || perms.clients_all_docs === true
+    canSeeAllDocuments: rbac?.canAny ? rbac.canAny(['clients_all_docs', 'clients_verify']) : (canVerifyResolved || perms.clients_all_docs === true)
   };
 }
 
@@ -180,12 +175,15 @@ function getVerifierAllowedTenants() {
   const authCtx = window.__HUB_AUTH_CONTEXT || {};
   const allowed = Array.isArray(authCtx.allowedTenants) && authCtx.allowedTenants.length
     ? authCtx.allowedTenants
-    : ['plaza_mayor', 'casa_de_piedra'];
+    : [];
   return allowed.filter((slug) => slug === 'plaza_mayor' || slug === 'casa_de_piedra');
 }
 
-function installVerifierTenantNavigation(role) {
-  if (normalizeRoleName(role || '') !== 'verificador') return;
+function installVerifierTenantNavigation() {
+  const authCtx = window.__HUB_AUTH_CONTEXT || {};
+  const perms = (authCtx.permissions && typeof authCtx.permissions === 'object') ? authCtx.permissions : {};
+  const canVerifyByPermission = window.HUB_RBAC?.can ? window.HUB_RBAC.can('clients_verify') : (authCtx.isAdmin === true || perms.clients_verify === true);
+  if (!canVerifyByPermission) return;
   const navContainer = document.querySelector('nav .container');
   if (!navContainer) return;
   navContainer.dataset.verifierTenantNav = 'true';
@@ -231,8 +229,7 @@ function installVerifierTenantNavigation(role) {
 }
 
 function isAdminClientRoleActive() {
-  const authCtx = window.__HUB_AUTH_CONTEXT || {};
-  return authCtx.isAdmin === true || normalizeRoleName(currentClientRole || authCtx.role || authCtx.profile?.role || '') === 'admin';
+  return window.HUB_RBAC?.isAdmin ? window.HUB_RBAC.isAdmin() : (window.__HUB_AUTH_CONTEXT?.isAdmin === true);
 }
 
 function readAdminVerifierMode() {
@@ -289,6 +286,47 @@ function safeObject(v){
     } catch(e){ return {}; }
   }
   return {};
+}
+
+function parseClientDocumentRequirementsConfig(rawValue) {
+  if (Array.isArray(rawValue)) return rawValue;
+  if (rawValue && typeof rawValue === 'object') {
+    if (Array.isArray(rawValue.documents)) return rawValue.documents;
+    if (Array.isArray(rawValue.requisitos)) return rawValue.requisitos;
+    if (Array.isArray(rawValue.items)) return rawValue.items;
+    return [];
+  }
+  if (typeof rawValue === 'string') {
+    const clean = rawValue.trim();
+    if (!clean) return [];
+    try {
+      const parsed = JSON.parse(clean);
+      return parseClientDocumentRequirementsConfig(parsed);
+    } catch (_) {
+      return [];
+    }
+  }
+  return [];
+}
+
+async function refreshClientDocumentRequirementsConfig() {
+  if (!window.tenantPocketBase) return cachedClientDocumentRequirementsConfig;
+  try {
+    const { data, error } = await window.tenantPocketBase.from('configuracion')
+      .select('id,valor_json,valor,updated_at')
+      .eq('tenant', CLIENT_TENANT_SLUG)
+      .eq('clave', 'client_document_requirements')
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    const row = Array.isArray(data) ? (data[0] || null) : data;
+    const parsed = parseClientDocumentRequirementsConfig(row?.valor_json ?? row?.valor ?? '');
+    cachedClientDocumentRequirementsConfig = Array.isArray(parsed) ? parsed : [];
+    return cachedClientDocumentRequirementsConfig;
+  } catch (_) {
+    return cachedClientDocumentRequirementsConfig;
+  }
 }
 function safeDate(v){
   const s = normalizeStoredDate(v);
@@ -364,6 +402,198 @@ const CLIENT_DOC_REQUIREMENTS = [
     ]
   }
 ];
+const CLIENT_BUILT_IN_DOC_FIELDS = Object.freeze(
+  CLIENT_DOC_REQUIREMENTS.map((doc) => String(doc?.field || '').trim()).filter(Boolean)
+);
+const CLIENT_CUSTOM_DOC_UPLOAD_PREFIX = 'extra_doc__';
+
+function normalizeClientDocumentFieldKey(value = '') {
+  const source = String(value || '').trim().toLowerCase();
+  if (!source) return '';
+  const normalized = (typeof source.normalize === 'function' ? source.normalize('NFD') : source)
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9_]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .replace(/_+/g, '_');
+  if (!normalized) return '';
+  const withPrefix = normalized.startsWith('doc_') ? normalized : `doc_custom_${normalized}`;
+  return withPrefix.slice(0, 80);
+}
+
+function humanizeClientDocumentFieldLabel(field = '') {
+  const normalized = normalizeClientDocumentFieldKey(field);
+  if (!normalized) return '';
+  const compact = normalized
+    .replace(/^doc_custom_/, '')
+    .replace(/^doc_/, '')
+    .replace(/_+/g, ' ')
+    .trim();
+  if (!compact) return '';
+  return compact.replace(/\b[a-z]/g, (char) => char.toUpperCase());
+}
+
+function normalizeClientDocumentLabel(label = '', field = '') {
+  const raw = String(label || '')
+    .replace(/^doc_custom_/i, '')
+    .replace(/^doc_/i, '')
+    .replace(/[_-]+/g, ' ')
+    .trim();
+  const base = raw || humanizeClientDocumentFieldLabel(field) || 'Documento';
+  const joiners = new Set(['de', 'del', 'la', 'las', 'el', 'los', 'y', 'o', 'u', 'e', 'en', 'a', 'para', 'por', 'con', 'sin']);
+  return base
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word, index) => {
+      const plain = String(word || '').replace(/[^A-Za-z0-9]/g, '');
+      if (plain.length > 1 && plain.length <= 4 && word === word.toUpperCase()) return word;
+      const lower = word.toLowerCase();
+      if (index > 0 && joiners.has(lower)) return lower;
+      return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+    })
+    .join(' ');
+}
+
+function normalizeClientDocumentRequirementsList(value) {
+  if (Array.isArray(value)) return value.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 8);
+  if (typeof value === 'string') return value.split(/\r?\n/).map((item) => String(item || '').trim()).filter(Boolean).slice(0, 8);
+  return [];
+}
+
+function isBuiltInClientDocumentField(field = '') {
+  return CLIENT_BUILT_IN_DOC_FIELDS.includes(String(field || '').trim());
+}
+
+function getDefaultClientDocumentRequirements() {
+  return CLIENT_DOC_REQUIREMENTS.map((doc, index) => ({
+    field: String(doc.field || '').trim(),
+    key: String(doc.field || '').trim(),
+    label: normalizeClientDocumentLabel(doc.label || '', doc.field || ''),
+    desc: String(doc.desc || doc.description || '').trim(),
+    description: String(doc.description || doc.desc || '').trim(),
+    requirements: normalizeClientDocumentRequirementsList(doc.requirements || []),
+    dateField: String(doc.dateField || '').trim(),
+    requiredForProfile: true,
+    requiredForContract: true,
+    allowOmit: String(doc.field || '').trim() !== 'doc_constancia_fiscal',
+    builtIn: true,
+    custom: false,
+    uploadField: String(doc.field || '').trim(),
+    enabled: true,
+    order: index
+  })).filter((doc) => !!doc.field);
+}
+
+function normalizeClientDocumentRequirement(item, orderIndex, fallbackMap = {}) {
+  const raw = item && typeof item === 'object' ? item : {};
+  let field = normalizeClientDocumentFieldKey(raw.field || raw.key || raw.id || raw.name || '');
+  if (!field && raw.label) field = normalizeClientDocumentFieldKey(raw.label);
+  if (!field) return null;
+
+  const fallback = safeObject(fallbackMap[field]);
+  const builtIn = isBuiltInClientDocumentField(field) || fallback.builtIn === true;
+  const hasRequiredForProfile = Object.prototype.hasOwnProperty.call(raw, 'requiredForProfile') || Object.prototype.hasOwnProperty.call(raw, 'required_for_profile');
+  const hasRequiredForContract = Object.prototype.hasOwnProperty.call(raw, 'requiredForContract') || Object.prototype.hasOwnProperty.call(raw, 'required_for_contract');
+  const hasAllowOmit = Object.prototype.hasOwnProperty.call(raw, 'allowOmit') || Object.prototype.hasOwnProperty.call(raw, 'allow_omit');
+  const requiredForProfile = hasRequiredForProfile
+    ? (raw.requiredForProfile === true || raw.required_for_profile === true)
+    : (fallback.requiredForProfile !== false);
+  const requiredForContract = hasRequiredForContract
+    ? (raw.requiredForContract === true || raw.required_for_contract === true)
+    : (fallback.requiredForContract !== false);
+  const allowOmit = field === 'doc_constancia_fiscal'
+    ? false
+    : (hasAllowOmit ? (raw.allowOmit !== false && raw.allow_omit !== false) : (fallback.allowOmit !== false));
+  const hasOrder = Number.isFinite(Number(raw.order));
+  const fallbackOrder = Number.isFinite(Number(fallback.order)) ? Number(fallback.order) : orderIndex;
+  const enabled = raw.enabled !== false && fallback.enabled !== false;
+  const label = normalizeClientDocumentLabel(raw.label || raw.nombre || fallback.label || '', field);
+  const description = String(raw.description || raw.desc || fallback.description || fallback.desc || '').trim();
+  const requirements = normalizeClientDocumentRequirementsList(raw.requirements || raw.requisitos || fallback.requirements || []);
+  const dateField = builtIn ? String(raw.dateField || raw.date_field || fallback.dateField || '').trim() : '';
+
+  return {
+    field,
+    key: field,
+    label,
+    desc: description,
+    description,
+    requirements,
+    dateField,
+    requiredForProfile,
+    requiredForContract,
+    allowOmit,
+    builtIn,
+    custom: !builtIn,
+    uploadField: String(raw.uploadField || raw.upload_field || fallback.uploadField || (builtIn ? field : `${CLIENT_CUSTOM_DOC_UPLOAD_PREFIX}${field}`)).trim() || field,
+    enabled,
+    order: hasOrder ? Number(raw.order) : fallbackOrder
+  };
+}
+
+function getClientDocumentRequirements(client, options = {}) {
+  const includeObserved = options.includeObserved !== false;
+  const validation = safeObject(getClientValidation(client));
+  const fallback = getDefaultClientDocumentRequirements();
+  const fallbackMap = {};
+  fallback.forEach((doc) => { fallbackMap[doc.field] = doc; });
+  const configured = Array.isArray(cachedClientDocumentRequirementsConfig) ? cachedClientDocumentRequirementsConfig : [];
+  const source = Array.isArray(validation.documentRequirements) && validation.documentRequirements.length
+    ? validation.documentRequirements
+    : (configured.length ? configured : fallback);
+
+  const byField = {};
+  const ordered = [];
+  source.forEach((item, index) => {
+    const normalized = normalizeClientDocumentRequirement(item, index, fallbackMap);
+    if (!normalized || normalized.enabled === false) return;
+    byField[normalized.field] = normalized;
+    if (!ordered.includes(normalized.field)) ordered.push(normalized.field);
+  });
+
+  if (includeObserved) {
+    const observed = [safeObject(validation.documents), safeObject(client?.documentos_estado)];
+    observed.forEach((bucket) => {
+      Object.keys(bucket || {}).forEach((rawField) => {
+        if (!/^doc_/i.test(String(rawField || '').trim())) return;
+        const field = normalizeClientDocumentFieldKey(rawField);
+        if (!field || byField[field]) return;
+        const row = safeObject(bucket[rawField]);
+        const inferred = normalizeClientDocumentRequirement({
+          field,
+          label: row.label || row.nombre || humanizeClientDocumentFieldLabel(field),
+          requiredForProfile: true,
+          requiredForContract: true,
+          allowOmit: field !== 'doc_constancia_fiscal',
+          enabled: true
+        }, ordered.length, fallbackMap);
+        if (!inferred || inferred.enabled === false) return;
+        byField[inferred.field] = inferred;
+        ordered.push(inferred.field);
+      });
+    });
+  }
+
+  return ordered
+    .map((field) => byField[field])
+    .filter(Boolean)
+    .sort((a, b) => {
+      const orderA = Number.isFinite(Number(a.order)) ? Number(a.order) : 0;
+      const orderB = Number.isFinite(Number(b.order)) ? Number(b.order) : 0;
+      if (orderA !== orderB) return orderA - orderB;
+      return String(a.label || '').localeCompare(String(b.label || ''), 'es', { sensitivity: 'base' });
+    });
+}
+
+function getClientRequiredDocumentRequirements(client, options = {}) {
+  return getClientDocumentRequirements(client, options).filter((doc) => doc.requiredForProfile === true);
+}
+
+function getClientDocumentRequirementByField(client, field, options = {}) {
+  const target = normalizeClientDocumentFieldKey(field);
+  if (!target) return null;
+  return getClientDocumentRequirements(client, options).find((doc) => doc.field === target) || null;
+}
+
 const CLIENT_QUOTE_DOC_FIELDS = [
   { field: 'cotizacion_final_file', urlField: 'url_cotizacion_final', label: 'Cotizacion aprobada', fallback: 'cotizacion_aprobada.pdf' },
   { field: 'orden_compra_file', urlField: 'url_orden_compra', label: 'Orden de compra', fallback: 'orden_compra.pdf' },
@@ -407,29 +637,26 @@ function getClientDocumentValidityDays(field) {
 }
 
 function getClientDocumentValidityReferenceDate(client, field) {
+  if (field === 'doc_constancia_fiscal') {
+    return getClientValidationDate(client, 'constancia_fiscal_emitida_el');
+  }
+  if (field === 'doc_comprobante_domicilio') {
+    return getClientValidationDate(client, 'comprobante_domicilio_emitido_el');
+  }
+
   const validation = safeObject(client?.expediente_validacion);
   const documents = safeObject(validation.documents);
   const currentDoc = safeObject(documents[field]);
   const states = safeObject(client?.documentos_estado);
   const currentState = safeObject(states[field]);
-  const activityDate = normalizeStoredDate(
+
+  return normalizeStoredDate(
     currentState.subido_at
     || currentDoc.subidoAt
     || currentDoc.subido_at
-    || currentState.aprobado_at
-    || currentDoc.aprobadoAt
-    || currentState.revisado_at
-    || currentDoc.revisadoAt
     || client?.created_at
     || client?.created
   );
-  if (field === 'doc_constancia_fiscal') {
-    return activityDate || getClientValidationDate(client, 'constancia_fiscal_emitida_el');
-  }
-  if (field === 'doc_comprobante_domicilio') {
-    return getClientValidationDate(client, 'comprobante_domicilio_emitido_el') || activityDate;
-  }
-  return activityDate;
 }
 
 function hasClientDocumentFile(client, field, documents = safeObject(getClientValidation(client).documents)) {
@@ -505,8 +732,12 @@ function isDocumentOmitted(docState = {}, validationState = {}) {
     || String(validationState?.estado || '').trim().toLowerCase() === 'omitido';
 }
 
-function canClientDocumentBeOmitted(field = '') {
-  return String(field || '').trim() !== 'doc_constancia_fiscal';
+function canClientDocumentBeOmitted(field = '', client = null) {
+  const normalizedField = normalizeClientDocumentFieldKey(field) || String(field || '').trim();
+  if (normalizedField === 'doc_constancia_fiscal') return false;
+  const docConfig = getClientDocumentRequirementByField(client || verifCurrentClient, normalizedField, { includeObserved: true });
+  if (docConfig) return docConfig.allowOmit !== false;
+  return true;
 }
 
 function buildTooltipButtonHtml(text, extraClasses = '', modalTitle = 'Detalle') {
@@ -635,13 +866,14 @@ function summarizeClientDocuments(client) {
   const validation = getClientValidation(client);
   const documents = safeObject(validation.documents);
   const estados = safeObject(client?.documentos_estado);
+  const requiredDocs = getClientRequiredDocumentRequirements(client, { includeObserved: true });
   const rawStatus = String(client?.perfil_estatus || validation.status || '').trim().toLowerCase();
   const constanciaValidity = getClientDocumentValidityConfig('doc_constancia_fiscal');
   const comprobanteValidity = getClientDocumentValidityConfig('doc_comprobante_domicilio');
   const summary = {
     uploadedCount: 0,
     coveredCount: 0,
-    totalCount: CLIENT_DOC_REQUIREMENTS.length,
+    totalCount: requiredDocs.length,
     missingDocs: [],
     pendingDocs: [],
     rejectedDocs: [],
@@ -665,11 +897,11 @@ function summarizeClientDocuments(client) {
     comprobanteOmitted: false
   };
 
-  CLIENT_DOC_REQUIREMENTS.forEach((doc) => {
+  requiredDocs.forEach((doc) => {
     const docState = safeObject(estados[doc.field]);
     const validationState = safeObject(documents[doc.field]);
     const uploaded = hasClientDocumentFile(client, doc.field, documents);
-    const omitted = canClientDocumentBeOmitted(doc.field) && isDocumentOmitted(docState, validationState);
+    const omitted = canClientDocumentBeOmitted(doc.field, client) && isDocumentOmitted(docState, validationState);
     const status = String(docState.status || validationState.estado || '').trim().toLowerCase();
     const reason = String(docState.motivo || validationState.motivo || '').trim();
     const traffic = doc.dateField
@@ -932,7 +1164,7 @@ function getClientDocumentStateMeta(client, field) {
   const docStates = safeObject(client?.documentos_estado);
   const docState = safeObject(docStates[field]);
   const status = String(docState.status || docValidation.estado || '').trim().toLowerCase();
-  const omitted = canClientDocumentBeOmitted(field) && isDocumentOmitted(docState, docValidation);
+  const omitted = canClientDocumentBeOmitted(field, client) && isDocumentOmitted(docState, docValidation);
   const approved = omitted || status === 'aprobado';
   return {
     status,
@@ -972,7 +1204,7 @@ async function fetchServerNowIso() {
     const now = String(data?.now || '').trim();
     if (now && !Number.isNaN(new Date(now).getTime())) return now;
   } catch (_) {}
-  return new Date().toISOString();
+  return window.__serverDateService.nowISO();
 }
 
 async function getSignedFileUrl(collection, recordId, filename) {
@@ -995,6 +1227,30 @@ async function getSignedFileUrl(collection, recordId, filename) {
   } catch (_) {
     return `${String(PB_URL || '').replace(/\/+$/, '')}/api/files/${encodeURIComponent(collection)}/${encodeURIComponent(recordId)}/${encodeURIComponent(String(filename))}`;
   }
+}
+
+async function getVerificationDocumentSignedUrl(docInfo, clientId, fallbackFileName = '') {
+  const info = docInfo && typeof docInfo === 'object' ? docInfo : {};
+  const fileName = String(info.fileName || fallbackFileName || '').trim();
+  const fileCollection = String(info.fileCollection || info.collection || '').trim();
+  const fileRecordId = String(info.fileRecordId || info.recordId || '').trim();
+  const ruta = String(info.ruta || info.path || '').trim();
+
+  if (ruta) {
+    try {
+      const signed = await getStoredDocumentSignedUrl(ruta);
+      if (signed) return signed;
+    } catch (_) {}
+  }
+  if (fileCollection && fileRecordId && fileName) {
+    const signed = await getSignedFileUrl(fileCollection, fileRecordId, fileName);
+    if (signed) return signed;
+  }
+  if (fileName && clientId) {
+    const signed = await getSignedFileUrl('clientes', clientId, fileName);
+    if (signed) return signed;
+  }
+  return '';
 }
 
 async function openClientProfileFile(client, field, label='documento') {
@@ -1278,7 +1534,7 @@ function renderClients(list) {
           return;
       }
       if (ev.target.closest('.client-tooltip-btn')) return;
-      if (currentClientRole === 'verificador') {
+      if (canVerify && !canManage) {
         openVerificationModal(c);
         return;
       }
@@ -1305,6 +1561,7 @@ function renderClients(list) {
 async function loadClients() {
   pmClientsApplyViewStateControls();
   try {
+    await refreshClientDocumentRequirementsConfig();
     const { data, error } = await window.tenantPocketBase.from('clientes')
       .select('id,nombre_completo,telefono,correo,correos_adicionales,rfc,telefonos_adicionales,perfil_estatus,perfil_validado,perfil_completo,expediente_validacion,documentos_estado,constancia_fiscal_emitida_el,comprobante_domicilio_emitido_el,doc_acta_constitutiva,doc_ine,doc_comprobante_domicilio,doc_constancia_fiscal,created_at,updated_at')
       .order('nombre_completo', { ascending: true });
@@ -1485,9 +1742,13 @@ async function approveClient(client) {
   if (!confirm(`¿Estás seguro de que deseas aprobar el expediente de ${client.nombre_completo}?`)) return;
   try {
     const estados = safeObject(client?.documentos_estado);
-    ['doc_acta_constitutiva', 'doc_ine', 'doc_comprobante_domicilio', 'doc_constancia_fiscal'].forEach(field => {
-      const rawValue = Array.isArray(client?.[field]) ? client[field][0] : client?.[field];
-      if (String(rawValue || '').trim()) estados[field] = { status: 'aprobado', motivo: '' };
+    const requiredDocs = getClientRequiredDocumentRequirements(client, { includeObserved: true });
+    const validationDocs = safeObject(getClientValidation(client).documents);
+    requiredDocs.forEach((doc) => {
+      const docInfo = getVerificationDocState(client, doc.field, validationDocs);
+      if (docInfo.uploaded === true || docInfo.omitted === true) {
+        estados[doc.field] = { status: 'aprobado', motivo: '', omitido: docInfo.omitted === true };
+      }
     });
     const { error } = await window.tenantPocketBase.from('clientes').update({ documentos_estado: estados }).eq('id', client.id);
     if (error) throw error;
@@ -1757,7 +2018,7 @@ async function fetchClientQuoteRowsForZip(client) {
 
 function buildClientZipManifest(client, quotes, includeQuotes, failures) {
   return JSON.stringify({
-    generado_en: new Date().toISOString(),
+    generado_en: window.__serverDateService.nowISO(),
     sede: CLIENT_TENANT_SLUG,
     cliente: {
       id: client?.id || '',
@@ -1775,14 +2036,21 @@ function buildClientZipManifest(client, quotes, includeQuotes, failures) {
 }
 
 async function addClientPersonalFilesToZip(client, entries, usedPaths, failures) {
-  for (const doc of CLIENT_DOC_REQUIREMENTS) {
-    const filename = getFirstClientFileName(client?.[doc.field]);
-    if (!filename) continue;
+  const validationDocs = safeObject(getClientValidation(client).documents);
+  const requiredDocs = getClientRequiredDocumentRequirements(client, { includeObserved: true });
+  for (const doc of requiredDocs) {
+    const docInfo = getVerificationDocState(client, doc.field, validationDocs);
+    const filename = String(docInfo.fileName || '').trim();
+    if (!docInfo.uploaded || !filename) continue;
     if (!canAccessClientDocumentFile(client, doc.field)) {
       failures.push({ path: doc.label, error: 'Sin permiso para descargar este documento.' });
       continue;
     }
-    const url = await getSignedFileUrl('clientes', client.id, filename);
+    const url = await getVerificationDocumentSignedUrl(docInfo, String(client?.id || '').trim(), filename);
+    if (!url) {
+      failures.push({ path: doc.label, error: 'No se pudo obtener URL firmada del documento.' });
+      continue;
+    }
     const folder = `informacion_personal/${sanitizeZipSegment(doc.label, doc.field)}`;
     await addRemoteZipFile(entries, usedPaths, `${folder}/${basenameFromPath(filename, doc.field)}`, url, failures);
   }
@@ -2153,9 +2421,10 @@ async function openClientHistory(client) {
 }
 
 async function saveClient() {
-  if (!canManage) return window.showToast?.("No tienes permisos para administrar clientes.", "error");
-
   const id = (document.getElementById('client-id')?.value || '').trim();
+  const isCreate = !id;
+  if (isCreate && !canCreate) return window.showToast?.("Solo Alta Clientes o Admin pueden crear clientes nuevos.", "error");
+  if (!isCreate && !canManage) return window.showToast?.("No tienes permisos para administrar clientes.", "error");
   const nombre = (document.getElementById('client-name')?.value || '').trim();
   const telefono = (document.getElementById('client-phone')?.value || '').replace(/\D/g,'').trim();
   const correo = (document.getElementById('client-email')?.value || '').trim();
@@ -2262,8 +2531,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   const perms = accessCtx.perms || {};
   currentClientRole = role;
   adminVerifierMode = false;
-  installVerifierTenantNavigation(role);
+  installVerifierTenantNavigation();
   canManage = accessCtx.canManage === true;
+  canCreate = accessCtx.canCreate === true;
   canVerify = accessCtx.canVerify === true;
   canSeeAllDocuments = accessCtx.canSeeAllDocuments === true;
   renderAdminVerifierModeBox();
@@ -2278,19 +2548,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     return;
   }
 
-  if (role !== 'admin') {
+  const isAdminAccess = window.HUB_RBAC?.isAdmin ? window.HUB_RBAC.isAdmin() : (window.__HUB_AUTH_CONTEXT?.isAdmin === true);
+  if (!isAdminAccess) {
+    const ordersFallback = ('orders_view' in perms) ? !!perms.orders_view : false;
     const navRules = {
-      'catalog.html': ('catalog_view' in perms) ? !!perms.catalog_view : true,
-      'agenda.html': ('orders_view' in perms) ? !!perms.orders_view : true,
-      'contracts.html': ('orders_view' in perms) ? !!perms.orders_view : true,
-      'receipts.html': ('orders_view' in perms) ? !!perms.orders_view : true,
-      'invoices.html': ('orders_view' in perms) ? !!perms.orders_view : true,
-      'orders.html': ('orders_view' in perms) ? !!perms.orders_view : true,
-      'cotizacion.html': ('orders_view' in perms) ? !!perms.orders_view : true,
-      'reports.html': ('reports_view' in perms) ? !!perms.reports_view : true,
-      'clientes.html': (('clients_view' in perms) || ('clients_manage' in perms) || ('clients_verify' in perms))
-        ? (!!perms.clients_view || !!perms.clients_manage || !!perms.clients_verify)
-        : true
+      'catalog.html': ('catalog_view' in perms) ? !!perms.catalog_view : false,
+      'agenda.html': ordersFallback,
+      'contracts.html': ('contracts_view' in perms) ? !!perms.contracts_view : ordersFallback,
+      'receipts.html': ('receipts_view' in perms) ? !!perms.receipts_view : ordersFallback,
+      'invoices.html': ('invoices_view' in perms) ? !!perms.invoices_view : ordersFallback,
+      'orders.html': ordersFallback,
+      'cotizacion.html': ordersFallback,
+      'reports.html': ('reports_view' in perms) ? !!perms.reports_view : false,
+      'clientes.html': (('clients_view' in perms) || ('clients_manage' in perms) || ('clients_verify' in perms) || ('clients_create' in perms))
+        ? (!!perms.clients_view || !!perms.clients_manage || !!perms.clients_verify || !!perms.clients_create)
+        : false
     };
     Object.keys(navRules).forEach(page => {
       if (!navRules[page]) {
@@ -2302,7 +2574,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const btnNew = document.getElementById('btn-new-client');
   if (btnNew) {
-    if (!canManage) btnNew.classList.add('hidden');
+    if (!canCreate) btnNew.classList.add('hidden');
     btnNew.addEventListener('click', () => openClientModal(null));
   }
 
@@ -2346,16 +2618,33 @@ function getVerificationDocState(client, field, documents = safeObject(getClient
   const docState = safeObject(estados[field]);
   const validationState = safeObject(documents[field]);
   const rawFilename = Array.isArray(client?.[field]) ? client[field][0] : client?.[field];
-  const fileName = String(rawFilename || validationState.fileName || '').trim();
-  const uploaded = !!fileName;
-  const omittedAllowed = canClientDocumentBeOmitted(field);
+  const fileName = String(rawFilename || validationState.fileName || docState.fileName || '').trim();
+  const fallbackCollection = isBuiltInClientDocumentField(field) ? 'clientes' : '';
+  const fallbackRecordId = fallbackCollection === 'clientes' ? String(client?.id || '').trim() : '';
+  const fileCollection = String(validationState.fileCollection || validationState.collection || fallbackCollection).trim();
+  const fileRecordId = String(validationState.fileRecordId || validationState.recordId || fallbackRecordId).trim();
+  const ruta = String(validationState.ruta || validationState.path || '').trim();
+  const uploaded = validationState.uploaded === true || !!fileName;
+  const omittedAllowed = canClientDocumentBeOmitted(field, client);
   const omitted = omittedAllowed && isDocumentOmitted(docState, validationState);
   let status = String(docState.status || validationState.estado || 'pendiente').trim().toLowerCase();
   if (!omittedAllowed && status === 'omitido') status = 'pendiente';
   if (omitted) status = 'omitido';
   const reason = String(docState.motivo || validationState.motivo || '').trim();
   const refreshMeta = getDocumentRefreshMeta(docState, validationState);
-  return { docState, validationState, fileName, uploaded, omitted, status, reason, ...refreshMeta };
+  return {
+    docState,
+    validationState,
+    fileName,
+    fileCollection,
+    fileRecordId,
+    ruta,
+    uploaded,
+    omitted,
+    status,
+    reason,
+    ...refreshMeta
+  };
 }
 
 function setVerificationButtonState(button, enabled) {
@@ -2540,8 +2829,8 @@ async function loadClientDictamenPdfStyle() {
 
 function canSaveClientDictamenTemplate() {
   const auth = window.__HUB_AUTH_CONTEXT || {};
-  const role = normalizeRoleName(auth.role || auth.profile?.role || currentClientRole || '');
-  return auth.isAdmin === true || role === 'admin';
+  const perms = (auth.permissions && typeof auth.permissions === 'object') ? auth.permissions : {};
+  return auth.isAdmin === true || perms.pdf_layout_manage === true || perms.config_manage === true;
 }
 
 async function saveClientDictamenPdfStyle(style) {
@@ -2561,7 +2850,7 @@ async function saveClientDictamenPdfStyle(style) {
   const nextConfig = {
     ...config,
     profiles: { ...profiles, dictamen: normalized },
-    updated_at: new Date().toISOString()
+    updated_at: window.__serverDateService.nowISO()
   };
   if (row?.id) {
     const { error: updateError } = await window.tenantPocketBase
@@ -2833,7 +3122,8 @@ function buildClientDictamenDocumentSnapshot(client) {
   const validation = safeObject(getClientValidation(client));
   const documents = safeObject(validation.documents);
   const states = safeObject(client?.documentos_estado);
-  return CLIENT_DOC_REQUIREMENTS.map((item) => {
+  const requirements = getClientRequiredDocumentRequirements(client, { includeObserved: true });
+  return requirements.map((item) => {
     const docInfo = getVerificationDocState(client, item.field, documents);
     const reviewMeta = getClientDocumentStateMeta(client, item.field);
     const state = safeObject(states[item.field]);
@@ -2953,7 +3243,7 @@ async function persistClientDictamenSnapshot(client, folio, blob, filename, docu
     return { saved: false, reason: 'unchanged', record: latest, documentosHash };
   }
   const actor = getClientDictamenActorMeta();
-  const generatedAt = new Date().toISOString();
+  const generatedAt = window.__serverDateService.nowISO();
 
   const form = new FormData();
   const uploadFile = typeof File !== 'undefined'
@@ -3014,7 +3304,7 @@ async function uploadManualClientDictamen(client, options = {}) {
     return window.showToast?.('El dictamen manual debe ser un PDF.', 'error');
   }
   const actor = getClientDictamenActorMeta();
-  const folio = `MANUAL-${getClientDictamenTenantCode()}-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(client.id).slice(0, 6).toUpperCase()}`;
+  const folio = `MANUAL-${getClientDictamenTenantCode()}-${window.__serverDateService.todayISO().replace(/-/g, '')}-${String(client.id).slice(0, 6).toUpperCase()}`;
   const documentSnapshot = buildClientDictamenDocumentSnapshot(client);
   const documentosHash = await hashClientDictamenSnapshot({
     tenant: CLIENT_TENANT_SLUG,
@@ -3036,7 +3326,7 @@ async function uploadManualClientDictamen(client, options = {}) {
     approved: false,
     cliente_nombre: client?.nombre_completo || '',
     uploaded_by: actor,
-    uploaded_at: new Date().toISOString()
+    uploaded_at: window.__serverDateService.nowISO()
   }));
   form.append('pdf', file, fileName);
   try {
@@ -3074,7 +3364,7 @@ function syncVerificationActionPanel(label, options = {}) {
   const deleteBtn = document.getElementById('btn-verif-delete-doc');
   const hasFile = options.uploaded === true;
   const omitted = options.omitted === true;
-  const allowOmit = options.allowOmit !== false;
+  const allowOmit = false;
   const allowDelete = options.allowDelete !== false;
 
   if (actionPanel) actionPanel.classList.remove('hidden');
@@ -3082,9 +3372,9 @@ function syncVerificationActionPanel(label, options = {}) {
   if (rejectBox) rejectBox.classList.add('hidden');
   if (rejectReason) rejectReason.value = '';
   if (omitToggle) omitToggle.checked = omitted;
-  if (omitWrap) omitWrap.classList.toggle('hidden', !allowOmit);
+  if (omitWrap) omitWrap.classList.add('hidden');
   if (omitToggle) omitToggle.disabled = !allowOmit;
-  if (omitNote) omitNote.classList.toggle('hidden', !allowOmit || !omitted);
+  if (omitNote) omitNote.classList.add('hidden');
   setVerificationButtonState(approveBtn, hasFile && !omitted);
   setVerificationButtonState(rejectBtn, hasFile && !omitted);
   setVerificationButtonState(deleteBtn, hasFile && allowDelete);
@@ -3101,16 +3391,23 @@ function getClientDictamenTenantCode() {
 function formatClientDictamenDateTime(value='') {
   const stamp = String(value || '').trim();
   if (!stamp) return 'Sin fecha registrada';
+  const normalized = stamp.replace('T', ' ').replace('Z', '');
+  const match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?/);
+  if (match) {
+    const [, year, month, day, hh, mm, ss] = match;
+    const datePart = `${day}/${month}/${year}`;
+    if (!hh || !mm) return datePart;
+    return `${datePart} ${hh}:${mm}:${ss || '00'}`;
+  }
   const parsed = new Date(stamp);
   if (Number.isNaN(parsed.getTime())) return stamp;
-  return parsed.toLocaleString('es-MX', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  });
+  const day = String(parsed.getDate()).padStart(2, '0');
+  const month = String(parsed.getMonth() + 1).padStart(2, '0');
+  const year = String(parsed.getFullYear());
+  const hh = String(parsed.getHours()).padStart(2, '0');
+  const mm = String(parsed.getMinutes()).padStart(2, '0');
+  const ss = String(parsed.getSeconds()).padStart(2, '0');
+  return `${day}/${month}/${year} ${hh}:${mm}:${ss}`;
 }
 
 function getClientDictamenRecordDate(record = {}) {
@@ -3415,7 +3712,7 @@ async function deleteVerificationDocument() {
   if (isVerificationDictamenField(verifCurrentDocField)) {
     return window.showToast?.('Los dictamenes se validan desde este panel, pero no se eliminan aqui.', 'error');
   }
-  const docConfig = CLIENT_DOC_REQUIREMENTS.find((item) => item.field === verifCurrentDocField);
+  const docConfig = getClientDocumentRequirementByField(verifCurrentClient, verifCurrentDocField, { includeObserved: true });
   const currentDoc = getVerificationDocState(verifCurrentClient, verifCurrentDocField);
   if (!currentDoc.uploaded) {
     window.showToast?.('Este documento ya no tiene un archivo cargado.', 'error');
@@ -3481,11 +3778,12 @@ function openVerificationModal(client) {
 
   const validation = safeObject(client?.expediente_validacion);
   const docs = safeObject(validation.documents);
-  const requiredFields = CLIENT_DOC_REQUIREMENTS.map((doc) => ({ ...doc }));
+  const requiredFields = getClientRequiredDocumentRequirements(client, { includeObserved: true });
   const listContainer = document.getElementById('verif-docs-list');
   listContainer.innerHTML = '';
 
   requiredFields.forEach(item => {
+    const itemLabel = normalizeClientDocumentLabel(item.label || '', item.field);
     const docInfo = getVerificationDocState(client, item.field, docs);
     let statusLabel = 'Pendiente';
     let statusColor = 'text-orange-500';
@@ -3510,9 +3808,9 @@ function openVerificationModal(client) {
 
     const dateBadgeHtml = item.dateField
       ? `<div class="mt-2 flex flex-wrap gap-2">${docInfo.omitted
-          ? buildOmittedBadgeHtml(item.label.includes('Constancia') ? 'Constancia' : 'Comprobante')
+          ? buildOmittedBadgeHtml(item.field === 'doc_constancia_fiscal' ? 'Constancia' : 'Comprobante')
           : buildTrafficBadgeHtml(
-              item.label.includes('Constancia') ? 'Constancia' : 'Comprobante',
+              item.field === 'doc_constancia_fiscal' ? 'Constancia' : 'Comprobante',
               getClientDocumentValidityReferenceDate(client, item.field),
               getClientDocumentValidityDays(item.field)
             )}</div>`
@@ -3523,24 +3821,14 @@ function openVerificationModal(client) {
       : '';
     const reviewedMeta = getClientDocumentStateMeta(client, item.field);
     const reviewedHtml = reviewedMeta.reviewedByName
-      ? `<p class="mt-2 text-[10px] text-gray-500 font-semibold">${escapeHTML((reviewedMeta.status === 'aprobado' || reviewedMeta.omitted ? 'Aprobó' : 'Revisó') + ': ' + reviewedMeta.reviewedByName + (reviewedMeta.reviewedAt ? ' · ' + safeDate(reviewedMeta.reviewedAt) : ''))}</p>`
+      ? `<p class="mt-2 text-[10px] text-gray-500 font-semibold">${escapeHTML((reviewedMeta.status === 'aprobado' || reviewedMeta.omitted ? 'Aprobó' : 'Revisó') + ': ' + reviewedMeta.reviewedByName + (reviewedMeta.reviewedAt ? ' · ' + formatClientDictamenDateTime(reviewedMeta.reviewedAt) : ''))}</p>`
       : '';
     const reasonHtml = docInfo.status === 'rechazado' && docInfo.reason
       ? `<p class="mt-2 text-[10px] text-red-600 font-semibold">${escapeHTML(docInfo.reason)}</p>`
       : (docInfo.omitted
         ? '<p class="mt-2 text-[10px] text-sky-700 font-semibold">Marcado como omitido por administración.</p>'
         : '');
-    const allowOmit = canClientDocumentBeOmitted(item.field);
-    const omitControlsHtml = allowOmit
-      ? `
-      <div class="flex items-center justify-between gap-3 border-t border-gray-100 px-3 py-2">
-        <span class="text-[10px] font-black uppercase tracking-wide text-gray-400">Omitir requisito</span>
-        <label class="inline-flex items-center gap-2 text-[10px] font-bold text-gray-600">
-          <span>${docInfo.omitted ? 'Activo' : 'Inactivo'}</span>
-          <input type="checkbox" class="verif-card-omit-toggle h-4 w-4 accent-brand-red" data-field="${escapeAttr(item.field)}" data-label="${escapeAttr(item.label)}" ${docInfo.omitted ? 'checked' : ''}>
-        </label>
-      </div>`
-      : '';
+    const omitControlsHtml = '';
 
     const card = document.createElement('div');
     card.className = 'rounded-xl border border-gray-200 bg-white shadow-sm';
@@ -3550,7 +3838,7 @@ function openVerificationModal(client) {
           ${docInfo.uploaded ? '<i class="fa-solid fa-file-invoice"></i>' : '<i class="fa-solid fa-file-circle-xmark"></i>'}
         </div>
         <div class="flex-1 min-w-0">
-          <p class="text-xs font-bold text-gray-800">${item.label}</p>
+          <p class="text-xs font-bold text-gray-800">${itemLabel}</p>
           <p class="text-[10px] text-gray-400 truncate mt-0.5">${escapeHTML(docInfo.fileName || 'No cargado')}</p>
           ${emittedDateHtml}
           ${dateBadgeHtml}
@@ -3562,16 +3850,7 @@ function openVerificationModal(client) {
       ${omitControlsHtml}
     `;
     card.querySelector('.verif-doc-open')?.addEventListener('click', () => {
-      loadVerifDoc(item.field, item.label, docInfo.fileName);
-    });
-    const inlineToggle = card.querySelector('.verif-card-omit-toggle');
-    inlineToggle?.addEventListener('click', (event) => {
-      event.stopPropagation();
-    });
-    inlineToggle?.addEventListener('change', async (event) => {
-      event.stopPropagation();
-      verifCurrentDocField = item.field;
-      await submitVerifDecision(event.target.checked ? 'omitido' : 'pendiente', '');
+      loadVerifDoc(item.field, itemLabel, docInfo.fileName);
     });
     listContainer.appendChild(card);
   });
@@ -3611,7 +3890,7 @@ async function renderVerificationDictamenCards(client, listContainer) {
     const reviewedBy = String(recordMeta.approved_by?.name || recordMeta.reviewed_by?.name || '').trim();
     const reviewedAt = String(recordMeta.approved_at || recordMeta.reviewed_at || '').trim();
     const reviewedHtml = reviewedBy
-      ? `<p class="mt-2 text-[10px] text-gray-500 font-semibold">${escapeHTML(`${meta.status === 'aprobado' ? 'Aprobo' : 'Reviso'}: ${reviewedBy}${reviewedAt ? ` · ${safeDate(reviewedAt)}` : ''}`)}</p>`
+      ? `<p class="mt-2 text-[10px] text-gray-500 font-semibold">${escapeHTML(`${meta.status === 'aprobado' ? 'Aprobo' : 'Reviso'}: ${reviewedBy}${reviewedAt ? ` · ${formatClientDictamenDateTime(reviewedAt)}` : ''}`)}</p>`
       : '';
     const reasonHtml = meta.status === 'rechazado' && recordMeta.reason
       ? `<p class="mt-2 text-[10px] text-red-600 font-semibold">${escapeHTML(recordMeta.reason)}</p>`
@@ -3695,10 +3974,11 @@ async function loadVerifDoc(field, label, fileName) {
   const validation = safeObject(verifCurrentClient?.expediente_validacion);
   const docs = safeObject(validation.documents);
   const docInfo = getVerificationDocState(verifCurrentClient, field, docs);
+  const docConfig = getClientDocumentRequirementByField(verifCurrentClient, field, { includeObserved: true });
   const effectiveFileName = String(fileName || docInfo.fileName || '').trim();
   verifCurrentDocUploaded = docInfo.uploaded;
 
-  document.getElementById('verif-doc-name').textContent = String(label || 'Documento');
+  document.getElementById('verif-doc-name').textContent = normalizeClientDocumentLabel(label || docConfig?.label || 'Documento', field);
   document.getElementById('verif-preview-loading').classList.remove('hidden');
   document.getElementById('verif-preview-iframe').classList.add('hidden');
   document.getElementById('verif-preview-img').classList.add('hidden');
@@ -3707,8 +3987,7 @@ async function loadVerifDoc(field, label, fileName) {
   document.getElementById('verif-preview-iframe').src = '';
   document.getElementById('verif-preview-img').src = '';
 
-  const allowOmit = canClientDocumentBeOmitted(field);
-  syncVerificationActionPanel(label, { uploaded: docInfo.uploaded, omitted: docInfo.omitted, allowOmit });
+  syncVerificationActionPanel(label, { uploaded: docInfo.uploaded, omitted: docInfo.omitted, allowOmit: false });
 
   const previewError = document.getElementById('verif-preview-error');
   const previewErrorText = document.getElementById('verif-preview-error-text');
@@ -3717,9 +3996,7 @@ async function loadVerifDoc(field, label, fileName) {
   if (!effectiveFileName) {
     document.getElementById('verif-preview-loading').classList.add('hidden');
     if (previewErrorText) {
-      previewErrorText.textContent = allowOmit
-        ? 'Este documento no está cargado. Si no aplica para este cliente, puedes marcarlo como omitido.'
-        : 'Este documento es obligatorio y debe cargarse para validar el expediente.';
+      previewErrorText.textContent = 'Este documento no está cargado. Debe subirse para validar el expediente.';
     }
     if (previewDownload) {
       previewDownload.href = '#';
@@ -3730,7 +4007,18 @@ async function loadVerifDoc(field, label, fileName) {
     return;
   }
 
-  const url = await getSignedFileUrl('clientes', verifCurrentClient.id, effectiveFileName);
+  const url = await getVerificationDocumentSignedUrl(docInfo, String(verifCurrentClient?.id || '').trim(), effectiveFileName);
+  if (!url) {
+    document.getElementById('verif-preview-loading').classList.add('hidden');
+    if (previewErrorText) previewErrorText.textContent = 'No se pudo obtener el archivo del documento seleccionado.';
+    if (previewDownload) {
+      previewDownload.href = '#';
+      previewDownload.classList.add('hidden');
+    }
+    previewError.classList.remove('hidden');
+    previewError.classList.add('flex');
+    return;
+  }
   if (previewDownload) {
     previewDownload.href = url;
     previewDownload.classList.remove('hidden');
@@ -3745,13 +4033,10 @@ async function loadVerifDoc(field, label, fileName) {
     const img = document.getElementById('verif-preview-img');
     img.src = url;
     img.classList.remove('hidden');
-  } else if (ext === 'pdf') {
+  } else {
     const ifr = document.getElementById('verif-preview-iframe');
     ifr.src = url;
     ifr.classList.remove('hidden');
-  } else {
-    previewError.classList.remove('hidden');
-    previewError.classList.add('flex');
   }
 }
 
@@ -3844,7 +4129,7 @@ async function submitVerifDecision(status, motivo) {
       return;
     }
 
-    if (status === 'omitido' && !canClientDocumentBeOmitted(verifCurrentDocField)) {
+    if (status === 'omitido' && !canClientDocumentBeOmitted(verifCurrentDocField, verifCurrentClient)) {
       window.showToast?.('La constancia de situación fiscal es obligatoria y no se puede omitir.', 'error');
       return;
     }
@@ -3873,7 +4158,7 @@ async function submitVerifDecision(status, motivo) {
     window.showToast?.(`Documento ${verb} correctamente`, 'success');
 
     verifCurrentClient = Array.isArray(data) ? (data[0] || verifCurrentClient) : (data || verifCurrentClient);
-    const docConfig = CLIENT_DOC_REQUIREMENTS.find((item) => item.field === verifCurrentDocField);
+    const docConfig = getClientDocumentRequirementByField(verifCurrentClient, verifCurrentDocField, { includeObserved: true });
     const nextDoc = getVerificationDocState(verifCurrentClient, verifCurrentDocField);
     openVerificationModal(verifCurrentClient);
     if (docConfig) await loadVerifDoc(verifCurrentDocField, docConfig.label, nextDoc.fileName);
@@ -3883,3 +4168,4 @@ async function submitVerifDecision(status, motivo) {
     window.showToast?.('No se pudo actualizar el estado del documento.', 'error');
   }
 }
+

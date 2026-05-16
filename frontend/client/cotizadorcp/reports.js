@@ -919,47 +919,47 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
     }
 
-    const authCtx = window.HUB_SESSION?.ensureAuth
-        ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, redirectOnFail: true })
-        : await window.PB_SERVICES.auth.bootstrap({ schema: FIN_SCHEMA });
-    const session = authCtx?.session || null;
+    // Use layout auth context as primary source (already resolved by layout.js)
+    const layoutAuth = window.__HUB_AUTH_CONTEXT || window.__HUB_LAYOUT_AUTH_STATE || null;
+    let session = layoutAuth?.session || null;
+    if (!session?.user) {
+        const authCtx = window.HUB_SESSION?.ensureAuth
+            ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, redirectOnFail: true })
+            : await window.PB_SERVICES.auth.bootstrap({ schema: FIN_SCHEMA });
+        session = authCtx?.session || null;
+    }
     if (!session?.user) {
         window.showToast?.('No se encontró una sesión válida. Evitando recarga automática.', 'error');
         return;
     }
 
-    const { data: profile } = await window.globalPocketBase
-        .from('app_users')
-        .select('role, app_metadata')
-        .eq('id', session.user.id)
-        .single();
-
-    const __role = String(profile.role || '').toLowerCase().trim();
-    const __roleHasAccess = (__role === 'admin') || (__role === 'casa_de_piedra');
-    const perms = (__role === 'admin')
-        ? { orders_view: true, reports_view: true }
-        : (__roleHasAccess ? { orders_view: true, reports_view: true } : (profile.app_metadata?.finanzas?.permissions || {}));
-
-    if (!perms.reports_view) {
+    const rbac = window.HUB_RBAC || null;
+    const perms = rbac?.getPermissions
+        ? rbac.getPermissions()
+        : ((layoutAuth?.permissions && typeof layoutAuth.permissions === 'object')
+            ? layoutAuth.permissions
+            : ((session?.user?.effective_permissions && typeof session.user.effective_permissions === 'object')
+                ? session.user.effective_permissions
+                : {}));
+    const canReportsView = rbac?.can ? rbac.can('reports_view') : (perms.reports_view === true);
+    if (!canReportsView) {
         window.showToast?.('No tienes permisos para acceder a Reportes.', 'error');
         return;
     }
 
-    if (__role !== 'admin') {
-        const navRules = {
-            'orders.html': ('orders_view' in perms) ? !!perms.orders_view : true,
-            'reports.html': ('reports_view' in perms) ? !!perms.reports_view : true,
-            'clientes.html': (('clients_view' in perms) || ('clients_manage' in perms))
-                ? (!!perms.clients_view || !!perms.clients_manage)
-                : true
-        };
-        Object.keys(navRules).forEach(page => {
-            if (!navRules[page]) {
-                const link = document.querySelector(`a[href="${page}"]`);
-                if (link) link.classList.add('hidden');
-            }
-        });
-    }
+    const navRules = {
+        'orders.html': rbac?.can ? rbac.can('orders_view') : (perms.orders_view === true),
+        'reports.html': canReportsView,
+        'clientes.html': rbac?.canAny
+            ? rbac.canAny(['clients_view', 'clients_manage'])
+            : (!!perms.clients_view || !!perms.clients_manage)
+    };
+    Object.keys(navRules).forEach(page => {
+        if (!navRules[page]) {
+            const link = document.querySelector(`a[href="${page}"]`);
+            if (link) link.classList.add('hidden');
+        }
+    });
 
     await loadData();
     initFilters();
@@ -968,6 +968,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateConvenioToggleButton();
     window.generateReports();
 });
+
 
 
 

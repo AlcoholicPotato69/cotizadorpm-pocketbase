@@ -94,7 +94,7 @@ Eso deja listos:
 Si todavía quieres que PocketBase publique el frontend directamente, TI debe habilitarlo explícitamente:
 
 ```bat
-production\backend-service.bat set-public-dir frontend\pb_public
+production\backend-service.bat set-public-dir frontend
 ```
 
 No es la ruta recomendada para producción actual.

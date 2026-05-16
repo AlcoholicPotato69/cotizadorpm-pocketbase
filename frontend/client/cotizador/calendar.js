@@ -124,35 +124,36 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!window.tenantPocketBase) window.tenantPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY, { db: { schema: FIN_SCHEMA } });
         if (!window.globalPocketBase) window.globalPocketBase = window.PB_CLIENT.createClient(PB_URL, PB_KEY);
     }
-    const authCtx = window.HUB_SESSION?.ensureAuth
-        ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, redirectOnFail: true })
-        : await window.PB_SERVICES.auth.bootstrap({ schema: FIN_SCHEMA });
-    const session = authCtx?.session || null;
+    // Use layout auth context as primary source (already resolved by layout.js)
+    const layoutAuth = window.__HUB_AUTH_CONTEXT || window.__HUB_LAYOUT_AUTH_STATE || null;
+    let session = layoutAuth?.session || null;
+    if (!session?.user) {
+        const authCtx = window.HUB_SESSION?.ensureAuth
+            ? await window.HUB_SESSION.ensureAuth({ schema: FIN_SCHEMA, redirectOnFail: true })
+            : await window.PB_SERVICES.auth.bootstrap({ schema: FIN_SCHEMA });
+        session = authCtx?.session || null;
+    }
     if (!session?.user) {
         window.showToast?.('No se encontró una sesión válida. Evitando recarga automática.', 'error');
         return;
     }
-    const { data: profile } = await window.globalPocketBase.from('app_users').select('*').eq('id', session.user.id).single();
-    let __role = String(profile.role || '').toLowerCase().trim();
-    if (typeof __role.normalize === 'function') __role = __role.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    __role = __role.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-    if (__role === 'plazamayor' || __role === 'pm' || __role === 'finanzas') __role = 'plaza_mayor';
-    if (__role === 'casadepiedra' || __role === 'cp') __role = 'casa_de_piedra';
-    if (__role === 'administrador' || __role === 'superadmin' || __role === 'super_admin') __role = 'admin';
-    const __roleHasAccess = (__role === 'admin') || (__role === 'plaza_mayor');
 
-    const roleDefaultPerms = {
-        access: true,
-        orders_edit: true,
-        orders_view: true,
-        reports_view: true,
-        clients_view: true,
-        clients_manage: true
+    const rbac = window.HUB_RBAC || null;
+    const rawPerms = rbac?.getPermissions
+        ? rbac.getPermissions()
+        : ((layoutAuth?.permissions && typeof layoutAuth.permissions === 'object')
+            ? layoutAuth.permissions
+            : ((session?.user?.effective_permissions && typeof session.user.effective_permissions === 'object')
+                ? session.user.effective_permissions
+                : {}));
+    myPermissions = {
+        access: rbac?.can ? rbac.can('access') : rawPerms.access === true,
+        orders_view: rbac?.can ? rbac.can('orders_view') : rawPerms.orders_view === true,
+        orders_edit: rbac?.can ? rbac.can('orders_edit') : rawPerms.orders_edit === true,
+        reports_view: rbac?.can ? rbac.can('reports_view') : rawPerms.reports_view === true,
+        clients_view: rbac?.can ? rbac.can('clients_view') : rawPerms.clients_view === true,
+        clients_manage: rbac?.can ? rbac.can('clients_manage') : rawPerms.clients_manage === true
     };
-
-    if (__role === 'admin') myPermissions = { ...roleDefaultPerms };
-    else if (__roleHasAccess) myPermissions = { ...roleDefaultPerms };
-    else myPermissions = (profile.app_metadata?.finanzas?.permissions || { access: false });
 
     if (!myPermissions.access) {
         window.showToast?.('No tienes permisos para acceder a Agenda.', 'error');
@@ -160,22 +161,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // --- SISTEMA DE PERMISOS DE NAVEGACIÓN ---
-    if (__role !== 'admin') {
-        const navRules = {
-            'orders.html': ('orders_view' in myPermissions) ? !!myPermissions.orders_view : true,
-            'cotizacion.html': ('orders_view' in myPermissions) ? !!myPermissions.orders_view : true,
-            'reports.html': ('reports_view' in myPermissions) ? !!myPermissions.reports_view : true,
-            'clientes.html': (('clients_view' in myPermissions) || ('clients_manage' in myPermissions))
-                ? (!!myPermissions.clients_view || !!myPermissions.clients_manage)
-                : true
-        };
-        Object.keys(navRules).forEach(page => {
-            if (!navRules[page]) {
-                const link = document.querySelector(`a[href="${page}"]`);
-                if (link) link.classList.add('hidden');
-            }
-        });
-    }
+    const navRules = {
+        'orders.html': ('orders_view' in myPermissions) ? !!myPermissions.orders_view : false,
+        'cotizacion.html': ('orders_view' in myPermissions) ? !!myPermissions.orders_view : false,
+        'reports.html': ('reports_view' in myPermissions) ? !!myPermissions.reports_view : false,
+        'clientes.html': (('clients_view' in myPermissions) || ('clients_manage' in myPermissions))
+            ? (!!myPermissions.clients_view || !!myPermissions.clients_manage)
+            : false
+    };
+    Object.keys(navRules).forEach(page => {
+        if (!navRules[page]) {
+            const link = document.querySelector(`a[href="${page}"]`);
+            if (link) link.classList.add('hidden');
+        }
+    });
 
     await loadTaxes();
     await loadData();
@@ -542,6 +541,7 @@ window.removeConceptRow = function () { }
 function renderConceptsList() { }
 function autoGenerateOrderNum() { }
 function parseIds(v) { if (!v) return []; if (Array.isArray(v)) return v; if (typeof v === 'string') { try { const parsed = JSON.parse(v); return Array.isArray(parsed) ? parsed : []; } catch (e) { return v.split(',').map(x => x.trim()).filter(Boolean); } } return []; }
+
 
 
 

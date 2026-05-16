@@ -124,24 +124,31 @@
   }
 
   function normalizeRole(value) {
-    const safe = String(value || "").trim().toLowerCase();
+    let safe = String(value || "").trim().toLowerCase();
+    if (!safe) return "";
+    if (typeof safe.normalize === "function") safe = safe.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    safe = safe.replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
     if (!safe) return "";
     if (safe === "administrador" || safe === "superadmin" || safe === "super_admin") return "admin";
-    if (safe === "both" || safe === "ambos" || safe === "user" || safe === "usuario") return "";
-    if (["admin", "plaza_mayor", "casa_de_piedra", "verificador"].indexOf(safe) === -1) return "";
+    return safe;
+  }
+
+  function normalizeTenant(value) {
+    const safe = String(value || "").trim().toLowerCase();
+    if (!safe) return "";
+    if (safe === "pm" || safe === "plaza mayor" || safe === "plaza_mayor") return "plaza_mayor";
+    if (safe === "cp" || safe === "casa de piedra" || safe === "casa_de_piedra") return "casa_de_piedra";
     return safe;
   }
 
   function normalizeUserCandidate(raw) {
     if (!raw || typeof raw !== "object") return null;
     const role = normalizeRole(raw.role || raw.rol);
-    let allowed = Array.isArray(raw.allowed_tenants)
-      ? raw.allowed_tenants.map(function (item) { return String(item || "").toLowerCase().trim(); }).filter(Boolean)
+    const allowed = Array.isArray(raw.allowed_tenants)
+      ? raw.allowed_tenants.map(function (item) { return normalizeTenant(item); }).filter(Boolean)
       : [];
-    if (!allowed.length) {
-      if (role === "admin") allowed = ["plaza_mayor", "casa_de_piedra"];
-      else if (role === "plaza_mayor" || role === "casa_de_piedra") allowed = [role];
-    }
+    const tenantDefault = normalizeTenant(raw.tenant_default || raw.default_tenant || null) || null;
+    if (tenantDefault && allowed.indexOf(tenantDefault) === -1) allowed.push(tenantDefault);
     const email = String(raw.email || raw.correo || "").trim();
     const username = String(
       raw.login_username
@@ -161,8 +168,8 @@
       username: username || "",
       role: role || "",
       allowed_tenants: allowed,
-      tenant_default: raw.tenant_default || raw.default_tenant || null,
-      default_tenant: raw.default_tenant || raw.tenant_default || null
+      tenant_default: tenantDefault,
+      default_tenant: tenantDefault
     };
   }
 
@@ -180,17 +187,12 @@
       source = source.session;
     }
     if (!source) return null;
-    if (source.id || source.email || source.correo) {
-      const userOnly = normalizeUserCandidate(source);
-      return userOnly ? { user: userOnly, __fallback: true } : null;
-    }
     const token = String(source.access_token || source.token || "").trim();
     const user = normalizeUserCandidate(source.user || source.record || source.model || null);
     if (!user) return null;
     const session = { ...source, user: user };
     if (token && !session.access_token) session.access_token = token;
     if (token && !session.token) session.token = token;
-    if (!token) session.__fallback = true;
     return session;
   }
 
@@ -201,19 +203,6 @@
       if (session) return session;
     }
     return null;
-  }
-
-  function buildCachedUser() {
-    const email = String(safeStorageGet("hub_user_cache_email") || "").trim();
-    const username = String(safeStorageGet("hub_user_cache_name") || "").trim();
-    const role = normalizeRole(safeStorageGet("hub_user_cache_role") || "");
-    if (!email && !username) return null;
-    return normalizeUserCandidate({
-      id: email || username || "cached-user",
-      email: email || "",
-      username: username || (email ? email.split("@")[0] : ""),
-      role: role || ""
-    });
   }
 
   function rememberSession(session) {
@@ -465,12 +454,6 @@
     return !!buildSession(readRememberedSession() || readStoredSession() || activeSessionCache || window.__HUB_ACTIVE_SESSION || null);
   }
 
-  function shouldAllowCachedIdentity() {
-    const state = getActivityState();
-    if (state.lastActivityTs <= 0) return false;
-    return state.isInactive !== true;
-  }
-
   function resolveRefreshBaseUrl(options) {
     const opts = (options && typeof options === "object") ? options : {};
     const clients = ensureClients(opts);
@@ -507,13 +490,21 @@
     const mode = opts.mode === "refresh" ? "refresh" : "current";
     const method = mode === "refresh" ? "POST" : "GET";
     const current = buildSession(opts.session || readRememberedSession() || readStoredSession() || null);
+    const hasToken = !!getSessionToken(current);
+
+    // Evita sondas /session/current sin sesion en escenarios cross-origin:
+    // en ese caso el navegador no comparte cookie de auth y siempre responde 401.
+    if (!hasToken && mode === "current" && isCrossOriginBaseUrl(baseUrl)) {
+      return null;
+    }
+
     let response;
 
     try {
       const headers = buildServerSessionHeaders(current);
       response = await fetch(baseUrl + (mode === "refresh" ? "/api/hub/session/refresh" : "/api/hub/session/current"), {
         method: method,
-        credentials: isCrossOriginBaseUrl(baseUrl) && String(headers.Authorization || "").trim() ? "omit" : "include",
+        credentials: isCrossOriginBaseUrl(baseUrl) ? "omit" : "include",
         cache: "no-store",
         headers: headers
       });
@@ -769,14 +760,6 @@
         allowStaleOnError: true
       });
     }
-    if (!session && opts.allowCachedUser === true && shouldAllowCachedIdentity()) {
-      const cachedUser = buildCachedUser();
-      if (cachedUser) {
-        session = { user: cachedUser, __fallback: true };
-        source = "cache_user";
-      }
-    }
-
     if (session) rememberSession(session);
     return {
       session: session || null,
@@ -806,7 +789,7 @@
       lastServerSessionTouchTs = 0;
       return result;
     },
-    /** Retorna la sesión activa desde sessionStorage con fallback legado. */
+    /** Retorna la sesión activa validada contra backend/cookie. */
     async getSession(options) {
       startSessionWatch();
       const session = await ensureFreshSession({

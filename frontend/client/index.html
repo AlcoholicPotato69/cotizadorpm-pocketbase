@@ -7,11 +7,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Marketing Hub - Plaza Mayor</title>
 
-    <link rel="preload" as="script" href="../assets/libs/js/tailwindcss.js">
-    <script src="../assets/libs/js/tailwindcss.js?v=20260426-v3-digital-calendar"></script>
-    <link rel="preload" as="style" href="../assets/libs/css/all.min.css?v=20260426-v3-digital-calendar">
-    <link rel="stylesheet" href="../assets/libs/css/all.min.css?v=20260426-v3-digital-calendar">
+    <link rel="preload" as="script" href="./public/assets/libs/js/tailwindcss.js?v=20260426-v3-digital-calendar">
+    <script src="./public/assets/libs/js/tailwindcss.js?v=20260426-v3-digital-calendar"></script>
+    <link rel="preload" as="style" href="./public/assets/libs/css/all.min.css?v=20260426-v3-digital-calendar">
+    <link rel="stylesheet" href="./public/assets/libs/css/all.min.css?v=20260426-v3-digital-calendar">
     <script src="./js/hub-config.js?v=20260426-v3-digital-calendar"></script>
+    <script src="services/server-date-service.js?v=20260427-v2-server-dates"></script>
     <script src="./services/pb-core.js?v=20260426-v3-digital-calendar"></script>
     <script src="./services/_shared.js?v=20260426-v3-digital-calendar"></script>
     <script src="./services/auth.js?v=20260426-v3-digital-calendar"></script>
@@ -199,9 +200,9 @@
         }
     </style>
     <!-- Local Animations -->
-    <link rel="preload" as="style" href="../assets/libs/css/animate.min.css?v=20260426-v3-digital-calendar">
-    <link rel="stylesheet" href="../assets/libs/css/animate.min.css?v=20260426-v3-digital-calendar">
-    <link rel="icon" type="image/png" href="../assets/img/logo.png">
+    <link rel="preload" as="style" href="./public/assets/libs/css/animate.min.css?v=20260426-v3-digital-calendar">
+    <link rel="stylesheet" href="./public/assets/libs/css/animate.min.css?v=20260426-v3-digital-calendar">
+    <link rel="icon" type="image/png" href="./public/assets/img/logo.png">
 </head>
 
 <body class="bg-brand-gray text-gray-800 min-h-screen flex flex-col">
@@ -215,7 +216,7 @@
             <div class="p-6 md:p-10">
                 <div class="text-center mb-8">
                     <div class="inline-block p-4 rounded-full bg-red-50 mb-4 animate-float">
-                        <img src="../assets/logo.png" class="h-12 object-contain"
+                        <img src="./public/assets/logo.png" class="h-12 object-contain"
                             onerror="if(!this.dataset.fallback){this.dataset.fallback='1';this.src='./public/assets/img/logo.png';return;} this.style.display='none'; this.parentElement.innerHTML='<i class=\'fa-solid fa-layer-group text-3xl text-brand-red\'></i>'">
                     </div>
                     <h2 class="text-3xl font-black text-gray-800 tracking-tight uppercase">Marketing<span
@@ -508,9 +509,12 @@
             return tenant;
         }
 
-        function canOpenControlFromDashboard(role) {
-            const normalized = normalizeDashboardRole(role);
-            return normalized === 'admin' || normalized === 'verificador';
+        function canOpenControlFromDashboard(role, profile) {
+            const normalized = normalizeDashboardRole(role || profile?.role || profile?.rol || '');
+            if (normalized === 'admin' || normalized === 'verificador') return true;
+            const perms = getDashboardFinanzasPermissions(profile || {});
+            if (perms && Object.prototype.hasOwnProperty.call(perms, 'control_view')) return !!perms.control_view;
+            return false;
         }
 
         function isControlDashboardModule(module) {
@@ -555,18 +559,21 @@
 
         function canShowDashboardApp(app, profile, role) {
             const normalizedRole = normalizeDashboardRole(role || profile?.role || profile?.rol || '');
-            if (normalizedRole === 'admin') return true;
             const perms = getDashboardFinanzasPermissions(profile);
             const key = getDashboardModuleKey(app);
             const accessFallback = !perms || perms.access !== false;
 
-            if (normalizedRole === 'verificador') {
-                return ['catalog', 'clients', 'control', 'config'].includes(key);
+            if (normalizedRole === 'admin') return true;
+            if (key === 'control') {
+                const explicit = hasExplicitDashboardPermission(perms, ['control_view']);
+                return explicit === null ? canOpenControlFromDashboard(normalizedRole, profile) : explicit;
             }
-
-            if (key === 'control' || key === 'config') return normalizedRole === 'verificador' || normalizedRole === 'admin';
+            if (key === 'config') {
+                const explicit = hasExplicitDashboardPermission(perms, ['config_manage', 'permissions_manage', 'users_manage', 'catalog_manage', 'pdf_layout_manage']);
+                return explicit === null ? normalizedRole === 'verificador' : explicit;
+            }
             if (key === 'clients') {
-                const explicit = hasExplicitDashboardPermission(perms, ['clients_view', 'clients_manage', 'clients_verify']);
+                const explicit = hasExplicitDashboardPermission(perms, ['clients_view', 'clients_manage', 'clients_verify', 'clients_create']);
                 return explicit === null ? accessFallback : explicit;
             }
             if (key === 'reports') {
@@ -578,7 +585,7 @@
                 return explicit === null ? accessFallback : explicit;
             }
             if (['orders', 'quote', 'agenda', 'contracts', 'receipts', 'invoices'].includes(key)) {
-                const explicit = hasExplicitDashboardPermission(perms, ['orders_view']);
+                const explicit = hasExplicitDashboardPermission(perms, ['orders_view', 'orders_edit', 'contracts_view', 'receipts_view', 'invoices_view']);
                 return explicit === null ? accessFallback : explicit;
             }
             return accessFallback;
@@ -586,43 +593,7 @@
 
         async function filterDashboardAppsByAssignedModules(apps, role, profile) {
             const normalizedRole = normalizeDashboardRole(role || profile?.role || profile?.rol || '');
-            if (normalizedRole === 'admin') return apps;
-
-            let roleData = null;
-            let allModules = null;
-            if (hubPocketBase && normalizedRole) {
-                try {
-                    const roleRes = await hubPocketBase.from('roles').select('allowed_modules').eq('name', normalizedRole).maybeSingle();
-                    roleData = roleRes?.data || null;
-                } catch (_) { }
-                try {
-                    const modulesRes = await hubPocketBase.from('modules').select('*').eq('active', true).order('orden', { ascending: true });
-                    allModules = modulesRes?.data || null;
-                } catch (_) { }
-            }
-
-            const allowedIds = Array.isArray(roleData?.allowed_modules) ? roleData.allowed_modules.map(id => Number(id)) : [];
-            const hasAssignedModules = allowedIds.includes('*') || allowedIds.length > 0;
-            const allowedKeys = new Set();
-            if (hasAssignedModules && Array.isArray(allModules)) {
-                allModules.forEach((module) => {
-                    if (allowedIds.includes('*') || allowedIds.includes(Number(module.id))) {
-                        allowedKeys.add(getDashboardModuleKey(module));
-                    }
-                });
-            }
-
-            return apps.filter((app) => {
-                if (!canShowDashboardApp(app, profile, normalizedRole)) return false;
-                const key = getDashboardModuleKey(app);
-                if (!hasAssignedModules) {
-                    if (normalizedRole === 'verificador') return ['catalog', 'clients', 'control', 'config'].includes(key);
-                    return true;
-                }
-                if (key === 'control') return allowedKeys.has('control') || canOpenControlFromDashboard(normalizedRole);
-                if (key === 'config') return allowedKeys.has('config') || normalizedRole === 'verificador';
-                return allowedKeys.has(key);
-            });
+            return apps.filter((app) => canShowDashboardApp(app, profile, normalizedRole));
         }
 
         async function renderTenantSwitchDashboard(grid, profile, role, buildModulesFn, cardHTMLFn, options = {}) {
@@ -843,8 +814,8 @@
             const defaultGridClass = 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6';
             const dualGridClass = 'grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-6 max-w-5xl mx-auto';
 
-            const pmLogo = (window.HUB_CONFIG && window.HUB_CONFIG.companyLogoUrl) || '../assets/logo.png';
-            const cpLogo = (window.HUB_CONFIG && (window.HUB_CONFIG.companyLogoUrlCP || window.HUB_CONFIG.cpLogoUrl)) || '../assets/logocp.png';
+            const pmLogo = (window.HUB_CONFIG && window.HUB_CONFIG.companyLogoUrl) || './public/assets/logo.png';
+            const cpLogo = (window.HUB_CONFIG && (window.HUB_CONFIG.companyLogoUrlCP || window.HUB_CONFIG.cpLogoUrl)) || './public/assets/logocp.png';
 
             function cardHTML(app) {
                 const colorKey = app.color || 'gray';
@@ -855,7 +826,7 @@
                 const bgColor = isAdminCard ? 'bg-slate-100' : (isCPCard ? 'bg-yellow-50' : getBgColorClass(colorKey));
                 const cardClass = 'module-card ' + (isCPCard ? 'cp ' : '') + 'bg-white rounded-2xl p-6 relative overflow-hidden group cursor-pointer block' + (isAdminCard ? ' border border-slate-200' : '');
 
-                const logoFallback = isCPCard ? '../assets/logocp.png' : '../assets/logo.png';
+                const logoFallback = isCPCard ? './public/assets/logocp.png' : './public/assets/logo.png';
                 const iconHTML = app.logoUrl
                     ? `<img src="${app.logoUrl}" alt="${app.name || ''}" class="h-8 object-contain" onerror="if(!this.dataset.fallback){this.dataset.fallback='1';this.src='${logoFallback}';return;} this.style.display='none';">`
                     : `<i class="fa-solid ${app.icon || 'fa-cube'}"></i>`;
@@ -973,7 +944,7 @@
             }
 
             const profile = p;
-            const userCanOpenControl = canOpenControlFromDashboard(userRole);
+            const userCanOpenControl = canOpenControlFromDashboard(userRole, profile);
             if (userRole === 'verificador') {
                 const verifierTenant = resolveVerifierDashboardTenant(profile);
                 const verifierPrefix = verifierTenant === 'casa_de_piedra' ? 'cotizadorcp' : 'cotizador';
@@ -1051,17 +1022,11 @@
                 return;
             }
 
-            const { data: roleData } = await hubPocketBase.from('roles').select('allowed_modules').eq('name', userRole).single();
-            let allowedModulesIds = userRole === 'admin' ? ['*'] : (roleData?.allowed_modules?.map(id => Number(id)) || []);
+            let moduleCandidates = [];
+            if (hasPM) moduleCandidates = moduleCandidates.concat(buildModules('cotizador', 'red'));
+            if (hasCP) moduleCandidates = moduleCandidates.concat(buildModules('cotizadorcp', 'cp'));
+            let filteredModules = await filterDashboardAppsByAssignedModules(moduleCandidates, userRole, profile);
 
-            const { data: allModules } = await hubPocketBase.from('modules').select('*').eq('active', true).order('orden', { ascending: true });
-
-            const filteredModules = allModules ? allModules.filter(module => {
-                const assigned = allowedModulesIds.includes('*') || allowedModulesIds.includes(Number(module.id));
-                if (!assigned) return false;
-                if (isControlDashboardModule(module)) return userCanOpenControl;
-                return true;
-            }) : [];
             if (userCanOpenControl && !filteredModules.some(isControlDashboardModule)) {
                 const controlPrefix = resolveDashboardControlPrefix(profile);
                 filteredModules.push({
@@ -1070,6 +1035,16 @@
                     icon: 'fa-solid fa-shield-halved',
                     url_path: `${controlPrefix}/control.html`,
                     color: userRole === 'admin' ? 'gray' : 'red'
+                });
+            }
+            if ((userRole === 'admin' || canShowDashboardApp({ name: 'Configuracion', url_path: 'system/config.html' }, profile, userRole))
+                && !filteredModules.some((module) => getDashboardModuleKey(module) === 'config')) {
+                filteredModules.push({
+                    name: 'Configuracion',
+                    description: 'Panel general de administración y permisos.',
+                    icon: 'fa-solid fa-gear',
+                    url_path: 'system/config.html',
+                    color: 'gray'
                 });
             }
 
@@ -1397,7 +1372,7 @@
             if (currentUser) {
                 await hubPocketBase.from('hub_notifications').update({
                     dismissed: true,
-                    dismissed_at: new Date().toISOString()
+                    dismissed_at: (window.__serverDateService ? window.__serverDateService.nowISO() : new Date().toISOString())
                 }).eq('id', id).eq('user_id', currentUser.id);
                 if (dashboardNotifActive && String(dashboardNotifActive.id || '') === String(id || '')) closeDashboardNotifModal();
                 fetchNotifs(currentUser.id);
@@ -1408,7 +1383,7 @@
             if (currentUser && confirm('¿Estás seguro de descartar todas las notificaciones?')) {
                 await hubPocketBase.from('hub_notifications').update({
                     dismissed: true,
-                    dismissed_at: new Date().toISOString()
+                    dismissed_at: (window.__serverDateService ? window.__serverDateService.nowISO() : new Date().toISOString())
                 }).eq('user_id', currentUser.id).eq('dismissed', false);
                 closeDashboardNotifModal();
                 fetchNotifs(currentUser.id);
@@ -1425,7 +1400,7 @@
         }
 
         function playSound() {
-            const audio = new Audio('../assets/sfx/notify.wav');
+            const audio = new Audio('./public/assets/sfx/notify.wav');
             audio.volume = 0.2;
             audio.play().catch(() => { });
         }
@@ -1433,3 +1408,4 @@
 </body>
 
 </html>
+

@@ -6,23 +6,24 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="robots" content="noindex, nofollow">
     <title>Cotización - Casa de Piedra</title>
-    <link rel="preload" as="script" href="../../assets/libs/js/tailwindcss.js">
-    <script src="../../assets/libs/js/tailwindcss.js?v=20260426-v3-digital-calendar"></script>
-    <link rel="preload" as="style" href="../../assets/libs/css/all.min.css?v=20260426-v3-digital-calendar">
-    <link rel="stylesheet" href="../../assets/libs/css/all.min.css?v=20260426-v3-digital-calendar">
-    <script src="../js/hub-config.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../services/pb-core.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../services/_shared.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../services/auth.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../services/clientes.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../services/conceptos.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../services/configuracion.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../services/impuestos.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../services/espacios.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../services/cotizaciones.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../services/documentos.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../services/pb-client.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../../assets/libs/js/fullcalendar.js?v=20260426-v3-digital-calendar"></script>
+    <link rel="preload" as="script" href="../public/assets/libs/js/tailwindcss.js">
+    <script src="../public/assets/libs/js/tailwindcss.js?v=20260427-v1-contracts-fix"></script>
+    <link rel="preload" as="style" href="../public/assets/libs/css/all.min.css?v=20260427-v1-contracts-fix">
+    <link rel="stylesheet" href="../public/assets/libs/css/all.min.css?v=20260427-v1-contracts-fix">
+    <script src="../js/hub-config.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../services/server-date-service.js?v=20260427-v2-server-dates"></script>
+    <script src="../services/pb-core.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../services/_shared.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../services/auth.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../services/clientes.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../services/conceptos.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../services/configuracion.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../services/impuestos.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../services/espacios.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../services/cotizaciones.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../services/documentos.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../services/pb-client.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../public/assets/libs/js/fullcalendar.js?v=20260427-v1-contracts-fix"></script>
     <script>
         tailwind.config = { 
             theme: { 
@@ -53,13 +54,13 @@
         }
     </style>
     <!-- Local Animations -->
-    <link rel="preload" as="style" href="../../assets/libs/css/animate.min.css?v=20260426-v3-digital-calendar">
-    <link rel="stylesheet" href="../../assets/libs/css/animate.min.css?v=20260426-v3-digital-calendar">
+    <link rel="preload" as="style" href="../public/assets/libs/css/animate.min.css?v=20260427-v1-contracts-fix">
+    <link rel="stylesheet" href="../public/assets/libs/css/animate.min.css?v=20260427-v1-contracts-fix">
 </head>
 <body class="bg-brand-gray text-gray-800 flex flex-col min-h-screen">
     
     <script>const TENANT_SCHEMA='finanzas_casadepiedra'; window.__CP_PAGE_MODE='cotizacion';</script>
-    <script src="../js/layout.js?v=20260426-v3-digital-calendar"></script>
+    <script src="../js/layout.js?v=20260427-v1-contracts-fix"></script>
 
     <nav class="bg-brand-red shadow-lg sticky top-16 z-30 border-t border-yellow-600 transition-all duration-300">
         <div class="container mx-auto px-4 flex h-14 items-center text-white gap-2 overflow-x-auto no-scrollbar">
@@ -257,19 +258,12 @@
                             <div id="avail-msg" class="hidden mb-6 p-2 rounded-lg text-center text-xs font-bold border"></div>
                             <div class="space-y-4">
                                 <div>
-                                    <label class="block text-xs font-bold mb-1 text-gray-700 uppercase">Cliente (perfil validado)</label>
-                                    <select id="cli-select" class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm focus:outline-none focus:border-brand-red transition"><option value="">— Selecciona un perfil validado —</option></select>
+                                    <label class="block text-xs font-bold mb-1 text-gray-700 uppercase">Cliente (perfil opcional)</label>
+                                    <select id="cli-select" class="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm focus:outline-none focus:border-brand-red transition"><option value="">— Sin perfil asignado —</option></select>
                                     <input type="hidden" id="cli-id">
-                                    <p id="cli-profile-hint" class="mt-2 text-[11px] font-semibold text-gray-500">Selecciona un perfil validado. Si el cliente aún no existe, activa cotización rápida.</p>
+                                    <p id="cli-profile-hint" class="mt-2 text-[11px] font-semibold text-gray-500">Puedes continuar sin perfil. Si asignas uno, se validará para contrato en la etapa correspondiente.</p>
                                 </div>
-                                <label id="cli-quick-quote-row" class="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 cursor-pointer">
-                                    <input id="cli-quick-quote" type="checkbox" class="mt-0.5 accent-brand-red" onchange="window.toggleQuoteQuickClientMode && window.toggleQuoteQuickClientMode()">
-                                    <span class="block">
-                                        <span class="block text-[11px] font-black uppercase tracking-wide text-amber-800">Cotización rápida</span>
-                                        <span class="block mt-1 text-[11px] font-semibold text-amber-900/80">Muestra la captura manual y crea un perfil nuevo pendiente para completar su expediente después.</span>
-                                    </span>
-                                </label>
-                                <div id="cli-manual-fields" class="hidden space-y-4">
+                                <div id="cli-manual-fields" class="space-y-4">
                                     <div><label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Cliente</label><input id="cli-name" placeholder="Nombre completo o Empresa" class="w-full border border-gray-200 rounded-lg p-2.5 text-sm font-bold text-gray-800 outline-none focus:border-brand-red transition"></div>
                                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4"><input id="cli-phone" placeholder="Teléfono (10 dígitos)" class="w-full border border-gray-200 rounded-lg p-2.5 text-xs outline-none focus:border-brand-red transition"><input id="cli-email" placeholder="Correo electrónico" class="w-full border border-gray-200 rounded-lg p-2.5 text-xs outline-none focus:border-brand-red transition"></div><input id="cli-rfc" placeholder="RFC (Opcional)" class="w-full border border-gray-200 rounded-lg p-2.5 text-xs outline-none focus:border-brand-red transition uppercase">
                                 </div>
@@ -347,6 +341,7 @@
                             <select id="mgr-digital-media-type" class="w-full border border-gray-200 rounded-lg p-2.5 text-sm font-bold bg-white focus:border-brand-red outline-none">
                                 <option value="imagen">Imagen</option>
                                 <option value="video">Video</option>
+                                <option value="imagen_video">Imagen / Video</option>
                             </select>
                         </div>
                         <div>
@@ -507,9 +502,10 @@
     </div>
 
     <div id="generic-confirm-modal" class="fixed inset-0 bg-black/80 z-[9000] hidden flex items-center justify-center p-4"></div>
-    <script src="cotizacion.js?v=20260426-v3-digital-calendar"></script>
+    <script src="cotizacion.js?v=20260427-v1-contracts-fix"></script>
 </body>
 </html>
+
 
 
 

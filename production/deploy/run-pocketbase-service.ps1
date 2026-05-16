@@ -88,16 +88,16 @@ function Convert-BindToTargetUrl {
         return 'http://127.0.0.1:8090'
     }
 
-    $host = $parts[0].Trim()
+    $bindHost = $parts[0].Trim()
     $port = $parts[$parts.Length - 1].Trim()
     if ([string]::IsNullOrWhiteSpace($port)) {
         $port = '8090'
     }
-    if ($host -eq '0.0.0.0' -or $host -eq '+') {
-        $host = '127.0.0.1'
+    if ($bindHost -eq '0.0.0.0' -or $bindHost -eq '+') {
+        $bindHost = '127.0.0.1'
     }
 
-    return "http://$host`:$port"
+    return "http://$bindHost`:$port"
 }
 
 function Get-UrlOrigin {
@@ -170,22 +170,22 @@ function Build-CorsOrigins {
         $origins.Add($backendOrigin)
     }
 
-    $host = Get-UrlHost -Url $BackendUrl
-    if ([string]::IsNullOrWhiteSpace($host)) {
+    $backendHost = Get-UrlHost -Url $BackendUrl
+    if ([string]::IsNullOrWhiteSpace($backendHost)) {
         $targetUrl = Convert-BindToTargetUrl -BindAddr $BindAddr
-        $host = Get-UrlHost -Url $targetUrl
+        $backendHost = Get-UrlHost -Url $targetUrl
     }
 
-    if ($host -eq '0.0.0.0' -or $host -eq '+') {
-        $host = '127.0.0.1'
+    if ($backendHost -eq '0.0.0.0' -or $backendHost -eq '+') {
+        $backendHost = '127.0.0.1'
     }
 
-    if (-not [string]::IsNullOrWhiteSpace($host)) {
-        $origins.Add("http://${host}:*")
-        $origins.Add("https://${host}:*")
+    if (-not [string]::IsNullOrWhiteSpace($backendHost)) {
+        $origins.Add("http://${backendHost}:*")
+        $origins.Add("https://${backendHost}:*")
     }
 
-    if ($host -eq '127.0.0.1' -or $host -eq 'localhost' -or [string]::IsNullOrWhiteSpace($host)) {
+    if ($backendHost -eq '127.0.0.1' -or $backendHost -eq 'localhost' -or [string]::IsNullOrWhiteSpace($backendHost)) {
         $origins.Add('http://127.0.0.1:*')
         $origins.Add('https://127.0.0.1:*')
         $origins.Add('http://localhost:*')
@@ -209,7 +209,7 @@ function Resolve-PublicDirPath {
         [string]$ConfiguredPath
     )
 
-    $publicDirValue = 'frontend\pb_public'
+    $publicDirValue = 'frontend'
     if (-not [string]::IsNullOrWhiteSpace($ConfiguredPath)) {
         $publicDirValue = $ConfiguredPath.Trim()
     }
@@ -283,6 +283,27 @@ function Stop-ProcessSafe {
     }
 }
 
+function Test-BackendHealth {
+    param([string]$BaseUrl)
+
+    if ([string]::IsNullOrWhiteSpace($BaseUrl)) {
+        return $false
+    }
+
+    $safeBase = $BaseUrl.Trim().TrimEnd('/')
+    if ([string]::IsNullOrWhiteSpace($safeBase)) {
+        return $false
+    }
+
+    $healthUrl = "$safeBase/api/health"
+    try {
+        $resp = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 3
+        return ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 300)
+    } catch {
+        return $false
+    }
+}
+
 if (-not (Test-Path $pbExe)) {
     Write-RunnerLog "ERROR: pocketbase.exe no encontrado en $pbExe"
     exit 2
@@ -300,6 +321,11 @@ $httpsPortValue = Get-ConfValue -Map $cfg -Key 'HTTPS_PORT' -Default '9443'
 $httpsPort = 9443
 if (-not [int]::TryParse($httpsPortValue, [ref]$httpsPort)) {
     $httpsPort = 9443
+}
+
+if (Test-BackendHealth -BaseUrl $backendUrl) {
+    Write-RunnerLog "PocketBase ya responde en $backendUrl. Se omite reinicio."
+    exit 0
 }
 
 $publicDirDisabled = Test-PublicDirDisabled -ConfiguredPath $publicDirRaw
@@ -329,21 +355,21 @@ $pbArgsPrimary = @(
     "--http=$bindAddr",
     '--origins',
     ($corsAllowedOrigins -join ','),
-    "--dir=$pbDataDir",
-    "--hooksDir=$pbHooksDir",
-    "--migrationsDir=$pbMigrationsDir"
+    "--dir=`"$pbDataDir`"",
+    "--hooksDir=`"$pbHooksDir`"",
+    "--migrationsDir=`"$pbMigrationsDir`""
 )
 $pbArgsFallback = @(
     'serve',
     '--origins',
     ($corsAllowedOrigins -join ','),
-    "--dir=$pbDataDir",
-    "--hooksDir=$pbHooksDir",
-    "--migrationsDir=$pbMigrationsDir"
+    "--dir=`"$pbDataDir`"",
+    "--hooksDir=`"$pbHooksDir`"",
+    "--migrationsDir=`"$pbMigrationsDir`""
 )
 if (-not $publicDirDisabled) {
-    $pbArgsPrimary += "--publicDir=$publicDir"
-    $pbArgsFallback += "--publicDir=$publicDir"
+    $pbArgsPrimary += "--publicDir=`"$publicDir`""
+    $pbArgsFallback += "--publicDir=`"$publicDir`""
 }
 
 $pbProc = $null

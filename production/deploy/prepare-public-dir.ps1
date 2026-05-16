@@ -1,6 +1,6 @@
 param(
     [string]$RootDir = '',
-    [string]$PublicDir = 'frontend\pb_public'
+    [string]$PublicDir = 'frontend\public_runtime'
 )
 
 $ErrorActionPreference = 'Stop'

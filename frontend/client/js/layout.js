@@ -54,13 +54,13 @@
 
     
 
-    const NOTIFY_SOUND = pathPrefix + '../assets/sfx/notify.wav';
+    const NOTIFY_SOUND = pathPrefix + 'public/assets/sfx/notify.wav';
     // Ruta / logos según tenant (Plaza Mayor vs Casa de Piedra)
     const _p = window.location.pathname || '';
     const _isCP = /\/cotizadorcp(\/|$)/.test(_p) || (window.location.href || '').includes('cotizadorcp');
     const TENANT_SCHEMA = _isCP ? 'finanzas_casadepiedra' : FIN_SCHEMA;
-    const pmLogo = (window.HUB_CONFIG && window.HUB_CONFIG.companyLogoUrl) || '../assets/logo.png';
-    const cpLogo = (window.HUB_CONFIG && (window.HUB_CONFIG.companyLogoUrlCP || window.HUB_CONFIG.cpLogoUrl)) || '../assets/logocp.png';
+    const pmLogo = (window.HUB_CONFIG && window.HUB_CONFIG.companyLogoUrl) || '../public/assets/img/logo.png';
+    const cpLogo = (window.HUB_CONFIG && (window.HUB_CONFIG.companyLogoUrlCP || window.HUB_CONFIG.cpLogoUrl)) || '../public/assets/img/logocp.png';
     const layoutLogoSrc = _isCP ? cpLogo : pmLogo;
     const layoutBrandName = _isCP ? 'CASA DE PIEDRA' : 'PLAZA MAYOR';
     const layoutAccentHex = _isCP ? '#c1621e' : '#D32F2F';
@@ -667,6 +667,225 @@
     let layoutAuthEnsurePromise = null;
     const layoutAuthSubscribers = new Set();
     let layoutHeartbeatBound = false;
+    const LAYOUT_CORE_PERMISSION_KEYS = Object.freeze([
+        'access',
+        'catalog_view',
+        'catalog_manage',
+        'orders_view',
+        'orders_edit',
+        'quotes_delete',
+        'contracts_view',
+        'contracts_generate',
+        'receipts_view',
+        'invoices_view',
+        'reports_view',
+        'clients_view',
+        'clients_manage',
+        'clients_create',
+        'clients_verify',
+        'clients_all_docs',
+        'control_view',
+        'pdf_layout_manage',
+        'config_manage',
+        'users_manage',
+        'roles_manage',
+        'permissions_manage'
+    ]);
+
+    function getLayoutAuthContextForRbac(inputCtx) {
+        if (inputCtx && typeof inputCtx === 'object') return inputCtx;
+        const payloadCtx = window.__HUB_LAYOUT_AUTH_STATE?.context;
+        if (payloadCtx && typeof payloadCtx === 'object') return payloadCtx;
+        return window.__HUB_AUTH_CONTEXT || null;
+    }
+
+    function resolveRbacTenantFromRoute(routeCtx) {
+        const route = routeCtx && typeof routeCtx === 'object' ? routeCtx : resolveLayoutRouteContext();
+        if (route?.tenant) return normalizeTenantSlug(route.tenant);
+        return normalizeTenantSlug(window.__HUB_AUTH_CONTEXT?.route?.tenant || '');
+    }
+
+    function resolveRbacTenantFromOptions(opts = {}, authCtx = null) {
+        const rawOpts = opts && typeof opts === 'object' ? opts : {};
+        const tenantFromOpts = normalizeTenantSlug(rawOpts.tenant);
+        if (tenantFromOpts) return tenantFromOpts;
+        const routeTenant = resolveRbacTenantFromRoute(rawOpts.routeCtx);
+        if (routeTenant) return routeTenant;
+        const context = authCtx && typeof authCtx === 'object' ? authCtx : null;
+        const contextRouteTenant = normalizeTenantSlug(context?.route?.tenant || '');
+        if (contextRouteTenant) return contextRouteTenant;
+        return '';
+    }
+
+    function ensureBooleanPermissionMap(input, { includeCore = true } = {}) {
+        const src = input && typeof input === 'object' ? input : {};
+        const out = {};
+        Object.keys(src).forEach((key) => {
+            out[key] = src[key] === true;
+        });
+        if (includeCore) {
+            LAYOUT_CORE_PERMISSION_KEYS.forEach((key) => {
+                if (!hasOwn(out, key)) out[key] = false;
+            });
+        }
+        return out;
+    }
+
+    function resolveContextPermissionMap(authCtx, tenant) {
+        const context = authCtx && typeof authCtx === 'object' ? authCtx : {};
+        const map = context.permissionMap && typeof context.permissionMap === 'object'
+            ? context.permissionMap
+            : {};
+        if (tenant && map[tenant] && typeof map[tenant] === 'object') {
+            return ensureBooleanPermissionMap(map[tenant]);
+        }
+        if (!tenant && context.permissions && typeof context.permissions === 'object') {
+            return ensureBooleanPermissionMap(context.permissions);
+        }
+        if (context.permissions && typeof context.permissions === 'object') {
+            return ensureBooleanPermissionMap(context.permissions);
+        }
+        const profile = context.profile && typeof context.profile === 'object' ? context.profile : {};
+        if (tenant && profile.effective_permissions_map && typeof profile.effective_permissions_map === 'object') {
+            const explicit = profile.effective_permissions_map[tenant];
+            if (explicit && typeof explicit === 'object') return ensureBooleanPermissionMap(explicit);
+        }
+        if (profile.effective_permissions && typeof profile.effective_permissions === 'object') {
+            return ensureBooleanPermissionMap(profile.effective_permissions);
+        }
+        return ensureBooleanPermissionMap({});
+    }
+
+    function resolveRbacCan(action, options = {}) {
+        const safeAction = String(action || '').trim();
+        if (!safeAction) return false;
+        const authCtx = getLayoutAuthContextForRbac(options.context);
+        if (!authCtx?.session?.user) return false;
+        const tenant = resolveRbacTenantFromOptions(options, authCtx);
+        if (tenant && authCtx.tenantAllowed === false && resolveRbacTenantFromRoute(authCtx.route) === tenant) return false;
+        const perms = resolveContextPermissionMap(authCtx, tenant);
+        const tenantPermissionMap = authCtx.permissionMap && typeof authCtx.permissionMap === 'object'
+            ? authCtx.permissionMap
+            : {};
+        const allowedTenants = Array.isArray(authCtx.allowedTenants) ? authCtx.allowedTenants : [];
+        if (safeAction === 'access') {
+            if (tenant && Array.isArray(authCtx.allowedTenants) && authCtx.allowedTenants.length) {
+                return authCtx.allowedTenants.includes(tenant) && perms.access === true;
+            }
+            if (!tenant) {
+                const tenantKeys = Object.keys(tenantPermissionMap);
+                for (let i = 0; i < tenantKeys.length; i += 1) {
+                    const tenantKey = normalizeTenantSlug(tenantKeys[i]);
+                    if (!tenantKey) continue;
+                    if (allowedTenants.length && !allowedTenants.includes(tenantKey)) continue;
+                    const tenantPerms = resolveContextPermissionMap(authCtx, tenantKey);
+                    if (tenantPerms.access === true) return true;
+                }
+            }
+            return perms.access === true;
+        }
+        if (authCtx.isAdmin === true) return true;
+        if (hasOwn(perms, safeAction)) return perms[safeAction] === true;
+        if (!tenant) {
+            const tenantKeys = Object.keys(tenantPermissionMap);
+            for (let i = 0; i < tenantKeys.length; i += 1) {
+                const tenantKey = normalizeTenantSlug(tenantKeys[i]);
+                if (!tenantKey) continue;
+                if (allowedTenants.length && !allowedTenants.includes(tenantKey)) continue;
+                const tenantPerms = resolveContextPermissionMap(authCtx, tenantKey);
+                if (tenantPerms[safeAction] === true) return true;
+            }
+        }
+        return false;
+    }
+
+    function resolveRbacCanAny(actions, options = {}) {
+        const list = Array.isArray(actions) ? actions : [actions];
+        return list.some((action) => resolveRbacCan(action, options));
+    }
+
+    function resolveRbacCanAll(actions, options = {}) {
+        const list = Array.isArray(actions) ? actions : [actions];
+        if (!list.length) return false;
+        return list.every((action) => resolveRbacCan(action, options));
+    }
+
+    function applyRbacVisibilityToNode(node, visible) {
+        if (!(node instanceof Element)) return;
+        node.classList.toggle('hidden', !visible);
+        node.setAttribute('aria-hidden', visible ? 'false' : 'true');
+    }
+
+    function parseRbacPermissionList(raw) {
+        return String(raw || '')
+            .split(',')
+            .map((item) => String(item || '').trim())
+            .filter(Boolean);
+    }
+
+    function refreshRbacDomBindings(root = document) {
+        const scope = root && typeof root.querySelectorAll === 'function' ? root : document;
+        scope.querySelectorAll('[data-rbac-any]').forEach((node) => {
+            const actions = parseRbacPermissionList(node.getAttribute('data-rbac-any'));
+            const tenant = node.getAttribute('data-rbac-tenant') || '';
+            const visible = resolveRbacCanAny(actions, tenant ? { tenant } : {});
+            applyRbacVisibilityToNode(node, visible);
+        });
+        scope.querySelectorAll('[data-rbac-all]').forEach((node) => {
+            const actions = parseRbacPermissionList(node.getAttribute('data-rbac-all'));
+            const tenant = node.getAttribute('data-rbac-tenant') || '';
+            const visible = resolveRbacCanAll(actions, tenant ? { tenant } : {});
+            applyRbacVisibilityToNode(node, visible);
+        });
+    }
+
+    window.HUB_RBAC = {
+        getContext(context) {
+            return getLayoutAuthContextForRbac(context);
+        },
+        getPermissions(options = {}) {
+            const authCtx = getLayoutAuthContextForRbac(options.context);
+            const tenant = resolveRbacTenantFromOptions(options, authCtx);
+            return resolveContextPermissionMap(authCtx, tenant);
+        },
+        can(action, options = {}) {
+            return resolveRbacCan(action, options);
+        },
+        canAny(actions, options = {}) {
+            return resolveRbacCanAny(actions, options);
+        },
+        canAll(actions, options = {}) {
+            return resolveRbacCanAll(actions, options);
+        },
+        isAdmin(context) {
+            const authCtx = getLayoutAuthContextForRbac(context);
+            return authCtx?.isAdmin === true;
+        },
+        guard(actions, options = {}) {
+            const opts = options && typeof options === 'object' ? options : {};
+            const modeAll = opts.requireAll === true;
+            const allowed = modeAll
+                ? resolveRbacCanAll(actions, opts)
+                : resolveRbacCanAny(actions, opts);
+            if (allowed) return true;
+            const redirectUrl = String(opts.redirectUrl || (pathPrefix + 'index.html')).trim();
+            const shouldRedirect = opts.redirect !== false;
+            if (opts.toast !== false && typeof window.showToast === 'function') {
+                window.showToast(String(opts.message || 'No tienes permisos para acceder a este módulo.'), 'error');
+            }
+            if (shouldRedirect && redirectUrl) {
+                if (typeof window.__HUB_SAFE_NAVIGATE === 'function') {
+                    window.__HUB_SAFE_NAVIGATE(redirectUrl, { allowSamePage: true });
+                } else {
+                    window.location.href = redirectUrl;
+                }
+            }
+            return false;
+        },
+        refreshBindings(root) {
+            refreshRbacDomBindings(root);
+        }
+    };
 
     function buildLayoutAuthEventPayload(context, reason = 'update') {
         const authCtx = context || null;
@@ -690,6 +909,7 @@
     function notifyLayoutAuthSubscribers(context, reason = 'update') {
         const payload = buildLayoutAuthEventPayload(context, reason);
         try { window.__HUB_LAYOUT_AUTH_STATE = payload; } catch (_) {}
+        try { window.HUB_RBAC?.refreshBindings?.(); } catch (_) {}
         layoutAuthSubscribers.forEach((listener) => {
             try { listener(payload); } catch (_) {}
         });
@@ -738,9 +958,6 @@
         const profile = authCtx?.profile || sessionUser || null;
         const displayName = resolveLayoutDisplayName(profile, sessionUser);
         const email = String(sessionUser?.email || profile?.email || '').trim();
-        if (authCtx?.isAdmin) localStorage.setItem('hub_user_cache_role', 'admin');
-        else if (authCtx?.role) localStorage.setItem('hub_user_cache_role', String(authCtx.role || ''));
-        else localStorage.removeItem('hub_user_cache_role');
         localStorage.setItem('hub_user_cache_name', displayName || 'Usuario');
         localStorage.setItem('hub_user_cache_email', email || '');
         updateHeaderInfo(displayName, email);
@@ -755,7 +972,6 @@
         myId = String(ctx?.user?.id || ctx?.session?.user?.id || '').trim();
         if (ctx?.session?.user) syncLayoutIdentityCache(ctx);
         applyLayoutNavPermissions(ctx);
-        if (ctx?.canAccessCurrentRoute) persistLastGoodLayoutAuth(ctx);
         publishLayoutReady(ctx, { reason });
         return ctx;
     }
@@ -809,7 +1025,6 @@
                 try {
                     const authState = await window.PB_SERVICES?.auth?.bootstrap?.({
                         schema: opts.schema || ((typeof TENANT_SCHEMA !== 'undefined' && TENANT_SCHEMA) ? TENANT_SCHEMA : FIN_SCHEMA),
-                        allowCachedUser: opts.allowCachedUser === true,
                         retries: 1,
                         delayMs: 120
                     });
@@ -820,12 +1035,6 @@
             }
 
             if (!session?.user) {
-                const stableFallback = opts.allowStableFallback === true
-                    ? buildStableLayoutFallback(routeCtx, opts.forceRefresh === true ? 'manager_refresh_fallback' : 'manager_fallback')
-                    : null;
-                if (stableFallback) {
-                    return applyResolvedLayoutAuthContext(stableFallback, { reason: 'layout_manager_fallback' });
-                }
                 publishLayoutReady({
                     route: routeCtx,
                     session: null,
@@ -872,8 +1081,6 @@
             });
 
             if (authCtx.canAccessCurrentRoute === false && opts.requireAccess !== false) {
-                const stableFallback = buildStableLayoutFallback(routeCtx, 'layout_manager_access_guard');
-                if (stableFallback) return applyResolvedLayoutAuthContext(stableFallback, { reason: 'layout_manager_access_fallback' });
                 if (opts.redirectOnFail !== false && !shouldDeferSystemPageAuth(routeCtx)) {
                     window.__HUB_PAGE_ACCESS_DENIED = true;
                     window.__HUB_PAGE_ACCESS_DENIED_REASON = authCtx.tenantAllowed ? 'insufficient_permissions' : 'tenant_forbidden';
@@ -898,8 +1105,6 @@
             resolveManagedLayoutAuthContext({
                 routeCtx,
                 requireAccess: false,
-                allowStableFallback: false,
-                allowCachedUser: false,
                 forceRefresh: true,
                 redirectOnFail: !routeCtx?.isLoginPage
             }).catch(function () {
@@ -957,28 +1162,33 @@
         },
         async logout(options = {}) {
             const opts = (options && typeof options === 'object') ? options : {};
-            if (layoutClient) {
-                localStorage.removeItem('hub_user_cache_name');
-                localStorage.removeItem('hub_user_cache_email');
-                localStorage.removeItem('hub_user_cache_role');
-                localStorage.removeItem(SHARED_AUTH_ACTIVITY_KEY);
-                writeLayoutSessionState(LAYOUT_LAST_GOOD_AUTH_KEY, null);
-                try { window.currentUserProfile = null; } catch (_) {}
-                try { window.currentUserPermissions = {}; } catch (_) {}
-                publishLayoutReady({
-                    route: resolveLayoutRouteContext(),
-                    session: null,
-                    user: null,
-                    profile: null,
-                    permissions: {},
-                    role: '',
-                    tenantAllowed: false,
-                    isAdmin: false,
-                    canAccessCurrentRoute: false,
-                    deniedReason: 'logout'
-                }, { reason: 'logout' });
-                await layoutClient.auth.signOut();
-            }
+            localStorage.removeItem('hub_user_cache_name');
+            localStorage.removeItem('hub_user_cache_email');
+            localStorage.removeItem('hub_user_cache_role');
+            localStorage.removeItem(SHARED_AUTH_ACTIVITY_KEY);
+            writeLayoutSessionState(LAYOUT_LAST_GOOD_AUTH_KEY, null);
+            try { sessionStorage.removeItem(SHARED_AUTH_ACTIVITY_KEY); } catch (_) {}
+            try { window.currentUserProfile = null; } catch (_) {}
+            try { window.currentUserPermissions = {}; } catch (_) {}
+            publishLayoutReady({
+                route: resolveLayoutRouteContext(),
+                session: null,
+                user: null,
+                profile: null,
+                permissions: {},
+                role: '',
+                tenantAllowed: false,
+                isAdmin: false,
+                canAccessCurrentRoute: false,
+                deniedReason: 'logout'
+            }, { reason: 'logout' });
+            try {
+                if (layoutClient && layoutClient.auth && typeof layoutClient.auth.signOut === 'function') {
+                    await layoutClient.auth.signOut();
+                } else {
+                    await window.PB_SERVICES?.auth?.logout?.();
+                }
+            } catch (_) {}
             if (opts.redirect !== false) {
                 window.location.href = (opts.redirectUrl || (pathPrefix + 'index.html'));
             }
@@ -1008,6 +1218,7 @@
         if (typeof safe.normalize === 'function') safe = safe.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
         safe = safe.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
         if (safe === 'administrador' || safe === 'superadmin' || safe === 'super_admin') return 'admin';
+        if (safe === 'alta_clientes' || safe === 'alta_clientes_role' || safe === 'alta_de_clientes') return 'alta_clientes';
         if (safe === 'both' || safe === 'ambos' || safe === 'user' || safe === 'usuario') return '';
         if (safe === 'plazamayor' || safe === 'plaza_mayor' || safe === 'pm' || safe === 'finanzas') return 'plaza_mayor';
         if (safe === 'casadepiedra' || safe === 'casa_de_piedra' || safe === 'cp') return 'casa_de_piedra';
@@ -1023,7 +1234,7 @@
         return safe;
     }
 
-    function normalizeTenantList(input, role, fallbackTenant) {
+    function normalizeTenantList(input, fallbackTenant) {
         const values = Array.isArray(input)
             ? input
             : (input == null || input === '' ? [] : [input]);
@@ -1038,13 +1249,6 @@
             }
             unique.add(normalized);
         });
-        const normalizedRole = normalizeLayoutRole(role);
-        if (normalizedRole === 'admin' || normalizedRole === 'verificador') {
-            unique.add('plaza_mayor');
-            unique.add('casa_de_piedra');
-        } else if (normalizedRole === 'plaza_mayor' || normalizedRole === 'casa_de_piedra') {
-            unique.add(normalizedRole);
-        }
         const fallback = normalizeTenantSlug(fallbackTenant);
         if (fallback && fallback !== 'ambos') unique.add(fallback);
         return Array.from(unique);
@@ -1071,10 +1275,9 @@
     }
 
     const LAYOUT_LAST_GOOD_AUTH_KEY = 'hub_layout_last_good_auth_v1';
+    const SHARED_AUTH_ACTIVITY_KEY = 'hub_auth_last_activity_v1';
     const LAYOUT_ROUTE_STABILITY_KEY = 'hub_layout_route_stability_v1';
     const LAYOUT_SCROLL_STATE_PREFIX = 'hub_layout_scroll_v1:';
-    const SHARED_AUTH_ACTIVITY_KEY = 'hub_auth_last_activity_v1';
-    const LAYOUT_AUTH_MAX_IDLE_MS = 2 * 60 * 60 * 1000;
     const LAYOUT_SCROLL_RESTORE_STEPS = [0, 120, 320, 700, 1400];
     let layoutScrollSaveRaf = 0;
 
@@ -1097,14 +1300,6 @@
             }
             sessionStorage.setItem(key, JSON.stringify(value));
         } catch (_) {}
-    }
-
-    function readSharedAuthActivityTs() {
-        try {
-            return Math.max(0, Number(localStorage.getItem(SHARED_AUTH_ACTIVITY_KEY) || 0) || 0);
-        } catch (_) {
-            return 0;
-        }
     }
 
     function currentLayoutScrollKey() {
@@ -1170,11 +1365,6 @@
         return true;
     }
 
-    function resolveLayoutAuthWindowMs() {
-        const declared = Number(window.PB_SERVICES?.auth?.inactivityWindowMs || 0) || 0;
-        return Math.max(LAYOUT_AUTH_MAX_IDLE_MS, declared);
-    }
-
     function markLayoutRouteLoad(routeCtx) {
         const now = Date.now();
         const currentPath = String(routeCtx?.path || window.location.pathname || '').toLowerCase();
@@ -1198,133 +1388,91 @@
         };
     }
 
-    function persistLastGoodLayoutAuth(authCtx) {
-        if (!authCtx || !authCtx.session || !authCtx.user) return;
-        writeLayoutSessionState(LAYOUT_LAST_GOOD_AUTH_KEY, {
-            ts: Date.now(),
-            tenant: authCtx.route?.tenant || null,
-            user: authCtx.user || null,
-            profile: authCtx.profile || null,
-            permissions: authCtx.permissions || {},
-            role: authCtx.role || '',
-            tenantAllowed: authCtx.tenantAllowed === true,
-            isAdmin: authCtx.isAdmin === true
-        });
-    }
-
-    function readLastGoodLayoutAuth(routeCtx, maxAgeMs = resolveLayoutAuthWindowMs()) {
-        const cached = readLayoutSessionState(LAYOUT_LAST_GOOD_AUTH_KEY);
-        if (!cached) return null;
-        const authWindowMs = Math.max(0, Number(maxAgeMs) || resolveLayoutAuthWindowMs());
-        const activityState = window.PB_SERVICES?.auth?.getActivityState?.();
-        const activityTs = Number(activityState?.lastActivityTs || readSharedAuthActivityTs() || 0) || 0;
-        if (activityTs > 0 && (Date.now() - activityTs) > authWindowMs) return null;
-        if ((Date.now() - Number(cached.ts || 0)) > authWindowMs) return null;
-        if (!cached.user || typeof cached.user !== 'object') return null;
-        const routeTenant = routeCtx?.tenant || null;
-        if (routeTenant && cached.tenant && cached.tenant !== routeTenant && cached.isAdmin !== true) return null;
-        return cached;
-    }
-
-    function buildStableLayoutFallback(routeCtx, reason = 'transient_auth') {
-        const cached = readLastGoodLayoutAuth(routeCtx);
-        if (!cached) return null;
-        const identity = (cached.profile && typeof cached.profile === 'object') ? cached.profile : cached.user;
-        const authCtx = {
-            route: routeCtx,
-            session: { user: cached.user, __fallback: true, __stable: true, reason },
-            user: cached.user,
-            profile: identity || cached.user,
-            ...buildLayoutPermissions(identity || cached.user, routeCtx)
-        };
-        authCtx.canAccessCurrentRoute = canAccessCurrentRoute(routeCtx, authCtx);
-        if (!authCtx.canAccessCurrentRoute) return null;
-        return authCtx;
-    }
-
     function hasOwn(object, key) {
         return !!object && Object.prototype.hasOwnProperty.call(object, key);
     }
 
     function resolveRoutePermission(perms, key, fallbackAccess) {
-        if (!perms || typeof perms !== 'object') return !!fallbackAccess;
-        if (!hasOwn(perms, key)) return !!fallbackAccess;
+        if (!perms || typeof perms !== 'object') return false;
+        if (!hasOwn(perms, key)) return false;
         return !!perms[key];
     }
 
+    function resolveOrderModulePermission(perms, moduleKey, fallbackAccess) {
+        if (!perms || typeof perms !== 'object') return false;
+        if (hasOwn(perms, moduleKey)) return !!perms[moduleKey];
+        return false;
+    }
+
     function resolveClientsPermission(perms, fallbackAccess) {
-        if (!perms || typeof perms !== 'object') return !!fallbackAccess;
-        if (hasOwn(perms, 'clients_view') || hasOwn(perms, 'clients_manage') || hasOwn(perms, 'clients_verify')) {
-            return !!perms.clients_view || !!perms.clients_manage || !!perms.clients_verify;
+        if (!perms || typeof perms !== 'object') return false;
+        if (hasOwn(perms, 'clients_view') || hasOwn(perms, 'clients_manage') || hasOwn(perms, 'clients_verify') || hasOwn(perms, 'clients_create')) {
+            return !!perms.clients_view || !!perms.clients_manage || !!perms.clients_verify || !!perms.clients_create;
         }
-        return !!fallbackAccess;
+        return false;
     }
 
     function resolveControlPermission(authCtx) {
-        const role = normalizeLayoutRole(authCtx?.role || authCtx?.profile?.role || authCtx?.user?.role || '');
-        return authCtx?.isAdmin === true || role === 'admin' || role === 'verificador';
+        const perms = authCtx && authCtx.permissions && typeof authCtx.permissions === 'object'
+            ? authCtx.permissions
+            : {};
+        return !!perms.control_view;
     }
 
     function buildLayoutPermissions(identity, routeCtx) {
         const profile = identity && typeof identity === 'object' ? identity : {};
         const role = normalizeLayoutRole(profile.role || profile.rol || '');
         const defaultTenant = normalizeTenantSlug(profile.tenant_default || profile.default_tenant || '');
-        const allowedTenants = normalizeTenantList(profile.allowed_tenants, role, defaultTenant);
-        const rawPermissions = (profile.app_metadata && profile.app_metadata.finanzas && profile.app_metadata.finanzas.permissions && typeof profile.app_metadata.finanzas.permissions === 'object')
-            ? { ...profile.app_metadata.finanzas.permissions }
-            : {};
+        const allowedTenants = normalizeTenantList(profile.allowed_tenants, defaultTenant);
+        const appMeta = profile.app_metadata && typeof profile.app_metadata === 'object' ? profile.app_metadata : {};
+        const rbacMeta = appMeta.rbac && typeof appMeta.rbac === 'object' ? appMeta.rbac : {};
+        const explicitMap = profile.effective_permissions_map && typeof profile.effective_permissions_map === 'object'
+            ? profile.effective_permissions_map
+            : (rbacMeta.effective && typeof rbacMeta.effective === 'object' ? rbacMeta.effective : {});
+        const permissionsByTenant = {};
+        Object.keys(explicitMap || {}).forEach((tenantKey) => {
+            const normalizedTenant = normalizeTenantSlug(tenantKey);
+            if (!normalizedTenant || normalizedTenant === 'ambos') return;
+            const value = explicitMap[tenantKey];
+            if (value && typeof value === 'object' && !Array.isArray(value)) {
+                permissionsByTenant[normalizedTenant] = ensureBooleanPermissionMap(value, { includeCore: false });
+            }
+        });
+        const directPermissions = profile.effective_permissions && typeof profile.effective_permissions === 'object'
+            ? ensureBooleanPermissionMap(profile.effective_permissions, { includeCore: false })
+            : ensureBooleanPermissionMap({}, { includeCore: false });
         const tenant = routeCtx && routeCtx.tenant ? routeCtx.tenant : null;
-        const roleHasTenantAccess = role === 'admin' || role === 'verificador' || (!!tenant && role === tenant);
-        const tenantAllowed = !tenant || roleHasTenantAccess || allowedTenants.includes(tenant) || defaultTenant === tenant;
+        const tenantPermissions = tenant && permissionsByTenant[tenant]
+            ? { ...permissionsByTenant[tenant] }
+            : {};
+        const hasTenantPermissionObject = Object.keys(tenantPermissions).length > 0;
+        const permissions = hasTenantPermissionObject
+            ? tenantPermissions
+            : { ...(directPermissions && typeof directPermissions === 'object' ? directPermissions : {}) };
 
-        let permissions;
-        if (role === 'admin') {
-            permissions = {
-                access: true,
-                catalog_view: true,
-                orders_view: true,
-                orders_edit: true,
-                reports_view: true,
-                clients_view: true,
-                clients_manage: true,
-                clients_verify: true,
-                clients_all_docs: true,
-                catalog_manage: true
-            };
-        } else if (role === 'verificador') {
-            permissions = {
-                access: true,
-                catalog_view: true,
-                orders_view: false,
-                orders_edit: false,
-                reports_view: false,
-                clients_view: true,
-                clients_manage: false,
-                clients_verify: true,
-                clients_all_docs: true,
-                catalog_manage: true
-            };
-        } else if (!!tenant && role === tenant) {
-            permissions = {
-                access: true,
-                catalog_view: true,
-                orders_view: true,
-                orders_edit: true,
-                reports_view: true,
-                clients_view: true,
-                clients_manage: true,
-                clients_verify: false,
-                clients_all_docs: false,
-                catalog_manage: false
-            };
-        } else {
-            permissions = {
-                access: !!tenantAllowed
-            };
-            Object.assign(permissions, rawPermissions);
+        let tenantAllowed = !tenant
+            || allowedTenants.includes(tenant);
+        if (tenant && permissions.access === false) tenantAllowed = false;
+
+        if (!hasOwn(permissions, 'access')) {
+            permissions.access = tenant ? !!tenantAllowed : true;
+        } else if (tenant && !tenantAllowed) {
+            permissions.access = false;
         }
 
-        if (!tenantAllowed && tenant) permissions.access = false;
+        const appMetaRbac = appMeta.rbac && typeof appMeta.rbac === 'object' ? appMeta.rbac : {};
+        const mapHasAdmin = Object.keys(permissionsByTenant).some((tenantKey) => {
+            const current = permissionsByTenant[tenantKey] || {};
+            return current.users_manage === true && current.roles_manage === true && current.permissions_manage === true;
+        });
+        const directHasAdmin = directPermissions.users_manage === true
+            && directPermissions.roles_manage === true
+            && directPermissions.permissions_manage === true;
+        const profileExplicitAdmin = profile.is_admin === true
+            || profile.rbac_is_admin === true
+            || appMetaRbac.is_admin === true
+            || appMetaRbac.admin === true;
+        const isAdminByPermission = profileExplicitAdmin || mapHasAdmin || directHasAdmin;
 
         return {
             role,
@@ -1332,9 +1480,10 @@
             defaultTenant: defaultTenant || null,
             tenantAllowed: !!tenantAllowed,
             permissions,
-            rawPermissions,
-            isAdmin: role === 'admin',
-            isVerifier: role === 'verificador'
+            rawPermissions: { ...permissions },
+            permissionMap: permissionsByTenant,
+            isAdmin: isAdminByPermission,
+            isVerifier: !!permissions.clients_verify
         };
     }
 
@@ -1342,62 +1491,50 @@
         if (!routeCtx) return true;
         if (routeCtx.isLoginPage) return true;
         if (!authCtx || !authCtx.session || !authCtx.session.user) return false;
-        if (routeCtx.isSystem) return authCtx.isAdmin === true || authCtx.isVerifier === true;
+        if (routeCtx.isSystem) {
+            const systemPerms = authCtx.permissions || {};
+            return authCtx.isAdmin === true
+                || !!systemPerms.config_manage
+                || !!systemPerms.catalog_manage
+                || !!systemPerms.pdf_layout_manage
+                || !!systemPerms.permissions_manage
+                || !!systemPerms.users_manage;
+        }
         if (!routeCtx.tenant) return true;
         if (authCtx.tenantAllowed !== true) return false;
 
         const perms = authCtx.permissions || {};
-        const accessFallback = perms.access !== false;
-        const verifierRole = authCtx.isVerifier === true || normalizeLayoutRole(authCtx.role || authCtx.profile?.role || authCtx.user?.role || '') === 'verificador';
-
-        if (verifierRole) {
-            switch (routeCtx.file) {
-                case 'catalog.html':
-                case 'clientes.html':
-                case 'control.html':
-                    return true;
-                case 'orders.html':
-                case 'order_detail.html':
-                case 'cotizacion.html':
-                case 'agenda.html':
-                case 'contracts.html':
-                case 'receipts.html':
-                case 'invoices.html':
-                case 'montajes.html':
-                case 'reports.html':
-                case 'report.html':
-                    return false;
-                default:
-                    return !!accessFallback;
-            }
-        }
+        const accessFallback = perms.access === true;
 
         switch (routeCtx.file) {
             case 'catalog.html':
                 return resolveRoutePermission(perms, 'catalog_view', accessFallback);
             case 'agenda.html':
-            case 'contracts.html':
-            case 'receipts.html':
-            case 'invoices.html':
             case 'montajes.html':
             case 'orders.html':
             case 'order_detail.html':
             case 'cotizacion.html':
                 return resolveRoutePermission(perms, 'orders_view', accessFallback);
+            case 'contracts.html':
+                return resolveOrderModulePermission(perms, 'contracts_view', accessFallback);
+            case 'receipts.html':
+                return resolveOrderModulePermission(perms, 'receipts_view', accessFallback);
+            case 'invoices.html':
+                return resolveOrderModulePermission(perms, 'invoices_view', accessFallback);
             case 'reports.html':
             case 'report.html':
                 return resolveRoutePermission(perms, 'reports_view', accessFallback);
             case 'clientes.html':
                 return resolveClientsPermission(perms, accessFallback);
             case 'control.html':
-                return resolveControlPermission(authCtx);
+                return resolveRoutePermission(perms, 'control_view', resolveControlPermission(authCtx));
             default:
                 return !!accessFallback;
         }
     }
 
     function isVerifierLayoutContext(authCtx) {
-        return authCtx?.isVerifier === true || normalizeLayoutRole(authCtx?.role || authCtx?.profile?.role || authCtx?.user?.role || '') === 'verificador';
+        return authCtx?.isVerifier === true;
     }
 
     const VERIFIER_TENANT_PREFERENCE_KEY = 'hub_verifier_dashboard_tenant_v1';
@@ -1561,8 +1698,14 @@
             const tenantSlug = getCurrentVerifierTenantSlug();
             const tenantParam = tenantSlug === 'casa_de_piedra' ? 'cp' : 'pm';
             settingsBtn.href = `${pathPrefix}system/config.html?tenant=${tenantParam}`;
-            settingsBtn.classList.remove('hidden');
-            settingsBtn.classList.add('flex');
+            const perms = authCtx?.permissions && typeof authCtx.permissions === 'object' ? authCtx.permissions : {};
+            const canOpenSettings = authCtx?.isAdmin === true
+                || perms.config_manage === true
+                || perms.users_manage === true
+                || perms.roles_manage === true
+                || perms.permissions_manage === true;
+            settingsBtn.classList.toggle('hidden', !canOpenSettings);
+            settingsBtn.classList.toggle('flex', canOpenSettings);
         }
         return true;
     }
@@ -1575,9 +1718,9 @@
         const navRules = {
             'catalog.html': resolveRoutePermission(perms, 'catalog_view', accessFallback),
             'agenda.html': resolveRoutePermission(perms, 'orders_view', accessFallback),
-            'contracts.html': resolveRoutePermission(perms, 'orders_view', accessFallback),
-            'receipts.html': resolveRoutePermission(perms, 'orders_view', accessFallback),
-            'invoices.html': resolveRoutePermission(perms, 'orders_view', accessFallback),
+            'contracts.html': resolveOrderModulePermission(perms, 'contracts_view', accessFallback),
+            'receipts.html': resolveOrderModulePermission(perms, 'receipts_view', accessFallback),
+            'invoices.html': resolveOrderModulePermission(perms, 'invoices_view', accessFallback),
             'montajes.html': resolveRoutePermission(perms, 'orders_view', accessFallback),
             'orders.html': resolveRoutePermission(perms, 'orders_view', accessFallback),
             'cotizacion.html': resolveRoutePermission(perms, 'orders_view', accessFallback),
@@ -1596,8 +1739,15 @@
         });
         const settingsBtn = document.getElementById('layout-settings-btn');
         if (settingsBtn) {
-            if (authCtx.isAdmin) settingsBtn.classList.replace('hidden', 'flex');
-            else settingsBtn.classList.add('hidden');
+            const canOpenSettings = authCtx.isAdmin === true
+                || perms.config_manage === true
+                || perms.users_manage === true
+                || perms.roles_manage === true
+                || perms.permissions_manage === true
+                || perms.catalog_manage === true
+                || perms.pdf_layout_manage === true;
+            settingsBtn.classList.toggle('hidden', !canOpenSettings);
+            settingsBtn.classList.toggle('flex', canOpenSettings);
         }
     }
 
@@ -2014,7 +2164,6 @@
         merged.allowed_tenants = normalizeTenantList(
             appUser?.allowed_tenants
             || sessionUser?.allowed_tenants,
-            merged.role,
             merged.tenant_default
         );
         if (!merged.app_metadata && appUser?.app_metadata) merged.app_metadata = appUser.app_metadata;
@@ -2113,7 +2262,7 @@
             try {
                 const list = readDiag();
                 list.push({
-                    ts: new Date().toISOString(),
+                    ts: (window.__serverDateService ? window.__serverDateService.nowISO() : new Date().toISOString()),
                     type: safeSlice(type, 80),
                     path: safeSlice(window.location.pathname || '', 200),
                     href: safeSlice(window.location.href || '', 320),
@@ -2351,9 +2500,9 @@
                 interaction: lastInteraction
             });
         });
-        window.addEventListener('unload', () => {
-            pushDiag('unload', { interaction: lastInteraction });
-        });
+        // window.addEventListener('unload', () => {
+        //     pushDiag('unload', { interaction: lastInteraction });
+        // });
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'hidden') {
                 persistLayoutScrollPosition('visibility_hidden');
@@ -2383,45 +2532,6 @@
                 key: safeSlice(keyName, 180)
             });
         });
-    }
-
-    function readAuthLikeStorageEntry(key) {
-        try {
-            const raw = sessionStorage.getItem(key) || localStorage.getItem(key);
-            if (!raw) return null;
-            const parsed = JSON.parse(raw);
-            return parsed && typeof parsed === 'object' ? parsed : null;
-        } catch (_) {
-            return null;
-        }
-    }
-
-    function resolveFallbackSessionUser() {
-        const pool = [];
-        try {
-            pool.push(
-                layoutClient?.authStore?.model || null,
-                window.globalPocketBase?.authStore?.model || null,
-                window.tenantPocketBase?.authStore?.model || null
-            );
-            ['pb_native_auth_v1', 'pb_compat_auth_v1', 'pb_auth'].forEach((key) => {
-                const parsed = readAuthLikeStorageEntry(key);
-                if (!parsed) return;
-                pool.push(parsed.user || null, parsed.record || null, parsed.model || null);
-            });
-            [sessionStorage, localStorage].forEach((storageLike) => {
-                try {
-                    for (let i = 0; i < storageLike.length; i += 1) {
-                        const key = String(storageLike.key(i) || '');
-                        if (!/(pocketbase|pb).*(auth|session)|auth.*(pocketbase|pb)/i.test(key)) continue;
-                        const parsed = readAuthLikeStorageEntry(key);
-                        if (!parsed) continue;
-                        pool.push(parsed.user || null, parsed.record || null, parsed.model || null);
-                    }
-                } catch (_) {}
-            });
-        } catch (_) {}
-        return pool.find((candidate) => candidate && typeof candidate === 'object' && (candidate.id || candidate.email)) || null;
     }
 
     document.addEventListener('DOMContentLoaded', async () => {
@@ -2454,7 +2564,6 @@
             try {
                 const authState = await window.PB_SERVICES?.auth?.bootstrap?.({
                     schema: (typeof TENANT_SCHEMA !== 'undefined' && TENANT_SCHEMA) ? TENANT_SCHEMA : FIN_SCHEMA,
-                    allowCachedUser: true,
                     retries: 2,
                     delayMs: 220
                 });
@@ -2462,35 +2571,8 @@
             } catch (_) {
                 session = null;
             }
-            // Fallback legacy para mantener compatibilidad si el helper aún no resolvió sesión.
-            if (!session) {
-                try {
-                    const response = await layoutClient.auth.getSession();
-                    session = response?.data?.session || null;
-                } catch (_) {
-                    session = null;
-                }
-            }
-            if (!session) {
-                await new Promise(r => setTimeout(r, 300));
-                try {
-                    const response2 = await layoutClient.auth.getSession();
-                    session = response2?.data?.session || null;
-                } catch (_) {
-                    session = null;
-                }
-            }
-            if (!session) {
-                const fallbackUser = resolveFallbackSessionUser();
-                if (fallbackUser) session = { user: fallbackUser, __fallback: true };
-            }
             
             if (!session) {
-                const stableFallback = buildStableLayoutFallback(routeCtx, 'missing_session');
-                if (stableFallback) {
-                    applyResolvedLayoutAuthContext(stableFallback, { reason: 'missing_session_fallback' });
-                    return;
-                }
                 publishLayoutReady({
                     route: routeCtx,
                     session: null,
@@ -2533,11 +2615,6 @@
                 applyResolvedLayoutAuthContext(authCtx, { reason: 'layout_bootstrap' });
 
                 if (!authCtx.canAccessCurrentRoute && !routeCtx.isLoginPage) {
-                    const stableFallback = buildStableLayoutFallback(routeCtx, 'access_guard');
-                    if (stableFallback) {
-                        applyResolvedLayoutAuthContext(stableFallback, { reason: 'access_guard_fallback' });
-                        return;
-                    }
                     if (shouldDeferSystemPageAuth(routeCtx)) return;
                     window.__HUB_PAGE_ACCESS_DENIED = true;
                     window.__HUB_PAGE_ACCESS_DENIED_REASON = authCtx.tenantAllowed ? 'insufficient_permissions' : 'tenant_forbidden';
@@ -2554,28 +2631,23 @@
                 }
 
             } catch(e) {
-                const fallbackProfile = session?.user && typeof session.user === 'object'
+                const identityProfile = session?.user && typeof session.user === 'object'
                     ? { ...session.user }
                     : {};
                 authCtx = {
                     route: routeCtx,
                     session,
                     user: session.user,
-                    profile: fallbackProfile,
-                    ...buildLayoutPermissions(fallbackProfile, routeCtx)
+                    profile: identityProfile,
+                    ...buildLayoutPermissions(identityProfile, routeCtx)
                 };
                 authCtx.canAccessCurrentRoute = canAccessCurrentRoute(routeCtx, authCtx);
-                applyResolvedLayoutAuthContext(authCtx, { reason: 'layout_identity_fallback' });
+                applyResolvedLayoutAuthContext(authCtx, { reason: 'layout_identity_recovery' });
                 if (!authCtx.canAccessCurrentRoute && !routeCtx.isLoginPage) {
-                    const stableFallback = buildStableLayoutFallback(routeCtx, 'layout_identity_error');
-                    if (stableFallback) {
-                        applyResolvedLayoutAuthContext(stableFallback, { reason: 'layout_identity_error_fallback' });
-                        return;
-                    }
                     if (shouldDeferSystemPageAuth(routeCtx)) return;
                     window.__HUB_PAGE_ACCESS_DENIED = true;
                     window.__HUB_PAGE_ACCESS_DENIED_REASON = authCtx.tenantAllowed ? 'insufficient_permissions' : 'tenant_forbidden';
-                    try { window.__HUB_ALLOW_NEXT_UNLOAD?.('layout_access_guard_fallback'); } catch (_) {}
+                    try { window.__HUB_ALLOW_NEXT_UNLOAD?.('layout_access_guard'); } catch (_) {}
                     if (typeof window.__HUB_SAFE_NAVIGATE === 'function') {
                         window.__HUB_SAFE_NAVIGATE(routeCtx.redirectUrl, { allowSamePage: true });
                     } else {
@@ -2747,11 +2819,20 @@
         function initOrderNotifications(authCtx) {
         if (IS_LOCAL) return;
         if (!layoutClient) return;
-        const userRole = String(authCtx && authCtx.role ? authCtx.role : '').toLowerCase();
-        const isAdmin = userRole === 'admin';
+        const permissionMap = authCtx && authCtx.permissionMap && typeof authCtx.permissionMap === 'object'
+            ? authCtx.permissionMap
+            : {};
         const allowedTenants = (authCtx && Array.isArray(authCtx.allowedTenants)) ? authCtx.allowedTenants : [];
-        const hasPM = isAdmin || allowedTenants.includes('plaza_mayor');
-        const hasCP = isAdmin || allowedTenants.includes('casa_de_piedra');
+        const pmPerms = permissionMap.plaza_mayor && typeof permissionMap.plaza_mayor === 'object'
+            ? permissionMap.plaza_mayor
+            : {};
+        const cpPerms = permissionMap.casa_de_piedra && typeof permissionMap.casa_de_piedra === 'object'
+            ? permissionMap.casa_de_piedra
+            : {};
+        const hasPM = allowedTenants.includes('plaza_mayor')
+            && (pmPerms.access === true || pmPerms.orders_view === true || pmPerms.notifications_view === true);
+        const hasCP = allowedTenants.includes('casa_de_piedra')
+            && (cpPerms.access === true || cpPerms.orders_view === true || cpPerms.notifications_view === true);
 
         const PM_SCHEMA = (window.HUB_CONFIG && window.HUB_CONFIG.finanzasSchema) || 'finanzas';
         const CP_SCHEMA = 'finanzas_casadepiedra';
@@ -2903,6 +2984,7 @@
         if (e.key === 'Escape') closeLayoutNotificationDetail();
     });
 })();
+
 
 
 

@@ -10,10 +10,27 @@
 
 // --- 0. FUNCIONES GLOBALES ---
 window.safeFormatDate = function(dateStr) { 
-    if (!dateStr) return '--'; 
-    const parts = dateStr.split('-'); 
-    if (parts.length !== 3) return dateStr; 
-    return `${parts[2]}/${parts[1]}/${parts[0]}`; 
+    if (!dateStr) return '--';
+    const raw = String(dateStr).trim();
+    const normalized = raw.replace('T', ' ').replace('Z', '');
+    const match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?/);
+    if (match) {
+        const [, year, month, day, hh, mm, ss] = match;
+        const formattedDate = `${day}/${month}/${year}`;
+        if (!hh || !mm) return formattedDate;
+        return `${formattedDate} ${hh}:${mm}:${ss || '00'}`;
+    }
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) return raw;
+    const day = String(parsed.getDate()).padStart(2, '0');
+    const month = String(parsed.getMonth() + 1).padStart(2, '0');
+    const year = String(parsed.getFullYear());
+    const hh = String(parsed.getHours()).padStart(2, '0');
+    const mm = String(parsed.getMinutes()).padStart(2, '0');
+    const ss = String(parsed.getSeconds()).padStart(2, '0');
+    const formattedDate = `${day}/${month}/${year}`;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return formattedDate;
+    return `${formattedDate} ${hh}:${mm}:${ss}`;
 };
 
 window.formatDate = function(dateStr) {
@@ -66,7 +83,7 @@ function __pmContractsSaveEditorDraft(style) {
     try {
         const safeStyle = __pmContractsNormalizePdfStyle(style || __pmContractsPdfStyleState || {});
         localStorage.setItem(__PM_RECEIPTS_EDITOR_DRAFT_KEY, JSON.stringify({
-            updated_at: new Date().toISOString(),
+            updated_at: window.__serverDateService.nowISO(),
             style: safeStyle
         }));
     } catch (_) {}
@@ -1792,7 +1809,7 @@ function __pmContractsBuildPdfStyleConfigPayload(rawExisting, style, profile = _
         ...existing,
         tenant: __PM_CONTRACTS_PDF_STYLE_TENANT,
         version: Math.max(2, parseInt(existing.version, 10) || 2),
-        updated_at: new Date().toISOString(),
+        updated_at: window.__serverDateService.nowISO(),
         profiles
     };
 }
@@ -3111,69 +3128,19 @@ function __pmContractsNormalizeRoleValue(value) {
     return role;
 }
 
-function __pmContractsResolveCurrentUserRole() {
-    const candidates = [
-        window.currentUserProfile?.role,
-        window.currentUserProfile?.rol,
-        window.currentUserProfile?.record?.role,
-        window.currentUserProfile?.record?.rol,
-        window.currentUserProfile?.profile?.role,
-        window.currentUserProfile?.profile?.rol,
-        window.currentUserProfile?.user?.role,
-        window.currentUserProfile?.app_user?.role,
-        window.currentUserProfile?.user_metadata?.role,
-        window.currentUserProfile?.app_metadata?.role,
-        window.globalPocketBase?.authStore?.model?.role,
-        window.globalPocketBase?.authStore?.model?.rol,
-        window.tenantPocketBase?.authStore?.model?.role,
-        window.tenantPocketBase?.authStore?.model?.rol,
-        window.currentUser?.role,
-        window.userProfile?.role,
-        Array.isArray(window.currentUserProfile?.roles) ? window.currentUserProfile.roles[0] : ''
-    ];
-    try {
-        candidates.push(localStorage.getItem('hub_user_cache_role') || '');
-        const parseAuthState = (key) => {
-            try {
-                const raw = sessionStorage.getItem(key) || localStorage.getItem(key);
-                if (!raw) return null;
-                const parsed = JSON.parse(raw);
-                return parsed && typeof parsed === 'object' ? parsed : null;
-            } catch (_) {
-                return null;
-            }
-        };
-        const authState = parseAuthState('pb_native_auth_v1');
-        candidates.push(
-            authState?.user?.role,
-            authState?.record?.role
-        );
-        for (let i = 0; i < localStorage.length; i += 1) {
-            const key = String(localStorage.key(i) || '');
-            if (!/(pocketbase|pb).*(auth|session)|auth.*(pocketbase|pb)/i.test(key)) continue;
-            const parsed = parseAuthState(key);
-            if (!parsed) continue;
-            candidates.push(
-                parsed?.role,
-                parsed?.rol,
-                parsed?.model?.role,
-                parsed?.model?.rol,
-                parsed?.record?.role,
-                parsed?.record?.rol,
-                parsed?.user?.role,
-                parsed?.user?.rol
-            );
-        }
-    } catch (_) {}
-    for (const candidate of candidates) {
-        const safe = __pmContractsNormalizeRoleValue(candidate);
-        if (safe) return safe;
-    }
-    return '';
-}
-
 function __pmContractsIsAdminProfile() {
-    return __pmContractsResolveCurrentUserRole() === 'admin';
+    const rbac = window.HUB_RBAC || null;
+    if (rbac?.canAny) return rbac.canAny(['pdf_layout_manage', 'config_manage']);
+    const authCtx = window.__HUB_AUTH_CONTEXT || {};
+    const perms = (authCtx.permissions && typeof authCtx.permissions === 'object')
+        ? authCtx.permissions
+        : ((window.currentUserProfile?.effective_permissions && typeof window.currentUserProfile.effective_permissions === 'object')
+            ? window.currentUserProfile.effective_permissions
+            : {});
+    if (authCtx.isAdmin === true) return true;
+    if (Object.prototype.hasOwnProperty.call(perms || {}, 'pdf_layout_manage')) return perms.pdf_layout_manage === true;
+    if (Object.prototype.hasOwnProperty.call(perms || {}, 'config_manage')) return perms.config_manage === true;
+    return false;
 }
 
 function __pmContractsResolveReceiptActorName() {
@@ -3282,7 +3249,6 @@ async function __pmContractsLoadCurrentUserProfile(user) {
     );
     if (role) {
         merged.role = role;
-        localStorage.setItem('hub_user_cache_role', role);
     }
     if (!merged.username) merged.username = appUser?.login_username || appUser?.username || fallback?.login_username || fallback?.username || fallback?.email?.split('@')[0] || '';
     return merged;
@@ -3310,7 +3276,7 @@ function __pmContractsResolvePdfOverlayConfigPayload(record = {}) {
         return {
             tenant: rawRecord.tenant || elements.tenant || __PM_CONTRACTS_PDF_STYLE_TENANT,
             version: Math.max(2, parseInt(elements.version, 10) || 2),
-            updated_at: elements.updated_at || new Date().toISOString(),
+            updated_at: elements.updated_at || window.__serverDateService.nowISO(),
             profiles: elements.profiles
         };
     }
@@ -3353,7 +3319,7 @@ function __pmContractsBuildPdfOverlayElementsPayload(configJson) {
     return {
         tenant: resolved.tenant || __PM_CONTRACTS_PDF_STYLE_TENANT,
         version: Math.max(2, parseInt(resolved.version, 10) || 2),
-        updated_at: resolved.updated_at || new Date().toISOString(),
+        updated_at: resolved.updated_at || window.__serverDateService.nowISO(),
         profiles,
         config_json: resolved,
         objects
@@ -5197,7 +5163,7 @@ window.generateAndSaveLiquidationCertificate = async function() {
 
         const history = __pmContractsPayments(selectedOrder).filter((p) => String(p?.type || p?.tipo || '').toLowerCase() !== 'constancia_liquidacion');
         const closureEntry = {
-            date: new Date().toISOString(),
+            date: window.__serverDateService.nowISO(),
             amount: 0,
             concept: 'Constancia de Liquidación',
             reference: selectedOrder.numero_orden || selectedOrder.id,
@@ -5248,7 +5214,7 @@ window.generateAndSaveReceipt = async function() {
         const filePath = `${selectedOrder.id}/recibos/${fileName}`;
         const { error: upErr } = await window.globalPocketBase.storage.from('documentos').upload(filePath, pdfBlob);
         if(upErr) throw upErr;
-        const newPayment = { date: new Date().toISOString(), amount: amount, concept: document.getElementById('rcp-concept').value, reference: document.getElementById('rcp-ref').value, bank: document.getElementById('rcp-bank').value, account: document.getElementById('rcp-account').value, file_path: filePath };
+        const newPayment = { date: window.__serverDateService.nowISO(), amount: amount, concept: document.getElementById('rcp-concept').value, reference: document.getElementById('rcp-ref').value, bank: document.getElementById('rcp-bank').value, account: document.getElementById('rcp-account').value, file_path: filePath };
         const updatedHistory = [...(selectedOrder.historial_pagos || []), newPayment];
         const { error: dbErr } = await window.tenantPocketBase.from('cotizaciones').update({ historial_pagos: updatedHistory }).eq('id', selectedOrder.id);
         if(dbErr) throw dbErr;
@@ -5330,7 +5296,7 @@ window.loadSelectedTemplate = async function() {
             .replace(/{{FECHA_INICIO}}/g, hl(window.formatDate(selectedOrder.fecha_inicio)))
             .replace(/{{FECHA_FIN}}/g, hl(window.formatDate(selectedOrder.fecha_fin)))
             .replace(/{{MONTO_TOTAL}}/g, hl(window.formatMoney(selectedOrder.precio_final)))
-            .replace(/{{FECHA_HOY}}/g, hl(new Date().toLocaleDateString('es-MX')))
+            .replace(/{{FECHA_HOY}}/g, hl(window.__serverDateService.todayLocale('es-MX')))
             .replace(/{{NUM_ORDEN}}/g, hl(selectedOrder.numero_orden))
             .replace(/{{NUM_CONTRATO}}/g, hl(selectedOrder.numero_contrato || 'PENDIENTE'));
 
@@ -5537,7 +5503,7 @@ window.saveExternalReceipt = async function() {
         if(upErr) throw upErr;
         
         const newPayment = { 
-            date: new Date().toISOString(), 
+            date: window.__serverDateService.nowISO(), 
             amount: amount, 
             concept: document.getElementById('up-rcp-concept').value, 
             reference: document.getElementById('up-rcp-ref').value, 
@@ -5691,5 +5657,6 @@ function getReceiptHTML(isVisual = false) {
 
     return wrapStyledReceipt(receiptRaw, extraPages);
 }
+
 
 

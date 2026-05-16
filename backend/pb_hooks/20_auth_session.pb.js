@@ -1,5 +1,8 @@
 (function () {
   routerUse(function (e) {
+    const shared = require(`${__hooks}/auth_session_shared.js`);
+    const readHeader = shared.readHeader;
+
     function isLoopbackHost(host) {
       const safe = String(host || "").trim().toLowerCase();
       return safe === "127.0.0.1" || safe === "localhost" || safe === "::1" || safe === "[::1]";
@@ -47,15 +50,7 @@
     function shouldAllowCorsOrigin(origin) {
       const safeOrigin = String(origin || "").trim();
       if (!safeOrigin || safeOrigin === "null") return false;
-      const originHost = parseUrlHost(safeOrigin);
-      if (!originHost) return false;
-      if (isLoopbackHost(originHost) || isPrivateIpv4Host(originHost)) return true;
-      const requestHost = parseHeaderHost(
-        e?.request?.header?.get("X-Forwarded-Host")
-        || e?.request?.header?.get("Host")
-        || ""
-      );
-      return !!requestHost && originHost === requestHost;
+      return /^https?:\/\//i.test(safeOrigin);
     }
 
     function applyCorsHeaders(origin) {
@@ -66,7 +61,7 @@
       responseHeader.set("Access-Control-Allow-Methods", "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS");
       responseHeader.set(
         "Access-Control-Allow-Headers",
-        "Accept, Authorization, Content-Type, Origin, X-Requested-With"
+        "Accept, Authorization, Content-Type, Origin, X-Requested-With, X-Tenant"
       );
       responseHeader.set("Access-Control-Max-Age", "600");
       responseHeader.set("Vary", "Origin, Access-Control-Request-Method, Access-Control-Request-Headers");
@@ -75,7 +70,7 @@
     const path = String(e?.request?.url?.path || "");
     if (path.indexOf("/api/") !== 0) return e.next();
 
-    const origin = String(e?.request?.header?.get("Origin") || "").trim();
+    const origin = readHeader(e, "Origin");
     const allowCors = shouldAllowCorsOrigin(origin);
     if (allowCors) {
       applyCorsHeaders(origin);
@@ -86,7 +81,7 @@
     const header = e?.request?.header;
     if (!header) return e.next();
 
-    const existing = String(header.get("Authorization") || "").trim();
+    const existing = readHeader(e, "Authorization");
     if (existing) {
       const result = e.next();
       if (allowCors) applyCorsHeaders(origin);
@@ -105,6 +100,10 @@
   });
 
   routerAdd("POST", "/api/hub/session/login", function (e) {
+    const shared = require(`${__hooks}/auth_session_shared.js`);
+    const readHeader = shared.readHeader;
+    const shouldExposeTokenForRequest = shared.shouldExposeTokenForRequest;
+
     const AUTH_COLLECTION = "app_users";
     const SESSION_COOKIE_NAME = "hub_auth_session_v1";
     const SESSION_MAX_AGE_SECONDS = 2 * 60 * 60;
@@ -122,26 +121,22 @@
       try {
         if (e && typeof e.isTLS === "function" && e.isTLS()) return true;
       } catch (_) {}
-      const forwardedProto = String(e?.request?.header?.get("X-Forwarded-Proto") || "").trim().toLowerCase();
+      const forwardedProto = String(readHeader(e, "X-Forwarded-Proto") || "").trim().toLowerCase();
       return forwardedProto === "https";
     }
 
     function resolveRequestOrigin() {
       const proto = resolveCookieSecureFlag() ? "https" : "http";
       const host = String(
-        e?.request?.header?.get("X-Forwarded-Host")
-        || e?.request?.header?.get("Host")
+        readHeader(e, "X-Forwarded-Host")
+        || readHeader(e, "Host")
         || ""
       ).trim().toLowerCase();
       return host ? (proto + "://" + host) : "";
     }
 
     function shouldExposeSessionToken() {
-      const authHeader = String(e?.request?.header?.get("Authorization") || "").trim();
-      if (authHeader) return true;
-      const origin = String(e?.request?.header?.get("Origin") || "").trim().toLowerCase();
-      const requestOrigin = resolveRequestOrigin();
-      return !!origin && !!requestOrigin && origin !== requestOrigin;
+      return shouldExposeTokenForRequest(e);
     }
 
     function buildSessionCookie(token, maxAgeSeconds) {
@@ -182,63 +177,31 @@
       return safe;
     }
 
-    function normalizeRoleValue(value) {
-      const safe = normalizeTenantValue(value).replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
-      if (safe === "administrador" || safe === "superadmin" || safe === "super_admin") return "admin";
-      return safe;
-    }
-
-    function normalizeAllowedTenants(record) {
-      const raw = record?.get("allowed_tenants");
-      let list = [];
-      if (Array.isArray(raw)) list = raw;
-      else if (typeof raw === "string") {
-        try {
-          const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed)) list = parsed;
-        } catch (_) {}
-      }
-      list = list
-        .map(function (item) {
-          return normalizeTenantValue(item);
-        })
-        .filter(Boolean);
-
-      const role = normalizeRoleValue(record?.getString("role") || "");
-      if (!list.length) {
-        if (role === "admin" || role === "verificador") list = ["plaza_mayor", "casa_de_piedra"];
-        else if (role === "plaza_mayor" || role === "casa_de_piedra") list = [role];
-      }
-      return list;
-    }
-
     function serializeAuthRecord(record) {
       if (!record) return null;
-      const email = String(record.getString("email") || "").trim();
-      return {
-        id: String(record.get("id") || "").trim(),
-        email: email,
-        username: String(
-          record.getString("login_username") ||
-            record.getString("username") ||
-            (email ? email.split("@")[0] : "") ||
-            ""
-        ).trim(),
-        role: normalizeRoleValue(record.getString("role") || "") || "",
-        allowed_tenants: normalizeAllowedTenants(record),
-        tenant_default: normalizeTenantValue(record.get("tenant_default") || "") || null,
-        default_tenant: normalizeTenantValue(record.get("tenant_default") || "") || null
-      };
+      const rbac = require(`${__hooks}/rbac_shared.js`);
+      if (rbac && typeof rbac.buildSessionUser === "function") return rbac.buildSessionUser(record);
+      throw e.internalServerError("No se pudo resolver la sesion RBAC.");
     }
 
     function resolveAuthRecordByIdentity(identity) {
       const safeIdentity = normalizeIdentity(identity);
       if (!safeIdentity) return null;
+      const lowerIdentity = safeIdentity.toLowerCase();
 
       if (safeIdentity.indexOf("@") !== -1) {
         try {
-          return $app.findAuthRecordByEmail(AUTH_COLLECTION, safeIdentity.toLowerCase());
+          return $app.findAuthRecordByEmail(AUTH_COLLECTION, lowerIdentity);
         } catch (_) {}
+
+        if (lowerIdentity.indexOf(".com.mx") !== -1) {
+          const altIdentity = lowerIdentity.replace(".com.mx", ".com");
+          if (altIdentity && altIdentity !== lowerIdentity) {
+            try {
+              return $app.findAuthRecordByEmail(AUTH_COLLECTION, altIdentity);
+            } catch (_) {}
+          }
+        }
       }
 
       try {
@@ -295,6 +258,11 @@
   });
 
   routerAdd("GET", "/api/hub/session/current", function (e) {
+    const shared = require(`${__hooks}/auth_session_shared.js`);
+    const readHeader = shared.readHeader;
+    const normalizeAuthToken = shared.normalizeAuthToken;
+    const shouldExposeTokenForRequest = shared.shouldExposeTokenForRequest;
+
     const SESSION_COOKIE_NAME = "hub_auth_session_v1";
     const SESSION_MAX_AGE_SECONDS = 2 * 60 * 60;
     const SAME_SITE_STRICT_MODE = 3;
@@ -303,26 +271,22 @@
       try {
         if (e && typeof e.isTLS === "function" && e.isTLS()) return true;
       } catch (_) {}
-      const forwardedProto = String(e?.request?.header?.get("X-Forwarded-Proto") || "").trim().toLowerCase();
+      const forwardedProto = String(readHeader(e, "X-Forwarded-Proto") || "").trim().toLowerCase();
       return forwardedProto === "https";
     }
 
     function resolveRequestOrigin() {
       const proto = resolveCookieSecureFlag() ? "https" : "http";
       const host = String(
-        e?.request?.header?.get("X-Forwarded-Host")
-        || e?.request?.header?.get("Host")
+        readHeader(e, "X-Forwarded-Host")
+        || readHeader(e, "Host")
         || ""
       ).trim().toLowerCase();
       return host ? (proto + "://" + host) : "";
     }
 
     function shouldExposeSessionToken() {
-      const authHeader = String(e?.request?.header?.get("Authorization") || "").trim();
-      if (authHeader) return true;
-      const origin = String(e?.request?.header?.get("Origin") || "").trim().toLowerCase();
-      const requestOrigin = resolveRequestOrigin();
-      return !!origin && !!requestOrigin && origin !== requestOrigin;
+      return shouldExposeTokenForRequest(e);
     }
 
     function buildSessionCookie(token, maxAgeSeconds) {
@@ -363,61 +327,19 @@
       return safe;
     }
 
-    function normalizeRoleValue(value) {
-      const safe = normalizeTenantValue(value).replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
-      if (safe === "administrador" || safe === "superadmin" || safe === "super_admin") return "admin";
-      return safe;
-    }
-
-    function normalizeAllowedTenants(record) {
-      const raw = record?.get("allowed_tenants");
-      let list = [];
-      if (Array.isArray(raw)) list = raw;
-      else if (typeof raw === "string") {
-        try {
-          const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed)) list = parsed;
-        } catch (_) {}
-      }
-      list = list
-        .map(function (item) {
-          return normalizeTenantValue(item);
-        })
-        .filter(Boolean);
-
-      const role = normalizeRoleValue(record?.getString("role") || "");
-      if (!list.length) {
-        if (role === "admin" || role === "verificador") list = ["plaza_mayor", "casa_de_piedra"];
-        else if (role === "plaza_mayor" || role === "casa_de_piedra") list = [role];
-      }
-      return list;
-    }
-
     function serializeAuthRecord(record) {
       if (!record) return null;
-      const email = String(record.getString("email") || "").trim();
-      return {
-        id: String(record.get("id") || "").trim(),
-        email: email,
-        username: String(
-          record.getString("login_username") ||
-            record.getString("username") ||
-            (email ? email.split("@")[0] : "") ||
-            ""
-        ).trim(),
-        role: normalizeRoleValue(record.getString("role") || "") || "",
-        allowed_tenants: normalizeAllowedTenants(record),
-        tenant_default: normalizeTenantValue(record.get("tenant_default") || "") || null,
-        default_tenant: normalizeTenantValue(record.get("tenant_default") || "") || null
-      };
+      const rbac = require(`${__hooks}/rbac_shared.js`);
+      if (rbac && typeof rbac.buildSessionUser === "function") return rbac.buildSessionUser(record);
+      throw e.internalServerError("No se pudo resolver la sesion RBAC.");
     }
 
     function resolveAuthTokenFromRequest() {
-      const authHeader = String(e?.request?.header?.get("Authorization") || "").trim();
+      const authHeader = normalizeAuthToken(readHeader(e, "Authorization"));
       if (authHeader) return authHeader;
       try {
         const cookie = e?.request?.cookie(SESSION_COOKIE_NAME);
-        const value = String(cookie?.value || "").trim();
+        const value = normalizeAuthToken(cookie?.value || "");
         if (value) return value;
       } catch (_) {}
       return "";
@@ -454,6 +376,11 @@
   });
 
   routerAdd("POST", "/api/hub/session/refresh", function (e) {
+    const shared = require(`${__hooks}/auth_session_shared.js`);
+    const readHeader = shared.readHeader;
+    const normalizeAuthToken = shared.normalizeAuthToken;
+    const shouldExposeTokenForRequest = shared.shouldExposeTokenForRequest;
+
     const SESSION_COOKIE_NAME = "hub_auth_session_v1";
     const SESSION_MAX_AGE_SECONDS = 2 * 60 * 60;
     const SAME_SITE_STRICT_MODE = 3;
@@ -462,26 +389,22 @@
       try {
         if (e && typeof e.isTLS === "function" && e.isTLS()) return true;
       } catch (_) {}
-      const forwardedProto = String(e?.request?.header?.get("X-Forwarded-Proto") || "").trim().toLowerCase();
+      const forwardedProto = String(readHeader(e, "X-Forwarded-Proto") || "").trim().toLowerCase();
       return forwardedProto === "https";
     }
 
     function resolveRequestOrigin() {
       const proto = resolveCookieSecureFlag() ? "https" : "http";
       const host = String(
-        e?.request?.header?.get("X-Forwarded-Host")
-        || e?.request?.header?.get("Host")
+        readHeader(e, "X-Forwarded-Host")
+        || readHeader(e, "Host")
         || ""
       ).trim().toLowerCase();
       return host ? (proto + "://" + host) : "";
     }
 
     function shouldExposeSessionToken() {
-      const authHeader = String(e?.request?.header?.get("Authorization") || "").trim();
-      if (authHeader) return true;
-      const origin = String(e?.request?.header?.get("Origin") || "").trim().toLowerCase();
-      const requestOrigin = resolveRequestOrigin();
-      return !!origin && !!requestOrigin && origin !== requestOrigin;
+      return shouldExposeTokenForRequest(e);
     }
 
     function buildSessionCookie(token, maxAgeSeconds) {
@@ -522,61 +445,19 @@
       return safe;
     }
 
-    function normalizeRoleValue(value) {
-      const safe = normalizeTenantValue(value).replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
-      if (safe === "administrador" || safe === "superadmin" || safe === "super_admin") return "admin";
-      return safe;
-    }
-
-    function normalizeAllowedTenants(record) {
-      const raw = record?.get("allowed_tenants");
-      let list = [];
-      if (Array.isArray(raw)) list = raw;
-      else if (typeof raw === "string") {
-        try {
-          const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed)) list = parsed;
-        } catch (_) {}
-      }
-      list = list
-        .map(function (item) {
-          return normalizeTenantValue(item);
-        })
-        .filter(Boolean);
-
-      const role = normalizeRoleValue(record?.getString("role") || "");
-      if (!list.length) {
-        if (role === "admin" || role === "verificador") list = ["plaza_mayor", "casa_de_piedra"];
-        else if (role === "plaza_mayor" || role === "casa_de_piedra") list = [role];
-      }
-      return list;
-    }
-
     function serializeAuthRecord(record) {
       if (!record) return null;
-      const email = String(record.getString("email") || "").trim();
-      return {
-        id: String(record.get("id") || "").trim(),
-        email: email,
-        username: String(
-          record.getString("login_username") ||
-            record.getString("username") ||
-            (email ? email.split("@")[0] : "") ||
-            ""
-        ).trim(),
-        role: normalizeRoleValue(record.getString("role") || "") || "",
-        allowed_tenants: normalizeAllowedTenants(record),
-        tenant_default: normalizeTenantValue(record.get("tenant_default") || "") || null,
-        default_tenant: normalizeTenantValue(record.get("tenant_default") || "") || null
-      };
+      const rbac = require(`${__hooks}/rbac_shared.js`);
+      if (rbac && typeof rbac.buildSessionUser === "function") return rbac.buildSessionUser(record);
+      throw e.internalServerError("No se pudo resolver la sesion RBAC.");
     }
 
     function resolveAuthTokenFromRequest() {
-      const authHeader = String(e?.request?.header?.get("Authorization") || "").trim();
+      const authHeader = normalizeAuthToken(readHeader(e, "Authorization"));
       if (authHeader) return authHeader;
       try {
         const cookie = e?.request?.cookie(SESSION_COOKIE_NAME);
-        const value = String(cookie?.value || "").trim();
+        const value = normalizeAuthToken(cookie?.value || "");
         if (value) return value;
       } catch (_) {}
       return "";
@@ -616,13 +497,16 @@
   });
 
   routerAdd("POST", "/api/hub/session/logout", function (e) {
+    const shared = require(`${__hooks}/auth_session_shared.js`);
+    const readHeader = shared.readHeader;
+
     const SAME_SITE_STRICT_MODE = 3;
 
     function resolveCookieSecureFlag() {
       try {
         if (e && typeof e.isTLS === "function" && e.isTLS()) return true;
       } catch (_) {}
-      const forwardedProto = String(e?.request?.header?.get("X-Forwarded-Proto") || "").trim().toLowerCase();
+      const forwardedProto = String(readHeader(e, "X-Forwarded-Proto") || "").trim().toLowerCase();
       return forwardedProto === "https";
     }
 

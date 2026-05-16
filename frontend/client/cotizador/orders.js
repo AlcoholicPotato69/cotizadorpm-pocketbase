@@ -541,13 +541,115 @@ function __pmResolveDetailMaterialMeasure(detailSpace, catalogSpace) {
         medida_unidad: (hasDetailWidth || hasDetailHeight) ? detail.medida_unidad : catalog.medida_unidad
     };
 }
+function __pmNormalizeMeasureValue(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const n = parseFloat(value);
+    return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function __pmTrimMeasureValue(value) {
+    if (value === null || value === undefined) return '';
+    return String(parseFloat(value) || value).trim();
+}
+
+function __pmNormalizeSpaceTag(value) {
+    const raw = String(value || '').trim();
+    const normalized = typeof raw.normalize === 'function' ? raw.normalize('NFD') : raw;
+    return normalized.replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
+
+function __pmNormalizeDigitalMediaConfig(value = {}) {
+    const source = value && typeof value === 'object' ? value : {};
+    const enabled = !!(source.enabled ?? source.activo ?? source.es_digital);
+    const rawType = __pmNormalizeSpaceTag(source.media_type || source.tipo_medio || source.tipo || source.formato || 'imagen');
+    const durationValue = __pmNormalizeMeasureValue(source.duration_value ?? source.duracion_valor ?? source.duracion);
+    const unit = String(source.duration_unit || source.duracion_unidad || 'segundos').trim().toLowerCase();
+    const pixelWidth = __pmNormalizeMeasureValue(source.pixel_width ?? source.pixeles_ancho ?? source.ancho_px);
+    const pixelHeight = __pmNormalizeMeasureValue(source.pixel_height ?? source.pixeles_alto ?? source.alto_px);
+    return {
+        enabled,
+        media_type: rawType.includes('imagen') && rawType.includes('video') ? 'imagen_video' : (rawType.includes('video') ? 'video' : 'imagen'),
+        duration_value: durationValue,
+        duration_unit: unit === 'minutos' ? 'minutos' : 'segundos',
+        pixel_width: pixelWidth,
+        pixel_height: pixelHeight
+    };
+}
+
+function __pmResolveDigitalMediaConfig(detailSpace = {}, catalogSpace = {}) {
+    const hasDetailConfig = !!detailSpace && typeof detailSpace === 'object' && (
+        Object.prototype.hasOwnProperty.call(detailSpace, 'digital_media') ||
+        Object.prototype.hasOwnProperty.call(detailSpace, 'digitalMedia') ||
+        Object.prototype.hasOwnProperty.call(detailSpace, 'medio_digital')
+    );
+    const detailCfg = __pmNormalizeDigitalMediaConfig(detailSpace?.digital_media || detailSpace?.digitalMedia || detailSpace?.medio_digital || {});
+    if (hasDetailConfig || detailCfg.enabled) return detailCfg;
+    const catalogB2b = __pmParseRecordJson(catalogSpace?.config_b2b);
+    return __pmNormalizeDigitalMediaConfig(catalogB2b.digital_media || catalogB2b.digitalMedia || catalogB2b.medio_digital || {});
+}
+
+function __pmDigitalMediaTypeLabel(config) {
+    const t = __pmNormalizeDigitalMediaConfig(config).media_type;
+    if (t === 'imagen_video') return 'Imagen / Video';
+    return t === 'video' ? 'Video' : 'Imagen';
+}
+
+function __pmDigitalMediaDurationUnitAbbr(unit = '') {
+    const normalized = __pmNormalizeSpaceTag(unit);
+    if (normalized.includes('min')) return 'min';
+    return 's';
+}
+
+function __pmDigitalMediaResolutionText(config) {
+    const cfg = __pmNormalizeDigitalMediaConfig(config);
+    if (cfg.pixel_width === null || cfg.pixel_height === null) return '--';
+    return `${__pmTrimMeasureValue(cfg.pixel_width)} x ${__pmTrimMeasureValue(cfg.pixel_height)}`;
+}
+
+function __pmDigitalMediaDurationText(config) {
+    const cfg = __pmNormalizeDigitalMediaConfig(config);
+    if (cfg.duration_value === null) return '--';
+    return `${__pmTrimMeasureValue(cfg.duration_value)} ${__pmDigitalMediaDurationUnitAbbr(cfg.duration_unit)}`;
+}
+
+function __pmDigitalMediaDetailHtml(config) {
+    const resolutionText = __pmDigitalMediaResolutionText(config);
+    const durationText = __pmDigitalMediaDurationText(config);
+    const rows = [];
+    if (resolutionText !== '--') rows.push(resolutionText);
+    if (durationText !== '--') rows.push(durationText);
+    return rows.length ? rows.map(row => __pmSafeHtml(row)).join('<br>') : '<span class="text-gray-300">---</span>';
+}
+
+function __pmDigitalMediaDetailText(config) {
+    const resolutionText = __pmDigitalMediaResolutionText(config);
+    const durationText = __pmDigitalMediaDurationText(config);
+    const rows = [];
+    if (resolutionText !== '--') rows.push(resolutionText);
+    if (durationText !== '--') rows.push(durationText);
+    return rows.join(' · ');
+}
+
 function __pmResolvePdfSpaceDetail(detailSpace, catalogSpace) {
+    const digitalMedia = __pmResolveDigitalMediaConfig(detailSpace, catalogSpace);
+    if (digitalMedia.enabled) return __pmDigitalMediaTypeLabel(digitalMedia);
     const locationValue = __pmResolveDetailLocation(detailSpace, catalogSpace);
     if (__pmIsLocationDetailSpace(detailSpace, catalogSpace)) {
         return locationValue || '--';
     }
     const detailMaterialMeasure = __pmResolveDetailMaterialMeasure(detailSpace, catalogSpace);
     return String(detailMaterialMeasure.material || '').trim() || '--';
+}
+
+function __pmResolvePdfMeasureHtml(detailSpace, catalogSpace) {
+    const digitalMedia = __pmResolveDigitalMediaConfig(detailSpace, catalogSpace);
+    if (digitalMedia.enabled) return __pmDigitalMediaDetailHtml(digitalMedia);
+    const detailMaterialMeasure = __pmResolveDetailMaterialMeasure(detailSpace, catalogSpace);
+    const width = detailMaterialMeasure.medida_ancho;
+    const height = detailMaterialMeasure.medida_alto;
+    const unit = detailMaterialMeasure.medida_unidad || 'M';
+    const measuresStr = (width !== null && width !== undefined && height !== null && height !== undefined) ? `${width}x${height} ${unit}` : '--';
+    return __pmSafeHtml(measuresStr);
 }
 function __pmResolvePdfDetailHeader(detailSpaces = [], fallbackOrder = null, fallbackCatalogSpace = null) {
     const candidates = Array.isArray(detailSpaces) && detailSpaces.length ? detailSpaces : [fallbackOrder].filter(Boolean);
@@ -699,7 +801,7 @@ function __pmApplyOrderClientProfileSelection(order = {}) {
 
 const _p = (window.location.pathname || '') + ' ' + (window.location.href || '');
 const _isCP = /\/cotizadorcp(\/|$)/.test(window.location.pathname || '') || _p.includes('cotizadorcp');
-const COMPANY_LOGO_URL = _isCP ? ((window.HUB_CONFIG && (window.HUB_CONFIG.companyLogoUrlCP || window.HUB_CONFIG.cpLogoUrl)) || '../../assets/logocp.png') : ((window.HUB_CONFIG && window.HUB_CONFIG.companyLogoUrl) || '../../assets/logo.png');
+const COMPANY_LOGO_URL = _isCP ? ((window.HUB_CONFIG && (window.HUB_CONFIG.companyLogoUrlCP || window.HUB_CONFIG.cpLogoUrl)) || '../public/assets/logocp.png') : ((window.HUB_CONFIG && window.HUB_CONFIG.companyLogoUrl) || '../public/assets/logo.png');
 function __pmDefaultLetterheadUrl() {
     return (window.HUB_CONFIG && (window.HUB_CONFIG.pmPdfLetterheadUrl || window.HUB_CONFIG.pdfLetterheadPlazaMayorUrl)) || '../public/assets/img/pm-letterhead-default.png';
 }
@@ -934,21 +1036,39 @@ function __pmNormalizeOrderAccessRole(value) {
 }
 
 function __pmResolveOrderAccess() {
+    const rbac = window.HUB_RBAC || null;
     const authCtx = window.__HUB_AUTH_CONTEXT || {};
     const profile = authCtx.profile || window.currentUserProfile || {};
-    const perms = (authCtx.permissions && typeof authCtx.permissions === 'object')
-        ? authCtx.permissions
-        : ((profile.app_metadata?.finanzas?.permissions && typeof profile.app_metadata.finanzas.permissions === 'object') ? profile.app_metadata.finanzas.permissions : {});
+    const perms = rbac?.getPermissions
+        ? rbac.getPermissions()
+        : ((authCtx.permissions && typeof authCtx.permissions === 'object')
+            ? authCtx.permissions
+            : ((profile.effective_permissions && typeof profile.effective_permissions === 'object')
+                ? profile.effective_permissions
+                : {}));
     const role = __pmNormalizeOrderAccessRole(authCtx.role || profile.role || profile.rol || '');
-    return { role, perms, isAdmin: authCtx.isAdmin === true || role === 'admin' };
+    return {
+        role,
+        perms,
+        isAdmin: rbac?.isAdmin ? rbac.isAdmin() : (authCtx.isAdmin === true)
+    };
 }
 
 function __pmCanEditOrders() {
+    const rbac = window.HUB_RBAC || null;
+    if (rbac?.can) return rbac.can('orders_edit');
     const access = __pmResolveOrderAccess();
-    if (access.role === 'verificador') return false;
-    if (access.isAdmin) return true;
     if (Object.prototype.hasOwnProperty.call(access.perms || {}, 'orders_edit')) return access.perms.orders_edit === true;
-    return true;
+    if (access.isAdmin) return true;
+    return false;
+}
+
+function __pmCanDeleteOrders() {
+    const rbac = window.HUB_RBAC || null;
+    if (rbac?.can) return rbac.can('quotes_delete');
+    const access = __pmResolveOrderAccess();
+    if (Object.prototype.hasOwnProperty.call(access.perms || {}, 'quotes_delete')) return access.perms.quotes_delete === true;
+    return access.isAdmin === true;
 }
 
 function __pmOrderReadOnlyMessage() {
@@ -1290,6 +1410,8 @@ function __pmNormalizeQuoteUpdatePayload(payload = {}) {
         'factura_pdf_url',
         'factura_xml_url',
         'contrato_url',
+        'contrato_en_blanco_url',
+        'contrato_firmado_url',
         'creado_por',
         'creado_por_nombre',
         'modificado_por',
@@ -1487,7 +1609,29 @@ async function __pmQuotesDelete(id) {
     return { error: result && result.error ? result.error : null };
 }
 
-window.safeFormatDate = function(dateStr) { if (!dateStr) return '--'; const parts = dateStr.split('-'); if (parts.length !== 3) return dateStr; return `${parts[2]}/${parts[1]}/${parts[0]}`; };
+window.safeFormatDate = function (dateStr) {
+    if (!dateStr) return '--';
+    const raw = String(dateStr).trim();
+    const normalized = raw.replace('T', ' ').replace('Z', '');
+    const match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?/);
+    if (match) {
+        const [, year, month, day, hh, mm, ss] = match;
+        const formattedDate = `${day}/${month}/${year}`;
+        if (!hh || !mm) return formattedDate;
+        return `${formattedDate} ${hh}:${mm}:${ss || '00'}`;
+    }
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) return raw;
+    const day = String(parsed.getDate()).padStart(2, '0');
+    const month = String(parsed.getMonth() + 1).padStart(2, '0');
+    const year = String(parsed.getFullYear());
+    const hh = String(parsed.getHours()).padStart(2, '0');
+    const mm = String(parsed.getMinutes()).padStart(2, '0');
+    const ss = String(parsed.getSeconds()).padStart(2, '0');
+    const formattedDate = `${day}/${month}/${year}`;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return formattedDate;
+    return `${formattedDate} ${hh}:${mm}:${ss}`;
+};
 window.parseIds = function(v){ if(!v) return []; if(Array.isArray(v)) return v; if(typeof v === 'string'){ try { const parsed = JSON.parse(v); return Array.isArray(parsed) ? parsed : []; } catch(e){ return v.split(',').map(x=>x.trim()).filter(Boolean); } } return []; };
 
 function __pmReadRefreshSignal() {
@@ -1906,8 +2050,8 @@ window.askCloseEditModal = function() {
 
 window.askDeleteOrder = function(id, e) {
     if (e) e.stopPropagation();
-    if (!__pmIsAdminProfile()) {
-        window.showToast("Solo administradores pueden eliminar cotizaciones.", "error");
+    if (!__pmCanDeleteOrders()) {
+        window.showToast("No tienes permiso para eliminar cotizaciones.", "error");
         return;
     }
     window.openConfirm("¿Eliminar cotización y TODOS sus archivos? Esta acción es irreversible.", async () => {
@@ -2365,7 +2509,7 @@ window.loadOrders = async function() {
 function renderOrdersTable(data) {
     const t = document.getElementById('orders-table'); if(!t) return; t.innerHTML = ''; 
     if(!data.length) { t.innerHTML = '<tr><td colspan="9" class="p-8 text-center text-gray-400">Sin registros.</td></tr>'; return; }
-    const canDelete = __pmIsAdminProfile();
+    const canDelete = __pmCanDeleteOrders();
     data.forEach(o => {
         let sColor = 'bg-gray-100 text-gray-600', sText = 'Pendiente', missingIcons = []; 
         const isConvenio = __pmIsConvenioOrder(o);
@@ -2378,6 +2522,7 @@ function renderOrdersTable(data) {
             } else {
                 if (!o.factura_xml_url) missingIcons.push('<i class="fa-solid fa-file-invoice" title="Falta Factura"></i>');
                 if (!o.historial_pagos || o.historial_pagos.length === 0) missingIcons.push('<i class="fa-solid fa-money-bill-wave" title="Falta Pago"></i>');
+                if (!o.contrato_firmado_url) missingIcons.push('<i class="fa-solid fa-file-signature" title="Se requiere contrato"></i>');
             }
         }
         if(o.status === 'finalizada') { sColor = 'bg-green-100 text-green-700 border border-green-200'; sText = 'Finalizada'; }
@@ -2910,7 +3055,7 @@ window.confirmAndGeneratePurchaseOrder = async function() {
                 const folioUnificado = __pmResolveQuoteFolio(currentPreviewOrder);
                 const path = `${currentPreviewOrder.id}/orden_compra_${folioUnificado}.pdf`;
                 await window.globalPocketBase.storage.from('documentos').upload(path, blob, { upsert: true });
-                const fechaOrden = new Date().toISOString();
+                const fechaOrden = window.__serverDateService.nowISO();
                 const ocUpdate = await __pmQuotesUpdate(currentPreviewOrder.id, { url_orden_compra: path, fecha_orden_compra: fechaOrden });
                 if (ocUpdate.error) throw ocUpdate.error;
                 currentPreviewOrder = { ...currentPreviewOrder, url_orden_compra: path, fecha_orden_compra: fechaOrden };
@@ -3002,9 +3147,15 @@ window.openDocsModal = function(id) {
             createLocked('Evidencias (Pendientes)', 'fa-solid fa-camera');
         }
     } else {
-        // Contrato
-        if (order.contrato_url) {
-            createBtn('Ver Contrato', 'fa-solid fa-file-signature', 'emerald', `window.openStoredDocument('${order.contrato_url}')`);
+        // Contrato en Blanco
+        if (order.contrato_en_blanco_url || order.contrato_url) {
+            const urlToUse = order.contrato_en_blanco_url || order.contrato_url;
+            createBtn('Contrato en Blanco', 'fa-solid fa-file-contract', 'emerald', `window.openStoredDocument('${urlToUse}')`);
+        }
+        
+        // Contrato Firmado
+        if (order.contrato_firmado_url) {
+            createBtn('Contrato Firmado', 'fa-solid fa-file-signature', 'emerald', `window.openStoredDocument('${order.contrato_firmado_url}')`);
         } else {
             createLocked('Contrato (Pendiente)', 'fa-solid fa-lock');
         }
@@ -3088,18 +3239,19 @@ window.openPDFPreview = async function(id, type) {
 
 window.downloadPDFFromPreview = async function() { 
     const element = document.getElementById('pdf-content'); 
+    if (!element) return window.showToast("No se encontró la vista previa para exportar.", "error");
     const folioUnificado = __pmResolveQuoteFolio(currentPreviewOrder);
+    const docType = String(currentPreviewOrder?.docType || 'quote').toLowerCase() === 'order' ? 'order' : 'quote';
+    const filePrefix = docType === 'order' ? 'Orden_Compra' : 'Cotizacion';
     try {
-        const pdfBlob = await __pmWithBusyOverlay('Generando PDF...', async () => {
-            if (!__pmIsAdminProfile() && element && currentPreviewOrder) {
-                const docType = String(currentPreviewOrder.docType || 'quote').toLowerCase() === 'order' ? 'order' : 'quote';
-                await __pmEnsurePdfStyleProfile(docType, { forceReload: true });
-                element.innerHTML = window.getOrderHTML(currentPreviewOrder, docType);
-                __pmApplyPdfStyleToLivePreview();
+        const pdfBlob = await __pmWithBusyOverlay('Generando PDF desde la vista previa...', async () => {
+            // Exporta exactamente lo que el usuario está viendo en pantalla.
+            if (typeof __pmApplyPdfStyleToLivePreview === 'function') {
+                __pmApplyPdfStyleToLivePreview({ skipEditorUiRefresh: true });
             }
             return await window.generatePdfBlobFromNode(element);
         });
-        window.downloadBlobAsFile(pdfBlob, `Documento_${folioUnificado}.pdf`);
+        window.downloadBlobAsFile(pdfBlob, `${filePrefix}_${folioUnificado}.pdf`);
     } catch (e) {
         window.showToast("No se pudo descargar el PDF: " + (e?.message || e), "error");
     }
@@ -3377,7 +3529,7 @@ function __pmBuildPdfTemplateContext(order = {}, extra = {}) {
         START_DATE: startDate,
         END_DATE: endDate,
         VALIDITY: [startDate, endDate].filter(Boolean).join(' - '),
-        TODAY: extra.dateStr || new Date().toLocaleDateString('es-MX'),
+        TODAY: extra.dateStr || window.__serverDateService.todayLocale('es-MX'),
         CURRENT_USER_NAME: __pmResolveCurrentActorName(),
         CURRENT_USER_EMAIL: __pmResolveCurrentActorEmail(),
         VENUE_NAME: extra.venueName || 'Plaza Mayor'
@@ -4816,45 +4968,14 @@ function __pmNormalizeUserRole(value) {
     return safe;
 }
 
-function __pmResolveCurrentUserRole() {
-    const parseAuthState = (key) => {
-        try {
-            const raw = sessionStorage.getItem(key) || localStorage.getItem(key);
-            if (!raw) return null;
-            const parsed = JSON.parse(raw);
-            return parsed && typeof parsed === 'object' ? parsed : null;
-        } catch (_) {
-            return null;
-        }
-    };
-    const authState = parseAuthState('pb_native_auth_v1');
-    const candidates = [
-        window.currentUserProfile?.role,
-        window.currentUserProfile?.rol,
-        window.currentUserProfile?.record?.role,
-        window.currentUserProfile?.record?.rol,
-        window.currentUserProfile?.profile?.role,
-        window.currentUserProfile?.profile?.rol,
-        window.currentUserProfile?.user?.role,
-        window.currentUserProfile?.app_user?.role,
-        window.currentUserProfile?.user_metadata?.role,
-        window.currentUserProfile?.app_metadata?.role,
-        window.currentUser?.role,
-        window.userProfile?.role,
-        Array.isArray(window.currentUserProfile?.roles) ? window.currentUserProfile.roles[0] : '',
-        localStorage.getItem('hub_user_cache_role') || '',
-        authState?.user?.role,
-        authState?.record?.role
-    ];
-    for (const candidate of candidates) {
-        const safe = __pmNormalizeUserRole(candidate);
-        if (safe) return safe;
-    }
-    return '';
-}
-
 function __pmIsAdminProfile() {
-    return __pmResolveCurrentUserRole() === 'admin';
+    const rbac = window.HUB_RBAC || null;
+    if (rbac?.canAny) return rbac.canAny(['pdf_layout_manage', 'config_manage']);
+    const access = __pmResolveOrderAccess();
+    if (access.isAdmin === true) return true;
+    if (Object.prototype.hasOwnProperty.call(access.perms || {}, 'pdf_layout_manage')) return access.perms.pdf_layout_manage === true;
+    if (Object.prototype.hasOwnProperty.call(access.perms || {}, 'config_manage')) return access.perms.config_manage === true;
+    return false;
 }
 
 function __pmResolvePdfActorName() {
@@ -4944,7 +5065,6 @@ async function __pmLoadCurrentUserProfile(user) {
     );
     if (role) {
         merged.role = role;
-        localStorage.setItem('hub_user_cache_role', role);
     }
     if (!merged.username) merged.username = appUser?.login_username || appUser?.username || fallback?.login_username || fallback?.username || fallback?.email?.split('@')[0] || '';
     return merged;
@@ -4978,7 +5098,7 @@ function __pmResolvePdfOverlayConfigPayload(record = {}) {
         return {
             tenant: rawRecord.tenant || elements.tenant || __PM_PDF_STYLE_TENANT,
             version: Math.max(2, parseInt(elements.version, 10) || 2),
-            updated_at: elements.updated_at || new Date().toISOString(),
+            updated_at: elements.updated_at || window.__serverDateService.nowISO(),
             profiles: elements.profiles
         };
     }
@@ -4994,7 +5114,7 @@ function __pmBuildPdfStyleConfigPayload(rawExisting, style, profile = __pmPdfSty
         ...existing,
         tenant: __PM_PDF_STYLE_TENANT,
         version: Math.max(2, parseInt(existing.version, 10) || 2),
-        updated_at: new Date().toISOString(),
+        updated_at: window.__serverDateService.nowISO(),
         profiles
     };
 }
@@ -5033,7 +5153,7 @@ function __pmBuildPdfOverlayElementsPayload(configJson) {
     return {
         tenant: resolved.tenant || __PM_PDF_STYLE_TENANT,
         version: Math.max(2, parseInt(resolved.version, 10) || 2),
-        updated_at: resolved.updated_at || new Date().toISOString(),
+        updated_at: resolved.updated_at || window.__serverDateService.nowISO(),
         profiles,
         config_json: resolved,
         objects
@@ -5999,7 +6119,7 @@ window.getOrderHTML = function(o, type) {
     const pdfStyleTag = `<style>.pm-pdf-root{font-family:var(--pm-font-family)!important;}.pm-pdf-root .pm-pdf-shift{transform:translate(var(--pm-offset-x),var(--pm-offset-y));position:relative;}.pm-pdf-root .pm-pdf-header{border-bottom-width:var(--pm-header-line)!important;justify-content:var(--pm-header-justify)!important;}.pm-pdf-root .pm-pdf-header>div:last-child{text-align:var(--pm-header-align)!important;}.pm-pdf-root .pm-pdf-title{font-size:var(--pm-title-size)!important;line-height:1.05!important;text-align:var(--pm-header-align)!important;}.pm-pdf-root .pm-pdf-folio{font-size:var(--pm-meta-size)!important;text-align:var(--pm-meta-align)!important;}.pm-pdf-root .pm-pdf-date{font-size:var(--pm-date-size)!important;text-align:var(--pm-meta-align)!important;}.pm-pdf-root .pm-pdf-table-head th{font-size:var(--pm-table-head-size)!important;}.pm-pdf-root .pm-pdf-table-body td,.pm-pdf-root .pm-pdf-table-body p,.pm-pdf-root .pm-pdf-table-body span{font-size:var(--pm-table-body-size)!important;line-height:var(--pm-line-height)!important;}.pm-pdf-root .pm-pdf-table-body td:first-child,.pm-pdf-root .pm-pdf-table-body td:first-child *{text-align:var(--pm-table-align)!important;}.pm-pdf-root .pm-pdf-summary,.pm-pdf-root .pm-pdf-summary *{text-align:var(--pm-summary-align)!important;}.pm-pdf-root .pm-pdf-quick,.pm-pdf-root .pm-pdf-quick *{font-size:var(--pm-quick-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-quick-align)!important;}.pm-pdf-root .pm-pdf-general-conditions,.pm-pdf-root .pm-pdf-general-conditions *{font-size:var(--pm-conditions-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-conditions-align)!important;}.pm-pdf-root .pm-pdf-sign,.pm-pdf-root .pm-pdf-sign *{font-size:var(--pm-sign-size)!important;line-height:var(--pm-line-height)!important;text-align:var(--pm-sign-align)!important;}.pm-pdf-root .pm-pdf-footer-text{font-size:var(--pm-footer-size)!important;text-align:var(--pm-footer-align)!important;}.pm-pdf-root .pm-pdf-amount,.pm-pdf-root .pm-pdf-table-body td:last-child,.pm-pdf-root .pm-pdf-summary td:last-child{white-space:nowrap!important;word-break:normal!important;overflow-wrap:normal!important;font-variant-numeric:tabular-nums;}.pm-pdf-root .pm-pdf-summary-table-wrap{width:20rem;max-width:100%;margin-left:auto;}.pm-pdf-root [data-base-resource]{position:relative;transform-origin:top left;}.pm-pdf-root .pm-pdf-resource,.pm-pdf-root .pm-pdf-editable{cursor:default;box-sizing:border-box;outline:none;outline-offset:2px;}.pm-pdf-root .pm-pdf-resource::before,.pm-pdf-root .pm-pdf-editable::before{content:'';position:absolute;inset:-1px;border:1px dashed rgba(239,68,68,.28);border-radius:inherit;background:radial-gradient(circle at top left,#ef4444 0 3px,transparent 3.2px),radial-gradient(circle at top right,#ef4444 0 3px,transparent 3.2px),radial-gradient(circle at bottom left,#ef4444 0 3px,transparent 3.2px),radial-gradient(circle at bottom right,#ef4444 0 3px,transparent 3.2px);background-size:12px 12px;background-repeat:no-repeat;opacity:0;pointer-events:none;}.pm-pdf-root .pm-pdf-resource::after,.pm-pdf-root .pm-pdf-editable::after{content:'';position:absolute;right:-7px;bottom:-7px;width:12px;height:12px;border-radius:999px;background:#ef4444;box-shadow:0 0 0 2px #fff;opacity:0;pointer-events:none;}.pm-pdf-root .pm-pdf-base-selected,.pm-pdf-root .pm-pdf-edit-selected{outline:none;outline-offset:2px;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-resource,.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-editable{cursor:move;outline:1px dashed rgba(239,68,68,.45);}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-resource::before,.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-resource::after,.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-editable::before,.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-editable::after{opacity:.94;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-base-selected,.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-edit-selected{outline:2px solid #ef4444;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-edit-selected::before,.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-edit-selected::after{opacity:1;}.pm-pdf-delete-btn{position:absolute;top:-8px;right:-8px;width:22px;height:22px;border-radius:50%;background:#ef4444;color:#fff;display:none;align-items:center;justify-content:center;cursor:pointer;font-size:11px;z-index:80;box-shadow:0 0 0 2px #fff;pointer-events:auto;}.pm-pdf-root.pm-pdf-admin-enabled .pm-pdf-edit-selected .pm-pdf-delete-btn{display:flex;}.pm-pdf-delete-btn:hover{background:#dc2626;transform:scale(1.08);transition:all .2s;}</style>`;
     const pdfTableFitTag = `<style>.pm-pdf-root .pm-pdf-table-head th{font-size:var(--pm-fit-head-size,var(--pm-table-head-size))!important;padding-top:var(--pm-fit-cell-py,.5rem)!important;padding-bottom:var(--pm-fit-cell-py,.5rem)!important;padding-left:var(--pm-fit-cell-px,.75rem)!important;padding-right:var(--pm-fit-cell-px,.75rem)!important;}.pm-pdf-root .pm-pdf-table-body td,.pm-pdf-root .pm-pdf-table-body p,.pm-pdf-root .pm-pdf-table-body span{font-size:var(--pm-fit-body-size,var(--pm-table-body-size))!important;line-height:var(--pm-fit-line-height,var(--pm-line-height))!important;}.pm-pdf-root .pm-pdf-table-body td{padding-top:var(--pm-fit-cell-py,.5rem)!important;padding-bottom:var(--pm-fit-cell-py,.5rem)!important;padding-left:var(--pm-fit-cell-px,.75rem)!important;padding-right:var(--pm-fit-cell-px,.75rem)!important;}</style>`;
 
-    const now = new Date(); const dateStr = now.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' }); const genDateTime = now.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'medium' }); let docTitle = isOrder ? "ORDEN DE COMPRA" : "COTIZACIÓN"; 
+    const now = window.__serverDateService.nowDate(); const dateStr = now.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' }); const genDateTime = now.toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'medium' }); let docTitle = isOrder ? "ORDEN DE COMPRA" : "COTIZACIÓN"; 
     
     let folio = __pmResolveQuoteFolio(o); 
     
@@ -6085,9 +6205,9 @@ window.getOrderHTML = function(o, type) {
         const raw = String(value || '').trim();
         return raw && !/^impuestos?$/i.test(raw) ? raw : 'IVA';
     };
-    const __pmBuildTaxRows = (subtotal, activeTaxIds, storedTaxTotal = 0) => {
+    const __pmBuildTaxRows = (subtotal, activeTaxIds, storedTaxTotal = 0, summaryColspan = 4) => {
         const rows = [
-            `<tr><td class="py-1 px-3 text-[10px] font-bold text-gray-500 text-right" colspan="4">Subtotal</td><td class="py-1 px-3 text-right text-xs font-bold text-gray-800">${__pmFormatMoneyHtml(subtotal)}</td></tr>`
+            `<tr><td class="py-1 px-3 text-[10px] font-bold text-gray-500 text-right" colspan="${summaryColspan}">Subtotal</td><td class="py-1 px-3 text-right text-xs font-bold text-gray-800">${__pmFormatMoneyHtml(subtotal)}</td></tr>`
         ];
         const resolvedTaxes = parseIds(activeTaxIds)
             .map((tid) => __pmResolveTaxRecord(tid))
@@ -6112,10 +6232,10 @@ window.getOrderHTML = function(o, type) {
                 if (storedTaxTotal > 0 && index < resolvedTaxes.length - 1) {
                     remainingStoredTax = __pmRoundMoney(remainingStoredTax - amount);
                 }
-                rows.push(`<tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="4">${__pmSafeHtml(entry.name)}${entry.percentage > 0 ? ` (${entry.percentage}%)` : ''}</td><td class="py-1 px-3 text-right text-xs text-red-500 font-bold">${__pmFormatMoneyHtml(amount, { prefix: '+' })}</td></tr>`);
+                rows.push(`<tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="${summaryColspan}">${__pmSafeHtml(entry.name)}${entry.percentage > 0 ? ` (${entry.percentage}%)` : ''}</td><td class="py-1 px-3 text-right text-xs text-red-500 font-bold">${__pmFormatMoneyHtml(amount, { prefix: '+' })}</td></tr>`);
             });
         } else if (storedTaxTotal > 0) {
-            rows.push(`<tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="4">IVA</td><td class="py-1 px-3 text-right text-xs text-red-500 font-bold">${__pmFormatMoneyHtml(storedTaxTotal, { prefix: '+' })}</td></tr>`);
+            rows.push(`<tr><td class="py-1 px-3 text-[10px] text-gray-400 text-right" colspan="${summaryColspan}">IVA</td><td class="py-1 px-3 text-right text-xs text-red-500 font-bold">${__pmFormatMoneyHtml(storedTaxTotal, { prefix: '+' })}</td></tr>`);
         }
 
         return rows.join('');
@@ -6126,37 +6246,47 @@ window.getOrderHTML = function(o, type) {
     let convenioBaseTotal = 0;
     let convenioDeliveredTotal = 0;
     let rowsHtml = '';
+    const __pmPdfDetailRows = detailSpaces.length
+        ? detailSpaces.map((item) => ({ detail: item, catalogSpace: __pmFindCatalogSpace(item?.espacio_id || item?.space_id || '') }))
+        : [{ detail: o, catalogSpace: space }];
+    const hasDigitalMediaInTable = __pmPdfDetailRows.some((entry) => __pmResolveDigitalMediaConfig(entry.detail, entry.catalogSpace).enabled);
+    const __pmMeasureHeaderLabel = hasDigitalMediaInTable ? 'Resolución (px)' : 'Medidas';
+    const __pmSummaryColspan = hasDigitalMediaInTable ? 5 : 4;
     if (detailSpaces.length) {
         detailSpaces.forEach(sp => {
             const identity = __pmResolveSpaceIdentity(sp);
             const catalogSpace = __pmFindCatalogSpace(sp?.espacio_id || sp?.space_id || '');
-            const detailMaterialMeasure = __pmResolveDetailMaterialMeasure(sp, catalogSpace);
             const spSubtotal = parseFloat(sp.subtotal_espacio || sp.total_espacio || 0) || 0;
             runningSubtotal += spSubtotal;
             convenioBaseTotal += spSubtotal;
-            const mAncho = detailMaterialMeasure.medida_ancho;
-            const mAlto = detailMaterialMeasure.medida_alto;
-            const mUnidad = detailMaterialMeasure.medida_unidad || 'M';
             const mDetail = __pmResolvePdfSpaceDetail(sp, catalogSpace);
-            const measuresStr = (mAncho !== null && mAncho !== undefined && mAlto !== null && mAlto !== undefined) ? `${mAncho}x${mAlto} ${mUnidad}` : '--';
+            const digitalMedia = __pmResolveDigitalMediaConfig(sp, catalogSpace);
+            const measureCellHtml = hasDigitalMediaInTable
+                ? __pmSafeHtml(digitalMedia.enabled ? __pmDigitalMediaResolutionText(digitalMedia) : '--')
+                : __pmResolvePdfMeasureHtml(sp, catalogSpace);
+            const durationCellHtml = hasDigitalMediaInTable
+                ? `<td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(digitalMedia.enabled ? __pmDigitalMediaDurationText(digitalMedia) : '--')}</td>`
+                : '';
             const dateRangeLabel = (isConvenio && __pmSpaceDetailBlocksIndefinitely(sp))
                 ? `${window.safeFormatDate(sp.fecha_inicio)}<br>Indefinido`
                 : `${window.safeFormatDate(sp.fecha_inicio)}<br>${window.safeFormatDate(sp.fecha_fin)}`;
             const amountCellHtml = isConvenio ? '' : `<td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${__pmFormatMoneyHtml(spSubtotal)}</td>`;
-            rowsHtml += `<tr><td class="py-2 px-3 align-top break-words">${__pmRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(mDetail)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(measuresStr)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${dateRangeLabel}</td>${amountCellHtml}</tr>`;
+            rowsHtml += `<tr><td class="py-2 px-3 align-top break-words">${__pmRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(mDetail)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${measureCellHtml}</td>${durationCellHtml}<td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${dateRangeLabel}</td>${amountCellHtml}</tr>`;
         });
     } else {
         const identity = __pmResolveSpaceIdentity();
-        const detailMaterialMeasure = __pmResolveDetailMaterialMeasure(o, space);
-        const mAncho = detailMaterialMeasure.medida_ancho;
-        const mAlto = detailMaterialMeasure.medida_alto;
-        const mUnidad = detailMaterialMeasure.medida_unidad || 'M';
         const mDetail = __pmResolvePdfSpaceDetail(o, space);
-        const measuresStr = (mAncho !== null && mAncho !== undefined && mAlto !== null && mAlto !== undefined) ? `${mAncho}x${mAlto} ${mUnidad}` : '--';
+        const digitalMedia = __pmResolveDigitalMediaConfig(o, space);
+        const measureCellHtml = hasDigitalMediaInTable
+            ? __pmSafeHtml(digitalMedia.enabled ? __pmDigitalMediaResolutionText(digitalMedia) : '--')
+            : __pmResolvePdfMeasureHtml(o, space);
+        const durationCellHtml = hasDigitalMediaInTable
+            ? `<td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(digitalMedia.enabled ? __pmDigitalMediaDurationText(digitalMedia) : '--')}</td>`
+            : '';
         runningSubtotal = rentalTotal;
         convenioBaseTotal = rentalTotal;
         const amountCellHtml = isConvenio ? '' : `<td class="py-2 px-3 align-top text-right font-bold text-gray-700 text-xs">${__pmFormatMoneyHtml(rentalTotal)}</td>`;
-        rowsHtml = `<tr><td class="py-2 px-3 align-top break-words">${__pmRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(mDetail)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(measuresStr)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmOrderBlocksIndefinitely(o) ? `${window.safeFormatDate(o.fecha_inicio)}<br>Indefinido` : `${window.safeFormatDate(o.fecha_inicio)}<br>${window.safeFormatDate(o.fecha_fin)}`}</td>${amountCellHtml}</tr>`;
+        rowsHtml = `<tr><td class="py-2 px-3 align-top break-words">${__pmRenderSpaceCell(identity)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmSafeHtml(mDetail)}</td><td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${measureCellHtml}</td>${durationCellHtml}<td class="py-2 px-3 align-top text-center text-gray-500 text-xs">${__pmOrderBlocksIndefinitely(o) ? `${window.safeFormatDate(o.fecha_inicio)}<br>Indefinido` : `${window.safeFormatDate(o.fecha_inicio)}<br>${window.safeFormatDate(o.fecha_fin)}`}</td>${amountCellHtml}</tr>`;
     }
     
     const cArray = __pmNormalizeConceptsArray(o.conceptos_adicionales);
@@ -6175,10 +6305,13 @@ window.getOrderHTML = function(o, type) {
         const peopleSuffix = conceptPeople > 0 ? ` (${conceptPeople} persona${conceptPeople === 1 ? '' : 's'})` : '';
         const label = `${spName ? `${spName} - ` : ''}${c.description || c.nombre || (convenioConcept ? 'Trato de Convenio' : 'Adicional')}${peopleSuffix}`;
         const amountCellHtml = isConvenio ? '' : `<td class="py-2 px-3 text-right text-[13px] font-medium text-gray-600">${__pmFormatMoneyHtml(amount, { prefix: sign })}</td>`;
-        rowsHtml += `<tr><td class="py-2 px-3 text-[13px] font-medium text-gray-600 break-words leading-snug">${label}</td><td class="py-2 px-3"></td><td class="py-2 px-3"></td><td class="py-2 px-3"></td>${amountCellHtml}</tr>`; 
+        const metaColsHtml = hasDigitalMediaInTable
+            ? '<td class="py-2 px-3"></td><td class="py-2 px-3"></td><td class="py-2 px-3"></td><td class="py-2 px-3"></td>'
+            : '<td class="py-2 px-3"></td><td class="py-2 px-3"></td><td class="py-2 px-3"></td>';
+        rowsHtml += `<tr><td class="py-2 px-3 text-[13px] font-medium text-gray-600 break-words leading-snug">${label}</td>${metaColsHtml}${amountCellHtml}</tr>`; 
     }); 
     
-    if(o.tipo_ajuste && o.tipo_ajuste !== 'ninguno') { let val = parseFloat(o.valor_ajuste); let displayAmount = val; if (o.ajuste_es_porcentaje) { displayAmount = runningSubtotal * (val / 100); } const sign = o.tipo_ajuste === 'descuento' ? '-' : '+'; if(o.tipo_ajuste==='descuento') runningSubtotal -= displayAmount; else runningSubtotal += displayAmount; const amountCellHtml = isConvenio ? '' : `<td class="py-2 px-3 text-right font-bold text-[12px] text-gray-600">${__pmFormatMoneyHtml(displayAmount, { prefix: sign })}</td>`; rowsHtml += `<tr class="bg-gray-50"><td class="py-2 px-3 italic text-[12px] text-gray-500">Ajuste Global</td><td></td><td></td><td></td>${amountCellHtml}</tr>`; } 
+    if(o.tipo_ajuste && o.tipo_ajuste !== 'ninguno') { let val = parseFloat(o.valor_ajuste); let displayAmount = val; if (o.ajuste_es_porcentaje) { displayAmount = runningSubtotal * (val / 100); } const sign = o.tipo_ajuste === 'descuento' ? '-' : '+'; if(o.tipo_ajuste==='descuento') runningSubtotal -= displayAmount; else runningSubtotal += displayAmount; const amountCellHtml = isConvenio ? '' : `<td class="py-2 px-3 text-right font-bold text-[12px] text-gray-600">${__pmFormatMoneyHtml(displayAmount, { prefix: sign })}</td>`; const adjustmentMetaColsHtml = hasDigitalMediaInTable ? '<td></td><td></td><td></td><td></td>' : '<td></td><td></td><td></td>'; rowsHtml += `<tr class="bg-gray-50"><td class="py-2 px-3 italic text-[12px] text-gray-500">Ajuste Global</td>${adjustmentMetaColsHtml}${amountCellHtml}</tr>`; } 
     const __pmTableRows = (String(rowsHtml).match(/<tr\b/gi) || []).length;
     const __pmTableChars = String(rowsHtml).replace(/<[^>]+>/g, '').length;
     let __pmDensityLevel = 0;
@@ -6198,18 +6331,26 @@ window.getOrderHTML = function(o, type) {
     const storedTaxTotal = pricing.taxTotal > 0
         ? pricing.taxTotal
         : Math.max(0, __pmRoundMoney(pricing.total - runningSubtotal));
-    const taxRows = __pmBuildTaxRows(runningSubtotal, taxIds, storedTaxTotal);
+    const taxRows = __pmBuildTaxRows(runningSubtotal, taxIds, storedTaxTotal, __pmSummaryColspan);
     // Blindaje adicional: si por cualquier ruta un convenio usa el layout
     // generico, la tabla y el resumen tambien deben quedar sin montos visibles.
     const totalsBlock = isConvenio
         ? ''
-        : `<div class="pm-pdf-summary flex justify-end mb-2 pr-4" data-base-resource="summary"><div class="pm-pdf-summary-table-wrap"><table class="w-full border-collapse">${taxRows}<tr><td class="pt-2 border-t-2 border-gray-800 align-middle text-right" colspan="4"><span class="text-[10px] font-bold uppercase text-gray-500 mr-2">Total Neto</span></td><td class="pt-2 border-t-2 border-gray-800 align-middle text-right"><span class="text-xl font-black text-gray-900">${__pmFormatMoneyHtml(pricing.total)}</span></td></tr></table></div></div>`; 
+        : `<div class="pm-pdf-summary flex justify-end mb-2 pr-4" data-base-resource="summary"><div class="pm-pdf-summary-table-wrap"><table class="w-full border-collapse">${taxRows}<tr><td class="pt-2 border-t-2 border-gray-800 align-middle text-right" colspan="${__pmSummaryColspan}"><span class="text-[10px] font-bold uppercase text-gray-500 mr-2">Total Neto</span></td><td class="pt-2 border-t-2 border-gray-800 align-middle text-right"><span class="text-xl font-black text-gray-900">${__pmFormatMoneyHtml(pricing.total)}</span></td></tr></table></div></div>`; 
     const tableColGroupHtml = isConvenio
-        ? `<colgroup><col style="width:42%;"><col style="width:18%;"><col style="width:16%;"><col style="width:24%;"></colgroup>`
-        : `<colgroup><col style="width:38%;"><col style="width:14%;"><col style="width:12%;"><col style="width:14%;"><col style="width:22%;"></colgroup>`;
+        ? (hasDigitalMediaInTable
+            ? `<colgroup><col style="width:36%;"><col style="width:16%;"><col style="width:16%;"><col style="width:12%;"><col style="width:20%;"></colgroup>`
+            : `<colgroup><col style="width:42%;"><col style="width:18%;"><col style="width:16%;"><col style="width:24%;"></colgroup>`)
+        : (hasDigitalMediaInTable
+            ? `<colgroup><col style="width:32%;"><col style="width:13%;"><col style="width:13%;"><col style="width:10%;"><col style="width:12%;"><col style="width:20%;"></colgroup>`
+            : `<colgroup><col style="width:38%;"><col style="width:14%;"><col style="width:12%;"><col style="width:14%;"><col style="width:22%;"></colgroup>`);
     const tableHeadHtml = isConvenio
-        ? `<thead class="pm-pdf-table-head bg-gray-100 text-sm font-black text-gray-500 uppercase"><tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">${__pmSafeHtml(detailColumnLabel)}</th><th class="py-2 px-3 text-center">Medidas</th><th class="py-2 px-3 text-center rounded-r">Fecha</th></tr></thead>`
-        : `<thead class="pm-pdf-table-head bg-gray-100 text-sm font-black text-gray-500 uppercase"><tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">${__pmSafeHtml(detailColumnLabel)}</th><th class="py-2 px-3 text-center">Medidas</th><th class="py-2 px-3 text-center">Fecha</th><th class="py-2 px-3 text-right rounded-r">Importe</th></tr></thead>`;
+        ? (hasDigitalMediaInTable
+            ? `<thead class="pm-pdf-table-head bg-gray-100 text-sm font-black text-gray-500 uppercase"><tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">${__pmSafeHtml(detailColumnLabel)}</th><th class="py-2 px-3 text-center">${__pmMeasureHeaderLabel}</th><th class="py-2 px-3 text-center">Duración</th><th class="py-2 px-3 text-center rounded-r">Fecha</th></tr></thead>`
+            : `<thead class="pm-pdf-table-head bg-gray-100 text-sm font-black text-gray-500 uppercase"><tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">${__pmSafeHtml(detailColumnLabel)}</th><th class="py-2 px-3 text-center">${__pmMeasureHeaderLabel}</th><th class="py-2 px-3 text-center rounded-r">Fecha</th></tr></thead>`)
+        : (hasDigitalMediaInTable
+            ? `<thead class="pm-pdf-table-head bg-gray-100 text-sm font-black text-gray-500 uppercase"><tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">${__pmSafeHtml(detailColumnLabel)}</th><th class="py-2 px-3 text-center">${__pmMeasureHeaderLabel}</th><th class="py-2 px-3 text-center">Duración</th><th class="py-2 px-3 text-center">Fecha</th><th class="py-2 px-3 text-right rounded-r">Importe</th></tr></thead>`
+            : `<thead class="pm-pdf-table-head bg-gray-100 text-sm font-black text-gray-500 uppercase"><tr><th class="py-2 px-3 rounded-l">Concepto</th><th class="py-2 px-3 text-center">${__pmSafeHtml(detailColumnLabel)}</th><th class="py-2 px-3 text-center">${__pmMeasureHeaderLabel}</th><th class="py-2 px-3 text-center">Fecha</th><th class="py-2 px-3 text-right rounded-r">Importe</th></tr></thead>`);
     const convenioTableHideTag = isConvenio
         ? `<style>.pm-pdf-root .pm-pdf-hide-convenio-amounts tbody tr>td:last-child{display:none!important;}</style>`
         : '';
@@ -6278,10 +6419,11 @@ window.getOrderHTML = function(o, type) {
             const identity = detailSpaces.length ? __pmResolveSpaceIdentity(item) : __pmResolveSpaceIdentity();
             const materialMeasure = __pmResolveDetailMaterialMeasure(detailSpaces.length ? item : o, catalogSpace);
             const detailLabel = __pmResolvePdfSpaceDetail(detailSpaces.length ? item : o, catalogSpace);
+            const digitalMedia = __pmResolveDigitalMediaConfig(detailSpaces.length ? item : o, catalogSpace);
             const width = materialMeasure.medida_ancho;
             const height = materialMeasure.medida_alto;
             const unit = materialMeasure.medida_unidad || 'M';
-            const measures = (width !== null && width !== undefined && height !== null && height !== undefined) ? `${width} x ${height} ${unit}` : 'Sin medida capturada';
+            const measures = digitalMedia.enabled ? __pmDigitalMediaDetailText(digitalMedia) : ((width !== null && width !== undefined && height !== null && height !== undefined) ? `${width} x ${height} ${unit}` : 'Sin medida capturada');
             const start = item?.fecha_inicio || o.fecha_inicio || '';
             const end = item?.fecha_fin || o.fecha_fin || '';
             const isIndefinite = __pmSpaceDetailBlocksIndefinitely(item) || __pmOrderBlocksIndefinitely(o);
@@ -6395,7 +6537,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
   let pmTotals = { spaces: [], subtotal: 0, adjusted: 0, adjustment: 0, tax: 0, final: 0, adjType: "ninguno", subtotalBase: 0 };
 
   const iso = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || "").trim()) ? String(v).trim() : "");
-  const today = () => new Date().toISOString().slice(0, 10);
+  const today = () => window.__serverDateService.todayISO();
   const safeArr = (v) => {
     if (!v) return [];
     if (Array.isArray(v)) return v;
@@ -7271,7 +7413,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       const convenioMeta = __pmParseConvenioMeta(order);
       if (!convenioMeta.activo && !__pmIsConvenioOrder(order)) throw new Error("La cotización no está marcada como convenio.");
       const stamp = Date.now();
-      const uploadedAt = new Date().toISOString();
+      const uploadedAt = window.__serverDateService.nowISO();
       const evidenceItems = [];
       for (let index = 0; index < files.length; index += 1) {
         const file = files[index];
@@ -7597,22 +7739,47 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
             ]
           });
         });
-      } else if (order.contrato_url) {
-        const contractUrl = await __pmCreateSignedStorageUrl(order.contrato_url);
+      } 
+
+      // Contrato en Blanco
+      if (order.contrato_en_blanco_url || order.contrato_url) {
+        const urlToUse = order.contrato_en_blanco_url || order.contrato_url;
+        const contractUrl = await __pmCreateSignedStorageUrl(urlToUse);
         docs.push({
-          title: "Contrato",
-          description: "Documento contractual almacenado para esta cotización.",
-          badge: "Adjunto",
-          badgeTone: "emerald",
+          title: "Contrato en Blanco",
+          description: "Documento contractual generado por el sistema.",
+          badge: "Autogenerado",
+          badgeTone: "slate",
           metaRows: [
-            { label: "Archivo", value: order.contrato_url.split("/").pop() || "contrato.pdf" },
+            { label: "Archivo", value: urlToUse.split("/").pop() || "contrato_en_blanco.pdf" },
             { label: "Cliente", value: order.cliente_nombre || "--" }
           ],
           previewType: contractUrl ? "iframe" : "message",
           previewSrc: contractUrl,
-          previewMessage: "No se pudo cargar el contrato.",
+          previewMessage: "No se pudo cargar el contrato en blanco.",
           actions: [
-            { label: "Abrir Documento", icon: "fa-solid fa-folder-open", tone: "emerald", onclick: contractUrl ? `window.openPmExpedientePreview(${JSON.stringify(contractUrl)}, ${JSON.stringify("Contrato")})` : `window.openStoredDocument(${JSON.stringify(order.contrato_url)})` }
+            { label: "Abrir Documento", icon: "fa-solid fa-folder-open", tone: "slate", onclick: contractUrl ? `window.openPmExpedientePreview(${JSON.stringify(contractUrl)}, ${JSON.stringify("Contrato en Blanco")})` : `window.openStoredDocument(${JSON.stringify(urlToUse)})` }
+          ]
+        });
+      }
+
+      // Contrato Firmado
+      if (order.contrato_firmado_url) {
+        const contractUrl = await __pmCreateSignedStorageUrl(order.contrato_firmado_url);
+        docs.push({
+          title: "Contrato Firmado",
+          description: "Documento contractual con firmas almacenado.",
+          badge: "Adjunto",
+          badgeTone: "emerald",
+          metaRows: [
+            { label: "Archivo", value: order.contrato_firmado_url.split("/").pop() || "contrato_firmado.pdf" },
+            { label: "Cliente", value: order.cliente_nombre || "--" }
+          ],
+          previewType: contractUrl ? "iframe" : "message",
+          previewSrc: contractUrl,
+          previewMessage: "No se pudo cargar el contrato firmado.",
+          actions: [
+            { label: "Abrir Documento", icon: "fa-solid fa-folder-open", tone: "emerald", onclick: contractUrl ? `window.openPmExpedientePreview(${JSON.stringify(contractUrl)}, ${JSON.stringify("Contrato Firmado")})` : `window.openStoredDocument(${JSON.stringify(order.contrato_firmado_url)})` }
           ]
         });
       }
@@ -7736,7 +7903,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
       const folio = __pmResolveQuoteFolio(order, order.id);
       const path = `${order.id}/orden_compra_${folio}.pdf`;
       await window.globalPocketBase.storage.from("documentos").upload(path, blob, { upsert: true });
-      const fechaOrden = new Date().toISOString();
+      const fechaOrden = window.__serverDateService.nowISO();
       const { error } = await __pmQuotesUpdate(order.id, { url_orden_compra: path, fecha_orden_compra: fechaOrden });
       if (error) throw error;
       currentPreviewOrder = { ...currentPreviewOrder, ...order, url_orden_compra: path, fecha_orden_compra: fechaOrden };
@@ -9334,6 +9501,7 @@ const extraRaw = `<div class="pm-pdf-shift" style="width:100%;min-height:${pageB
     viewport.scrollBy({ left: (direction || 1) * delta, behavior: "smooth" });
   };
 })();
+
 
 
 

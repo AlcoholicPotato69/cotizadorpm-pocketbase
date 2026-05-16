@@ -25,6 +25,45 @@
     return String(value || "").trim();
   }
 
+  function readRequestHeader(e, name) {
+    const safeName = trim(name);
+    if (!safeName) return "";
+    const header = e && e.request ? e.request.header : null;
+    if (!header) return "";
+    try {
+      if (typeof header.get === "function") return trim(header.get(safeName));
+    } catch (_) {}
+    try {
+      if (typeof header.values === "function") {
+        const values = header.values(safeName);
+        if (Array.isArray(values) && values.length) return trim(values[0]);
+      }
+    } catch (_) {}
+    try {
+      const direct = header[safeName] || header[safeName.toLowerCase()] || header[safeName.toUpperCase()];
+      if (Array.isArray(direct) && direct.length) return trim(direct[0]);
+      return trim(direct);
+    } catch (_) {}
+    return "";
+  }
+
+  function readQueryParam(e, name) {
+    const safeName = trim(name);
+    if (!safeName) return "";
+    try {
+      if (e && e.request && typeof e.request.queryParam === "function") {
+        return trim(e.request.queryParam(safeName));
+      }
+    } catch (_) {}
+    try {
+      const query = e && e.request && e.request.url && typeof e.request.url.query === "function"
+        ? e.request.url.query()
+        : null;
+      if (query && typeof query.get === "function") return trim(query.get(safeName));
+    } catch (_) {}
+    return "";
+  }
+
   function getNotificationsApi() {
     if (notificationsApi !== null) return notificationsApi;
     try {
@@ -241,12 +280,14 @@
   }
 
   function resolveEndpointAuthRecord(e) {
-    const authHeader = trim(e && e.request && e.request.header ? e.request.header.get("Authorization") : "");
+    const authHeader = readRequestHeader(e, "Authorization") || readRequestHeader(e, "authorization");
     if (!authHeader) throw new UnauthorizedError("Debes iniciar sesion para consultar movimientos.");
+    const safeToken = authHeader.toLowerCase().startsWith("bearer ") ? authHeader.slice(7).trim() : authHeader;
+    if (!safeToken) throw new UnauthorizedError("Debes iniciar sesion para consultar movimientos.");
 
     let authRecord = null;
     try {
-      authRecord = $app.findAuthRecordByToken(authHeader, "auth");
+      authRecord = $app.findAuthRecordByToken(safeToken, "auth");
     } catch (_) {
       authRecord = null;
     }
@@ -254,27 +295,39 @@
     if (trim(authRecord.collection().name) !== AUTH_COLLECTION) {
       throw new ForbiddenError("No tienes acceso a esta funcion.");
     }
+    try {
+      const tenantHint = normalizeTenant(readQueryParam(e, "tenant")) || normalizeTenant(recordValue(authRecord, "tenant_default")) || "plaza_mayor";
+      const rbac = require(`${__hooks}/rbac_shared.js`);
+      const decision = rbac.evaluateAction(authRecord, "control_view", tenantHint, {});
+      if (!decision || decision.allowed !== true) {
+        throw new ForbiddenError("No tienes permisos para consultar movimientos de control.");
+      }
+    } catch (err) {
+      if (err && (String(err.name || "") === "ForbiddenError" || String(err.name || "") === "UnauthorizedError")) throw err;
+      throw new ForbiddenError("No tienes permisos para consultar movimientos de control.");
+    }
     return authRecord;
   }
 
   function normalizeAllowedTenants(authRecord) {
-    const tenants = safeArray(recordValue(authRecord, "allowed_tenants"))
-      .map(normalizeTenant)
-      .filter(Boolean);
-    if (tenants.length) return tenants;
-    const role = normalizeRole(recordValue(authRecord, "role"));
-    if (role === "admin" || role === "verificador") return ["plaza_mayor", "casa_de_piedra"];
-    const tenantDefault = normalizeTenant(recordValue(authRecord, "tenant_default"));
-    return tenantDefault ? [tenantDefault] : [];
+    const base = ["plaza_mayor", "casa_de_piedra"];
+    const out = [];
+    for (let i = 0; i < base.length; i += 1) {
+      if (canAuthAccessTenant(authRecord, base[i])) out.push(base[i]);
+    }
+    return out;
   }
 
   function canAuthAccessTenant(authRecord, tenant) {
     const safeTenant = normalizeTenant(tenant);
     if (!authRecord || !safeTenant) return false;
-    const role = normalizeRole(recordValue(authRecord, "role"));
-    if (role === "admin" || role === "verificador") return true;
-    const allowed = normalizeAllowedTenants(authRecord);
-    return allowed.indexOf(safeTenant) !== -1;
+    try {
+      const rbac = require(`${__hooks}/rbac_shared.js`);
+      const decision = rbac.evaluateAction(authRecord, "control_view", safeTenant, {});
+      return !!(decision && decision.allowed === true);
+    } catch (_) {
+      return false;
+    }
   }
 
   function serializeMovementRecord(record) {
@@ -1168,11 +1221,10 @@
     e.next();
     const clientId = trim(e.record.get("id"));
     const profileOrigin = trim(recordValue(e.record, "perfil_origen")).toLowerCase();
-    const isQuickProfile = profileOrigin === "cotizacion_rapida";
 
     saveMovement({
       tenant,
-      tipo_movimiento: isQuickProfile ? "perfil_rapido_creado" : "cliente_creado",
+      tipo_movimiento: "cliente_creado",
       entidad_tipo: "cliente",
       entidad_id: clientId,
       entidad_nombre: clientName,
@@ -1181,9 +1233,7 @@
       actor_id: actor.id,
       actor_nombre: actor.name,
       actor_role: actor.role,
-      resumen: isQuickProfile
-        ? "Perfil rapido creado desde cotizacion rapida para " + clientName
-        : "Cliente " + clientName + " creado",
+      resumen: "Cliente " + clientName + " creado",
       metadata: {
         perfil_origen: profileOrigin || "manual",
         perfil_estatus: trim(recordValue(e.record, "perfil_estatus"))

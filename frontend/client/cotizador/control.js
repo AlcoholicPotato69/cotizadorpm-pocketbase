@@ -151,7 +151,7 @@ async function fetchServerNowIso() {
     const now = String(data?.now || '').trim();
     if (parseDateTime(now)) return now;
   } catch (_) {}
-  return new Date().toISOString();
+  return window.__serverDateService.nowISO();
 }
 
 function formatDate(value) {
@@ -174,7 +174,7 @@ function calcExpiryStatus(dateValue, validDays) {
   if (specialMode.indexOf('calendar_months:') === 0) {
     const baseUtc = new Date(`${normalized}T00:00:00Z`);
     if (Number.isNaN(baseUtc.getTime())) return { status: 'missing', daysLeft: null, expiry: '' };
-    const now = new Date();
+    const now = window.__serverDateService.nowDate();
     const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
     if (baseUtc.getTime() > todayUtc.getTime()) return { status: 'expired', daysLeft: -1, expiry: '' };
     const months = Math.max(1, Number(specialMode.split(':')[1]) || 3);
@@ -194,7 +194,7 @@ function calcExpiryStatus(dateValue, validDays) {
   if (Number.isNaN(base.getTime())) return { status: 'missing', daysLeft: null, expiry: '' };
   const expiry = new Date(base);
   expiry.setDate(expiry.getDate() + validDays);
-  const now = new Date();
+  const now = window.__serverDateService.nowDate();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const diffMs = expiry.getTime() - today.getTime();
   const daysLeft = Math.ceil(diffMs / 86400000);
@@ -207,13 +207,22 @@ function calcExpiryStatus(dateValue, validDays) {
 function deriveAccessFromLayout() {
   const authCtx = window.__HUB_AUTH_CONTEXT || null;
   if (!authCtx?.session?.user) return null;
-  const perms = (authCtx.permissions && typeof authCtx.permissions === 'object') ? authCtx.permissions : {};
+  const rbac = window.HUB_RBAC || null;
+  const perms = (authCtx.permissions && typeof authCtx.permissions === 'object')
+    ? authCtx.permissions
+    : ((authCtx.profile?.effective_permissions && typeof authCtx.profile.effective_permissions === 'object')
+      ? authCtx.profile.effective_permissions
+      : {});
   const role = normalizeRoleName(authCtx.role || authCtx.profile?.role || '');
+  const canVerify = rbac?.can ? rbac.can('clients_verify') : (authCtx.isAdmin === true || perms.clients_verify === true);
+  const canView = rbac?.canAny
+    ? rbac.canAny(['control_view', 'clients_verify', 'clients_view'])
+    : (authCtx.isAdmin === true || perms.control_view === true || perms.clients_verify === true || perms.clients_view === true);
   return {
     role,
     perms,
-    canView: authCtx.isAdmin === true || role === 'admin' || role === 'verificador',
-    canVerify: authCtx.isAdmin === true || role === 'verificador' || perms.clients_verify === true
+    canView,
+    canVerify
   };
 }
 
@@ -221,11 +230,17 @@ async function fetchAccessContext(sessionUser) {
   const fromLayout = deriveAccessFromLayout();
   if (fromLayout) return fromLayout;
   const role = normalizeRoleName(sessionUser?.role || '');
+  const perms = (sessionUser?.effective_permissions && typeof sessionUser.effective_permissions === 'object')
+    ? sessionUser.effective_permissions
+    : {};
+  const rbac = window.HUB_RBAC || null;
   return {
     role,
-    perms: {},
-    canView: role === 'admin' || role === 'verificador',
-    canVerify: role === 'admin' || role === 'verificador'
+    perms,
+    canView: rbac?.canAny
+      ? rbac.canAny(['control_view', 'clients_verify', 'clients_view'])
+      : (perms.control_view === true || perms.clients_verify === true || perms.clients_view === true),
+    canVerify: rbac?.can ? rbac.can('clients_verify') : (perms.clients_verify === true)
   };
 }
 
@@ -242,13 +257,12 @@ function getAllowedTenantsForVerifier() {
   const authCtx = window.__HUB_AUTH_CONTEXT || {};
   const allowed = Array.isArray(authCtx.allowedTenants) && authCtx.allowedTenants.length
     ? authCtx.allowedTenants
-    : ['plaza_mayor', 'casa_de_piedra'];
+    : [];
   return allowed.filter((slug) => slug === 'plaza_mayor' || slug === 'casa_de_piedra');
 }
 
 function installVerifierTenantNavigation(accessCtx) {
-  const activeRole = normalizeRoleName(accessCtx?.role || '');
-  if (activeRole !== 'verificador' && activeRole !== 'admin') return;
+  if (!accessCtx?.canVerify) return;
   const currentFile = getCurrentPageFile();
   const currentTenant = TENANT_SLUG;
   const allowedTenants = getAllowedTenantsForVerifier();
@@ -275,7 +289,7 @@ function installVerifierTenantNavigation(accessCtx) {
     return;
   }
 
-  if (activeRole !== 'verificador') return;
+  if (!accessCtx?.canVerify) return;
   const navContainer = document.querySelector('nav .container');
   if (!navContainer) return;
   navContainer.dataset.verifierTenantNav = 'true';
@@ -302,8 +316,11 @@ function installVerifierTenantNavigation(accessCtx) {
 }
 
 function isAdminControlRoleActive() {
-  const authCtx = window.__HUB_AUTH_CONTEXT || {};
-  return authCtx.isAdmin === true || normalizeRoleName(state.access?.role || authCtx.role || authCtx.profile?.role || '') === 'admin';
+  return window.HUB_RBAC?.canAny
+    ? window.HUB_RBAC.canAny(['config_manage', 'pdf_layout_manage'])
+    : ((window.__HUB_AUTH_CONTEXT?.isAdmin === true)
+      || ((window.__HUB_AUTH_CONTEXT?.permissions || {}).config_manage === true)
+      || ((window.__HUB_AUTH_CONTEXT?.permissions || {}).pdf_layout_manage === true));
 }
 
 function readAdminVerifierMode() {
@@ -746,7 +763,7 @@ function getControlDictamenBrandColor() {
 }
 
 function getControlDictamenYear() {
-  return new Date().getFullYear();
+  return window.__serverDateService.nowDate().getFullYear();
 }
 
 function getControlDictamenYearSuffix(year = getControlDictamenYear()) {
@@ -928,9 +945,10 @@ async function loadControlDictamenPdfStyle() {
 }
 
 function canSaveControlDictamenTemplate() {
+  if (window.HUB_RBAC?.canAny) return window.HUB_RBAC.canAny(['pdf_layout_manage', 'config_manage']);
   const auth = window.__HUB_AUTH_CONTEXT || {};
-  const role = normalizeRoleName(auth.role || auth.profile?.role || state.access?.role || '');
-  return auth.isAdmin === true || role === 'admin';
+  const perms = (auth.permissions && typeof auth.permissions === 'object') ? auth.permissions : (state.access?.perms || {});
+  return auth.isAdmin === true || perms.pdf_layout_manage === true || perms.config_manage === true;
 }
 
 async function saveControlDictamenPdfStyle(style) {
@@ -950,7 +968,7 @@ async function saveControlDictamenPdfStyle(style) {
   const nextConfig = {
     ...config,
     profiles: { ...profiles, dictamen: normalized },
-    updated_at: new Date().toISOString()
+    updated_at: window.__serverDateService.nowISO()
   };
   if (row?.id) {
     const { error: updateError } = await window.tenantPocketBase
@@ -1006,7 +1024,7 @@ function buildControlDictamenTemplateContext(client, folio, title) {
     CLIENT_RFC: client?.rfc || '',
     FOLIO: folio || '',
     DOC_TITLE: title || 'DICTAMEN LEGAL DOCUMENTOS PROTOCOLIZADOS',
-    TODAY: new Date().toLocaleDateString('es-MX'),
+    TODAY: window.__serverDateService.todayLocale('es-MX'),
     CURRENT_USER_NAME: actor.name,
     CURRENT_USER_EMAIL: actor.email,
     GENERATED_BY: actor.name,
@@ -1218,7 +1236,7 @@ async function persistControlDictamenSnapshot(client, folio, blob, filename, doc
   }
 
   const actor = getControlDictamenActorMeta();
-  const generatedAt = new Date().toISOString();
+  const generatedAt = window.__serverDateService.nowISO();
   const form = new FormData();
   const uploadFile = typeof File !== 'undefined'
     ? new File([blob], filename, { type: 'application/pdf' })
@@ -1570,7 +1588,7 @@ function buildMovementReportHtml(rows, generatedAtIso = '') {
   const searchValue = filters.search || 'Sin busqueda';
   const dateRange = `${filters.dateFrom || 'Sin inicio'} - ${filters.dateTo || 'Sin fin'}`;
   const generatedBy = getControlDictamenActorMeta();
-  const generatedAt = getDateTimeParts(generatedAtIso || state.serverNowIso || new Date().toISOString());
+  const generatedAt = getDateTimeParts(generatedAtIso || state.serverNowIso || window.__serverDateService.nowISO());
   const approvalCount = rows.filter(row => String(row?.tipo_movimiento || '') === 'documento_aprobado').length;
   const metaRowsHtml = [
     ['Sede', PAGE_CFG.tenantLabel || TENANT_SLUG],
@@ -1964,21 +1982,24 @@ async function loadControlData() {
 }
 
 function syncNavPermissions(accessCtx) {
-  const role = accessCtx?.role || '';
   const perms = accessCtx?.perms || {};
-  if (role === 'admin') return;
+  const rbac = window.HUB_RBAC || null;
+  const isAdminAccess = rbac?.isAdmin ? rbac.isAdmin() : (window.__HUB_AUTH_CONTEXT?.isAdmin === true);
+  if (isAdminAccess) return;
   const navRules = {
-    'catalog.html': ('catalog_view' in perms) ? !!perms.catalog_view : true,
-    'agenda.html': ('orders_view' in perms) ? !!perms.orders_view : true,
-    'contracts.html': ('orders_view' in perms) ? !!perms.orders_view : true,
-    'receipts.html': ('orders_view' in perms) ? !!perms.orders_view : true,
-    'invoices.html': ('orders_view' in perms) ? !!perms.orders_view : true,
-    'orders.html': ('orders_view' in perms) ? !!perms.orders_view : true,
-    'cotizacion.html': ('orders_view' in perms) ? !!perms.orders_view : true,
-    'reports.html': ('reports_view' in perms) ? !!perms.reports_view : true,
-    'clientes.html': (('clients_view' in perms) || ('clients_manage' in perms) || ('clients_verify' in perms))
-      ? (!!perms.clients_view || !!perms.clients_manage || !!perms.clients_verify)
-      : true
+    'catalog.html': rbac?.can ? rbac.can('catalog_view') : (('catalog_view' in perms) ? !!perms.catalog_view : false),
+    'agenda.html': rbac?.can ? rbac.can('orders_view') : (('orders_view' in perms) ? !!perms.orders_view : false),
+    'contracts.html': rbac?.can ? rbac.can('orders_view') : (('orders_view' in perms) ? !!perms.orders_view : false),
+    'receipts.html': rbac?.can ? rbac.can('orders_view') : (('orders_view' in perms) ? !!perms.orders_view : false),
+    'invoices.html': rbac?.can ? rbac.can('orders_view') : (('orders_view' in perms) ? !!perms.orders_view : false),
+    'orders.html': rbac?.can ? rbac.can('orders_view') : (('orders_view' in perms) ? !!perms.orders_view : false),
+    'cotizacion.html': rbac?.can ? rbac.can('orders_view') : (('orders_view' in perms) ? !!perms.orders_view : false),
+    'reports.html': rbac?.can ? rbac.can('reports_view') : (('reports_view' in perms) ? !!perms.reports_view : false),
+    'clientes.html': rbac?.canAny
+      ? rbac.canAny(['clients_view', 'clients_manage', 'clients_verify'])
+      : ((('clients_view' in perms) || ('clients_manage' in perms) || ('clients_verify' in perms))
+        ? (!!perms.clients_view || !!perms.clients_manage || !!perms.clients_verify)
+        : false)
   };
   Object.keys(navRules).forEach((page) => {
     if (!navRules[page]) {
@@ -2027,3 +2048,4 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   await loadControlData();
 });
+

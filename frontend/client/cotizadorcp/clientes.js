@@ -21,6 +21,7 @@ const FIN_SCHEMA = __isCP ? 'finanzas_casadepiedra' : ((window.HUB_CONFIG && win
 
 let allClients = [];
 let canManage = false;
+let canCreate = false;
 let canVerify = false;
 let canSeeAllDocuments = false;
 let currentClientRole = '';
@@ -93,16 +94,29 @@ function normalizeRoleName(value='') {
 function deriveClientAccessFromLayout() {
   const authCtx = window.__HUB_AUTH_CONTEXT || null;
   if (!authCtx?.session?.user) return null;
-  const perms = (authCtx.permissions && typeof authCtx.permissions === 'object') ? authCtx.permissions : {};
+  const rbac = window.HUB_RBAC || null;
+  const perms = (authCtx.permissions && typeof authCtx.permissions === 'object')
+    ? authCtx.permissions
+    : ((authCtx.profile?.effective_permissions && typeof authCtx.profile.effective_permissions === 'object')
+      ? authCtx.profile.effective_permissions
+      : {});
   const role = normalizeRoleName(authCtx.role || authCtx.profile?.role || '');
-  const verifyEnabled = authCtx.isAdmin === true || role === 'admin' || role === 'verificador';
+  const verifyEnabled = rbac?.can ? rbac.can('clients_verify') : (authCtx.isAdmin === true || perms.clients_verify === true);
+  const canManage = rbac?.can ? rbac.can('clients_manage') : (authCtx.isAdmin === true || perms.clients_manage === true);
+  const canCreate = rbac?.canAny
+    ? rbac.canAny(['clients_create', 'clients_manage'])
+    : (authCtx.isAdmin === true || perms.clients_create === true || perms.clients_manage === true);
+  const canView = rbac?.canAny
+    ? rbac.canAny(['clients_view', 'clients_manage', 'clients_verify', 'clients_create'])
+    : (authCtx.isAdmin === true || verifyEnabled || perms.clients_view === true || perms.clients_manage === true || perms.clients_create === true);
   return {
     role,
     perms,
-    canView: authCtx.isAdmin === true || verifyEnabled || perms.clients_view === true || perms.clients_manage === true,
-    canManage: authCtx.isAdmin === true || perms.clients_manage === true,
+    canView,
+    canManage,
+    canCreate,
     canVerify: verifyEnabled,
-    canSeeAllDocuments: verifyEnabled || perms.clients_all_docs === true
+    canSeeAllDocuments: rbac?.canAny ? rbac.canAny(['clients_all_docs', 'clients_verify']) : (verifyEnabled || perms.clients_all_docs === true)
   };
 }
 
@@ -130,47 +144,27 @@ async function fetchClientAccessContext(sessionUser) {
     || sessionUser?.rol
     || ''
   );
-  const rawPerms =
-    (appUser?.app_metadata?.finanzas?.permissions && typeof appUser.app_metadata.finanzas.permissions === 'object')
-      ? appUser.app_metadata.finanzas.permissions
-      : {};
-  const perms = (role === 'admin')
-    ? {
-        access: true,
-        catalog_view: true,
-        orders_view: true,
-        reports_view: true,
-        clients_view: true,
-        clients_manage: true,
-        clients_verify: true,
-        clients_all_docs: true
-      }
-    : (role === 'verificador')
-      ? {
-          access: true,
-          catalog_view: true,
-          orders_view: true,
-          reports_view: false,
-          clients_view: true,
-          clients_manage: false,
-          clients_verify: true,
-          clients_all_docs: true
-        }
-      : { ...rawPerms };
-  const canVerifyResolved = role === 'admin' || role === 'verificador';
-  const canView = role === 'admin'
-    || role === 'verificador'
-    || perms.clients_view === true
-    || perms.clients_manage === true
-    || perms.clients_verify === true;
-  const canManageResolved = role === 'admin' || perms.clients_manage === true;
+  const perms = (appUser?.effective_permissions && typeof appUser.effective_permissions === 'object')
+    ? appUser.effective_permissions
+    : {};
+  const rbac = window.HUB_RBAC || null;
+  const isAdminByContext = rbac?.isAdmin ? rbac.isAdmin() : (window.__HUB_AUTH_CONTEXT?.isAdmin === true);
+  const canVerifyResolved = rbac?.can ? rbac.can('clients_verify') : (isAdminByContext || perms.clients_verify === true);
+  const canView = rbac?.canAny
+    ? rbac.canAny(['clients_view', 'clients_manage', 'clients_verify', 'clients_create'])
+    : (isAdminByContext || perms.clients_view === true || perms.clients_manage === true || perms.clients_verify === true || perms.clients_create === true);
+  const canManageResolved = rbac?.can ? rbac.can('clients_manage') : (isAdminByContext || perms.clients_manage === true);
+  const canCreateResolved = rbac?.canAny
+    ? rbac.canAny(['clients_create', 'clients_manage'])
+    : (isAdminByContext || perms.clients_create === true || perms.clients_manage === true);
   return {
     role,
     perms,
     canView,
     canManage: canManageResolved,
+    canCreate: canCreateResolved,
     canVerify: canVerifyResolved,
-    canSeeAllDocuments: canVerifyResolved || perms.clients_all_docs === true
+    canSeeAllDocuments: rbac?.canAny ? rbac.canAny(['clients_all_docs', 'clients_verify']) : (canVerifyResolved || perms.clients_all_docs === true)
   };
 }
 
@@ -187,12 +181,15 @@ function getVerifierAllowedTenants() {
   const authCtx = window.__HUB_AUTH_CONTEXT || {};
   const allowed = Array.isArray(authCtx.allowedTenants) && authCtx.allowedTenants.length
     ? authCtx.allowedTenants
-    : ['plaza_mayor', 'casa_de_piedra'];
+    : [];
   return allowed.filter((slug) => slug === 'plaza_mayor' || slug === 'casa_de_piedra');
 }
 
-function installVerifierTenantNavigation(role) {
-  if (normalizeRoleName(role || '') !== 'verificador') return;
+function installVerifierTenantNavigation() {
+  const authCtx = window.__HUB_AUTH_CONTEXT || {};
+  const perms = (authCtx.permissions && typeof authCtx.permissions === 'object') ? authCtx.permissions : {};
+  const canVerifyByPermission = window.HUB_RBAC?.can ? window.HUB_RBAC.can('clients_verify') : (authCtx.isAdmin === true || perms.clients_verify === true);
+  if (!canVerifyByPermission) return;
   const navContainer = document.querySelector('nav .container');
   if (!navContainer) return;
   navContainer.dataset.verifierTenantNav = 'true';
@@ -238,8 +235,7 @@ function installVerifierTenantNavigation(role) {
 }
 
 function isAdminClientRoleActive() {
-  const authCtx = window.__HUB_AUTH_CONTEXT || {};
-  return authCtx.isAdmin === true || normalizeRoleName(currentClientRole || authCtx.role || authCtx.profile?.role || '') === 'admin';
+  return window.HUB_RBAC?.isAdmin ? window.HUB_RBAC.isAdmin() : (window.__HUB_AUTH_CONTEXT?.isAdmin === true);
 }
 
 function readAdminVerifierMode() {
@@ -406,29 +402,26 @@ function getClientDocumentValidityDays(field) {
 }
 
 function getClientDocumentValidityReferenceDate(client, field) {
+  if (field === 'doc_constancia_fiscal') {
+    return getClientValidationDate(client, 'constancia_fiscal_emitida_el');
+  }
+  if (field === 'doc_comprobante_domicilio') {
+    return getClientValidationDate(client, 'comprobante_domicilio_emitido_el');
+  }
+
   const validation = safeObject(client?.expediente_validacion);
   const documents = safeObject(validation.documents);
   const currentDoc = safeObject(documents[field]);
   const states = safeObject(client?.documentos_estado);
   const currentState = safeObject(states[field]);
-  const activityDate = normalizeStoredDate(
+
+  return normalizeStoredDate(
     currentState.subido_at
     || currentDoc.subidoAt
     || currentDoc.subido_at
-    || currentState.aprobado_at
-    || currentDoc.aprobadoAt
-    || currentState.revisado_at
-    || currentDoc.revisadoAt
     || client?.created_at
     || client?.created
   );
-  if (field === 'doc_constancia_fiscal') {
-    return activityDate || getClientValidationDate(client, 'constancia_fiscal_emitida_el');
-  }
-  if (field === 'doc_comprobante_domicilio') {
-    return getClientValidationDate(client, 'comprobante_domicilio_emitido_el') || activityDate;
-  }
-  return activityDate;
 }
 
 function hasClientDocumentFile(client, field, documents = safeObject(getClientValidation(client).documents)) {
@@ -976,7 +969,7 @@ async function fetchServerNowIso() {
     const now = String(data?.now || '').trim();
     if (now && !Number.isNaN(new Date(now).getTime())) return now;
   } catch (_) {}
-  return new Date().toISOString();
+  return window.__serverDateService.nowISO();
 }
 
 async function getSignedFileUrl(collection, recordId, filename) {
@@ -1280,7 +1273,7 @@ function renderClients(list) {
         return;
       }
       if (ev.target.closest('.client-tooltip-btn')) return;
-      if (currentClientRole === 'verificador') {
+      if (canVerify && !canManage) {
         openVerificationModal(c);
         return;
       }
@@ -1739,7 +1732,7 @@ async function fetchClientQuoteRowsForZip(client) {
 
 function buildClientZipManifest(client, quotes, includeQuotes, failures) {
   return JSON.stringify({
-    generado_en: new Date().toISOString(),
+    generado_en: window.__serverDateService.nowISO(),
     sede: CLIENT_TENANT_SLUG,
     cliente: {
       id: client?.id || '',
@@ -2128,9 +2121,10 @@ async function openClientHistory(client) {
 }
 
 async function saveClient() {
-  if (!canManage) return window.showToast?.("No tienes permisos para administrar clientes.", "error");
-
   const id = (document.getElementById('client-id')?.value || '').trim();
+  const isCreate = !id;
+  if (isCreate && !canCreate) return window.showToast?.("Solo Alta Clientes o Admin pueden crear clientes nuevos.", "error");
+  if (!isCreate && !canManage) return window.showToast?.("No tienes permisos para administrar clientes.", "error");
   const nombre = (document.getElementById('client-name')?.value || '').trim();
   const telefono = (document.getElementById('client-phone')?.value || '').replace(/\D/g,'').trim();
   const correo = (document.getElementById('client-email')?.value || '').trim();
@@ -2239,8 +2233,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   const perms = accessCtx.perms || {};
   currentClientRole = role;
   adminVerifierMode = false;
-  installVerifierTenantNavigation(role);
+  installVerifierTenantNavigation();
   canManage = accessCtx.canManage === true;
+  canCreate = accessCtx.canCreate === true;
   canVerify = accessCtx.canVerify === true;
   canSeeAllDocuments = accessCtx.canSeeAllDocuments === true;
   renderAdminVerifierModeBox();
@@ -2256,20 +2251,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     return;
   }
 
-// Nav hide (compat: si no existe key, NO escondemos)
-  if (role !== 'admin') {
+// Nav hide (RBAC estricto: sin permiso explicito, se oculta)
+  const isAdminAccess = window.HUB_RBAC?.isAdmin ? window.HUB_RBAC.isAdmin() : (window.__HUB_AUTH_CONTEXT?.isAdmin === true);
+  if (!isAdminAccess) {
+    const ordersFallback = ('orders_view' in perms) ? !!perms.orders_view : false;
     const navRules = {
-      'catalog.html': ('catalog_view' in perms) ? !!perms.catalog_view : true,
-      'agenda.html': ('orders_view' in perms) ? !!perms.orders_view : true,
-      'contracts.html': ('orders_view' in perms) ? !!perms.orders_view : true,
-      'receipts.html': ('orders_view' in perms) ? !!perms.orders_view : true,
-      'invoices.html': ('orders_view' in perms) ? !!perms.orders_view : true,
-      'orders.html': ('orders_view' in perms) ? !!perms.orders_view : true,
-      'cotizacion.html': ('orders_view' in perms) ? !!perms.orders_view : true,
-      'reports.html': ('reports_view' in perms) ? !!perms.reports_view : true,
-      'clientes.html': (('clients_view' in perms) || ('clients_manage' in perms) || ('clients_verify' in perms))
-        ? (!!perms.clients_view || !!perms.clients_manage || !!perms.clients_verify)
-        : true
+      'catalog.html': ('catalog_view' in perms) ? !!perms.catalog_view : false,
+      'agenda.html': ordersFallback,
+      'contracts.html': ('contracts_view' in perms) ? !!perms.contracts_view : ordersFallback,
+      'receipts.html': ('receipts_view' in perms) ? !!perms.receipts_view : ordersFallback,
+      'invoices.html': ('invoices_view' in perms) ? !!perms.invoices_view : ordersFallback,
+      'orders.html': ordersFallback,
+      'cotizacion.html': ordersFallback,
+      'reports.html': ('reports_view' in perms) ? !!perms.reports_view : false,
+      'clientes.html': (('clients_view' in perms) || ('clients_manage' in perms) || ('clients_verify' in perms) || ('clients_create' in perms))
+        ? (!!perms.clients_view || !!perms.clients_manage || !!perms.clients_verify || !!perms.clients_create)
+        : false
     };
     Object.keys(navRules).forEach(page => {
       if (!navRules[page]) {
@@ -2282,7 +2279,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // UI permissions
   const btnNew = document.getElementById('btn-new-client');
   if (btnNew) {
-    if (!canManage) btnNew.classList.add('hidden');
+    if (!canCreate) btnNew.classList.add('hidden');
     btnNew.addEventListener('click', () => openClientModal(null));
   }
 
@@ -2517,8 +2514,8 @@ async function loadClientDictamenPdfStyle() {
 
 function canSaveClientDictamenTemplate() {
   const auth = window.__HUB_AUTH_CONTEXT || {};
-  const role = normalizeRoleName(auth.role || auth.profile?.role || currentClientRole || '');
-  return auth.isAdmin === true || role === 'admin';
+  const perms = (auth.permissions && typeof auth.permissions === 'object') ? auth.permissions : {};
+  return auth.isAdmin === true || perms.pdf_layout_manage === true || perms.config_manage === true;
 }
 
 async function saveClientDictamenPdfStyle(style) {
@@ -2538,7 +2535,7 @@ async function saveClientDictamenPdfStyle(style) {
   const nextConfig = {
     ...config,
     profiles: { ...profiles, dictamen: normalized },
-    updated_at: new Date().toISOString()
+    updated_at: window.__serverDateService.nowISO()
   };
   if (row?.id) {
     const { error: updateError } = await window.tenantPocketBase
@@ -2594,7 +2591,7 @@ function buildClientDictamenTemplateContext(client, folio, title) {
     CLIENT_RFC: client?.rfc || '',
     FOLIO: folio || '',
     DOC_TITLE: title || 'DICTAMEN LEGAL DOCUMENTOS PROTOCOLIZADOS',
-    TODAY: new Date().toLocaleDateString('es-MX'),
+    TODAY: window.__serverDateService.todayLocale('es-MX'),
     CURRENT_USER_NAME: actor.name,
     CURRENT_USER_EMAIL: actor.email,
     GENERATED_BY: actor.name,
@@ -2604,7 +2601,7 @@ function buildClientDictamenTemplateContext(client, folio, title) {
 }
 
 function getClientDictamenYear() {
-  return new Date().getFullYear();
+  return window.__serverDateService.nowDate().getFullYear();
 }
 
 function getClientDictamenYearSuffix(year = getClientDictamenYear()) {
@@ -2930,7 +2927,7 @@ async function persistClientDictamenSnapshot(client, folio, blob, filename, docu
     return { saved: false, reason: 'unchanged', record: latest, documentosHash };
   }
   const actor = getClientDictamenActorMeta();
-  const generatedAt = new Date().toISOString();
+  const generatedAt = window.__serverDateService.nowISO();
 
   const form = new FormData();
   const uploadFile = typeof File !== 'undefined'
@@ -2991,7 +2988,7 @@ async function uploadManualClientDictamen(client, options = {}) {
     return window.showToast?.('El dictamen manual debe ser un PDF.', 'error');
   }
   const actor = getClientDictamenActorMeta();
-  const folio = `MANUAL-${getClientDictamenTenantCode()}-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(client.id).slice(0, 6).toUpperCase()}`;
+  const folio = `MANUAL-${getClientDictamenTenantCode()}-${window.__serverDateService.todayISO().replace(/-/g, '')}-${String(client.id).slice(0, 6).toUpperCase()}`;
   const documentSnapshot = buildClientDictamenDocumentSnapshot(client);
   const documentosHash = await hashClientDictamenSnapshot({
     tenant: CLIENT_TENANT_SLUG,
@@ -3013,7 +3010,7 @@ async function uploadManualClientDictamen(client, options = {}) {
     approved: false,
     cliente_nombre: client?.nombre_completo || '',
     uploaded_by: actor,
-    uploaded_at: new Date().toISOString()
+    uploaded_at: window.__serverDateService.nowISO()
   }));
   form.append('pdf', file, fileName);
   try {
@@ -3078,16 +3075,23 @@ function getClientDictamenTenantCode() {
 function formatClientDictamenDateTime(value='') {
   const stamp = String(value || '').trim();
   if (!stamp) return 'Sin fecha registrada';
+  const normalized = stamp.replace('T', ' ').replace('Z', '');
+  const match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?/);
+  if (match) {
+    const [, year, month, day, hh, mm, ss] = match;
+    const datePart = `${day}/${month}/${year}`;
+    if (!hh || !mm) return datePart;
+    return `${datePart} ${hh}:${mm}:${ss || '00'}`;
+  }
   const parsed = new Date(stamp);
   if (Number.isNaN(parsed.getTime())) return stamp;
-  return parsed.toLocaleString('es-MX', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  });
+  const day = String(parsed.getDate()).padStart(2, '0');
+  const month = String(parsed.getMonth() + 1).padStart(2, '0');
+  const year = String(parsed.getFullYear());
+  const hh = String(parsed.getHours()).padStart(2, '0');
+  const mm = String(parsed.getMinutes()).padStart(2, '0');
+  const ss = String(parsed.getSeconds()).padStart(2, '0');
+  return `${day}/${month}/${year} ${hh}:${mm}:${ss}`;
 }
 
 function getClientDictamenRecordDate(record = {}) {
@@ -3504,7 +3508,7 @@ function openVerificationModal(client) {
       : '';
     const reviewedMeta = getClientDocumentStateMeta(client, item.field);
     const reviewedHtml = reviewedMeta.reviewedByName
-      ? `<p class="mt-2 text-[10px] text-gray-500 font-semibold">${escapeHTML((reviewedMeta.status === 'aprobado' || reviewedMeta.omitted ? 'Aprobo' : 'Reviso') + ': ' + reviewedMeta.reviewedByName + (reviewedMeta.reviewedAt ? ' · ' + safeDate(reviewedMeta.reviewedAt) : ''))}</p>`
+      ? `<p class="mt-2 text-[10px] text-gray-500 font-semibold">${escapeHTML((reviewedMeta.status === 'aprobado' || reviewedMeta.omitted ? 'Aprobo' : 'Reviso') + ': ' + reviewedMeta.reviewedByName + (reviewedMeta.reviewedAt ? ' · ' + formatClientDictamenDateTime(reviewedMeta.reviewedAt) : ''))}</p>`
       : '';
     const reasonHtml = docInfo.status === 'rechazado' && docInfo.reason
       ? `<p class="mt-2 text-[10px] text-red-600 font-semibold">${escapeHTML(docInfo.reason)}</p>`
@@ -3594,7 +3598,7 @@ async function renderVerificationDictamenCards(client, listContainer) {
     const reviewedBy = String(recordMeta.approved_by?.name || recordMeta.reviewed_by?.name || '').trim();
     const reviewedAt = String(recordMeta.approved_at || recordMeta.reviewed_at || '').trim();
     const reviewedHtml = reviewedBy
-      ? `<p class="mt-2 text-[10px] text-gray-500 font-semibold">${escapeHTML(`${meta.status === 'aprobado' ? 'Aprobo' : 'Reviso'}: ${reviewedBy}${reviewedAt ? ` Â· ${safeDate(reviewedAt)}` : ''}`)}</p>`
+      ? `<p class="mt-2 text-[10px] text-gray-500 font-semibold">${escapeHTML(`${meta.status === 'aprobado' ? 'Aprobo' : 'Reviso'}: ${reviewedBy}${reviewedAt ? ` · ${formatClientDictamenDateTime(reviewedAt)}` : ''}`)}</p>`
       : '';
     const reasonHtml = meta.status === 'rechazado' && recordMeta.reason
       ? `<p class="mt-2 text-[10px] text-red-600 font-semibold">${escapeHTML(recordMeta.reason)}</p>`
@@ -3866,4 +3870,5 @@ async function submitVerifDecision(status, motivo) {
     window.showToast?.('No se pudo actualizar el estado del documento.', 'error');
   }
 }
+
 

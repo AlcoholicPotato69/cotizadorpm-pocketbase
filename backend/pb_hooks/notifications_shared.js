@@ -2,12 +2,6 @@
   const NOTIFICATIONS_COLLECTION = "hub_notifications";
   const AUTH_COLLECTION = "app_users";
   const DISMISSED_RETENTION_DAYS = 5;
-  const ALLOWED_ROLES = {
-    admin: true,
-    plaza_mayor: true,
-    casa_de_piedra: true,
-    verificador: true
-  };
 
   const STATUS_LABELS = {
     borrador: "Borrador",
@@ -32,7 +26,7 @@
   function normalizeRole(value) {
     const role = trim(value).toLowerCase();
     if (role === "administrador" || role === "superadmin" || role === "super_admin") return "admin";
-    return ALLOWED_ROLES[role] ? role : "";
+    return role;
   }
 
   function normalizeTenant(value) {
@@ -139,15 +133,14 @@
       while (true) {
         const batch = $app.findRecordsByFilter(
           AUTH_COLLECTION,
-          '(role = "admin" || role = "plaza_mayor" || role = "casa_de_piedra" || role = "verificador")',
+          'id != ""',
           "created_at",
           500,
           offset
         ) || [];
         if (!batch.length) break;
         for (let i = 0; i < batch.length; i += 1) {
-          const role = normalizeRole(getRecordString(batch[i], "role"));
-          if (role) users.push(batch[i]);
+          users.push(batch[i]);
         }
         if (batch.length < 500) break;
         offset += batch.length;
@@ -156,6 +149,40 @@
       console.log("[hub_notifications] No se pudieron leer usuarios:", String(err));
     }
     return users;
+  }
+
+  function resolveRequiredPermissionByNotification(payload) {
+    const source = payload && typeof payload === "object" ? payload : {};
+    const type = trim(source.type).toLowerCase();
+    if (type === "quote_status") return "orders_view";
+    if (type === "client_document_uploaded" || type === "client_document_approved" || type === "client_document_rejected") {
+      return "clients_view";
+    }
+    return "access";
+  }
+
+  function canUserReceiveNotification(userRecord, payload) {
+    const source = payload && typeof payload === "object" ? payload : {};
+    const metadata = source.metadata && typeof source.metadata === "object" ? source.metadata : {};
+    const tenant = normalizeTenant(metadata.tenant || source.tenant);
+    const requiredPermission = resolveRequiredPermissionByNotification(source);
+    try {
+      const rbac = require(`${__hooks}/rbac_shared.js`);
+      const tenants = Array.isArray(rbac.TENANTS) && rbac.TENANTS.length
+        ? rbac.TENANTS
+        : ["plaza_mayor", "casa_de_piedra"];
+      if (tenant) {
+        const decision = rbac.evaluateAction(userRecord, requiredPermission, tenant, {});
+        return !!(decision && decision.allowed === true);
+      }
+      for (let i = 0; i < tenants.length; i += 1) {
+        const decision = rbac.evaluateAction(userRecord, requiredPermission, tenants[i], {});
+        if (decision && decision.allowed === true) return true;
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
   }
 
   function createNotification(userId, payload) {
@@ -192,6 +219,7 @@
     sharedPayload.notification_key = buildNotificationKey(sharedPayload);
     const users = getAllUsers();
     for (let i = 0; i < users.length; i += 1) {
+      if (!canUserReceiveNotification(users[i], sharedPayload)) continue;
       createNotification(getRecordString(users[i], "id"), sharedPayload);
     }
   }

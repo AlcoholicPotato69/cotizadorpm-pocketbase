@@ -6,7 +6,7 @@
 
 const __hubPath = String(window.location.pathname || '').toLowerCase();
 const __hubNested = /\/(cotizador|cotizadorcp|public|system)\//.test(__hubPath);
-const __hubAssetsBase = __hubNested ? '../../assets' : '../assets';
+const __hubAssetsBase = __hubNested ? '../public/assets' : './public/assets';
 const __hubPublicBase = __hubNested ? '../public' : './public';
 const __hubConfigBase = __hubNested ? '../config' : './config';
 const __HUB_RUNTIME_CONFIG_CACHE_KEY = 'hub_runtime_config_cache_v2';
@@ -265,4 +265,5 @@ window.HUB_CONFIG_READY = __hubFetchRuntimeConfig()
 window.getHubConfigReady = function () {
   return window.HUB_CONFIG_READY || Promise.resolve(window.HUB_CONFIG);
 };
+
 

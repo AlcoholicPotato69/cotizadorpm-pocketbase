@@ -118,24 +118,68 @@
   function normalizeUser(record) {
     if (!record) return null;
     let role = String(record.role || "").toLowerCase().trim();
+    if (typeof role.normalize === "function") role = role.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    role = role.replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
     if (role === "administrador" || role === "superadmin" || role === "super_admin") role = "admin";
-    if (role === "both" || role === "ambos" || role === "user" || role === "usuario") role = "";
-    if (role && ["admin", "plaza_mayor", "casa_de_piedra", "verificador"].indexOf(role) === -1) role = "";
-    let allowed = Array.isArray(record.allowed_tenants)
-      ? record.allowed_tenants.map((x) => String(x || "").toLowerCase().trim()).filter(Boolean)
-      : [];
-    if (!allowed.length) {
-      if (role === "admin" || role === "verificador") allowed = ["plaza_mayor", "casa_de_piedra"];
-      else if (role === "plaza_mayor" || role === "casa_de_piedra") allowed = [role];
+
+    function normalizeTenant(value) {
+      const safe = String(value || "").toLowerCase().trim();
+      if (!safe) return "";
+      if (safe === "pm" || safe === "plaza mayor" || safe === "plaza_mayor") return "plaza_mayor";
+      if (safe === "cp" || safe === "casa de piedra" || safe === "casa_de_piedra") return "casa_de_piedra";
+      return safe;
     }
+
+    let metadata = {};
+    if (record.app_metadata && typeof record.app_metadata === "object") metadata = record.app_metadata;
+    else if (typeof record.app_metadata === "string") metadata = parseJsonSafe(record.app_metadata, {}) || {};
+    const metaRbac = metadata && typeof metadata.rbac === "object" ? metadata.rbac : {};
+    const metaRoleIds = Array.isArray(metaRbac.role_ids) ? metaRbac.role_ids : [];
+
+    const effectiveMapRaw =
+      (record.effective_permissions_map && typeof record.effective_permissions_map === "object" ? record.effective_permissions_map : null)
+      || (metaRbac.effective && typeof metaRbac.effective === "object" ? metaRbac.effective : null)
+      || {};
+    const effectiveMap = {};
+    Object.keys(effectiveMapRaw || {}).forEach(function (tenantKey) {
+      const tenantPerms = effectiveMapRaw[tenantKey];
+      if (tenantPerms && typeof tenantPerms === "object" && !Array.isArray(tenantPerms)) {
+        effectiveMap[tenantKey] = tenantPerms;
+      }
+    });
+
+    const fallbackTenant = normalizeTenant(record.tenant_default || record.default_tenant || "");
+    const effectivePermissions =
+      (record.effective_permissions && typeof record.effective_permissions === "object" ? record.effective_permissions : null)
+      || (fallbackTenant && effectiveMap[fallbackTenant] ? effectiveMap[fallbackTenant] : null)
+      || {};
+
+    const allowedRaw = Array.isArray(record.allowed_tenants)
+      ? record.allowed_tenants
+      : (function () {
+        if (typeof record.allowed_tenants !== "string") return [];
+        const parsed = parseJsonSafe(record.allowed_tenants, []);
+        return Array.isArray(parsed) ? parsed : [];
+      })();
+    const allowed = allowedRaw
+      .map((x) => normalizeTenant(x))
+      .filter(Boolean);
+    if (fallbackTenant && allowed.indexOf(fallbackTenant) === -1) allowed.push(fallbackTenant);
     return {
       id: record.id,
       email: record.email || "",
       username: record.login_username || record.username || "",
       role: role || "",
+      role_ids: metaRoleIds,
       allowed_tenants: allowed,
       tenant_default: record.tenant_default || null,
-      default_tenant: record.tenant_default || null
+      default_tenant: record.tenant_default || null,
+      effective_permissions: effectivePermissions,
+      effective_permissions_map: effectiveMap,
+      permissions: effectivePermissions,
+      app_metadata: metadata,
+      rbac_mode: record.rbac_mode || metaRbac.mode || "",
+      rbac_version: record.rbac_version || metaRbac.version || ""
     };
   }
 
@@ -162,7 +206,7 @@
 
   function resolveRequestCredentials(baseUrl, headers, explicitCredentials) {
     if (explicitCredentials) return explicitCredentials;
-    if (isCrossOriginBaseUrl(baseUrl) && hasAuthorizationHeader(headers)) return "omit";
+    if (isCrossOriginBaseUrl(baseUrl)) return "omit";
     return "include";
   }
 
@@ -368,6 +412,10 @@
           session: { access_token: state.token, user: state.user },
           user: state.user
         };
+      }
+      if (isCrossOriginBaseUrl(this.baseUrl)) {
+        writeAuthState(null);
+        return { session: null, user: null };
       }
       try {
         const data = await request(this.baseUrl, "/api/hub/session/current", {

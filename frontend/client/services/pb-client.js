@@ -4,7 +4,6 @@
  */
 (function () {
   const AUTH_KEYS = ['pb_native_auth_v1', 'pb_compat_auth_v1', 'pb_auth'];
-  const APP_ROLES = ['admin', 'plaza_mayor', 'casa_de_piedra', 'verificador'];
 
   function trimSlash(url) { return String(url || '').replace(/\/+$/, ''); }
   function clone(v) { return v == null ? v : JSON.parse(JSON.stringify(v)); }
@@ -98,7 +97,6 @@
     if (typeof role.normalize === 'function') role = role.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     role = role.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
     if (role === 'administrador' || role === 'superadmin' || role === 'super_admin') return 'admin';
-    if (role === 'ambos' || role === 'both' || role === 'user' || role === 'usuario') return '';
     if (role === 'plaza_mayor' || role === 'plazamayor' || role === 'pm' || role === 'finanzas') return 'plaza_mayor';
     if (role === 'casa_de_piedra' || role === 'casadepiedra' || role === 'cp') return 'casa_de_piedra';
     return role;
@@ -123,6 +121,14 @@
     const parsed = safeJsonParse(raw, undefined);
     return parsed === undefined ? undefined : parsed;
   }
+
+  function parseJsonObject(value) {
+    if (!value) return {};
+    if (typeof value === 'object') return isObject(value) ? { ...value } : {};
+    if (typeof value !== 'string') return {};
+    const parsed = safeJsonParse(value, {});
+    return isObject(parsed) ? parsed : {};
+  }
   function coerceJsonFields(record, fields) {
     if (!record || !Array.isArray(fields)) return;
     fields.forEach(function (field) {
@@ -135,7 +141,20 @@
     if (!record) return record;
     record = normalizeDeepDates(record);
     let role = normalizeRoleSlug(record.role || '');
-    if (role && APP_ROLES.indexOf(role) === -1) role = '';
+    const metadata = parseJsonObject(record.app_metadata);
+    const rbacMeta = parseJsonObject(metadata.rbac);
+    const roleIds = Array.isArray(rbacMeta.role_ids) ? rbacMeta.role_ids : [];
+    const effectiveMapRaw = isObject(record.effective_permissions_map)
+      ? record.effective_permissions_map
+      : (isObject(rbacMeta.effective) ? rbacMeta.effective : {});
+    const effectiveMap = {};
+    Object.keys(effectiveMapRaw || {}).forEach(function (tenantKey) {
+      if (isObject(effectiveMapRaw[tenantKey])) effectiveMap[tenantKey] = effectiveMapRaw[tenantKey];
+    });
+    const tenantDefault = normalizeTenantSlug(record.tenant_default || record.default_tenant || null) || null;
+    const effectivePermissions = isObject(record.effective_permissions)
+      ? record.effective_permissions
+      : (tenantDefault && isObject(effectiveMap[tenantDefault]) ? effectiveMap[tenantDefault] : {});
     const allowedRaw = Array.isArray(record.allowed_tenants)
       ? record.allowed_tenants
       : (function () {
@@ -143,18 +162,22 @@
         return Array.isArray(parsed) ? parsed : [];
       })();
     let allowed = allowedRaw.filter(Boolean).map(v => normalizeTenantSlug(v)).filter(Boolean);
-    if (!allowed.length) {
-      if (role === 'admin' || role === 'verificador') allowed = ['plaza_mayor', 'casa_de_piedra'];
-      else if (role === 'plaza_mayor' || role === 'casa_de_piedra') allowed = [role];
-    }
+    if (tenantDefault && allowed.indexOf(tenantDefault) === -1) allowed.push(tenantDefault);
     return {
       ...record,
       id: record.id,
       username: record.login_username || record.username || '',
       role: role || '',
+      role_ids: roleIds,
       allowed_tenants: allowed,
-      tenant_default: normalizeTenantSlug(record.tenant_default || record.default_tenant || null) || null,
-      default_tenant: normalizeTenantSlug(record.tenant_default || record.default_tenant || null) || null,
+      tenant_default: tenantDefault,
+      default_tenant: tenantDefault,
+      effective_permissions: effectivePermissions,
+      effective_permissions_map: effectiveMap,
+      permissions: effectivePermissions,
+      app_metadata: metadata,
+      rbac_mode: String(record.rbac_mode || rbacMeta.mode || '').trim(),
+      rbac_version: String(record.rbac_version || rbacMeta.version || '').trim(),
       created_at: record.created_at || record.created || null,
       updated_at: record.updated_at || record.updated || null,
     };
@@ -226,7 +249,7 @@
   }
   function resolveRequestCredentials(baseUrl, headers, explicitCredentials) {
     if (explicitCredentials) return explicitCredentials;
-    if (isCrossOriginBaseUrl(baseUrl) && hasAuthorizationHeader(headers)) return 'omit';
+    if (isCrossOriginBaseUrl(baseUrl)) return 'omit';
     return 'include';
   }
   function buildNativeQuoteFolio(record) {
@@ -713,6 +736,10 @@
           const st = readAuth();
           if (st && st.user && st.token) {
             return { data: { session: { access_token: st.token, user: st.user } }, error: null };
+          }
+          if (isCrossOriginBaseUrl(this.baseUrl)) {
+            writeAuth(null);
+            return { data: { session: null }, error: null };
           }
           try {
             const data = await pbFetch(this.baseUrl, '/api/hub/session/current', { method: 'GET' });

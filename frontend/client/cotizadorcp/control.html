@@ -6,16 +6,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="robots" content="noindex, nofollow">
     <title>Control - Casa de Piedra</title>
-    <link rel="preload" as="script" href="../../assets/libs/js/tailwindcss.js">
-    <script src="../../assets/libs/js/tailwindcss.js?v=20260426-v3-digital-calendar"></script>
-    <link rel="preload" as="style" href="../../assets/libs/css/all.min.css?v=20260426-v3-digital-calendar">
-    <link rel="stylesheet" href="../../assets/libs/css/all.min.css?v=20260426-v3-digital-calendar">
-    <script src="../../assets/libs/js/html2pdf.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../js/hub-config.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../services/pb-core.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../services/_shared.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../services/auth.js?v=20260426-v3-digital-calendar"></script>
-    <script src="../services/pb-client.js?v=20260426-v3-digital-calendar"></script>
+    <link rel="preload" as="script" href="../public/assets/libs/js/tailwindcss.js">
+    <script src="../public/assets/libs/js/tailwindcss.js?v=20260427-v1-contracts-fix"></script>
+    <link rel="preload" as="style" href="../public/assets/libs/css/all.min.css?v=20260427-v1-contracts-fix">
+    <link rel="stylesheet" href="../public/assets/libs/css/all.min.css?v=20260427-v1-contracts-fix">
+    <script src="../public/assets/libs/js/html2pdf.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../js/hub-config.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../services/server-date-service.js?v=20260427-v2-server-dates"></script>
+    <script src="../services/pb-core.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../services/_shared.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../services/auth.js?v=20260427-v1-contracts-fix"></script>
+    <script src="../services/pb-client.js?v=20260427-v1-contracts-fix"></script>
     <script>
         tailwind.config = {
             theme: {
@@ -44,14 +45,14 @@
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
-    <link rel="preload" as="style" href="../../assets/libs/css/animate.min.css?v=20260426-v3-digital-calendar">
-    <link rel="stylesheet" href="../../assets/libs/css/animate.min.css?v=20260426-v3-digital-calendar">
-    <link rel="icon" type="image/png" href="../assets/img/logocp.png">
+    <link rel="preload" as="style" href="../public/assets/libs/css/animate.min.css?v=20260427-v1-contracts-fix">
+    <link rel="stylesheet" href="../public/assets/libs/css/animate.min.css?v=20260427-v1-contracts-fix">
+    <link rel="icon" type="image/png" href="../public/assets/img/logocp.png">
 </head>
 <body class="bg-brand-gray text-gray-800 flex flex-col min-h-screen relative">
     <div id="toast-container" class="fixed bottom-5 right-5 z-[10000] flex flex-col gap-2 pointer-events-none"></div>
     <script>const TENANT_SCHEMA='finanzas_casadepiedra';</script>
-    <script src="../js/layout.js?v=20260426-v3-digital-calendar"></script>
+    <script src="../js/layout.js?v=20260427-v1-contracts-fix"></script>
 
     <main class="flex-grow container mx-auto px-4 md:px-6 py-6 md:py-8 max-w-7xl animate__animated animate__fadeInLeft animate__faster">
         <section class="bg-white border border-gray-100 shadow-sm rounded-3xl p-5 md:p-6">
@@ -195,7 +196,8 @@
         </section>
     </main>
 
-    <script src="../js/pdf-editor-hitbox.js?v=20260426-v3-digital-calendar"></script>
-    <script src="control.js?v=20260426-v3-digital-calendar"></script>
+    <script src="../js/pdf-editor-hitbox.js?v=20260427-v1-contracts-fix"></script>
+    <script src="control.js?v=20260427-v1-contracts-fix"></script>
 </body>
 </html>
+

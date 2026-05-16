@@ -8,8 +8,6 @@ Aquí vive todo lo necesario para la interfaz del cotizador.
   HTML, JS y configuración del sistema.
 - `assets/`
   librerías, imágenes, fuentes, sonidos y plantillas.
-- `pb_public/`
-  carpeta pública mínima para cuando PocketBase sirve el frontend en producción.
 
 ## Desarrollo local
 

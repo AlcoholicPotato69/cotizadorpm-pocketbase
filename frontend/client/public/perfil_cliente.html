@@ -2342,6 +2342,92 @@
                 return allUnique.length ? allUnique[allUnique.length - 1] : '';
             }
 
+            function scoreComprobanteEmissionContext(contextNormalized) {
+                var context = String(contextNormalized || '');
+                if (!context) return -1000;
+                var score = 0;
+                if (context.indexOf('FECHA DE EMISION') !== -1) score += 12;
+                if (context.indexOf('EMISION') !== -1 || context.indexOf('EMITID') !== -1) score += 8;
+                if (context.indexOf('EXPEDICION') !== -1 || context.indexOf('EXPEDIDA') !== -1) score += 7;
+                if (context.indexOf('PERIODO FACTURADO') !== -1 || context.indexOf('PERIODO DE CONSUMO') !== -1 || context.indexOf('FACTURACION') !== -1) score += 5;
+                if (context.indexOf('FECHA') !== -1) score += 2;
+                if (context.indexOf('VENCIMIENTO') !== -1 || context.indexOf('VENCE') !== -1) score -= 9;
+                if (context.indexOf('LIMITE DE PAGO') !== -1 || context.indexOf('FECHA LIMITE') !== -1 || context.indexOf('PAGO OPORTUNO') !== -1) score -= 9;
+                if (context.indexOf('PROXIMA LECTURA') !== -1 || context.indexOf('SIGUIENTE') !== -1) score -= 4;
+                if (context.indexOf('CORTE') !== -1 || context.indexOf('PAGO') !== -1) score -= 3;
+                return score;
+            }
+
+            function pickComprobanteEmissionDate(text, linesArr) {
+                var safeText = String(text || '');
+                var lines = Array.isArray(linesArr) ? linesArr : [];
+                var candidates = [];
+                var patterns = [
+                    { re: /(\d{1,2})\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+de\s+(\d{4})/gi, type: 'text' },
+                    { re: /(\d{1,2})\/(0?[1-9]|1[0-2])\/(\d{4})/g, type: 'slash' },
+                    { re: /(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])/g, type: 'iso' }
+                ];
+                for (var pi = 0; pi < patterns.length; pi++) {
+                    var p = patterns[pi];
+                    var m;
+                    while ((m = p.re.exec(safeText)) !== null) {
+                        var normalized = '';
+                        if (p.type === 'text') {
+                            var mo = MESES_MAP[String(m[2] || '').toLowerCase()];
+                            normalized = normalizeIsoDateParts(m[3], mo, m[1]);
+                        } else if (p.type === 'slash') {
+                            normalized = normalizeIsoDateParts(m[3], m[2], m[1]);
+                        } else {
+                            normalized = normalizeIsoDateParts(m[1], m[2], m[3]);
+                        }
+                        if (!normalized) continue;
+                        candidates.push({ date: normalized, index: Number(m.index) || 0 });
+                    }
+                }
+                if (!candidates.length) return '';
+
+                var today = todayProfileDate();
+                var bestCandidate = null;
+                for (var ci = 0; ci < candidates.length; ci++) {
+                    var candidate = candidates[ci];
+                    var start = Math.max(0, candidate.index - 120);
+                    var end = Math.min(safeText.length, candidate.index + 120);
+                    var context = normalizeConstanciaTextValue(safeText.slice(start, end));
+                    var score = scoreComprobanteEmissionContext(context);
+                    if (candidate.date > today) score -= 7;
+                    if (!bestCandidate || score > bestCandidate.score || (score === bestCandidate.score && candidate.date > bestCandidate.date)) {
+                        bestCandidate = { date: candidate.date, score: score };
+                    }
+                }
+                if (bestCandidate && bestCandidate.score >= 3) return bestCandidate.date;
+
+                var bestLineDate = '';
+                var bestLineScore = -1000;
+                for (var li = 0; li < lines.length; li++) {
+                    var neighborhood = (lines[li - 1] || '') + ' ' + (lines[li] || '') + ' ' + (lines[li + 1] || '');
+                    var lineDate = parseDateFromText(neighborhood);
+                    if (!lineDate) continue;
+                    var lineScore = scoreComprobanteEmissionContext(normalizeConstanciaTextValue(neighborhood));
+                    if (lineDate > today) lineScore -= 7;
+                    if (lineScore > bestLineScore || (lineScore === bestLineScore && lineDate > bestLineDate)) {
+                        bestLineScore = lineScore;
+                        bestLineDate = lineDate;
+                    }
+                }
+                if (bestLineDate && bestLineScore >= 1) return bestLineDate;
+
+                var nonFuture = [];
+                var seen = {};
+                for (var di = 0; di < candidates.length; di++) {
+                    var dt = candidates[di].date;
+                    if (seen[dt]) continue;
+                    seen[dt] = true;
+                    if (dt <= today) nonFuture.push(dt);
+                }
+                nonFuture.sort();
+                return nonFuture.length ? nonFuture[nonFuture.length - 1] : '';
+            }
+
             function normalizeConstanciaTextValue(value) {
                 var text = String(value || '').trim();
                 if (!text) return '';
@@ -2543,11 +2629,9 @@
                         return result;
                     }
 
-                    var dates = findAllDatesInText(text);
-                    if (dates.length > 0) {
-                        dates.sort();
-                        result.extracted.comprobanteDate = dates[dates.length - 1];
-                    }
+                    var linesArr = text.split(/\n/);
+                    var comprobanteDate = pickComprobanteEmissionDate(text, linesArr);
+                    if (comprobanteDate) result.extracted.comprobanteDate = comprobanteDate;
 
                     result.valid = true;
                     result.reason = 'Comprobante de ' + foundService + ' detectado correctamente.';
@@ -2836,13 +2920,13 @@
             function resolveProfileDocumentReferenceDate(profile, field, preferredConfig) {
                 var doc = getProfileDocumentInfo(profile, field);
                 var explicitDocDate = normalizeStoredDate(doc.fechaDocumento || doc.fecha_documento || doc.validityDate || '');
-                var activityDate = getProfileDocumentActivityDate(profile, field);
                 if (field === 'doc_constancia_fiscal') {
-                    return normalizeStoredDate(activityDate || (profile && profile.constanciaFiscalEmitidaEl) || explicitDocDate || '');
+                    return normalizeStoredDate((profile && profile.constanciaFiscalEmitidaEl) || explicitDocDate || '');
                 }
                 if (field === 'doc_comprobante_domicilio') {
-                    return normalizeStoredDate((profile && profile.comprobanteDomicilioEmitidoEl) || explicitDocDate || activityDate || '');
+                    return normalizeStoredDate((profile && profile.comprobanteDomicilioEmitidoEl) || explicitDocDate || '');
                 }
+                var activityDate = getProfileDocumentActivityDate(profile, field);
                 return explicitDocDate || activityDate;
             }
 
@@ -3973,11 +4057,12 @@
                         }
                         var docConfig = getProfileDocumentRequirement(state.profile || {}, field);
                         if (profileDocumentUsesValidity(docConfig) && !state.manualDates[field]) {
-                            state.manualDates[field] = todayProfileDate();
-                            if (field === 'doc_constancia_fiscal' && state.profile && !state.profile.constanciaFiscalEmitidaEl) {
+                            var persistedDate = resolveProfileDocumentReferenceDate(state.profile || {}, field, docConfig);
+                            state.manualDates[field] = persistedDate || todayProfileDate();
+                            if (field === 'doc_constancia_fiscal' && state.profile && !state.profile.constanciaFiscalEmitidaEl && state.manualDates[field]) {
                                 state.profile.constanciaFiscalEmitidaEl = state.manualDates[field];
                                 syncLegacyDocumentDateInputs(field, state.manualDates[field]);
-                            } else if (field === 'doc_comprobante_domicilio' && state.profile && !state.profile.comprobanteDomicilioEmitidoEl) {
+                            } else if (field === 'doc_comprobante_domicilio' && state.profile && !state.profile.comprobanteDomicilioEmitidoEl && state.manualDates[field]) {
                                 state.profile.comprobanteDomicilioEmitidoEl = state.manualDates[field];
                                 syncLegacyDocumentDateInputs(field, state.manualDates[field]);
                             }
@@ -4310,3 +4395,4 @@ init();
 </body>
 
 </html>
+

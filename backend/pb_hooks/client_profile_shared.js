@@ -180,6 +180,7 @@
     ]
   };
   let notificationsApi = null;
+  let rbacApi = null;
   let defenderCliPathCache = null;
   const TENANT_THEME = {
     plaza_mayor: {
@@ -202,6 +203,28 @@
     return String(value || "").trim();
   }
 
+  function readRequestHeader(e, name) {
+    const safeName = trim(name);
+    if (!safeName) return "";
+    const header = e && e.request ? e.request.header : null;
+    if (!header) return "";
+    try {
+      if (typeof header.get === "function") return trim(header.get(safeName));
+    } catch (_) {}
+    try {
+      if (typeof header.values === "function") {
+        const values = header.values(safeName);
+        if (Array.isArray(values) && values.length) return trim(values[0]);
+      }
+    } catch (_) {}
+    try {
+      const direct = header[safeName] || header[safeName.toLowerCase()] || header[safeName.toUpperCase()];
+      if (Array.isArray(direct) && direct.length) return trim(direct[0]);
+      return trim(direct);
+    } catch (_) {}
+    return "";
+  }
+
   function getNotificationsApi() {
     if (notificationsApi !== null) return notificationsApi;
     try {
@@ -211,6 +234,17 @@
       console.log("[client_profile] Notificaciones no disponibles:", String(err));
     }
     return notificationsApi;
+  }
+
+  function getRbacApi() {
+    if (rbacApi !== null) return rbacApi;
+    try {
+      rbacApi = require(`${__hooks}/rbac_shared.js`) || {};
+    } catch (err) {
+      rbacApi = {};
+      console.log("[client_profile] RBAC no disponible:", String(err));
+    }
+    return rbacApi;
   }
 
   function sanitizeText(value, maxLen) {
@@ -1405,16 +1439,26 @@
     ));
   }
 
-  function authRole(record) {
-    return trim(record?.getString ? record.getString("role") : "").toLowerCase();
-  }
-
-  function isVerifierRole(role) {
-    return role === "admin" || role === "verificador";
-  }
-
   function canVerifyClientDocuments(authRecord) {
-    return !!authRecord && isVerifierRole(authRole(authRecord));
+    if (!authRecord) return false;
+    const tenant = normalizeTenant(authRecord.get("tenant_default")) || "plaza_mayor";
+    const rbac = getRbacApi();
+    if (typeof rbac.evaluateAction === "function") {
+      const decision = rbac.evaluateAction(authRecord, "clients_verify", tenant, {});
+      return decision && decision.allowed === true;
+    }
+    return false;
+  }
+
+  function canCreateClientProfiles(authRecord) {
+    if (!authRecord) return false;
+    const tenant = normalizeTenant(authRecord.get("tenant_default")) || "plaza_mayor";
+    const rbac = getRbacApi();
+    if (typeof rbac.evaluateAction === "function") {
+      const decision = rbac.evaluateAction(authRecord, "clients_create", tenant, {});
+      return decision && decision.allowed === true;
+    }
+    return false;
   }
 
   function buildAuthActorMeta(authRecord) {
@@ -2230,44 +2274,22 @@
     e.response.header().set("X-Frame-Options", "DENY");
   }
 
-  function normalizeAllowedTenants(record) {
-    const raw = record ? record.get("allowed_tenants") : null;
-    let list = [];
-    if (Array.isArray(raw)) list = raw;
-    else if (typeof raw === "string") {
-      try {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) list = parsed;
-      } catch (_) { }
-    }
-
-    list = list
-      .map(function (item) {
-        return normalizeTenant(item);
-      })
-      .filter(Boolean);
-
-    const tenantDefault = normalizeTenant(record ? record.get("tenant_default") : "");
-    if (tenantDefault && list.indexOf(tenantDefault) === -1) list.push(tenantDefault);
-
-    const role = trim(record?.getString ? record.getString("role") : "").toLowerCase();
-    if (!list.length) {
-      if (role === "admin" || role === "verificador") list = ["plaza_mayor", "casa_de_piedra"];
-      else if (role === "plaza_mayor" || role === "casa_de_piedra") list = [role];
-    }
-
-    return list.filter(Boolean);
-  }
-
   function canAuthAccessClient(authRecord, clientRecord) {
     if (!authRecord || !clientRecord) return false;
-    const role = authRole(authRecord);
-    if (role === "admin" || role === "verificador") return true;
     const clientTenant = normalizeTenant(clientRecord.get("tenant"));
     if (!clientTenant) return false;
-    const allowed = normalizeAllowedTenants(authRecord);
-    if (allowed.indexOf(clientTenant) !== -1) return true;
-    return role === clientTenant;
+    const rbac = getRbacApi();
+    if (typeof rbac.evaluateAction === "function") {
+      const canView = rbac.evaluateAction(authRecord, "clients_view", clientTenant, {});
+      const canManage = rbac.evaluateAction(authRecord, "clients_manage", clientTenant, {});
+      const canCreate = rbac.evaluateAction(authRecord, "clients_create", clientTenant, {});
+      const canVerify = rbac.evaluateAction(authRecord, "clients_verify", clientTenant, {});
+      return (canView && canView.allowed === true)
+        || (canManage && canManage.allowed === true)
+        || (canCreate && canCreate.allowed === true)
+        || (canVerify && canVerify.allowed === true);
+    }
+    return false;
   }
 
   function ensureClientRecord(clientId) {
@@ -2397,14 +2419,18 @@
 
   function handleRecordCreateRequest(e) {
     if (!e || !e.record) return e.next();
+    const isSuperuser = !!(e.hasSuperuserAuth && e.hasSuperuserAuth());
+    const authRecord = e.auth || null;
+    if (!isSuperuser && !canCreateClientProfiles(authRecord)) {
+      throw new ForbiddenError("Solo Admin o Alta Clientes pueden crear perfiles nuevos.");
+    }
     e.record.set("nombre_completo", sanitizeText(e.record.get("nombre_completo"), 255));
     e.record.set("correo", sanitizeText(e.record.get("correo"), 255).toLowerCase());
     e.record.set("telefono", normalizePhone(e.record.get("telefono")));
     e.record.set("rfc", sanitizeText(e.record.get("rfc"), 40).toUpperCase());
     e.record.set("telefonos_adicionales", sanitizePhones(e.record.get("telefonos_adicionales")));
     e.record.set("correos_adicionales", sanitizeEmails(e.record.get("correos_adicionales")));
-    const profileOrigin = sanitizeText(e.record.get("perfil_origen"), 40).toLowerCase();
-    e.record.set("perfil_origen", profileOrigin === "cotizacion_rapida" ? "cotizacion_rapida" : "manual");
+    e.record.set("perfil_origen", "manual");
     validateUploadedFilesForRequest(e);
     applyValidationToRecord(e.record, { touchPublicUpdateAt: false });
     e.next();
@@ -2703,14 +2729,17 @@
 
     // Manual auth validation: extract the token from the Authorization header
     // This avoids CORS/middleware conflicts that cause 400 errors when using $apis.requireAuth
-    const authHeader = trim(e.request.header.get("Authorization") || "");
-    if (!authHeader) {
+    const authHeader = readRequestHeader(e, "Authorization") || readRequestHeader(e, "authorization");
+    const authToken = String(authHeader || "").toLowerCase().startsWith("bearer ")
+      ? String(authHeader || "").slice(7).trim()
+      : String(authHeader || "").trim();
+    if (!authToken) {
       throw new UnauthorizedError("Debes iniciar sesion para generar el enlace seguro.");
     }
 
     let authRecord = null;
     try {
-      authRecord = $app.findAuthRecordByToken(authHeader, "auth");
+      authRecord = $app.findAuthRecordByToken(authToken, "auth");
     } catch (_) {
       authRecord = null;
     }
@@ -2759,14 +2788,17 @@
   function handleProtectedClientZipDownload(e) {
     applyResponseHeaders(e);
 
-    const authHeader = trim(e.request.header.get("Authorization") || "");
-    if (!authHeader) {
+    const authHeader = readRequestHeader(e, "Authorization") || readRequestHeader(e, "authorization");
+    const authToken = String(authHeader || "").toLowerCase().startsWith("bearer ")
+      ? String(authHeader || "").slice(7).trim()
+      : String(authHeader || "").trim();
+    if (!authToken) {
       throw new UnauthorizedError("Debes iniciar sesion para descargar el ZIP protegido.");
     }
 
     let authRecord = null;
     try {
-      authRecord = $app.findAuthRecordByToken(authHeader, "auth");
+      authRecord = $app.findAuthRecordByToken(authToken, "auth");
     } catch (_) {
       authRecord = null;
     }
