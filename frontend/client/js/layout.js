@@ -1491,6 +1491,7 @@
         if (!routeCtx) return true;
         if (routeCtx.isLoginPage) return true;
         if (!authCtx || !authCtx.session || !authCtx.session.user) return false;
+        if (authCtx.isAdmin === true) return true;
         if (routeCtx.isSystem) {
             const systemPerms = authCtx.permissions || {};
             return authCtx.isAdmin === true
@@ -1713,6 +1714,7 @@
     function applyLayoutNavPermissions(authCtx) {
         if (!authCtx || !authCtx.permissions) return;
         if (applyVerifierNavPermissions(authCtx)) return;
+        const isAdmin = authCtx.isAdmin === true;
         const perms = authCtx.permissions || {};
         const accessFallback = perms.access !== false;
         const navRules = {
@@ -1728,7 +1730,7 @@
             'clientes.html': resolveClientsPermission(perms, accessFallback)
         };
         Object.keys(navRules).forEach((page) => {
-            const visible = !!navRules[page];
+            const visible = isAdmin || !!navRules[page];
             document.querySelectorAll(`a[href="${page}"], a[data-href="${page}"]`).forEach((link) => {
                 link.classList.toggle('hidden', !visible);
             });
