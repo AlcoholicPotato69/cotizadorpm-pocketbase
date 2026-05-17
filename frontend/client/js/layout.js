@@ -1461,18 +1461,7 @@
         }
 
         const appMetaRbac = appMeta.rbac && typeof appMeta.rbac === 'object' ? appMeta.rbac : {};
-        const mapHasAdmin = Object.keys(permissionsByTenant).some((tenantKey) => {
-            const current = permissionsByTenant[tenantKey] || {};
-            return current.users_manage === true && current.roles_manage === true && current.permissions_manage === true;
-        });
-        const directHasAdmin = directPermissions.users_manage === true
-            && directPermissions.roles_manage === true
-            && directPermissions.permissions_manage === true;
-        const profileExplicitAdmin = profile.is_admin === true
-            || profile.rbac_is_admin === true
-            || appMetaRbac.is_admin === true
-            || appMetaRbac.admin === true;
-        const isAdminByPermission = profileExplicitAdmin || mapHasAdmin || directHasAdmin;
+        const isAdminByPermission = profile.isAdmin === true || appMetaRbac.is_admin === true;
 
         return {
             role,
