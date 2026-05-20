@@ -1337,18 +1337,6 @@ window.closeModal = (id, opts = {}) => {
     }
     if (id === 'preview-modal') __cpPreviewModalSuppressCloseSnapshot = false;
 };
-window.showToast = (msg, type = 'success') => {
-    const c = document.getElementById('toast-container');
-    if (!c) {
-        try { console[type === 'error' ? 'error' : 'log'](String(msg || '')); } catch (_) { }
-        return;
-    }
-    const e = document.createElement('div');
-    e.className = `p-4 rounded-lg shadow-lg text-white text-xs font-bold uppercase tracking-wider mb-2 animate-bounce ${type === 'error' ? 'bg-red-500' : 'bg-green-500'}`;
-    e.innerText = msg;
-    c.appendChild(e);
-    setTimeout(() => e.remove(), 3000);
-};
 function __cpEnsureBusyOverlay() {
     let overlay = document.getElementById('cp-pdf-busy-overlay');
     if (overlay) return overlay;

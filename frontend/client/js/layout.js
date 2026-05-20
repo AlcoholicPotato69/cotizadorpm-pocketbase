@@ -2194,14 +2194,17 @@
         },
         deleteAll: async () => {
             if (IS_LOCAL) return;
-            if (!confirm('¿Estás seguro de que quieres borrar TODAS las notificaciones?')) return;
-            if (!layoutClient || !myId) return;
-            const { error } = await layoutClient.from('hub_notifications').delete().eq('user_id', myId);
-            if (!error) {
-                window.showToast('Notificaciones eliminadas', 'success');
-                loadHistory();
-            } else {
-                window.showToast('Error al eliminar', 'error');
+            if (window.openConfirm) {
+                window.openConfirm('¿Estás seguro de que quieres borrar TODAS las notificaciones?', async () => {
+                    if (!layoutClient || !myId) return;
+                    const { error } = await layoutClient.from('hub_notifications').delete().eq('user_id', myId);
+                    if (!error) {
+                        window.showToast('Notificaciones eliminadas', 'success');
+                        loadHistory();
+                    } else {
+                        window.showToast('Error al eliminar', 'error');
+                    }
+                });
             }
         },
         logout: async () => {

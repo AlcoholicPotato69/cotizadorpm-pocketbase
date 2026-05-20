@@ -390,7 +390,7 @@
             }
             if (!useNativeAuth && !hubPocketBase) {
                 console.error("CRÍTICO: No hay cliente de autenticación nativo.");
-                alert("Error de sistema: cliente no inicializado.");
+                if (window.showToast) window.showToast("Error de sistema: cliente no inicializado.", "error");
                 return;
             }
 
@@ -1343,13 +1343,15 @@
         }
 
         async function clearAllNotifs() {
-            if (currentUser && confirm('¿Estás seguro de descartar todas las notificaciones?')) {
-                await hubPocketBase.from('hub_notifications').update({
-                    dismissed: true,
-                    dismissed_at: (window.__serverDateService ? window.__serverDateService.nowISO() : new Date().toISOString())
-                }).eq('user_id', currentUser.id).eq('dismissed', false);
-                closeDashboardNotifModal();
-                fetchNotifs(currentUser.id);
+            if (currentUser) {
+                window.openConfirm('Descartar notificaciones', '¿Estás seguro de descartar todas las notificaciones?', async () => {
+                    await hubPocketBase.from('hub_notifications').update({
+                        dismissed: true,
+                        dismissed_at: (window.__serverDateService ? window.__serverDateService.nowISO() : new Date().toISOString())
+                    }).eq('user_id', currentUser.id).eq('dismissed', false);
+                    closeDashboardNotifModal();
+                    fetchNotifs(currentUser.id);
+                });
             }
         }
 

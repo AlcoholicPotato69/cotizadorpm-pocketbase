@@ -1670,7 +1670,8 @@ function openClientModal(client=null) {
         const rawFilename = Array.isArray(client[fieldName]) ? client[fieldName][0] : client[fieldName];
         if (rawFilename) {
             const rawStatus = (estados[fieldName] && estados[fieldName].status) ? estados[fieldName].status : 'pendiente';
-            if (rawStatus === 'aprobado' || rawStatus === 'pendiente') {
+            const isAdmin = window.HUB_RBAC?.isAdmin?.();
+            if ((rawStatus === 'aprobado' || rawStatus === 'pendiente') && !isAdmin && !canVerify) {
                 if (el) {
                     el.disabled = true;
                     el.classList.add('opacity-50', 'cursor-not-allowed');
@@ -1739,24 +1740,27 @@ async function confirmDeleteClient(client) {
 }
 
 async function approveClient(client) {
-  if (!confirm(`¿Estás seguro de que deseas aprobar el expediente de ${client.nombre_completo}?`)) return;
-  try {
-    const estados = safeObject(client?.documentos_estado);
-    const requiredDocs = getClientRequiredDocumentRequirements(client, { includeObserved: true });
-    const validationDocs = safeObject(getClientValidation(client).documents);
-    requiredDocs.forEach((doc) => {
-      const docInfo = getVerificationDocState(client, doc.field, validationDocs);
-      if (docInfo.uploaded === true || docInfo.omitted === true) {
-        estados[doc.field] = { status: 'aprobado', motivo: '', omitido: docInfo.omitted === true };
+  if (window.openConfirm) {
+    window.openConfirm(`¿Estás seguro de que deseas aprobar el expediente de ${client.nombre_completo}?`, async () => {
+      try {
+        const estados = safeObject(client?.documentos_estado);
+        const requiredDocs = getClientRequiredDocumentRequirements(client, { includeObserved: true });
+        const validationDocs = safeObject(getClientValidation(client).documents);
+        requiredDocs.forEach((doc) => {
+          const docInfo = getVerificationDocState(client, doc.field, validationDocs);
+          if (docInfo.uploaded === true || docInfo.omitted === true) {
+            estados[doc.field] = { status: 'aprobado', motivo: '', omitido: docInfo.omitted === true };
+          }
+        });
+        const { error } = await window.tenantPocketBase.from('clientes').update({ documentos_estado: estados }).eq('id', client.id);
+        if (error) throw error;
+        window.showToast?.("Expediente aprobado correctamente", "success");
+        await loadClients();
+      } catch (e) {
+        console.error(e);
+        window.showToast?.("No se pudo aprobar el expediente.", "error");
       }
     });
-    const { error } = await window.tenantPocketBase.from('clientes').update({ documentos_estado: estados }).eq('id', client.id);
-    if (error) throw error;
-    window.showToast?.("Expediente aprobado correctamente", "success");
-    await loadClients();
-  } catch (e) {
-    console.error(e);
-    window.showToast?.("No se pudo aprobar el expediente.", "error");
   }
 }
 

@@ -1,175 +1,107 @@
-# cotizadorpm-pocketbase
+# Cotizador y Gestor de Espacios - Sistema Integral
 
-Repositorio reorganizado para separar claramente frontend, backend, documentación y herramientas operativas.
+Sistema web integral de cotizaciones, administración de clientes, generación de contratos y control operativo.
+Soporta arquitectura multi-tenant (Plaza Mayor y Casa de Piedra) operando bajo un backend unificado y un robusto control de acceso basado en roles (RBAC).
 
-## Estructura
+---
 
-- `frontend/`
-  HTML, JS, CSS, assets y archivos públicos del sistema.
-- `backend/`
-  `pocketbase.exe`, hooks, migraciones, base de datos y logs.
-- `development/`
-  scripts para levantar backend y frontend en desarrollo local.
-- `production/`
-  scripts y utilidades para servicio Windows, despliegue y carpeta pública de producción.
-- `docs/`
-  documentación técnica y operativa vigente.
+## 1. Arquitectura General
 
-## Flujo local recomendado
+El sistema está construido en un esquema **Cliente-Servidor** clásico, separando claramente las responsabilidades:
 
-Backend:
+*   **Backend (PocketBase):** Actúa como la única fuente de la verdad. Utiliza PocketBase (binario oficial v0.38.1 en Go con SQLite embebido). Maneja la autenticación, base de datos, almacenamiento de documentos (S3-like local), y ejecuta ganchos (hooks) en JavaScript (via goja) para forzar reglas de negocio, permisos y auditoría de extremo a extremo.
+*   **Frontend (Vanilla JS + TailwindCSS):** Una SPA ligera. Consume la API REST de PocketBase. La UI reacciona dinámicamente al contexto de seguridad que entrega el backend, ocultando o mostrando módulos, tarjetas en el dashboard y botones de acción según el Rol, Permisos y Tenant (sede) asignados al usuario.
 
-```bat
-cd /d "C:\Users\johan\OneDrive\Desktop\repos git\cotizadorpm-pocketbase"
-development\dev-start.bat
+---
+
+## 2. Requisitos Previos
+
+*   **Windows Server / Windows 10/11** (debido al wrapper nativo en C# para instalar como servicio).
+*   **PowerShell 5.1+** (para los scripts de despliegue y sincronización).
+*   **Python 3.x** (Opcional: Solo usado para levantar el servidor estático local de frontend en modo de desarrollo).
+*   **Nginx** (o IIS) para servir el frontend de forma productiva.
+
+---
+
+## 3. Estructura del Repositorio
+
+El proyecto está organizado de manera profesional para separar el desarrollo, la producción y la documentación:
+
+```text
+/
+├── backend/            # Contiene PocketBase (binario, base de datos, hooks y migraciones)
+│   ├── pb_data/        # Base de datos SQLite y archivos de usuario
+│   ├── pb_hooks/       # Ganchos JavaScript del backend (Seguridad RBAC y Lógica de Negocio)
+│   ├── pb_migrations/  # Esquemas de la base de datos
+│   └── pocketbase.exe  # Ejecutable OFICIAL de PocketBase (v0.38.1)
+├── frontend/           # Código fuente de la interfaz gráfica
+│   └── client/         # HTML, CSS (Tailwind) y JavaScript (Vanilla)
+├── development/        # Scripts para levantar el sistema en modo local
+├── production/         # Scripts para compilación de servicio, Nginx proxy y despliegue local
+└── docs/               # Documentación técnica, arquitectónica y operativa profunda
 ```
 
-`development\dev-start.bat` ahora prevalida migraciones y crea `backend\pb_data\` si aún no existe, para que un clon limpio pueda inicializar la base sin pasos manuales extra.
+> **NOTA:** Para leer más a fondo sobre cómo modificar el sistema, ver flujos o solucionar problemas, explora la carpeta **[`docs/`](./docs/00-INDICE-DOCUMENTACION.md)** que contiene una amplia gama de guías técnicas.
 
-Frontend:
+---
 
-```bat
-cd /d "C:\Users\johan\OneDrive\Desktop\repos git\cotizadorpm-pocketbase"
-development\frontend-dev-start.bat
-```
+## 4. Instalación y Ejecución Local (Desarrollo)
 
-Accesos locales:
+Para trabajar localmente sin instalar el sistema como un servicio:
 
-- backend: `http://127.0.0.1:8090/_/`
-- API health: `http://127.0.0.1:8090/api/health`
-- frontend: `http://127.0.0.1:8080/client/index.html`
+1.  Abre una consola (CMD o PowerShell) en la raíz del proyecto.
+2.  Inicia el **backend**:
+    ```cmd
+    .\development\dev-start.bat
+    ```
+    *(PocketBase iniciará en http://127.0.0.1:8090)*
+3.  Abre una nueva consola y levanta el **frontend**:
+    ```cmd
+    .\development\frontend-dev-start.bat
+    ```
+    *(El frontend quedará disponible en http://127.0.0.1:8080/client/index.html)*
 
-## Producción
+---
 
-La ruta recomendada de producción es separar responsabilidades:
+## 5. Despliegue en Producción
 
-- PocketBase sirve backend, API y dashboard administrativo.
-- Los HTML se sirven por fuera de PocketBase, normalmente desde Nginx con la carpeta `production\deploy\nginx-site\`.
-- El frontend canónico para ejecución y despliegue es `frontend\client\` (sin espejos duplicados).
+El proyecto incluye un flujo robusto y automatizado para generar un servicio en Windows (`CotizadorPocketBase`) sin dependencias como NSSM, compilando su propio host nativo de manera transparente.
 
-Puntos clave:
+1. Abre una consola de **Administrador**.
+2. Ejecuta el asistente de despliegue:
+   ```cmd
+   .\production\levantar-todo.bat
+   ```
+3. El script te guiará para:
+   * Detener procesos huérfanos pasados.
+   * Definir la **IP y Puerto** a exponer del backend.
+   * Establecer la ruta del frontend.
+   * Sincronizar dinámicamente la IP configurada al frontend (`hub-runtime.json` / `env.js`).
+   * **Instalar e iniciar el servicio Windows** automáticamente.
 
-- configuración del backend: `production/deploy/backend-service.local.conf`
-- runtime del frontend: `frontend/client/config/hub-runtime.json`
-- runtime legacy/publico: `frontend/client/public/assets/libs/js/env.js`
-- servicio Windows: `production/backend-service.bat`
-- publicación estática separada: `production/deploy/nginx-site/`
+Si deseas administrar el servicio manualmente después, puedes usar `.\production\backend-service.bat {start|stop|restart|status}`.
 
-### 1. Levantar backend en producción
+---
 
-Si es un clon limpio sin datos previos, puedes arrancar con `backend\pb_data\` vacío o inexistente; PocketBase lo crea y aplica migraciones al iniciar.
+## 6. Roles y Permisos (RBAC)
 
-Revisa o ajusta IP/puerto si hace falta:
+La seguridad se evalúa estrictamente en el Backend a través del hook `rbac_shared.js`.
+*   El cálculo combina los permisos del **Rol base** (ej. Administrador, Gerente, Ventas), **Roles extra asignados** y **Permisos Directos del usuario**.
+*   El acceso está encapsulado por **Tenant** (`plaza_mayor` o `casa_de_piedra`). Un usuario no puede leer datos ni operar módulos fuera de su sede permitida, aunque intente forzar la URL del frontend o inyectar llamadas al API.
+*   **Regla de Oro:** El usuario `admin` o con rol de administrador sobreescribe cualquier negación y recibe acceso total (`allow = true`) implícitamente de parte de las protecciones API (hooks).
 
-```bat
-production\backend-service.bat show
-production\backend-service.bat set-bind 127.0.0.1:8090
-production\backend-service.bat set-url http://127.0.0.1:8090
-production\backend-service.bat set-public-dir off
-```
+---
 
-Instala e inicia el servicio:
+## 7. Flujo Operativo Principal
 
-```bat
-production\backend-service.bat install
-production\backend-service.bat start
-production\backend-service.bat status
-```
+1.  **Dashboard:** Al entrar, se le muestran al usuario las aplicaciones disponibles para su perfil y sede (Catálogo, Cotizaciones, Clientes, Reportes, Configuración).
+2.  **Catálogo:** Módulo para ver precios y disponibilidad de espacios.
+3.  **Cotización:** Se generan presupuestos por evento, guardando snapshots inmutables del estado en PDF.
+4.  **Expedientes:** Verificación documental de Clientes (INE, Comprobantes, Actas). Los documentos deben ser "verificados/aprobados" mediante permisos controlados.
+5.  **Aprobación/Contrato:** Una cotización aprobada, con expediente liberado, procede a generación de contrato automático en PDF y posteriormente a un ciclo para cargar recibos externos o de facturas.
 
-Valida salud del backend:
+---
 
-- dashboard PocketBase: `http://HOST:PUERTO/_/`
-- health-check: `http://HOST:PUERTO/api/health`
-
-Primer arranque de una instalación limpia:
-
-```bat
-backend\pocketbase.exe superuser upsert admin@tu-dominio.com TuPasswordSegura123 --dir=backend\pb_data
-```
-
-Ese superusuario te deja entrar al dashboard para crear o revisar los registros internos como `app_users`.
-
-### 2. Levantar frontend en producción
-
-El frontend se prepara como HTML estático separado. El flujo recomendado es:
-
-```bat
-production\levantar-todo.bat
-```
-
-El script pide:
-
-- IP/host y puerto del backend PocketBase
-- IP/host y puerto donde se servirá el frontend HTML
-
-Después actualiza automáticamente:
-
-- `BIND_ADDR`
-- `BACKEND_URL`
-- `FRONTEND_BACKEND_URL`
-- `CORS_ALLOWED_ORIGINS`
-- `PUBLIC_DIR=off`
-- `frontend/client/config/hub-runtime.json`
-- `frontend/client/public/assets/libs/js/env.js`
-- `production/deploy/nginx-site/`
-- `production/deploy/nginx/cotizador-production.conf`
-
-Accesos esperados con Nginx:
-
-- frontend: `http://FRONTEND_HOST/client/index.html`
-- backend/API por proxy: `http://FRONTEND_HOST/api/health`
-- dashboard por proxy: `http://FRONTEND_HOST/_/`
-
-Si TI decide servir el HTML desde otro servidor estático sin proxy same-origin, entonces el frontend debe apuntar directamente al backend:
-
-```bat
-production\backend-service.bat set-url http://BACKEND_HOST:8090
-production\backend-service.bat set-frontend-url http://BACKEND_HOST:8090
-production\backend-service.bat set-frontend-origin http://FRONTEND_HOST
-production\backend-service.bat sync-frontend
-```
-
-### 3. Configuración de IP (Acceso en Red Local o Producción)
-
-Para que otros equipos de la red accedan al sistema, usa IPs reales en lugar de `127.0.0.1`.
-
-```bat
-production\backend-service.bat set-bind 0.0.0.0:8090
-production\backend-service.bat set-url http://TU_IP_LOCAL:8090
-production\backend-service.bat set-frontend-origin http://IP_FRONTEND
-production\backend-service.bat restart
-```
-
-El frontend reconoce la IP del backend por estos archivos, generados por `sync-frontend-runtime.ps1`:
-
-- `frontend/client/config/hub-runtime.json`
-- `frontend/client/public/assets/libs/js/env.js`
-
-No se recomienda editarlos a mano salvo emergencia. Usa:
-
-```bat
-production\backend-service.bat set-frontend-url /
-production\backend-service.bat prepare-nginx production\deploy\nginx-site IP_FRONTEND
-```
-
-Con proxy Nginx same-origin, `FRONTEND_BACKEND_URL=/` es correcto. Si no hay proxy same-origin, usa `set-frontend-url http://BACKEND_HOST:8090` y autoriza CORS con `set-frontend-origin`.
-
-Nota de recuperación:
-
-- si el backend falló en un clon limpio sin datos reales, elimina `backend\pb_data\` y vuelve a iniciar para recrear la base desde cero
-- si `backend\pb_data\` ya contiene datos reales, respáldala antes de tocarla
-
-## Archivos importantes
-
-- `frontend/client/config/hub-runtime.json`
-- `frontend/client/js/hub-config.js`
-- `frontend/client/js/layout.js`
-- `backend/pb_hooks/`
-- `backend/pb_migrations/`
-- `backend/pb_data/`
-- `development/dev-start.bat`
-- `development/frontend-dev-start.bat`
-- `development/audit-smoke.ps1`
-- `production/backend-service.bat`
-- `docs/README docs.md`
-- `docs/35-requisitos-tecnicos-del-servidor.md`
+## 8. Consideraciones y Reglas
+*   **Veracidad del Backend:** Nunca confíes en el Frontend para seguridad real. Si el frontend se modifica de forma maliciosa, todos los hooks intermedios y de base de datos lo prevendrán gracias a `authorizeOrThrow` en el middleware Goja de PocketBase.
+*   **Binario Limpio:** Este sistema se alimenta en producción y en pruebas del binario de PocketBase oficial intacto, no modificado a código fuente. Toda la magia y complejidad residen en `/pb_hooks`.
