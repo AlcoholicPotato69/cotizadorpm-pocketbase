@@ -558,35 +558,32 @@
         }
 
         function canShowDashboardApp(app, profile, role) {
-            const normalizedRole = normalizeDashboardRole(role || profile?.role || profile?.rol || '');
-            const perms = getDashboardFinanzasPermissions(profile);
-            const key = getDashboardModuleKey(app);
-            const accessFallback = !perms || perms.access !== false;
+            const ctx = window.__HUB_AUTH_CONTEXT;
+            const perms = ctx?.permissions || {};
+            const isAdmin = ctx?.isAdmin === true;
+            const isVerifier = ctx?.isVerifier === true;
 
-            if (normalizedRole === 'admin') return true;
-            if (key === 'control') {
-                const explicit = hasExplicitDashboardPermission(perms, ['control_view']);
-                return explicit === null ? canOpenControlFromDashboard(normalizedRole, profile) : explicit;
-            }
+            const key = getDashboardModuleKey(app);
+            const accessFallback = perms.access !== false;
+
+            if (isAdmin) return true;
+
+            if (key === 'control') return !!perms.control_view;
+
             if (key === 'config') {
-                const explicit = hasExplicitDashboardPermission(perms, ['config_manage', 'permissions_manage', 'users_manage', 'catalog_manage', 'pdf_layout_manage']);
-                return explicit === null ? normalizedRole === 'verificador' : explicit;
+                return !!perms.config_manage || !!perms.users_manage || !!perms.roles_manage || !!perms.permissions_manage || !!perms.catalog_manage || !!perms.pdf_layout_manage;
             }
             if (key === 'clients') {
-                const explicit = hasExplicitDashboardPermission(perms, ['clients_view', 'clients_manage', 'clients_verify', 'clients_create']);
-                return explicit === null ? accessFallback : explicit;
+                return !!perms.clients_view || !!perms.clients_manage || !!perms.clients_verify || !!perms.clients_create || accessFallback;
             }
             if (key === 'reports') {
-                const explicit = hasExplicitDashboardPermission(perms, ['reports_view']);
-                return explicit === null ? accessFallback : explicit;
+                return !!perms.reports_view || accessFallback;
             }
             if (key === 'catalog') {
-                const explicit = hasExplicitDashboardPermission(perms, ['catalog_view', 'catalog_manage']);
-                return explicit === null ? accessFallback : explicit;
+                return !!perms.catalog_view || !!perms.catalog_manage || accessFallback;
             }
             if (['orders', 'quote', 'agenda', 'contracts', 'receipts', 'invoices'].includes(key)) {
-                const explicit = hasExplicitDashboardPermission(perms, ['orders_view', 'orders_edit', 'contracts_view', 'receipts_view', 'invoices_view']);
-                return explicit === null ? accessFallback : explicit;
+                return !!perms.orders_view || !!perms.orders_edit || !!perms.contracts_view || !!perms.receipts_view || !!perms.invoices_view || accessFallback;
             }
             return accessFallback;
         }
@@ -723,47 +720,26 @@
         }
 
         async function showDashboard(user) {
-            // Carga silenciosa de layout.js para mantener la sesión global activa al navegar
-            if (!document.querySelector('script[src="./js/layout.js?v=20260426-v3-digital-calendar"]')) {
+            // Carga silenciosa de layout.js para mantener la sesión global activa al navegar y tener las vars de entorno __HUB_AUTH_CONTEXT
+            if (!document.querySelector('script[src="./js/layout.js?v=20260426-v3-digital-calendar"]') && !document.querySelector('script[src="./js/layout.js"]')) {
                 const layoutScript = document.createElement('script');
                 layoutScript.src = "./js/layout.js";
                 document.body.appendChild(layoutScript);
             }
 
-            // Obtener perfil para nombre y roles
-            let profileRecord = null;
-            let profileError = null;
-            if (useNativeAuth && hubAuthNative) {
-                try {
-                    profileRecord = await hubAuthNative.getProfile(user.id);
-                } catch (err) {
-                    profileError = err;
-                }
+            // Forzar a que layout inicie sesión antes de cargar el contenido
+            if (window.HUB_SESSION && typeof window.HUB_SESSION.ensureAuth === 'function') {
+                await window.HUB_SESSION.ensureAuth({ forceRefresh: true, redirectOnFail: false });
+            } else if (window.__HUB_LAYOUT_READY && typeof window.__HUB_LAYOUT_READY.then === 'function') {
+                await window.__HUB_LAYOUT_READY;
             } else {
-                const resp = await hubPocketBase
-                    .from('app_users')
-                    .select('role, username, allowed_tenants, tenant_default, app_metadata')
-                    .eq('id', user.id)
-                    .single();
-                profileRecord = resp.data || null;
-                profileError = resp.error || null;
+                // Pequeño workaround por si layout.js apenas se está bajando. En general esto no pasará
+                // porque index no requiere layout.js para bootear, lo inyecta dinámicamente arriba
+                await new Promise(r => setTimeout(r, 600));
             }
 
-            if (profileError) { console.warn('No se pudo cargar el perfil:', profileError); }
-
-            let roleFallback = normalizeDashboardRole(user?.role || user?.rol || '');
-            const allowedFallback = Array.isArray(user?.allowed_tenants)
-                ? user.allowed_tenants.map(normalizeDashboardTenant).filter(Boolean)
-                : ((roleFallback === 'admin' || roleFallback === 'verificador')
-                    ? ['plaza_mayor', 'casa_de_piedra']
-                    : ((roleFallback === 'plaza_mayor' || roleFallback === 'casa_de_piedra') ? [roleFallback] : []));
-
-            const profile = profileRecord || {
-                role: roleFallback,
-                username: user?.username || user?.email?.split('@')[0] || '',
-                allowed_tenants: allowedFallback,
-                tenant_default: user?.tenant_default || user?.default_tenant || null,
-            };
+            const authCtx = window.__HUB_AUTH_CONTEXT || {};
+            const profile = authCtx.profile || user;
 
             // Determinar nombre a mostrar
             let displayName = '';
@@ -799,15 +775,16 @@
 
         async function loadApps(user, preloadedProfile) {
             const grid = document.getElementById('apps-grid');
+
+            // Usamos directamente el contexto global para asegurar una única fuente de verdad (inicializado en showDashboard->layout.js load)
+            const ctx = window.__HUB_AUTH_CONTEXT;
             const p = preloadedProfile || user || {};
-            let userRole = normalizeDashboardRole(p.role || p.rol || '');
-            const allowedTenants = Array.isArray(p.allowed_tenants)
-                ? p.allowed_tenants.map(normalizeDashboardTenant).filter(Boolean)
-                : ((userRole === 'admin' || userRole === 'verificador')
-                    ? ['plaza_mayor', 'casa_de_piedra']
-                    : ((userRole === 'plaza_mayor' || userRole === 'casa_de_piedra') ? [userRole] : []));
-            const isAdmin = userRole === 'admin';
-            const isVerifier = userRole === 'verificador';
+
+            const isAdmin = ctx?.isAdmin === true;
+            const isVerifier = ctx?.isVerifier === true;
+            let userRole = isAdmin ? 'admin' : (isVerifier ? 'verificador' : normalizeDashboardRole(p.role || p.rol || ''));
+
+            const allowedTenants = Array.isArray(ctx?.allowedTenants) ? ctx.allowedTenants : [];
 
             const hasPM = isAdmin || allowedTenants.includes('plaza_mayor');
             const hasCP = isAdmin || allowedTenants.includes('casa_de_piedra');
@@ -944,8 +921,13 @@
             }
 
             const profile = p;
-            const userCanOpenControl = canOpenControlFromDashboard(userRole, profile);
-            if (userRole === 'verificador') {
+
+            // Para simplificar, obtenemos acceso directamente desde auth ctx global
+            const ctx = window.__HUB_AUTH_CONTEXT || {};
+            const perms = ctx.permissions || {};
+            const userCanOpenControl = isAdmin || !!perms.control_view;
+
+            if (isVerifier) {
                 const verifierTenant = resolveVerifierDashboardTenant(profile);
                 const verifierPrefix = verifierTenant === 'casa_de_piedra' ? 'cotizadorcp' : 'cotizador';
                 const verifierAccent = verifierTenant === 'casa_de_piedra' ? 'cp' : 'red';
@@ -985,15 +967,12 @@
                 return;
             }
 
-                if (userRole === 'admin' || (hasPM && hasCP)) {
-                    await renderTenantSwitchDashboard(grid, profile, userRole, buildModules, cardHTML, { includeClients: true, includeAdminTools: userRole === 'admin' });
+                if (isAdmin || (hasPM && hasCP)) {
+                    await renderTenantSwitchDashboard(grid, profile, userRole, buildModules, cardHTML, { includeClients: true, includeAdminTools: isAdmin });
                     return;
                 }
 
-            const profileAllowedTenants = Array.isArray(profile?.allowed_tenants)
-                ? profile.allowed_tenants.map(normalizeDashboardTenant).filter(Boolean)
-                : [];
-            if (profileAllowedTenants.includes('plaza_mayor') && profileAllowedTenants.includes('casa_de_piedra')) {
+            if (hasPM && hasCP) {
                 await renderTenantSwitchDashboard(grid, profile, userRole, buildModules, (app) => {
                     const colorKey = app.color || 'gray';
                     const borderColor = getBorderColorClass(colorKey);
@@ -1037,7 +1016,7 @@
                     color: userRole === 'admin' ? 'gray' : 'red'
                 });
             }
-            if ((userRole === 'admin' || canShowDashboardApp({ name: 'Configuracion', url_path: 'system/config.html' }, profile, userRole))
+            if ((isAdmin || canShowDashboardApp({ name: 'Configuracion', url_path: 'system/config.html' }, profile, userRole))
                 && !filteredModules.some((module) => getDashboardModuleKey(module) === 'config')) {
                 filteredModules.push({
                     name: 'Configuracion',
