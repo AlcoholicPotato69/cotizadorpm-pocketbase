@@ -1393,23 +1393,23 @@
     }
 
     function resolveRoutePermission(perms, key, fallbackAccess) {
-        if (!perms || typeof perms !== 'object') return false;
-        if (!hasOwn(perms, key)) return false;
+        if (!perms || typeof perms !== 'object') return !!fallbackAccess;
+        if (!hasOwn(perms, key)) return !!fallbackAccess;
         return !!perms[key];
     }
 
     function resolveOrderModulePermission(perms, moduleKey, fallbackAccess) {
-        if (!perms || typeof perms !== 'object') return false;
+        if (!perms || typeof perms !== 'object') return !!fallbackAccess;
         if (hasOwn(perms, moduleKey)) return !!perms[moduleKey];
-        return false;
+        return !!fallbackAccess;
     }
 
     function resolveClientsPermission(perms, fallbackAccess) {
-        if (!perms || typeof perms !== 'object') return false;
+        if (!perms || typeof perms !== 'object') return !!fallbackAccess;
         if (hasOwn(perms, 'clients_view') || hasOwn(perms, 'clients_manage') || hasOwn(perms, 'clients_verify') || hasOwn(perms, 'clients_create')) {
             return !!perms.clients_view || !!perms.clients_manage || !!perms.clients_verify || !!perms.clients_create;
         }
-        return false;
+        return !!fallbackAccess;
     }
 
     function resolveControlPermission(authCtx) {
