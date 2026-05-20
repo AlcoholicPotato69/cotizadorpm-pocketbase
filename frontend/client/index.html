@@ -946,7 +946,6 @@
 
             const profile = p;
             const userCanOpenControl = canOpenControlFromDashboard(profile);
-            const isAdmin = profile?.isAdmin === true || profile?.app_metadata?.rbac?.is_admin === true;
 
             if (isAdmin || (hasPM && hasCP)) {
                 await renderTenantSwitchDashboard(grid, profile, userRole, buildModules, cardHTML, { includeClients: true, includeAdminTools: isAdmin });

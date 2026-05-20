@@ -27,7 +27,7 @@
     return require(`${__hooks}/rbac_admin_shared.js`).handleMode(e);
   });
 
-  onRecordBeforeUpdateRequest((e) => {
+  onRecordUpdateRequest((e) => {
     const rbac = require(`${__hooks}/rbac_shared.js`);
     const authRecord = e.httpContext.get("authRecord");
 
