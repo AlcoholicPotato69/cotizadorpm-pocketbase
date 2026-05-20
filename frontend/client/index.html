@@ -562,8 +562,8 @@
             const key = getDashboardModuleKey(app);
             const accessFallback = !perms || perms.access !== false;
 
-            const isAdmin = profile?.isAdmin === true || profile?.app_metadata?.rbac?.is_admin === true;
-            if (isAdmin) return true;
+            const localIsAdmin = profile?.isAdmin === true || profile?.app_metadata?.rbac?.is_admin === true;
+            if (localIsAdmin) return true;
 
             if (key === 'control') {
                 const explicit = hasExplicitDashboardPermission(perms, ['control_view']);
@@ -946,6 +946,7 @@
 
             const profile = p;
             const userCanOpenControl = canOpenControlFromDashboard(profile);
+            // isAdmin ya está declarado arriba
 
             if (isAdmin || (hasPM && hasCP)) {
                 await renderTenantSwitchDashboard(grid, profile, userRole, buildModules, cardHTML, { includeClients: true, includeAdminTools: isAdmin });
