@@ -870,30 +870,21 @@ function __orderNormalizeAccessRole(value) {
 }
 
 function __orderResolveAccess() {
-    const rbac = window.HUB_RBAC || null;
     const authCtx = window.__HUB_AUTH_CONTEXT || {};
     const profile = authCtx.profile || window.currentUserProfile || {};
-    const perms = rbac?.getPermissions
-        ? rbac.getPermissions()
-        : ((authCtx.permissions && typeof authCtx.permissions === 'object')
-            ? authCtx.permissions
-            : ((profile.effective_permissions && typeof profile.effective_permissions === 'object')
-                ? profile.effective_permissions
-                : {}));
+    const perms = authCtx.permissions || {};
     const role = __orderNormalizeAccessRole(authCtx.role || profile.role || profile.rol || '');
     return {
         role,
         perms,
-        isAdmin: rbac?.isAdmin ? rbac.isAdmin() : (authCtx.isAdmin === true)
+        isAdmin: authCtx.isAdmin === true
     };
 }
 
 function __orderCanEditOrders() {
-    const rbac = window.HUB_RBAC || null;
-    if (rbac?.can) return rbac.can('orders_edit');
     const access = __orderResolveAccess();
-    if (Object.prototype.hasOwnProperty.call(access.perms || {}, 'orders_edit')) return access.perms.orders_edit === true;
     if (access.isAdmin) return true;
+    if (Object.prototype.hasOwnProperty.call(access.perms || {}, 'orders_edit')) return access.perms.orders_edit === true;
     return false;
 }
 
@@ -4971,8 +4962,6 @@ function __cpNormalizeUserRole(value) {
 }
 
 function __cpIsAdminProfile() {
-    const rbac = window.HUB_RBAC || null;
-    if (rbac?.canAny) return rbac.canAny(['pdf_layout_manage', 'config_manage']);
     const access = __orderResolveAccess();
     if (access.isAdmin === true) return true;
     if (Object.prototype.hasOwnProperty.call(access.perms || {}, 'pdf_layout_manage')) return access.perms.pdf_layout_manage === true;

@@ -1393,23 +1393,23 @@
     }
 
     function resolveRoutePermission(perms, key, fallbackAccess) {
-        if (!perms || typeof perms !== 'object') return false;
-        if (!hasOwn(perms, key)) return false;
+        if (!perms || typeof perms !== 'object') return !!fallbackAccess;
+        if (!hasOwn(perms, key)) return !!fallbackAccess;
         return !!perms[key];
     }
 
     function resolveOrderModulePermission(perms, moduleKey, fallbackAccess) {
-        if (!perms || typeof perms !== 'object') return false;
+        if (!perms || typeof perms !== 'object') return !!fallbackAccess;
         if (hasOwn(perms, moduleKey)) return !!perms[moduleKey];
-        return false;
+        return !!fallbackAccess;
     }
 
     function resolveClientsPermission(perms, fallbackAccess) {
-        if (!perms || typeof perms !== 'object') return false;
+        if (!perms || typeof perms !== 'object') return !!fallbackAccess;
         if (hasOwn(perms, 'clients_view') || hasOwn(perms, 'clients_manage') || hasOwn(perms, 'clients_verify') || hasOwn(perms, 'clients_create')) {
             return !!perms.clients_view || !!perms.clients_manage || !!perms.clients_verify || !!perms.clients_create;
         }
-        return false;
+        return !!fallbackAccess;
     }
 
     function resolveControlPermission(authCtx) {
@@ -1461,18 +1461,20 @@
         }
 
         const appMetaRbac = appMeta.rbac && typeof appMeta.rbac === 'object' ? appMeta.rbac : {};
-        const mapHasAdmin = Object.keys(permissionsByTenant).some((tenantKey) => {
-            const current = permissionsByTenant[tenantKey] || {};
-            return current.users_manage === true && current.roles_manage === true && current.permissions_manage === true;
-        });
-        const directHasAdmin = directPermissions.users_manage === true
-            && directPermissions.roles_manage === true
-            && directPermissions.permissions_manage === true;
-        const profileExplicitAdmin = profile.is_admin === true
-            || profile.rbac_is_admin === true
-            || appMetaRbac.is_admin === true
-            || appMetaRbac.admin === true;
-        const isAdminByPermission = profileExplicitAdmin || mapHasAdmin || directHasAdmin;
+
+        // La única fuente de verdad para "isAdmin" debe venir de PB (que evalúa roles o flags reales).
+        // Evitamos deducirlo adivinando permisos ("mapHasAdmin", "directHasAdmin")
+        let isAdminByPermission = false;
+
+        // Buscamos si is_admin fue resuelto en app_metadata.rbac por el backend (vía buildSessionUser)
+        // O si viene explícito en el response profile.
+        if (appMetaRbac.is_admin === true || appMetaRbac.admin === true) {
+            isAdminByPermission = true;
+        } else if (profile.is_admin === true || profile.rbac_is_admin === true) {
+            isAdminByPermission = true;
+        } else if (role === 'admin') {
+            isAdminByPermission = true;
+        }
 
         return {
             role,

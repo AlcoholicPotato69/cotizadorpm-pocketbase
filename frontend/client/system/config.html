@@ -3624,9 +3624,6 @@
 
     async function resolveConfigAccess() {
       await requireAdmin();
-      const hintedRole = resolvedConfigRole || getConfigRoleHints();
-      isVerifierUser = !isAdminUser && hintedRole === 'verificador';
-      canEditConfigUser = isAdminUser || isVerifierUser;
       return canEditConfigUser || canAccessUsersModule;
     }
 
@@ -3660,6 +3657,8 @@
     async function requireAdmin() {
       resolvedConfigRole = '';
       isAdminUser = false;
+      isVerifierUser = false;
+      canEditConfigUser = false;
       canAccessUsersModule = false;
       canManageUsersModule = false;
       canManageRolesModule = false;
@@ -3675,6 +3674,10 @@
         canManageRolesModule = perms.roles_manage === true || isAdminUser;
         canManagePermissionsModule = perms.permissions_manage === true || isAdminUser;
         canAccessUsersModule = canManageUsersModule || canManageRolesModule || canManagePermissionsModule;
+
+        isVerifierUser = !isAdminUser && (perms.catalog_manage === true || perms.config_manage === true);
+        canEditConfigUser = isAdminUser || isVerifierUser || perms.config_manage === true || perms.catalog_manage === true || perms.pdf_layout_manage === true;
+
         if (isAdminUser) {
           resolvedConfigRole = 'admin';
           try { localStorage.setItem('hub_user_cache_role', 'admin'); } catch (_) { }
@@ -3682,22 +3685,17 @@
       };
 
       const layoutCtx = getResolvedLayoutAuthContext();
-      const layoutEffective = layoutCtx?.effective
-        || layoutCtx?.user?.effective
-        || null;
-      if (layoutEffective) applyEffective(layoutEffective);
-      if (!layoutEffective) {
-        const layoutPerms = layoutCtx?.permissions
-          || layoutCtx?.user?.permissions
-          || layoutCtx?.user?.effective_permissions
-          || {};
-        const layoutIsAdmin = layoutCtx?.isAdmin === true || normalizeAdminRole(layoutCtx?.user?.role) === 'admin';
-        applyEffective({ is_admin: layoutIsAdmin, permissions: layoutPerms });
+
+      // En vez de adivinar desde layout.js, siempre confiamos en la respuesta fresca o los properties garantizados
+      if (layoutCtx) {
+          applyEffective({ is_admin: layoutCtx.isAdmin, permissions: layoutCtx.permissions });
       }
 
       try {
         const effectiveResp = await rbacRequest('/api/hub/rbac/effective');
-        applyEffective(effectiveResp?.effective || {});
+        if (effectiveResp && effectiveResp.effective) {
+            applyEffective(effectiveResp.effective);
+        }
         return isAdminUser;
       } catch (_) {
         return isAdminUser;

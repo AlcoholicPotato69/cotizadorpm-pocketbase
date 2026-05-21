@@ -483,6 +483,7 @@
     meta.rbac = safeObject(meta.rbac);
     meta.rbac.effective = map;
     meta.rbac.mode = getRbacMode();
+    meta.rbac.is_admin = effective.is_admin;
     meta.rbac.version = String(Math.floor(roleCache.loadedAt / 1000) || 0);
 
     const email = trim(authRecord.getString("email"));
@@ -495,6 +496,7 @@
       tenant_default: tenantDefault,
       default_tenant: tenantDefault,
       app_metadata: meta,
+      is_admin: effective.is_admin,
       effective_permissions: effective.permissions,
       effective_permissions_map: map,
       permissions: effective.permissions,
