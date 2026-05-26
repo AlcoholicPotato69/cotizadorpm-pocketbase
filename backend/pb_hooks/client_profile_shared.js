@@ -2560,7 +2560,10 @@
           const dStat = docEstados[field] && docEstados[field].status ? docEstados[field].status : "";
           // Block if the user is not an admin and the file is locked
           const admin = e.httpContext ? e.httpContext.get("admin") : null;
-          if (!admin && (dStat === "aprobado" || dStat === "pendiente") && hasValue(e.record.get(field))) {
+          const authRecord = e.httpContext ? e.httpContext.get("authRecord") : null;
+          const canVerify = canVerifyClientDocuments(authRecord);
+
+          if (!admin && !canVerify && (dStat === "aprobado" || dStat === "pendiente") && hasValue(e.record.get(field))) {
             throw new BadRequestError("El documento " + DOC_LABELS[field] + " esta bloqueado (en revision o aprobado) y no puede ser modificado.");
           }
           docEstados[field] = {

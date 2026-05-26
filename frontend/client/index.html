@@ -390,7 +390,7 @@
             }
             if (!useNativeAuth && !hubPocketBase) {
                 console.error("CRÍTICO: No hay cliente de autenticación nativo.");
-                alert("Error de sistema: cliente no inicializado.");
+                if (window.showToast) window.showToast("Error de sistema: cliente no inicializado.", "error");
                 return;
             }
 
@@ -509,9 +509,9 @@
             return tenant;
         }
 
-        function canOpenControlFromDashboard(role, profile) {
-            const normalized = normalizeDashboardRole(role || profile?.role || profile?.rol || '');
-            if (normalized === 'admin' || normalized === 'verificador') return true;
+        function canOpenControlFromDashboard(profile) {
+            const isAdmin = profile?.isAdmin === true || profile?.app_metadata?.rbac?.is_admin === true;
+            if (isAdmin) return true;
             const perms = getDashboardFinanzasPermissions(profile || {});
             if (perms && Object.prototype.hasOwnProperty.call(perms, 'control_view')) return !!perms.control_view;
             return false;
@@ -558,19 +558,20 @@
         }
 
         function canShowDashboardApp(app, profile, role) {
-            const normalizedRole = normalizeDashboardRole(role || profile?.role || profile?.rol || '');
             const perms = getDashboardFinanzasPermissions(profile);
             const key = getDashboardModuleKey(app);
             const accessFallback = !perms || perms.access !== false;
 
-            if (normalizedRole === 'admin') return true;
+            const localIsAdmin = profile?.isAdmin === true || profile?.app_metadata?.rbac?.is_admin === true;
+            if (localIsAdmin) return true;
+
             if (key === 'control') {
                 const explicit = hasExplicitDashboardPermission(perms, ['control_view']);
-                return explicit === null ? canOpenControlFromDashboard(normalizedRole, profile) : explicit;
+                return explicit === null ? accessFallback : explicit;
             }
             if (key === 'config') {
                 const explicit = hasExplicitDashboardPermission(perms, ['config_manage', 'permissions_manage', 'users_manage', 'catalog_manage', 'pdf_layout_manage']);
-                return explicit === null ? normalizedRole === 'verificador' : explicit;
+                return explicit === null ? false : explicit;
             }
             if (key === 'clients') {
                 const explicit = hasExplicitDashboardPermission(perms, ['clients_view', 'clients_manage', 'clients_verify', 'clients_create']);
@@ -801,12 +802,12 @@
             const grid = document.getElementById('apps-grid');
             const p = preloadedProfile || user || {};
             let userRole = normalizeDashboardRole(p.role || p.rol || '');
+            const isAdmin = p.isAdmin === true || p.app_metadata?.rbac?.is_admin === true;
             const allowedTenants = Array.isArray(p.allowed_tenants)
                 ? p.allowed_tenants.map(normalizeDashboardTenant).filter(Boolean)
-                : ((userRole === 'admin' || userRole === 'verificador')
+                : ((isAdmin || userRole === 'verificador')
                     ? ['plaza_mayor', 'casa_de_piedra']
                     : ((userRole === 'plaza_mayor' || userRole === 'casa_de_piedra') ? [userRole] : []));
-            const isAdmin = userRole === 'admin';
             const isVerifier = userRole === 'verificador';
 
             const hasPM = isAdmin || allowedTenants.includes('plaza_mayor');
@@ -944,51 +945,13 @@
             }
 
             const profile = p;
-            const userCanOpenControl = canOpenControlFromDashboard(userRole, profile);
-            if (userRole === 'verificador') {
-                const verifierTenant = resolveVerifierDashboardTenant(profile);
-                const verifierPrefix = verifierTenant === 'casa_de_piedra' ? 'cotizadorcp' : 'cotizador';
-                const verifierAccent = verifierTenant === 'casa_de_piedra' ? 'cp' : 'red';
-                const verifierModules = [
-                    { name: 'Catálogo', description: 'Catálogo y cotización de conceptos.', icon: 'fa-solid fa-cart-shopping', url_path: `${verifierPrefix}/catalog.html`, color: verifierAccent },
-                    { name: 'Clientes', description: 'Revision de expedientes, documentos y dictamenes de la vista activa.', icon: 'fa-solid fa-users', url_path: `${verifierPrefix}/clientes.html`, color: verifierAccent },
-                    { name: 'Control', description: 'Bitacora, responsables y supervision operativa.', icon: 'fa-solid fa-shield-halved', url_path: `${verifierPrefix}/control.html`, color: 'gray' },
-                    { name: 'Configuracion', description: 'Configuracion general permitida para verificacion.', icon: 'fa-solid fa-gear', url_path: `system/config.html?tenant=${verifierTenant === 'casa_de_piedra' ? 'cp' : 'pm'}`, color: 'gray' },
-                ];
-                const allowedVerifierModules = await filterDashboardAppsByAssignedModules(verifierModules, userRole, profile);
-                grid.className = 'grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 md:gap-6 max-w-7xl mx-auto';
-                grid.innerHTML = buildVerifierDashboardSwitchHtml(profile, verifierTenant);
-                allowedVerifierModules.forEach(app => {
-                    const colorKey = app.color || 'gray';
-                    const textColor = getTextColorClass(colorKey);
-                    const bgColor = getBgColorClass(colorKey);
-                    grid.innerHTML += `
-                    <a href="${app.url_path || '#'}" class="module-card bg-white rounded-2xl p-6 relative overflow-hidden group cursor-pointer block">
-                        <div class="absolute -right-6 -bottom-6 w-24 h-24 rounded-full ${bgColor} opacity-50 group-hover:scale-150 transition-transform duration-500 ease-out"></div>
-                        <div class="relative z-10 flex flex-col h-full justify-between">
-                            <div class="flex justify-between items-start mb-6">
-                                <div class="module-icon w-12 h-12 rounded-xl ${bgColor} flex items-center justify-center text-xl ${textColor} transition-all duration-300 shadow-sm">
-                                    <i class="${app.icon || 'fa-solid fa-cube'}"></i>
-                                </div>
-                                <div class="w-8 h-8 rounded-full border border-gray-100 flex items-center justify-center text-gray-300 group-hover:border-brand-red group-hover:text-brand-red transition-colors bg-white">
-                                    <i class="fa-solid fa-arrow-right -rotate-45 group-hover:rotate-0 transition-transform duration-300"></i>
-                                </div>
-                            </div>
-                            <div>
-                                <h3 class="text-xl font-black text-gray-800 mb-2 leading-tight group-hover:text-brand-red transition-colors">${app.name}</h3>
-                                <p class="text-xs text-gray-500 font-medium line-clamp-2 leading-relaxed">${app.description}</p>
-                            </div>
-                        </div>
-                    </a>`;
-                });
-                bindVerifierDashboardTenantSwitch(grid, async () => { await showDashboard(currentUser || user); });
+            const userCanOpenControl = canOpenControlFromDashboard(profile);
+            // isAdmin ya está declarado arriba
+
+            if (isAdmin || (hasPM && hasCP)) {
+                await renderTenantSwitchDashboard(grid, profile, userRole, buildModules, cardHTML, { includeClients: true, includeAdminTools: isAdmin });
                 return;
             }
-
-                if (userRole === 'admin' || (hasPM && hasCP)) {
-                    await renderTenantSwitchDashboard(grid, profile, userRole, buildModules, cardHTML, { includeClients: true, includeAdminTools: userRole === 'admin' });
-                    return;
-                }
 
             const profileAllowedTenants = Array.isArray(profile?.allowed_tenants)
                 ? profile.allowed_tenants.map(normalizeDashboardTenant).filter(Boolean)
@@ -1030,14 +993,14 @@
             if (userCanOpenControl && !filteredModules.some(isControlDashboardModule)) {
                 const controlPrefix = resolveDashboardControlPrefix(profile);
                 filteredModules.push({
-                    name: userRole === 'admin' ? 'Control Operativo' : 'Control',
+                    name: isAdmin ? 'Control Operativo' : 'Control',
                     description: 'Bitácora, responsables y reportes en una vista independiente.',
                     icon: 'fa-solid fa-shield-halved',
                     url_path: `${controlPrefix}/control.html`,
-                    color: userRole === 'admin' ? 'gray' : 'red'
+                    color: isAdmin ? 'gray' : 'red'
                 });
             }
-            if ((userRole === 'admin' || canShowDashboardApp({ name: 'Configuracion', url_path: 'system/config.html' }, profile, userRole))
+            if ((isAdmin || canShowDashboardApp({ name: 'Configuracion', url_path: 'system/config.html' }, profile, userRole))
                 && !filteredModules.some((module) => getDashboardModuleKey(module) === 'config')) {
                 filteredModules.push({
                     name: 'Configuracion',
@@ -1380,13 +1343,15 @@
         }
 
         async function clearAllNotifs() {
-            if (currentUser && confirm('¿Estás seguro de descartar todas las notificaciones?')) {
-                await hubPocketBase.from('hub_notifications').update({
-                    dismissed: true,
-                    dismissed_at: (window.__serverDateService ? window.__serverDateService.nowISO() : new Date().toISOString())
-                }).eq('user_id', currentUser.id).eq('dismissed', false);
-                closeDashboardNotifModal();
-                fetchNotifs(currentUser.id);
+            if (currentUser) {
+                window.openConfirm('Descartar notificaciones', '¿Estás seguro de descartar todas las notificaciones?', async () => {
+                    await hubPocketBase.from('hub_notifications').update({
+                        dismissed: true,
+                        dismissed_at: (window.__serverDateService ? window.__serverDateService.nowISO() : new Date().toISOString())
+                    }).eq('user_id', currentUser.id).eq('dismissed', false);
+                    closeDashboardNotifModal();
+                    fetchNotifs(currentUser.id);
+                });
             }
         }
 

@@ -44,15 +44,6 @@ window.formatMoney = function(v){
     return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(v || 0); 
 };
 
-window.showToast = function(msg, type='success') { 
-    const c = document.getElementById('toast-container'); 
-    if(!c) return;
-    const e = document.createElement('div'); 
-    e.className = `p-4 rounded-lg shadow-lg text-white text-xs font-bold uppercase tracking-wider mb-2 animate-bounce ${type==='error'?'bg-red-500':'bg-green-500'}`; 
-    e.innerText = msg; 
-    c.appendChild(e); 
-    setTimeout(() => e.remove(), 3000); 
-};
 
 window.openModal = function(id) { 
     const el = document.getElementById(id);
@@ -4550,7 +4541,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (window.__HUB_PAGE_ACCESS_DENIED) return;
     // 1. Verificar librerías
     if (typeof window.PB_CLIENT === 'undefined') {
-        alert("Error crítico: No se pudo cargar la librería de conexión. Revisa tu internet o los bloqueadores de anuncios.");
+        if(window.showToast) window.showToast("Error crítico: No se pudo cargar la librería de conexión. Revisa tu internet o los bloqueadores de anuncios.", "error");
+        else console.error("Error crítico: No se pudo cargar la librería de conexión.");
         return;
     }
     __pmContractsNormalizeNonSubmitButtons(document);

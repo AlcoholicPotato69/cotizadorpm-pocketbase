@@ -85,17 +85,6 @@ function cpInvoicesRestoreViewStateAfterRender(state = cpInvoicesReadViewState()
 // --- HELPERS GLOBALES ---
 window.openModal = (id) => { document.getElementById(id).classList.remove('hidden'); document.getElementById(id).classList.add('flex'); }
 window.closeModal = (id) => { document.getElementById(id).classList.add('hidden'); document.getElementById(id).classList.remove('flex'); }
-window.showToast = (msg, type='success') => {
-    const c = document.getElementById('toast-container');
-    const e = document.createElement('div');
-    e.className = `p-4 rounded-lg shadow-lg text-white text-xs font-bold uppercase tracking-wider mb-2 animate-bounce ${type==='error'?'bg-red-500':'bg-green-500'}`;
-    e.innerText = msg; c.appendChild(e); setTimeout(() => e.remove(), 3000);
-}
-window.openConfirm = (msg, cb) => {
-    document.getElementById('confirm-title').innerText = msg;
-    confirmCallback = cb;
-    window.openModal('generic-confirm-modal');
-}
 function formatMoney(v){ return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(v || 0); }
 
 // --- INICIO ---

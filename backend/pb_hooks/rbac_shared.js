@@ -484,6 +484,7 @@
     meta.rbac.effective = map;
     meta.rbac.mode = getRbacMode();
     meta.rbac.version = String(Math.floor(roleCache.loadedAt / 1000) || 0);
+    meta.rbac.is_admin = effective.is_admin;
 
     const email = trim(authRecord.getString("email"));
     return {
@@ -498,6 +499,7 @@
       effective_permissions: effective.permissions,
       effective_permissions_map: map,
       permissions: effective.permissions,
+      isAdmin: effective.is_admin,
       rbac_mode: getRbacMode(),
       rbac_version: meta.rbac.version
     };

@@ -1461,18 +1461,7 @@
         }
 
         const appMetaRbac = appMeta.rbac && typeof appMeta.rbac === 'object' ? appMeta.rbac : {};
-        const mapHasAdmin = Object.keys(permissionsByTenant).some((tenantKey) => {
-            const current = permissionsByTenant[tenantKey] || {};
-            return current.users_manage === true && current.roles_manage === true && current.permissions_manage === true;
-        });
-        const directHasAdmin = directPermissions.users_manage === true
-            && directPermissions.roles_manage === true
-            && directPermissions.permissions_manage === true;
-        const profileExplicitAdmin = profile.is_admin === true
-            || profile.rbac_is_admin === true
-            || appMetaRbac.is_admin === true
-            || appMetaRbac.admin === true;
-        const isAdminByPermission = profileExplicitAdmin || mapHasAdmin || directHasAdmin;
+        const isAdminByPermission = profile.isAdmin === true || appMetaRbac.is_admin === true;
 
         return {
             role,
@@ -2205,14 +2194,17 @@
         },
         deleteAll: async () => {
             if (IS_LOCAL) return;
-            if (!confirm('¿Estás seguro de que quieres borrar TODAS las notificaciones?')) return;
-            if (!layoutClient || !myId) return;
-            const { error } = await layoutClient.from('hub_notifications').delete().eq('user_id', myId);
-            if (!error) {
-                window.showToast('Notificaciones eliminadas', 'success');
-                loadHistory();
-            } else {
-                window.showToast('Error al eliminar', 'error');
+            if (window.openConfirm) {
+                window.openConfirm('¿Estás seguro de que quieres borrar TODAS las notificaciones?', async () => {
+                    if (!layoutClient || !myId) return;
+                    const { error } = await layoutClient.from('hub_notifications').delete().eq('user_id', myId);
+                    if (!error) {
+                        window.showToast('Notificaciones eliminadas', 'success');
+                        loadHistory();
+                    } else {
+                        window.showToast('Error al eliminar', 'error');
+                    }
+                });
             }
         },
         logout: async () => {

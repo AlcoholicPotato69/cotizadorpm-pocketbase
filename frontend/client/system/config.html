@@ -2442,12 +2442,15 @@
 
     window.resetPdfEditorProfile = () => {
       if (!hasConfigEditAccess()) return _toast("Acceso restringido: solo Admin o Verificador.", "error");
-      if (!confirm('Se restablecera el estilo del tipo de PDF actual. Deseas continuar?')) return;
-      const next = normalizePdfEditorStyle(PDF_EDITOR_DEFAULTS, pdfEditorSelectedType);
-      pdfEditorProfiles = { ...pdfEditorProfiles, [pdfEditorSelectedType]: next };
-      pdfEditorSelectedItemId = '';
-      refreshPdfEditorWorkspace();
-      schedulePdfEditorSync();
+      if (window.openConfirm) {
+        window.openConfirm('Se restablecera el estilo del tipo de PDF actual. Deseas continuar?', () => {
+          const next = normalizePdfEditorStyle(PDF_EDITOR_DEFAULTS, pdfEditorSelectedType);
+          pdfEditorProfiles = { ...pdfEditorProfiles, [pdfEditorSelectedType]: next };
+          pdfEditorSelectedItemId = '';
+          refreshPdfEditorWorkspace();
+          schedulePdfEditorSync();
+        });
+      }
     };
 
     window.selectPdfEditorType = (type) => {
@@ -2541,7 +2544,7 @@
       if (!hasConfigEditAccess()) return _toast("Acceso restringido: solo Admin o Verificador.", "error");
       const id = String(pdfEditorSelectedTemplateId || document.getElementById('adm-pdf-template-select')?.value || '');
       if (!id) return _toast('Selecciona una plantilla para eliminar', 'error');
-      if (!confirm('¿Eliminar plantilla seleccionada?')) return;
+      window.openConfirm('Eliminar plantilla', '¿Eliminar plantilla seleccionada?', function() {
       const templatesByType = normalizePdfEditorTemplates(pdfEditorTemplates);
       const list = Array.isArray(templatesByType[pdfEditorSelectedType]) ? templatesByType[pdfEditorSelectedType] : [];
       templatesByType[pdfEditorSelectedType] = list.filter(item => item.id !== id);
@@ -2550,6 +2553,7 @@
       renderPdfEditorTemplateControls();
       schedulePdfEditorSync();
       _toast('Plantilla eliminada', 'success');
+    });
     };
 
     window.addPdfEditorResource = (type) => {
@@ -2659,7 +2663,6 @@
     function _toast(msg, type) {
       if (window.showToast) return window.showToast(msg, type);
       console[type === 'error' ? 'error' : 'log'](msg);
-      try { alert(msg); } catch (e) { }
     }
 
     function getDB() {
@@ -3355,18 +3358,19 @@
       if (!hasConfigEditAccess()) return _toast("Acceso restringido: solo Admin o Verificador.", "error");
       const path = decodeURIComponent(String(encodedPath || ''));
       if (!path) return;
-      if (!confirm("¿Eliminar esta plantilla?")) return;
+      window.openConfirm("Eliminar plantilla", "¿Eliminar esta plantilla?", async function() {
       const { error } = await window.globalPocketBase.storage.from(getTenantBucket()).remove([path]);
       if (error) return _toast("Error al eliminar: " + error.message, "error");
       _toast("Plantilla eliminada", "success");
       await loadDocsConfig();
+    });
     };
 
     window.deleteLetterheadFile = async (encodedPath) => {
       if (!hasConfigEditAccess()) return _toast("Acceso restringido: solo Admin o Verificador.", "error");
       const path = decodeURIComponent(String(encodedPath || ''));
       if (!path) return;
-      if (!confirm("¿Eliminar este membrete?")) return;
+      window.openConfirm("Eliminar membrete", "¿Eliminar este membrete?", async function() {
       const { error } = await window.globalPocketBase.storage.from(getTenantBucket()).remove([path]);
       if (error) return _toast("Error al eliminar: " + error.message, "error");
       _toast("Membrete eliminado", "success");
@@ -5670,23 +5674,24 @@
         const user = allUsers.find((row) => row.id === id);
         if (!user) return;
         const userLabel = String(user.login_username || user.username || user.email || 'usuario').trim();
-        if (!confirm(`¿Eliminar al usuario "${user.login_username || user.username || user.email}"?`)) return;
-        const adminPassword = await requestAdminPassword({
-          title: 'Eliminar usuario',
-          message: 'Ingresa tu contraseña de admin para eliminar este usuario.',
-          confirmLabel: 'Eliminar'
-        });
-        if (!adminPassword) return;
-        try {
-          await rbacRequest('/api/hub/rbac/users/delete', {
-            method: 'POST',
-            body: { user_id: id, password: adminPassword }
+        window.openConfirm('Eliminar usuario', `¿Eliminar al usuario "${user.login_username || user.username || user.email}"?`, async function() {
+          const adminPassword = await requestAdminPassword({
+            title: 'Eliminar usuario',
+            message: 'Ingresa tu contraseña de admin para eliminar este usuario.',
+            confirmLabel: 'Eliminar'
           });
-          await loadUsers({ throwOnError: true });
-          showToast(`Usuario eliminado correctamente: ${userLabel}.`, 'success');
-        } catch (e) {
-          showToast('Error al eliminar usuario: ' + (e?.message || e), 'error');
-        }
+          if (!adminPassword) return;
+          try {
+            await rbacRequest('/api/hub/rbac/users/delete', {
+              method: 'POST',
+              body: { user_id: id, password: adminPassword }
+            });
+            await loadUsers({ throwOnError: true });
+            showToast(`Usuario eliminado correctamente: ${userLabel}.`, 'success');
+          } catch (e) {
+            showToast('Error al eliminar usuario: ' + (e?.message || e), 'error');
+          }
+        });
       };
 
       window.saveUser = async function (e) {
@@ -5856,31 +5861,32 @@
           return;
         }
         if (!editingRoleId) return showToast('Selecciona un rol para eliminar.', 'error');
-        if (!confirm('¿Eliminar este rol? Asegúrate de que no tenga usuarios asignados.')) return;
-        const password = await requestAdminPassword({
-          title: 'Eliminar rol',
-          message: 'Ingresa tu contraseña de admin para eliminar este rol.',
-          confirmLabel: 'Eliminar rol'
-        });
-        if (!password) return;
-        let roleDeleted = false;
-        try {
-          await rbacRequest('/api/hub/rbac/roles/delete', {
-            method: 'POST',
-            body: { id: editingRoleId, password }
+        window.openConfirm('Eliminar rol', '¿Eliminar este rol? Asegúrate de que no tenga usuarios asignados.', async function() {
+          const password = await requestAdminPassword({
+            title: 'Eliminar rol',
+            message: 'Ingresa tu contraseña de admin para eliminar este rol.',
+            confirmLabel: 'Eliminar rol'
           });
-          roleDeleted = true;
-          resetRoleEditor();
-          await loadRbacCatalog(true);
-          await loadUsers({ throwOnError: true });
-          showToast('Rol eliminado correctamente.', 'success');
-        } catch (e) {
-          if (roleDeleted && Number(e?.status || 0) === 401) {
-            showToast('El rol se eliminó, pero tu sesión fue invalidada. Inicia sesión nuevamente.', 'error');
-            return;
+          if (!password) return;
+          let roleDeleted = false;
+          try {
+            await rbacRequest('/api/hub/rbac/roles/delete', {
+              method: 'POST',
+              body: { id: editingRoleId, password }
+            });
+            roleDeleted = true;
+            resetRoleEditor();
+            await loadRbacCatalog(true);
+            await loadUsers({ throwOnError: true });
+            showToast('Rol eliminado correctamente.', 'success');
+          } catch (e) {
+            if (roleDeleted && Number(e?.status || 0) === 401) {
+              showToast('El rol se eliminó, pero tu sesión fue invalidada. Inicia sesión nuevamente.', 'error');
+              return;
+            }
+            showToast('No se pudo eliminar el rol: ' + (e?.message || e), 'error');
           }
-          showToast('No se pudo eliminar el rol: ' + (e?.message || e), 'error');
-        }
+        });
       }
 
       document.getElementById('user-default-tenant')?.addEventListener('change', syncUserRoleTenantControls);
