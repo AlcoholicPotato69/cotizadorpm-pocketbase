@@ -5,7 +5,19 @@ __pycache__/
 logs/
 deploy/backend-service.local.conf
 deploy/*.local.conf
+production/deploy/backend-service.local.conf
+production/deploy/*.local.conf
 deploy/certs/
 deploy/CotizadorServiceHost.exe
 deploy/CotizadorServiceHost.pdb
 *.local.log
+/pb_public/
+/frontend/public_runtime/
+
+# Runtime PocketBase — nunca versionar datos vivos ni backups locales
+backend/pb_data/
+backend/*.exe.bak
+backend/pb_hooks/*.local.js
+
+# Diagnóstico ad-hoc (no pertenece al repo)
+check_rules.js

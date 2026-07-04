@@ -19,6 +19,7 @@ Esta carpeta concentra la documentacion vigente para desarrollo, soporte, seguri
 - auditoria tecnica y checklist TI: `docs/80-auditoria-tecnica-y-checklist.md`
 - catalogo de funciones y puntos de extension: `docs/85-catalogo-de-funciones-y-puntos-de-extension.md`
 - cambios documentados 2026-04-24: `docs/90-cambios-2026-04-24-client-profile-y-control.md`
+- auditoria seguridad 2026-07-04: `docs/95-auditoria-2026-07-04-seguridad-y-hardening.md`
 
 ## Documentos canonicos
 
@@ -36,13 +37,13 @@ Esta carpeta concentra la documentacion vigente para desarrollo, soporte, seguri
 | `docs/70-troubleshooting-y-runbooks.md` | runbooks de falla comun, restauracion y diagnostico |
 | `docs/80-auditoria-tecnica-y-checklist.md` | resultado de auditoria tecnica, hallazgos y checklist reproducible |
 | `docs/85-catalogo-de-funciones-y-puntos-de-extension.md` | funciones criticas, responsabilidades y puntos seguros de modificacion |
-| `docs/90-cambios-2026-04-24-client-profile-y-control.md` | detalle operativo del flujo rapido de clientes, seguridad documental y ajustes de control |
+| `docs/95-auditoria-2026-07-04-seguridad-y-hardening.md` | auditoria CORS, tokens, gitignore y hardening API |
 
 ## Herramientas de verificacion
 
-- auditoria smoke reproducible: `development/audit-smoke.ps1`
-- arranque local backend: `development/dev-start.bat`
-- arranque local frontend: `development/frontend-dev-start.bat`
+- auditoria smoke reproducible: `development/deploy/audit-smoke.ps1`
+- arranque local: `development/dev-start.bat` (frontend + backend unificados)
+- auditoria seguridad 2026-07-04: `docs/95-auditoria-2026-07-04-seguridad-y-hardening.md`
 
 ## Documentos heredados
 

@@ -13,7 +13,7 @@ Antes de modificar convenios, `order_detail` o PDFs:
 - no mezclar `publicidad` con `espacio` en una misma cotizacion
 - mantener sincronizados `frontend/client/...` y `frontend/pb_public/client/...`
 - ejecutar `node --check` sobre los archivos tocados
-- correr `development/audit-smoke.ps1` antes de cerrar una auditoria
+- correr `development/deploy/audit-smoke.ps1` antes de cerrar una auditoria
 
 ## 2. Plaza Mayor: convenio y selector en `orders.js`
 
@@ -209,7 +209,7 @@ Si TI necesita agregar un nuevo criterio de convenio:
 2. revisar el filtro visual del selector/editor
 3. revisar persistencia de `espacios_detalle`
 4. revisar `window.getOrderHTML`
-5. validar base viva con `development/audit-smoke.ps1`
+5. validar base viva con `development/deploy/audit-smoke.ps1`
 
 Si TI necesita agregar una nueva categoria en CP:
 

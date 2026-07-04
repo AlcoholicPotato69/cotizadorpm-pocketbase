@@ -60,7 +60,7 @@ function Remove-PathWithRetry {
   return $false
 }
 
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $pbExe = Join-Path $repoRoot "backend\pocketbase.exe"
 $hooksDir = Join-Path $repoRoot "backend\pb_hooks"
 $migrationsDir = Join-Path $repoRoot "backend\pb_migrations"

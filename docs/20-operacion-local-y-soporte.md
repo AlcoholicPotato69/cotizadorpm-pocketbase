@@ -8,31 +8,20 @@ Este documento describe cómo levantar, validar y recuperar el sistema en desarr
 
 - Windows
 - `backend/pocketbase.exe`
-- Python en `PATH` para servir el frontend local
-- puerto `8090` libre para backend
-- puerto `8080` libre para frontend
+- puerto `8090` libre (backend + frontend unificados)
 
 ## 2. Desarrollo local recomendado
-
-Backend:
 
 ```bat
 cd /d "C:\Users\johan\OneDrive\Desktop\repos git\cotizadorpm-pocketbase"
 development\dev-start.bat
 ```
 
-Frontend:
-
-```bat
-cd /d "C:\Users\johan\OneDrive\Desktop\repos git\cotizadorpm-pocketbase"
-development\frontend-dev-start.bat
-```
-
 Accesos:
 
-- backend: `http://127.0.0.1:8090/_/`
+- frontend: `http://127.0.0.1:8090/client/index.html` (o `http://127.0.0.1:8090/`)
+- backend dashboard: `http://127.0.0.1:8090/_/`
 - health: `http://127.0.0.1:8090/api/health`
-- frontend: `http://127.0.0.1:8080/client/index.html`
 
 ## 3. Reparacion local automatica
 
@@ -68,13 +57,13 @@ Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8090/api/health
 Frontend:
 
 ```powershell
-Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8080/client/index.html
+Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8090/client/index.html
 ```
 
 Auditoria smoke recomendada:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File development\audit-smoke.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File development\deploy\audit-smoke.ps1
 ```
 
 ## 5. Arranque manual del backend
@@ -91,7 +80,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File development\audit-smoke.ps1
 - `backend/pb_data/`
 - `backend/pb_hooks/`
 - `backend/pb_migrations/`
-- `development/audit-smoke.ps1`
+- `development/deploy/audit-smoke.ps1`
 
 ## 7. Evidencia y logs
 

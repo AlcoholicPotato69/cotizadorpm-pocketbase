@@ -41,7 +41,7 @@ Controles aplicados:
 
 ## 3. CORS y origenes permitidos
 
-La politica CORS se define en `backend/pb_hooks/20_auth_session.pb.js`.
+La politica CORS se define en `backend/pb_hooks/20_auth_session.pb.js` y `backend/pb_hooks/auth_session_shared.js` (`isAllowedRequestOrigin`).
 
 Se permiten origenes cuando:
 
@@ -49,7 +49,19 @@ Se permiten origenes cuando:
 - son IP privada RFC1918
 - o el host del `Origin` coincide con `Host` / `X-Forwarded-Host`
 
-Eso evita exponer la API autenticada a origenes arbitrarios.
+Cualquier otro origen recibe la respuesta sin headers CORS y sin token en el cuerpo del login.
+
+Eso evita exponer la API autenticada a origenes arbitrarios de internet.
+
+## 3.1. Headers de seguridad en API
+
+Todas las respuestas bajo `/api/` incluyen:
+
+- `X-Content-Type-Options: nosniff`
+- `X-Frame-Options: DENY`
+- `Referrer-Policy: strict-origin-when-cross-origin`
+
+Los endpoints de sesion agregan ademas `Cache-Control: no-store`.
 
 ## 4. Tenant isolation
 
@@ -270,7 +282,11 @@ Deuda historica detectada en datos vivos:
 
 Script oficial de smoke audit:
 
-- `development/audit-smoke.ps1`
+- `development/deploy/audit-smoke.ps1`
+
+Auditoria de seguridad 2026-07-04:
+
+- `docs/95-auditoria-2026-07-04-seguridad-y-hardening.md`
 
 El script valida:
 

@@ -76,7 +76,7 @@ Puntos de código:
 Si el problema parece sistémico o después de tocar migraciones/hooks, ejecutar:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File development\audit-smoke.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File development\deploy\audit-smoke.ps1
 ```
 
 Interpretacion rapida:

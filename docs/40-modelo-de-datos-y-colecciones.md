@@ -309,7 +309,7 @@ Uso:
 
 ## 16. Observaciones de auditoria sobre datos vivos
 
-Hallazgos detectados por `development/audit-smoke.ps1` el 2026-04-13:
+Hallazgos detectados por `development/deploy/audit-smoke.ps1` el 2026-04-13:
 
 - 1 cotizacion historica contiene `espacios_detalle` sin `tipo`/`espacio_tipo`
 - 1 cotizacion historica tiene `detalles_evento.convenio.bloqueo_indefinido = true` sin el flag equivalente en el detalle

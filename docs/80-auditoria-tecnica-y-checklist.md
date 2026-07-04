@@ -34,7 +34,7 @@ Validacion de sintaxis:
 
 Validacion integral reproducible:
 
-- `powershell -NoProfile -ExecutionPolicy Bypass -File development/audit-smoke.ps1`
+- `powershell -NoProfile -ExecutionPolicy Bypass -File development/deploy/audit-smoke.ps1`
 
 Cobertura del script:
 
@@ -201,7 +201,7 @@ Configuraciones CP presentes:
 
 ## 7. Checklist para TI antes de liberar o auditar
 
-1. Ejecutar `development/audit-smoke.ps1`.
+1. Ejecutar `development/deploy/audit-smoke.ps1`.
 2. Confirmar que el cold start siga en estado OK.
 3. Confirmar que `backend/pb_data/` tenga respaldo antes de cualquier cambio estructural.
 4. Validar login administrativo y acceso a ambos tenants.
@@ -222,7 +222,7 @@ Configuraciones CP presentes:
 2. Revisar la cotizacion historica con metadata de convenio inconsistente.
 3. Confirmar que no reaparezcan casos `cp_root_space_without_catalog_record`.
 4. Corregir historico solo con respaldo previo de `backend/pb_data/`.
-5. Repetir `development/audit-smoke.ps1` despues del saneamiento.
+5. Repetir `development/deploy/audit-smoke.ps1` despues del saneamiento.
 
 ## 9. Limitaciones de la auditoria ejecutada
 

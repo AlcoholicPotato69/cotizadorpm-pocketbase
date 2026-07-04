@@ -2,56 +2,8 @@
   routerUse(function (e) {
     const shared = require(`${__hooks}/auth_session_shared.js`);
     const readHeader = shared.readHeader;
-
-    function isLoopbackHost(host) {
-      const safe = String(host || "").trim().toLowerCase();
-      return safe === "127.0.0.1" || safe === "localhost" || safe === "::1" || safe === "[::1]";
-    }
-
-    function isPrivateIpv4Host(host) {
-      const safe = String(host || "").trim().toLowerCase();
-      if (!safe || /[^0-9.]/.test(safe)) return false;
-      if (safe.indexOf(".") === -1) return false;
-      if (safe.indexOf("10.") === 0) return true;
-      if (safe.indexOf("192.168.") === 0) return true;
-      const parts = safe.split(".");
-      const first = Number(parts[0] || 0);
-      const second = Number(parts[1] || 0);
-      return first === 172 && second >= 16 && second <= 31;
-    }
-
-    function parseUrlHost(rawUrl) {
-      let safe = String(rawUrl || "").trim().toLowerCase();
-      if (!safe || safe === "null") return "";
-      safe = safe.replace(/^https?:\/\//, "");
-      const slashIndex = safe.indexOf("/");
-      if (slashIndex !== -1) safe = safe.slice(0, slashIndex);
-      if (!safe) return "";
-      if (safe.charAt(0) === "[") {
-        const closingIndex = safe.indexOf("]");
-        if (closingIndex !== -1) return safe.slice(1, closingIndex);
-      }
-      const colonIndex = safe.indexOf(":");
-      if (colonIndex !== -1) safe = safe.slice(0, colonIndex);
-      return String(safe || "").trim().toLowerCase();
-    }
-
-    function parseHeaderHost(rawHost) {
-      const safe = String(rawHost || "").trim().toLowerCase();
-      if (!safe) return "";
-      if (safe.charAt(0) === "[") {
-        const closingIndex = safe.indexOf("]");
-        if (closingIndex !== -1) return safe.slice(1, closingIndex);
-      }
-      const parts = safe.split(":");
-      return String(parts[0] || "").trim().toLowerCase();
-    }
-
-    function shouldAllowCorsOrigin(origin) {
-      const safeOrigin = String(origin || "").trim();
-      if (!safeOrigin || safeOrigin === "null") return false;
-      return /^https?:\/\//i.test(safeOrigin);
-    }
+    const isAllowedRequestOrigin = shared.isAllowedRequestOrigin;
+    const applyApiSecurityHeaders = shared.applyApiSecurityHeaders;
 
     function applyCorsHeaders(origin) {
       const responseHeader = e?.response?.header?.();
@@ -71,20 +23,28 @@
     if (path.indexOf("/api/") !== 0) return e.next();
 
     const origin = readHeader(e, "Origin");
-    const allowCors = shouldAllowCorsOrigin(origin);
+    const allowCors = isAllowedRequestOrigin(e, origin);
     if (allowCors) {
       applyCorsHeaders(origin);
       const method = String(e?.request?.method || "").trim().toUpperCase();
-      if (method === "OPTIONS") return e.json(200, { ok: true });
+      if (method === "OPTIONS") {
+        applyApiSecurityHeaders(e);
+        return e.json(200, { ok: true });
+      }
     }
 
     const header = e?.request?.header;
-    if (!header) return e.next();
+    if (!header) {
+      const result = e.next();
+      applyApiSecurityHeaders(e);
+      return result;
+    }
 
     const existing = readHeader(e, "Authorization");
     if (existing) {
       const result = e.next();
       if (allowCors) applyCorsHeaders(origin);
+      applyApiSecurityHeaders(e);
       return result;
     }
 
@@ -96,6 +56,7 @@
 
     const result = e.next();
     if (allowCors) applyCorsHeaders(origin);
+    applyApiSecurityHeaders(e);
     return result;
   });
 

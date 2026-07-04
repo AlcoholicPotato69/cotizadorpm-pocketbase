@@ -26,22 +26,23 @@ development\dev-start.bat
 
 `development\dev-start.bat` ahora prevalida migraciones y crea `backend\pb_data\` si aún no existe, para que un clon limpio pueda inicializar la base sin pasos manuales extra.
 
-Frontend:
-
-```bat
-cd /d "C:\Users\johan\OneDrive\Desktop\repos git\cotizadorpm-pocketbase"
-development\frontend-dev-start.bat
-```
+Frontend y Backend unificados:
+Al iniciar `development\dev-start.bat`, PocketBase sirve automáticamente el frontend y backend sin necesidad de servidores adicionales.
 
 Accesos locales:
+- Frontend: `http://127.0.0.1:8090/client/index.html` (o `http://127.0.0.1:8090/`)
+- Backend API: `http://127.0.0.1:8090/api/`
+- Dashboard: `http://127.0.0.1:8090/_/`
 
-- backend: `http://127.0.0.1:8090/_/`
-- API health: `http://127.0.0.1:8090/api/health`
-- frontend: `http://127.0.0.1:8080/client/index.html`
+Verificación local:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File development\deploy\audit-smoke.ps1
+```
 
 ## Producción
 
-La ruta recomendada de producción es separar responsabilidades:
+La arquitectura unificada permite que el servicio de Windows de PocketBase sirva tanto el Backend como el Frontend:
 
 - PocketBase sirve backend, API y dashboard administrativo.
 - Los HTML se sirven por fuera de PocketBase, normalmente desde Nginx con la carpeta `production\deploy\nginx-site\`.
@@ -65,7 +66,7 @@ Revisa o ajusta IP/puerto si hace falta:
 production\backend-service.bat show
 production\backend-service.bat set-bind 127.0.0.1:8090
 production\backend-service.bat set-url http://127.0.0.1:8090
-production\backend-service.bat set-public-dir off
+production\backend-service.bat set-public-dir pb_public
 ```
 
 Instala e inicia el servicio:
@@ -89,9 +90,9 @@ backend\pocketbase.exe superuser upsert admin@tu-dominio.com TuPasswordSegura123
 
 Ese superusuario te deja entrar al dashboard para crear o revisar los registros internos como `app_users`.
 
-### 2. Levantar frontend en producción
+### 2. Levantar el sistema en producción
 
-El frontend se prepara como HTML estático separado. El flujo recomendado es:
+El flujo simplificado y automatizado para producción es:
 
 ```bat
 production\levantar-todo.bat
@@ -99,20 +100,18 @@ production\levantar-todo.bat
 
 El script pide:
 
-- IP/host y puerto del backend PocketBase
-- IP/host y puerto donde se servirá el frontend HTML
+- IP o dominio del servidor y puerto de PocketBase (ej: 192.168.1.50:8090)
 
 Después actualiza automáticamente:
 
 - `BIND_ADDR`
 - `BACKEND_URL`
-- `FRONTEND_BACKEND_URL`
+- `FRONTEND_BACKEND_URL=/`
 - `CORS_ALLOWED_ORIGINS`
-- `PUBLIC_DIR=off`
+- `PUBLIC_DIR=pb_public` (PocketBase sirve el frontend unificado)
 - `frontend/client/config/hub-runtime.json`
 - `frontend/client/public/assets/libs/js/env.js`
-- `production/deploy/nginx-site/`
-- `production/deploy/nginx/cotizador-production.conf`
+- `production/deploy/nginx-site/` (sitio y configuración opcional por si se usa Nginx como Reverse Proxy)
 
 Accesos esperados con Nginx:
 
@@ -168,8 +167,7 @@ Nota de recuperación:
 - `backend/pb_migrations/`
 - `backend/pb_data/`
 - `development/dev-start.bat`
-- `development/frontend-dev-start.bat`
-- `development/audit-smoke.ps1`
-- `production/backend-service.bat`
+- `development/deploy/audit-smoke.ps1`
+- `production/backend-service.bat` (wrapper → `production/deploy/backend-service.bat`)
 - `docs/README docs.md`
 - `docs/35-requisitos-tecnicos-del-servidor.md`

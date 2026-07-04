@@ -1,7 +1,7 @@
-﻿// Este archivo actÃºa como tus variables de entorno globales
+﻿// Variables de entorno globales del frontend (generadas por sync-frontend en producción).
 window.ENV = {
-    POCKETBASE_URL: 'http://127.0.0.1:8090',
-    BACKEND_URL: 'http://127.0.0.1:8090',
+    POCKETBASE_URL: '/',
+    BACKEND_URL: '/',
     POCKETBASE_ANON_KEY: '',
     SCHEMA_PLAZA_MAYOR: 'finanzas',
     SCHEMA_CASA_PIEDRA: 'finanzas_casadepiedra',
@@ -22,7 +22,7 @@ window.ENV = {
                     source[name] = function () {};
                 }
             } catch (_) {}
-});
+        });
         try { window.__HUB_CONSOLE_ORIGINAL = original; } catch (_) {}
         try { window.__HUB_CONSOLE_SHIELDED = true; } catch (_) {}
     }
@@ -61,46 +61,3 @@ window.ENV = {
     window.addEventListener('pagehide', saveScroll);
     window.addEventListener('beforeunload', saveScroll);
 })();
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

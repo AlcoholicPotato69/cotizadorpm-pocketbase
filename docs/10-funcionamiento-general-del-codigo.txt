@@ -275,11 +275,10 @@ Soporte comun:
 Arranque local:
 
 - `development/dev-start.bat`
-- `development/frontend-dev-start.bat`
 
 Auditoria reproducible:
 
-- `development/audit-smoke.ps1`
+- `development/deploy/audit-smoke.ps1`
 
 Validaciones cubiertas por el smoke:
 
