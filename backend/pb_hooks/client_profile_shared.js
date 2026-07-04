@@ -1377,6 +1377,58 @@
     return trim(field) !== "doc_constancia_fiscal";
   }
 
+  function isClientDocumentFieldExpired(record, field, tenant) {
+    if (!record || !field) return false;
+    const safeTenant = normalizeTenant(tenant || record.get("tenant"));
+    const definition = getDocumentDefinitionByField(safeTenant, field);
+    const docEstados = getRecordDocStateMap(record);
+    const stateInfo = docEstados[field] && typeof docEstados[field] === "object" ? docEstados[field] : {};
+    if (canDocumentBeOmitted(field, safeTenant) && isDocStateOmitted(stateInfo)) return false;
+    const validationDoc = {};
+    const fileInfo = definition
+      ? getClientDocumentFileInfo(record, definition, validationDoc)
+      : { uploaded: hasValue(record.get(field)) };
+    if (!fileInfo.uploaded) return false;
+    const documentDate = definition
+      ? getClientDocumentDateValue(record, definition, stateInfo, validationDoc)
+      : "";
+    if (field === "doc_constancia_fiscal") {
+      const normalized = normalizeDate(documentDate || record.get("constancia_fiscal_emitida_el"));
+      if (!normalized) return false;
+      const info = evaluateDocumentDate(normalized, MAX_CONSTANCIA_VALID_DAYS);
+      return info.valid === false && info.reason === "older_than_limit";
+    }
+    if (field === "doc_comprobante_domicilio") {
+      const normalized = normalizeDate(documentDate || record.get("comprobante_domicilio_emitido_el"));
+      if (!normalized) return false;
+      const info = evaluateDocumentCalendarMonths(normalized, MAX_COMPROBANTE_VALID_MONTHS);
+      return info.valid === false && info.reason === "older_than_calendar_month_limit";
+    }
+    if (!definition) return false;
+    if (!definition.requiresDate && !(Number(definition.validityDays) > 0) && !(Number(definition.validityMonths) > 0) && definition.validityMode !== "calendar_months") {
+      return false;
+    }
+    const normalized = normalizeDate(documentDate);
+    if (!normalized) return false;
+    if (definition.validityMode === "calendar_months" || Number(definition.validityMonths) > 0) {
+      return evaluateDocumentCalendarMonths(normalized, definition.validityMonths || MAX_COMPROBANTE_VALID_MONTHS).valid === false;
+    }
+    if (Number(definition.validityDays) > 0) {
+      const info = evaluateDocumentDate(normalized, definition.validityDays);
+      return info.valid === false && info.reason === "older_than_limit";
+    }
+    return false;
+  }
+
+  function archiveExpiredClientDocumentMirror(record, field, docStates, validationDocs) {
+    if (!record || !field || !hasValue(record.get(field))) return;
+    try {
+      syncClientDocumentMirrorField(record, field, docStates, validationDocs);
+    } catch (err) {
+      console.log("[client_profile] Error archiving expired document mirror:", field, String(err));
+    }
+  }
+
   function isDocStateOmitted(state) {
     return !!(state && typeof state === "object" && (
       state.omitido === true ||
@@ -2445,6 +2497,7 @@
 
   function handleRecordUpdateRequest(e) {
     if (!e || !e.record) return e.next();
+    const tenant = normalizeTenant(e.record.get("tenant"));
     const original = typeof e.record.originalCopy === "function" ? e.record.originalCopy() : null;
     const originalDocEstados = getRecordDocStateMap(original);
     const incomingDocEstados = getRecordDocStateMap(e.record);
@@ -2455,7 +2508,6 @@
       if (!isSuperuser && !canVerifyClientDocuments(authRecord)) {
         throw new ForbiddenError("Solo un usuario con rango Verificador puede validar documentos.");
       }
-      const tenant = normalizeTenant(e.record.get("tenant"));
       const incomingConstanciaState = incomingDocEstados.doc_constancia_fiscal && typeof incomingDocEstados.doc_constancia_fiscal === "object"
         ? incomingDocEstados.doc_constancia_fiscal
         : {};
@@ -2494,6 +2546,9 @@
           nextOmitted !== prevOmitted
         );
         if (!changed) continue;
+        if (normalizeDocDecisionStatus(nextState) === "aprobado" && isClientDocumentFieldExpired(e.record, field, tenant)) {
+          throw new BadRequestError("No puedes aprobar un documento vencido. Debe subirse un reemplazo primero.");
+        }
         nextState.revisado_por_id = actor.id;
         nextState.revisado_por_nombre = actor.name;
         nextState.revisado_at = reviewedAt;
@@ -2560,8 +2615,13 @@
           const dStat = docEstados[field] && docEstados[field].status ? docEstados[field].status : "";
           // Block if the user is not an admin and the file is locked
           const admin = e.httpContext ? e.httpContext.get("admin") : null;
-          if (!admin && (dStat === "aprobado" || dStat === "pendiente") && hasValue(e.record.get(field))) {
+          const replacingExpired = original && isClientDocumentFieldExpired(original, field, tenant);
+          if (!admin && (dStat === "aprobado" || dStat === "pendiente") && hasValue(original ? original.get(field) : e.record.get(field)) && !replacingExpired) {
             throw new BadRequestError("El documento " + DOC_LABELS[field] + " esta bloqueado (en revision o aprobado) y no puede ser modificado.");
+          }
+          if (replacingExpired && original) {
+            const validationSnapshot = parseJsonObject(original.get("expediente_validacion"));
+            archiveExpiredClientDocumentMirror(original, field, originalDocEstados, parseJsonObject(validationSnapshot.documents));
           }
           docEstados[field] = {
             status: "pendiente",
@@ -3092,11 +3152,16 @@
         const currentState = docEstados[field] && typeof docEstados[field] === "object" ? docEstados[field] : {};
         const currentStatus = normalizeDocDecisionStatus(currentState);
         const existingFilePresent = hasValue(record.get(field));
+        const replacingExpired = existingFilePresent && isClientDocumentFieldExpired(record, field, record.get("tenant"));
         if (
-          (existingFilePresent && currentStatus !== "rechazado") ||
+          (existingFilePresent && currentStatus !== "rechazado" && !replacingExpired) ||
           isDocStateOmitted(currentState)
         ) {
           throw new BadRequestError("El documento " + (DOC_LABELS[field] || field) + " ya fue aprobado o esta en revision.");
+        }
+        if (replacingExpired) {
+          const validationSnapshot = parseJsonObject(record.get("expediente_validacion"));
+          archiveExpiredClientDocumentMirror(record, field, docEstados, parseJsonObject(validationSnapshot.documents));
         }
         record.set(field, uploadFile);
         docEstados[field] = {
@@ -3129,8 +3194,23 @@
         const currentStatus = normalizeDocDecisionStatus(currentState);
         const existingDoc = getLatestClientDocumentRecord(record.get("tenant"), getRecordId(record), field);
         const existingFilePresent = !!(existingDoc && getRecordFileName(existingDoc, "archivo"));
-        if ((existingFilePresent && currentStatus !== "rechazado") || isDocStateOmitted(currentState)) {
+        const replacingExpired = existingFilePresent && isClientDocumentFieldExpired(record, field, record.get("tenant"));
+        if ((existingFilePresent && currentStatus !== "rechazado" && !replacingExpired) || isDocStateOmitted(currentState)) {
           throw new BadRequestError("El documento " + (definition.label || field) + " ya fue aprobado o esta en revision.");
+        }
+        if (replacingExpired && existingDoc) {
+          try {
+            existingDoc.set("vigente", false);
+            const mirrorMeta = parseJsonObject(existingDoc.get("metadata"));
+            existingDoc.set("metadata", {
+              ...mirrorMeta,
+              vigente: false,
+              historico: true,
+              historico_motivo: "vencido",
+              historico_desde: new Date().toISOString()
+            });
+            $app.save(existingDoc);
+          } catch (_) { }
         }
         const dateValue = trim(
           submittedDocumentDates[field] ||

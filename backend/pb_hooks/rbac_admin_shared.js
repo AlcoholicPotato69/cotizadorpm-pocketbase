@@ -242,6 +242,7 @@
       description: trim(role.description || ""),
       active: role.active !== false,
       system_role: role.system_role === true,
+      grants_admin: role.grants_admin === true,
       sort_order: Number(role.sort_order || 0),
       global: safeObject(role.global),
       byTenant: safeObject(role.byTenant)
@@ -311,7 +312,7 @@
     return safeObject(parsed);
   }
 
-  function saveRoleRecord(input, actorId) {
+  function saveRoleRecord(input, actorId, actorIsAdmin) {
     const payload = safeObject(input);
     const roleCollection = findCollection("app_roles");
     if (!roleCollection) throw new InternalServerError("Coleccion app_roles no disponible.");
@@ -324,12 +325,18 @@
     if (!roleRecord) roleRecord = findRoleBySlug(slug);
     if (!roleRecord) roleRecord = new Record(roleCollection);
 
+    const wasActive = roleRecord.getBool ? roleRecord.getBool("active") !== false : true;
+    const hadGrantsAdmin = roleRecord.getBool ? roleRecord.getBool("grants_admin") === true : false;
+
     roleRecord.set("slug", slug);
     roleRecord.set("name", trim(payload.name) || slug);
     roleRecord.set("description", trim(payload.description || ""));
     roleRecord.set("active", payload.active !== false);
     const existingSystemRole = roleRecord.getBool ? roleRecord.getBool("system_role") === true : false;
     roleRecord.set("system_role", existingSystemRole || payload.system_role === true);
+    // grants_admin: solo un admin efectivo puede otorgarlo, y es one-way (encender).
+    // Apagarlo requiere superusuario de PocketBase — evita lockouts accidentales.
+    roleRecord.set("grants_admin", hadGrantsAdmin || (actorIsAdmin === true && payload.grants_admin === true));
     roleRecord.set("sort_order", Number(payload.sort_order || 0));
     roleRecord.set("permissions_global", safeObject(parseJson(payload.permissions_global, payload.permissions_global || {})));
     roleRecord.set("permissions_tenant_overrides", safeObject(parseJson(payload.permissions_tenant_overrides, payload.permissions_tenant_overrides || {})));
@@ -337,7 +344,33 @@
     roleRecord.set("updated_by", trim(actorId));
     $app.save(roleRecord);
     RBAC.readRoleCollection(true);
+
+    // Si cambió lo que define admin (grants_admin/active), resincroniza el flag
+    // materializado de todos los usuarios y revoca sesiones de los afectados,
+    // para que el cambio aplique de inmediato también en las API rules.
+    const grantsAdminNow = roleRecord.getBool("grants_admin") === true;
+    const activeNow = roleRecord.getBool("active") !== false;
+    if (grantsAdminNow !== hadGrantsAdmin || activeNow !== wasActive) {
+      resyncAllUserAdminFlags();
+    }
     return roleRecord;
+  }
+
+  function resyncAllUserAdminFlags() {
+    if (typeof RBAC.syncUserAdminFlag !== "function") return;
+    let offset = 0;
+    while (true) {
+      const users = $app.findRecordsByFilter(AUTH_COLLECTION, 'id != ""', "", 300, offset) || [];
+      if (!users.length) break;
+      for (let i = 0; i < users.length; i += 1) {
+        try {
+          const result = RBAC.syncUserAdminFlag(users[i]);
+          if (result && result.changed) RBAC.revokeUserSessionsByRecord(users[i]);
+        } catch (_) {}
+      }
+      if (users.length < 300) break;
+      offset += users.length;
+    }
   }
 
   function roleIsInUse(roleRecord) {
@@ -402,7 +435,10 @@
     for (let i = 0; i < allowedValues.length; i += 1) {
       allowedMap[allowedValues[i]] = true;
     }
-    const normalizedRoleIds = sanitizeRoleIds(roleIds).map((item) => normalizeRole(item));
+    // role_ids puede traer IDs de registro (UI) o slugs (datos legacy):
+    // se resuelven contra app_roles ANTES de comparar. Comparar tokens crudos hacía
+    // que los admins guardados desde la UI quedaran con role="plaza_mayor" (RC2).
+    const normalizedRoleIds = toRoleSlugList(roleIds);
     const normalizedPrimary = normalizeRole(requestedPrimaryRole);
     const normalizedDefaultTenant = normalizeTenant(tenantDefault) || "plaza_mayor";
     const normalizedAllowedTenants = safeArray(allowedTenants).map((item) => normalizeTenant(item)).filter(Boolean);
@@ -479,7 +515,32 @@
     const allowedTenants = allowedRaw.map(normalizeTenant).filter(Boolean);
     if (allowedTenants.indexOf(tenantDefault) === -1) allowedTenants.push(tenantDefault);
 
-    if (!RBAC.ensureLastAdminLock(userRecord, roleIds)) {
+    // Estado previo normalizado, para revocar sesiones SOLO si hubo cambios reales.
+    const beforeState = JSON.stringify({
+      role_ids: sanitizeRoleIds(rbac.role_ids || []),
+      overrides: sanitizeOverrides(safeObject(rbac.user_overrides)),
+      tenant_default: normalizeTenant(userRecord.get("tenant_default")),
+      allowed_tenants: safeArray(parseJson(userRecord.get("allowed_tenants"), [])).map(normalizeTenant).filter(Boolean).sort()
+    });
+    const afterState = JSON.stringify({
+      role_ids: roleIds,
+      overrides: overrides,
+      tenant_default: tenantDefault,
+      allowed_tenants: allowedTenants.slice().sort()
+    });
+    const accessChanged = beforeState !== afterState;
+
+    // Last-admin lock: solo aplica si el cambio realmente le quita el admin al usuario.
+    const stillGrantsAdmin = (() => {
+      const rolesCtx = RBAC.readRoleCollection ? RBAC.readRoleCollection(true) : { byId: {}, bySlug: {} };
+      const slugs = toRoleSlugList(roleIds);
+      for (let i = 0; i < slugs.length; i += 1) {
+        const role = safeObject(rolesCtx.bySlug)[slugs[i]];
+        if (role && role.grants_admin === true && role.active !== false) return true;
+      }
+      return false;
+    })();
+    if (!stillGrantsAdmin && !RBAC.ensureLastAdminLock(userRecord, roleIds)) {
       throw new BadRequestError("No puedes quitar el ultimo admin efectivo de la plataforma.");
     }
 
@@ -495,8 +556,11 @@
     userRecord.set("tenant_default", tenantDefault);
     userRecord.set("allowed_tenants", allowedTenants);
     userRecord.set("app_metadata", meta);
+    if (typeof RBAC.syncUserAdminFlag === "function") {
+      RBAC.syncUserAdminFlag(userRecord, { save: false });
+    }
     $app.save(userRecord);
-    RBAC.revokeUserSessionsByRecord(userRecord);
+    if (accessChanged) RBAC.revokeUserSessionsByRecord(userRecord);
     return userRecord;
   }
 
@@ -577,6 +641,7 @@
       sort_order: 0,
       active: true,
       system_role: false,
+      grants_admin: false,
       permissions_global: {},
       permissions_tenant_overrides: {},
       password: ""
@@ -590,7 +655,10 @@
       message: "No tienes permisos para gestionar permisos."
     });
     requireReauth(guard.authRecord, payload.password);
-    const roleRecord = saveRoleRecord(payload, guard.authRecord.get("id"));
+    const actorIsAdmin = typeof RBAC.isEffectiveAdminRecord === "function"
+      ? RBAC.isEffectiveAdminRecord(guard.authRecord)
+      : false;
+    const roleRecord = saveRoleRecord(payload, guard.authRecord.get("id"), actorIsAdmin);
     writeAdminAudit(guard.authRecord, "roles_upsert", "app_roles", roleRecord.get("id"), true, { slug: roleRecord.get("slug") });
     return e.json(200, { ok: true, role: { id: trim(roleRecord.get("id")), slug: trim(roleRecord.get("slug")) } });
   }
@@ -612,6 +680,53 @@
     RBAC.readRoleCollection(true);
     writeAdminAudit(guard.authRecord, "roles_delete", "app_roles", roleId, true, {});
     return e.json(200, { ok: true, id: roleId });
+  }
+
+  function serializeUserForAdmin(record) {
+    if (!record || !record.get) return null;
+    const meta = readMetadata(record);
+    const rbacMeta = safeObject(meta.rbac);
+    const allowedRaw = parseJson(record.get("allowed_tenants"), record.get("allowed_tenants"));
+    const allowed = safeArray(allowedRaw).map((item) => normalizeTenant(item)).filter(Boolean);
+    return {
+      id: trim(record.get("id")),
+      email: trim(record.getString("email")),
+      login_username: trim(record.getString("login_username") || record.getString("username")),
+      username: trim(record.getString("login_username") || record.getString("username")),
+      role: trim(record.getString("role")),
+      tenant_default: normalizeTenant(record.get("tenant_default")) || "",
+      allowed_tenants: allowed,
+      is_admin: record.getBool("is_admin") === true,
+      app_metadata: meta,
+      role_ids: safeArray(rbacMeta.role_ids)
+    };
+  }
+
+  function listUsersForAdmin() {
+    const users = [];
+    let offset = 0;
+    while (true) {
+      const rows = $app.findRecordsByFilter(AUTH_COLLECTION, 'id != ""', "login_username", 300, offset) || [];
+      if (!rows.length) break;
+      for (let i = 0; i < rows.length; i += 1) {
+        const row = serializeUserForAdmin(rows[i]);
+        if (row && row.id) users.push(row);
+      }
+      if (rows.length < 300) break;
+      offset += rows.length;
+    }
+    return users;
+  }
+
+  function handleUsersList(e) {
+    const authRecord = resolveAuthRecord(e);
+    const tenant = normalizeTenant(readQueryParam(e, "tenant")) || normalizeTenant(authRecord.get("tenant_default")) || "plaza_mayor";
+    requireAction(e, "users_manage", {
+      authRecord: authRecord,
+      tenant: tenant,
+      message: "No tienes permisos para listar usuarios."
+    });
+    return e.json(200, { ok: true, users: listUsersForAdmin() });
   }
 
   function handleUserAccess(e) {
@@ -679,6 +794,7 @@
   module.exports = {
     handleCatalog,
     handleEffective,
+    handleUsersList,
     handleRoleUpsert,
     handleRoleDelete,
     handleUserAccess,

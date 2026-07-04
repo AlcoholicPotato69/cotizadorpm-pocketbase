@@ -332,15 +332,8 @@ $publicDirDisabled = Test-PublicDirDisabled -ConfiguredPath $publicDirRaw
 $publicDir = $null
 if (-not $publicDirDisabled) {
     try {
-        $publicDirLeaf = ''
-        if (-not [string]::IsNullOrWhiteSpace($publicDirRaw)) {
-            $publicDirLeaf = Split-Path -Leaf $publicDirRaw.Trim()
-        }
-        if ([string]::Equals($publicDirLeaf, 'pb_public', [System.StringComparison]::OrdinalIgnoreCase)) {
-            $preparePublicDirScript = Join-Path $RootDir 'production\deploy\prepare-public-dir.ps1'
-            if (-not (Test-Path -LiteralPath $preparePublicDirScript)) {
-                throw "No existe script de preparacion publica: $preparePublicDirScript"
-            }
+        $preparePublicDirScript = Join-Path $RootDir 'production\deploy\prepare-public-dir.ps1'
+        if (Test-Path -LiteralPath $preparePublicDirScript) {
             & $preparePublicDirScript -RootDir $RootDir -PublicDir $publicDirRaw | Out-Null
         }
         $publicDir = Resolve-PublicDirPath -RootDir $RootDir -ConfiguredPath $publicDirRaw

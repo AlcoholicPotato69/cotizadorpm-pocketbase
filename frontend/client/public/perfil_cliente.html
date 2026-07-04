@@ -1700,6 +1700,12 @@
             border: 1px solid rgba(37, 99, 235, .2);
         }
 
+        .doc-validation-msg.warning {
+            background: rgba(254, 243, 199, .85);
+            color: #92400e;
+            border: 1px solid rgba(245, 158, 11, .35);
+        }
+
         /* Constancia expiry inside card */
         .constancia-expiry-info {
             margin-top: 8px;
@@ -1752,13 +1758,14 @@
         }
 
         .doc-card.expired .btn-upload-label {
-            border-color: rgba(220, 38, 38, .4);
-            background: var(--danger-light);
-            color: var(--danger);
+            border-color: rgba(217, 119, 6, .45);
+            background: rgba(254, 243, 199, .95);
+            color: #b45309;
         }
 
         .doc-card.expired .btn-upload-label:hover {
-            border-color: var(--danger);
+            border-color: #d97706;
+            background: #fef3c7;
         }
 
         .doc-card.rejected .btn-upload-label {
@@ -1967,8 +1974,8 @@
         <div id="expired-banner" class="expired-banner" style="display:none;" role="alert">
             <div class="expired-banner-icon"><i class="fas fa-exclamation-triangle"></i></div>
             <div class="expired-banner-text">
-                <strong>Constancia de situación fiscal vencida</strong>
-                <span>Debes subir tu nueva constancia para habilitar tu expediente.</span>
+                <strong>Documento vencido</strong>
+                <span>Debes remplazar el documento vencido para restaurar la vigencia de tu expediente. El archivo anterior quedará archivado.</span>
             </div>
         </div>
 
@@ -3346,6 +3353,7 @@
             }
             function areRequiredProfileDocumentsApproved(profile) {
                 if (!profile) return false;
+                if (profileHasExpiredDocuments(profile)) return false;
                 if (profile.verificadoManualmente === true) return true;
                 var docConf = getRequiredProfileDocumentRequirements(profile);
                 if (!docConf.length) return false;
@@ -3354,6 +3362,22 @@
                     var state = getProfileDocumentState(profile, dc.field);
                     return doc.omitido === true || state === 'omitido' || (!!doc.uploaded && state === 'aprobado');
                 });
+            }
+            function profileHasExpiredDocuments(profile) {
+                if (!profile) return false;
+                var docConf = getProfileDocumentRequirements(profile);
+                for (var i = 0; i < docConf.length; i += 1) {
+                    var dc = docConf[i];
+                    if (!profileDocumentUsesValidity(dc)) continue;
+                    var doc = getProfileDocumentInfo(profile, dc.field);
+                    if (!doc.uploaded) continue;
+                    var st = calcConstanciaStatus(
+                        getProfileDocumentValidityDate(profile, dc.field),
+                        getProfileDocumentValidityDays(dc.field, profile, dc)
+                    );
+                    if (st.status === 'expired') return true;
+                }
+                return false;
             }
             function getProfileDocumentValidityDate(profile, field) {
                 return resolveProfileDocumentReferenceDate(profile, field);
@@ -3508,6 +3532,10 @@
                 var validation = profile && profile.validation && typeof profile.validation === 'object' ? profile.validation : {};
                 var valStatus = String(validation.status || profile.profileStatus || '').trim().toLowerCase();
                 if (valStatus === 'rechazado_parcial') return 'editing';
+                if (profileHasExpiredDocuments(profile)) {
+                    if (valStatus === 'constancia_vencida') return 'constancia_expired';
+                    return 'editing';
+                }
                 if (valStatus === 'validado' || valStatus === 'listo_para_contrato') return 'complete';
                 if (validation.ready === true || profile.readyForQuotes === true) return 'complete';
                 if (valStatus === 'constancia_vencida') return 'constancia_expired';
@@ -3795,7 +3823,8 @@
                         dMotivo = profile.validation.documents[dc.field].motivo || "";
                     }
 
-                    var backendLocked = isOmitted || (isUploaded && (dStat === "aprobado" || dStat === "pendiente"));
+                    var backendLocked = isOmitted || (isUploaded && (dStat === "aprobado" || dStat === "pendiente") && currentValidity.status !== 'expired');
+                    var isExpired = isUploaded && currentValidity.status === 'expired';
                     var adminRejected = isUploaded && dStat === "rechazado";
 
                     var cardClass = 'doc-card', badgeClass, badgeText;
@@ -3812,7 +3841,7 @@
                     else if (!dc.requiredForProfile && !dc.requiredForContract) { badgeClass = 'empty'; badgeText = 'Opcional'; }
                     else { badgeClass = 'empty'; badgeText = 'Requerido'; }
 
-                    if (!readonlyMode && state.profileState === 'complete') {
+                    if (!readonlyMode && state.profileState === 'complete' && !isExpired) {
                         return;
                     }
 
@@ -3840,6 +3869,8 @@
                         validationHtml = '<div class="doc-validation-msg info"><i class="fas fa-rotate"></i><span>' + (refreshMeta.updatedFromRejection ? 'Se subió una nueva versión después del rechazo. Pendiente de revisión administrativa.' : 'Se subió una nueva versión. Pendiente de revisión administrativa.') + '</span></div>';
                     } else if (isOmitted) {
                         validationHtml = '<div class="doc-validation-msg success"><i class="fas fa-circle-check"></i><span>Este requisito fue omitido por administración y no bloqueará el expediente.</span></div>';
+                    } else if (isUploaded && isExpired && !isPending) {
+                        validationHtml = '<div class="doc-validation-msg warning"><i class="fas fa-triangle-exclamation"></i><span>Este documento venció. Usa <strong>Remplazar</strong> para subir uno nuevo; el archivo anterior quedará archivado y el nuevo pasará por revisión.</span></div>';
                     } else if (isUploaded && dStat === 'aprobado') {
                         var approvedBy = docInfo.aprobadoPorNombre || docInfo.revisadoPorNombre || '';
                         var approvedAt = docInfo.aprobadoAt || docInfo.revisadoAt || '';
@@ -3865,10 +3896,9 @@
 
                     var btnText = (isRejected || adminRejected) ? '<i class="fas fa-redo"></i> Subir archivo correcto'
                         : (isPending && vr && vr.valid) ? '<i class="fas fa-exchange-alt"></i> Cambiar archivo'
-                            : isUploaded ? '<i class="fas fa-redo"></i> Reemplazar'
-                                : '<i class="fas fa-upload"></i> Subir documento';
-                    if (dc.isConstancia && constSt.status === 'expired') btnText = '<i class="fas fa-redo"></i> Renovar constancia';
-                    if (dc.field === 'doc_comprobante_domicilio' && compSt.status === 'expired') btnText = '<i class="fas fa-redo"></i> Renovar comprobante';
+                            : isExpired ? '<i class="fas fa-exchange-alt"></i> Remplazar'
+                                : isUploaded ? '<i class="fas fa-redo"></i> Reemplazar'
+                                    : '<i class="fas fa-upload"></i> Subir documento';
 
                     var actDisable = locked || backendLocked;
                     var backendLockLabel = 'Bloqueado por pre-validación';
@@ -3888,7 +3918,7 @@
                         ? '<div class="text-xs text-gray-500 font-medium p-2 text-center" style="background:#f9fafb; border-radius:6px;"><i class="fa-solid fa-eye"></i> Documento en modo consulta</div>'
                         : (backendLocked
                             ? '<div class="text-xs text-gray-500 font-medium p-2 text-center" style="background:#f9fafb; border-radius:6px;"><i class="fa-solid ' + backendLockIcon + '"></i> ' + backendLockLabel + '</div>'
-                            : '<label class="btn-upload-label" for="file-' + dc.field + '">' + btnText + '</label>' +
+                            : '<label class="btn-upload-label' + (isExpired ? ' btn-upload-replace-expired' : '') + '" for="file-' + dc.field + '">' + btnText + '</label>' +
                             '<input type="file" class="file-input-hidden" id="file-' + dc.field + '" data-field="' + dc.field + '" accept="' + (dc.accept || '.pdf,.jpg,.jpeg,.png,.webp') + '" ' + (actDisable ? 'disabled' : '') + '>');
 
                     var cardHtml =
@@ -3979,19 +4009,27 @@
                 if (pill) {
                     if (profileState === 'complete') { pill.textContent = '✓ Validado'; pill.className = 'header-status-pill validated'; }
                     else if (profileState === 'documents_approved') { pill.textContent = 'Documentos aprobados'; pill.className = 'header-status-pill validated'; }
-                    else if (profileState === 'constancia_expired') { pill.textContent = '⚠ Constancia vencida'; pill.className = 'header-status-pill expired'; }
+                    else if (profileState === 'constancia_expired' || profileHasExpiredDocuments(profile)) { pill.textContent = '⚠ Documento vencido'; pill.className = 'header-status-pill expired'; }
                     else { pill.textContent = 'Expediente pendiente'; pill.className = 'header-status-pill'; }
                 }
 
                 var pendingBanner = document.getElementById('pending-review-banner');
                 if (profileState === 'complete' || profileState === 'documents_approved') {
-                    renderCompleteState(profile);
-                    var completeContactNote = document.getElementById('complete-contact-note');
-                    if (completeContactNote) completeContactNote.textContent = 'Tu perfil esta completo y validado. Solo puedes actualizar el correo principal, correos alternativos y telefonos alternativos.';
+                    if (profileHasExpiredDocuments(profile)) {
+                        document.getElementById('complete-state').style.display = 'none';
+                        document.getElementById('edit-view').style.display = 'grid';
+                        document.getElementById('expired-banner').style.display = profileState === 'constancia_expired' ? 'flex' : (profileHasExpiredDocuments(profile) ? 'flex' : 'none');
+                        if (pendingBanner) pendingBanner.style.display = 'none';
+                        toggleCompleteDocsState(false);
+                    } else {
+                        renderCompleteState(profile);
+                        var completeContactNote = document.getElementById('complete-contact-note');
+                        if (completeContactNote) completeContactNote.textContent = 'Tu perfil esta completo y validado. Solo puedes actualizar el correo principal, correos alternativos y telefonos alternativos.';
+                    }
                 } else {
                     document.getElementById('complete-state').style.display = 'none';
                     document.getElementById('edit-view').style.display = 'grid';
-                    document.getElementById('expired-banner').style.display = profileState === 'constancia_expired' ? 'flex' : 'none';
+                    document.getElementById('expired-banner').style.display = profileHasExpiredDocuments(profile) ? 'flex' : 'none';
                     if (pendingBanner) {
                         pendingBanner.style.display = profileState === 'pending_review' ? 'flex' : 'none';
                     }

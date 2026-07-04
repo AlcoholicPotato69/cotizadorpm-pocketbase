@@ -31,15 +31,11 @@ production\levantar-todo.bat
 
 Ese script:
 
-- pide la IP/host y puerto reales del backend
-- pide la IP/host y puerto reales del frontend HTML
-- sincroniza `frontend\client\config\hub-runtime.json`
-- sincroniza `frontend\client\public\assets\libs\js\env.js`
-- deja el frontend en mismo origen (`/`) para Nginx
-- autoriza el origen del frontend en `CORS_ALLOWED_ORIGINS`
-- desactiva `PUBLIC_DIR` para que PocketBase no publique HTML
-- genera la carpeta estática `production\deploy\nginx-site\`
-- genera la plantilla `production\deploy\nginx\cotizador-production.conf`
+- pide la IP o dominio del servidor y el puerto de PocketBase
+- sincroniza `frontend\client\config\hub-runtime.json` y `env.js`
+- deja el frontend configurado en mismo origen (`/`)
+- activa `PUBLIC_DIR=pb_public` para que PocketBase sirva el Frontend unificado
+- genera la carpeta estática y plantilla Nginx opcional por si usas proxy inverso
 - instala/actualiza el servicio Windows y lo deja en `RUNNING`
 
 Primero revisa la configuración activa:
@@ -74,30 +70,19 @@ Si es la primera vez sobre una base vacía, crea un superusuario de PocketBase:
 backend\pocketbase.exe superuser upsert admin@tu-dominio.com TuPasswordSegura123 --dir=backend\pb_data
 ```
 
-### 2. Frontend y Nginx
+### 2. Frontend unificado y Nginx opcional
 
-La estrategia recomendada para producción es servir el frontend con Nginx y dejar PocketBase solo como backend/API.
+La estrategia oficial ahora es que **PocketBase sirva directamente el frontend** en `PUBLIC_DIR=pb_public`.
 
-El comando recomendado es:
-
-```bat
-production\backend-service.bat prepare-nginx
-```
-
-Eso deja listos:
-
-- site estático: `production\deploy\nginx-site\`
-- configuración Nginx: `production\deploy\nginx\cotizador-production.conf`
-- frontend runtime en mismo origen (`/`), listo para proxear `/api/` y `/_/`
-- `PUBLIC_DIR` desactivado, por lo que PocketBase no entrega `index.html`
-
-Si todavía quieres que PocketBase publique el frontend directamente, TI debe habilitarlo explícitamente:
+Al ejecutar `production\levantar-todo.bat`, el sistema configura el publicDir unificado:
 
 ```bat
-production\backend-service.bat set-public-dir frontend
+production\backend-service.bat set-public-dir pb_public
 ```
 
-No es la ruta recomendada para producción actual.
+Eso permite que PocketBase entregue `/`, `/client/index.html`, `/api/` y `/_/` en un solo puerto.
+
+Si además deseas colocar Nginx como Reverse Proxy (proxy inverso SSL/TLS en el puerto 443 o 80) delante de PocketBase, la plantilla generada (`production\deploy\nginx\cotizador-production.conf`) está lista para redirigir todo el tráfico al puerto del servicio.
 
 ## Comandos típicos
 
@@ -105,7 +90,7 @@ No es la ruta recomendada para producción actual.
 production\backend-service.bat show
 production\backend-service.bat set-frontend-url /
 production\backend-service.bat set-frontend-origin http://FRONTEND_HOST
-production\backend-service.bat set-public-dir off
+production\backend-service.bat set-public-dir pb_public
 production\backend-service.bat sync-frontend
 production\backend-service.bat prepare-nginx
 production\backend-service.bat install

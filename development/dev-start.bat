@@ -20,10 +20,11 @@ if not exist "%ROOT_DIR%\backend\pocketbase.exe" (
 
 if not exist "%PB_DATA_DIR%" mkdir "%PB_DATA_DIR%" >nul 2>&1
 
-call "%ROOT_DIR%\production\backend-service.bat" set-url "http://127.0.0.1:8090"
-if errorlevel 1 (
-  echo [WARN] No se pudo sincronizar BACKEND_URL al runtime local.
-)
+echo [INFO] Configurando variables de entorno e IPs locales para desarrollo...
+call "%ROOT_DIR%\production\deploy\backend-service.bat" set-url "http://127.0.0.1:8090" >nul 2>&1
+call "%ROOT_DIR%\production\deploy\backend-service.bat" set-frontend-url "/" >nul 2>&1
+call "%ROOT_DIR%\production\deploy\backend-service.bat" set-frontend-origin "http://127.0.0.1:8090" >nul 2>&1
+call "%ROOT_DIR%\production\deploy\backend-service.bat" set-public-dir "pb_public" >nul 2>&1
 
 call :ensure_dev_port_free
 if errorlevel 1 exit /b 1
@@ -37,14 +38,20 @@ if not "%MIGRATE_RC%"=="0" (
 )
 del /q "%MIGRATE_LOG%" >nul 2>&1
 
+echo [INFO] Preparando carpeta estatica unificada del frontend (pb_public)...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& '%ROOT_DIR%\production\deploy\prepare-public-dir.ps1' -RootDir '%ROOT_DIR%' -PublicDir 'pb_public'" >nul 2>&1
+
 echo.
-echo [INFO] Backend local en modo desarrollo
-echo [INFO] API y dashboard: http://127.0.0.1:8090
-echo [INFO] Para el frontend usa: development\\frontend-dev-start.bat
+echo ============================================================
+echo   SISTEMA LOCAL UNIFICADO EN POCKETBASE (DEV)
+echo ============================================================
+echo [INFO] Frontend:  http://127.0.0.1:8090/client/index.html (o http://127.0.0.1:8090/)
+echo [INFO] API Rest:  http://127.0.0.1:8090/api/
+echo [INFO] Dashboard: http://127.0.0.1:8090/_/
 echo [INFO] Presiona Ctrl+C para detener PocketBase
 echo.
 
-"%ROOT_DIR%\backend\pocketbase.exe" serve --http=%DEV_BIND% --automigrate=false --dir="%PB_DATA_DIR%" --hooksDir="%PB_HOOKS_DIR%" --migrationsDir="%PB_MIGRATIONS_DIR%"
+"%ROOT_DIR%\backend\pocketbase.exe" serve --http=%DEV_BIND% --publicDir="%ROOT_DIR%\pb_public" --automigrate=false --dir="%PB_DATA_DIR%" --hooksDir="%PB_HOOKS_DIR%" --migrationsDir="%PB_MIGRATIONS_DIR%"
 exit /b %ERRORLEVEL%
 
 :ensure_dev_port_free

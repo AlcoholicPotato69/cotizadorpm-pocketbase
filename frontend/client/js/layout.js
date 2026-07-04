@@ -692,6 +692,12 @@
         'permissions_manage'
     ]);
 
+    function isTruthyAdminFlag(value) {
+        if (value === true) return true;
+        if (value === 1 || value === '1' || value === 'true') return true;
+        return false;
+    }
+
     function getLayoutAuthContextForRbac(inputCtx) {
         if (inputCtx && typeof inputCtx === 'object') return inputCtx;
         const payloadCtx = window.__HUB_LAYOUT_AUTH_STATE?.context;
@@ -761,6 +767,7 @@
         if (!safeAction) return false;
         const authCtx = getLayoutAuthContextForRbac(options.context);
         if (!authCtx?.session?.user) return false;
+        if (isTruthyAdminFlag(authCtx.isAdmin) || isTruthyAdminFlag(authCtx.permissions?.is_admin)) return true;
         const tenant = resolveRbacTenantFromOptions(options, authCtx);
         if (tenant && authCtx.tenantAllowed === false && resolveRbacTenantFromRoute(authCtx.route) === tenant) return false;
         const perms = resolveContextPermissionMap(authCtx, tenant);
@@ -784,7 +791,6 @@
             }
             return perms.access === true;
         }
-        if (authCtx.isAdmin === true) return true;
         if (hasOwn(perms, safeAction)) return perms[safeAction] === true;
         if (!tenant) {
             const tenantKeys = Object.keys(tenantPermissionMap);
@@ -859,7 +865,7 @@
         },
         isAdmin(context) {
             const authCtx = getLayoutAuthContextForRbac(context);
-            return authCtx?.isAdmin === true;
+            return isTruthyAdminFlag(authCtx?.isAdmin) || isTruthyAdminFlag(authCtx?.permissions?.is_admin);
         },
         guard(actions, options = {}) {
             const opts = options && typeof options === 'object' ? options : {};
@@ -899,7 +905,7 @@
             permissions: authCtx?.permissions || {},
             role: authCtx?.role || '',
             tenantAllowed: authCtx?.tenantAllowed === true,
-            isAdmin: authCtx?.isAdmin === true,
+            isAdmin: isTruthyAdminFlag(authCtx?.isAdmin),
             canAccessCurrentRoute: authCtx?.canAccessCurrentRoute !== false,
             isAuthenticated: !!(authCtx?.session?.user),
             ts: Date.now()
@@ -1217,11 +1223,12 @@
         if (!safe) return '';
         if (typeof safe.normalize === 'function') safe = safe.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
         safe = safe.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-        if (safe === 'administrador' || safe === 'superadmin' || safe === 'super_admin') return 'admin';
+        // Aliases de tenant para compatibilidad de datos legacy (no seguridad)
         if (safe === 'alta_clientes' || safe === 'alta_clientes_role' || safe === 'alta_de_clientes') return 'alta_clientes';
         if (safe === 'both' || safe === 'ambos' || safe === 'user' || safe === 'usuario') return '';
         if (safe === 'plazamayor' || safe === 'plaza_mayor' || safe === 'pm' || safe === 'finanzas') return 'plaza_mayor';
         if (safe === 'casadepiedra' || safe === 'casa_de_piedra' || safe === 'cp') return 'casa_de_piedra';
+        // NOTA: NO se mapean aliases de admin — is_admin viene del engine RBAC (grants_admin=true).
         return safe;
     }
 
@@ -1392,31 +1399,171 @@
         return !!object && Object.prototype.hasOwnProperty.call(object, key);
     }
 
+    // Recuperación global de sesión: ante un 401 de la API se intenta UNA renovación
+    // silenciosa del token; si falla, se redirige al login una sola vez.
+    // Los 403 NO recargan ni redirigen: la autoridad es el backend (API rules + engine),
+    // cada módulo muestra su error y la UI sigue utilizable. El interceptor anterior
+    // recargaba la página ante cualquier 401/403 y convertía un permiso denegado
+    // en un bucle infinito de recargas ("pestaña bloqueada").
+    (function installSessionRecoveryGuard() {
+        if (window.__HUB_RBAC_GUARD_INSTALLED) return;
+        window.__HUB_RBAC_GUARD_INSTALLED = true;
+
+        let recoveringSession = false;
+
+        function isSessionEndpoint(url) {
+            return /\/api\/hub\/session\//.test(String(url || ''));
+        }
+
+        function handleUnauthorized(url) {
+            if (recoveringSession) return;
+            if (window.HUB_IS_LOGIN_PAGE || document.getElementById('login-form')) return;
+            if (isSessionEndpoint(url)) return;
+            recoveringSession = true;
+            Promise.resolve()
+                .then(() => window.PB_SERVICES?.auth?.refreshSession?.())
+                .then((session) => {
+                    if (session?.user) return; // token renovado: los siguientes requests ya pasan
+                    redirectLayoutToLogin(resolveLayoutRouteContext(), 'session_expired');
+                })
+                .catch(() => {
+                    redirectLayoutToLogin(resolveLayoutRouteContext(), 'session_expired');
+                })
+                .finally(() => {
+                    setTimeout(() => { recoveringSession = false; }, 5000);
+                });
+        }
+
+        let lastForbiddenToastAt = 0;
+        function handleForbidden(url) {
+            if (isSessionEndpoint(url)) return;
+            const now = Date.now();
+            if (now - lastForbiddenToastAt < 2500) return;
+            lastForbiddenToastAt = now;
+            const message = 'No tienes permisos para realizar esta acción.';
+            if (typeof window.showToast === 'function') {
+                window.showToast(message, 'warning');
+            } else if (typeof window._toast === 'function') {
+                window._toast(message, 'warning');
+            }
+        }
+
+        const origFetch = window.fetch;
+        if (origFetch) {
+            window.fetch = async function(...args) {
+                const res = await origFetch.apply(this, args);
+                if (res && res.status === 401) {
+                    const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
+                    if (url.includes('/api/')) handleUnauthorized(url);
+                } else if (res && res.status === 403) {
+                    const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
+                    if (url.includes('/api/')) handleForbidden(url);
+                }
+                return res;
+            };
+        }
+
+        const origXHRSend = XMLHttpRequest.prototype.send;
+        if (origXHRSend) {
+            XMLHttpRequest.prototype.send = function(...args) {
+                this.addEventListener('load', function() {
+                    if (this.responseURL && this.responseURL.includes('/api/')) {
+                        if (this.status === 401) handleUnauthorized(this.responseURL);
+                        else if (this.status === 403) handleForbidden(this.responseURL);
+                    }
+                });
+                return origXHRSend.apply(this, args);
+            };
+        }
+    })();
+
     function resolveRoutePermission(perms, key, fallbackAccess) {
         if (!perms || typeof perms !== 'object') return false;
-        if (!hasOwn(perms, key)) return false;
-        return !!perms[key];
+        // is_admin es un permiso sintético escrito por el engine, no un permiso CORE real
+        if (isTruthyAdminFlag(perms.is_admin)) return true;
+        if (hasOwn(perms, key) && !!perms[key]) return true;
+        if (key === 'catalog_view') {
+            return !!perms.catalog_manage || !!perms.catalog_view;
+        }
+        if (key === 'orders_view') {
+            return !!perms.orders_view || !!perms.orders_edit || !!perms.quotes_delete || !!perms.contracts_generate || !!perms.contracts_view || !!perms.receipts_view || !!perms.invoices_view;
+        }
+        if (key === 'reports_view') {
+            return !!perms.reports_view || !!perms.reports_manage;
+        }
+        if (key === 'control_view') {
+            return !!perms.control_view || !!perms.control_manage;
+        }
+        return false;
     }
 
     function resolveOrderModulePermission(perms, moduleKey, fallbackAccess) {
         if (!perms || typeof perms !== 'object') return false;
-        if (hasOwn(perms, moduleKey)) return !!perms[moduleKey];
+        if (isTruthyAdminFlag(perms.is_admin)) return true;
+        if (hasOwn(perms, moduleKey) && !!perms[moduleKey]) return true;
+        if (hasOwn(perms, 'orders_edit') && !!perms.orders_edit) return true;
         return false;
     }
 
     function resolveClientsPermission(perms, fallbackAccess) {
         if (!perms || typeof perms !== 'object') return false;
+        if (isTruthyAdminFlag(perms.is_admin)) return true;
         if (hasOwn(perms, 'clients_view') || hasOwn(perms, 'clients_manage') || hasOwn(perms, 'clients_verify') || hasOwn(perms, 'clients_create')) {
             return !!perms.clients_view || !!perms.clients_manage || !!perms.clients_verify || !!perms.clients_create;
         }
         return false;
     }
 
+    // ponytail: única puerta is_admin en frontend — alineada con buildSessionUser() del backend
+    function resolveProfileIsAdmin(profile) {
+        if (!profile || typeof profile !== 'object') return false;
+        if (isTruthyAdminFlag(profile.is_admin) || isTruthyAdminFlag(profile.rbac_is_admin)) return true;
+        const rbacMeta = profile.app_metadata && typeof profile.app_metadata === 'object'
+            ? profile.app_metadata.rbac
+            : null;
+        return !!(rbacMeta && typeof rbacMeta === 'object' && isTruthyAdminFlag(rbacMeta.is_admin));
+    }
+
+    const LAYOUT_SESSION_RBAC_KEYS = Object.freeze([
+        'is_admin',
+        'effective_permissions',
+        'effective_permissions_map',
+        'permissions',
+        'rbac_mode',
+        'rbac_version'
+    ]);
+
+    function mergeSessionRbacProfile(sessionUser, appUser) {
+        const session = sessionUser && typeof sessionUser === 'object' ? sessionUser : {};
+        const app = appUser && typeof appUser === 'object' ? appUser : {};
+        const merged = { ...session, ...app };
+        LAYOUT_SESSION_RBAC_KEYS.forEach((key) => {
+            if (session[key] !== undefined && session[key] !== null) merged[key] = session[key];
+        });
+        const sessionMeta = session.app_metadata && typeof session.app_metadata === 'object' ? session.app_metadata : null;
+        const appMeta = app.app_metadata && typeof app.app_metadata === 'object' ? app.app_metadata : null;
+        if (sessionMeta || appMeta) {
+            const sessionRbac = sessionMeta?.rbac && typeof sessionMeta.rbac === 'object' ? sessionMeta.rbac : {};
+            const appRbac = appMeta?.rbac && typeof appMeta.rbac === 'object' ? appMeta.rbac : {};
+            merged.app_metadata = {
+                ...(appMeta || {}),
+                ...(sessionMeta || {}),
+                rbac: { ...appRbac, ...sessionRbac },
+                finanzas: {
+                    ...(appMeta?.finanzas && typeof appMeta.finanzas === 'object' ? appMeta.finanzas : {}),
+                    ...(sessionMeta?.finanzas && typeof sessionMeta.finanzas === 'object' ? sessionMeta.finanzas : {}),
+                },
+            };
+        }
+        return merged;
+    }
+
     function resolveControlPermission(authCtx) {
+        if (isTruthyAdminFlag(authCtx?.isAdmin)) return true;
         const perms = authCtx && authCtx.permissions && typeof authCtx.permissions === 'object'
             ? authCtx.permissions
             : {};
-        return !!perms.control_view;
+        return !!perms.control_view || !!perms.control_manage;
     }
 
     function buildLayoutPermissions(identity, routeCtx) {
@@ -1460,19 +1607,20 @@
             permissions.access = false;
         }
 
-        const appMetaRbac = appMeta.rbac && typeof appMeta.rbac === 'object' ? appMeta.rbac : {};
-        const mapHasAdmin = Object.keys(permissionsByTenant).some((tenantKey) => {
-            const current = permissionsByTenant[tenantKey] || {};
-            return current.users_manage === true && current.roles_manage === true && current.permissions_manage === true;
-        });
-        const directHasAdmin = directPermissions.users_manage === true
-            && directPermissions.roles_manage === true
-            && directPermissions.permissions_manage === true;
-        const profileExplicitAdmin = profile.is_admin === true
-            || profile.rbac_is_admin === true
-            || appMetaRbac.is_admin === true
-            || appMetaRbac.admin === true;
-        const isAdminByPermission = profileExplicitAdmin || mapHasAdmin || directHasAdmin;
+        const isAdminByPermission = resolveProfileIsAdmin(profile);
+
+        if (isAdminByPermission) {
+            permissions.is_admin = true;
+            tenantAllowed = true;
+            permissions.access = true;
+            LAYOUT_CORE_PERMISSION_KEYS.forEach((key) => {
+                permissions[key] = true;
+            });
+        }
+        if (permissions.catalog_manage) permissions.catalog_view = true;
+        if (permissions.orders_edit || permissions.quotes_delete || permissions.contracts_generate || permissions.contracts_view || permissions.receipts_view || permissions.invoices_view) permissions.orders_view = true;
+        if (permissions.clients_manage || permissions.clients_create || permissions.clients_verify) permissions.clients_view = true;
+        if (permissions.control_manage) permissions.control_view = true;
 
         return {
             role,
@@ -1483,7 +1631,11 @@
             rawPermissions: { ...permissions },
             permissionMap: permissionsByTenant,
             isAdmin: isAdminByPermission,
-            isVerifier: !!permissions.clients_verify
+            effective: {
+                is_admin: isAdminByPermission,
+                permissions: { ...permissions },
+                tenant: tenant || defaultTenant || null
+            }
         };
     }
 
@@ -1491,10 +1643,19 @@
         if (!routeCtx) return true;
         if (routeCtx.isLoginPage) return true;
         if (!authCtx || !authCtx.session || !authCtx.session.user) return false;
-        if (authCtx.isAdmin === true) return true;
+        if (isTruthyAdminFlag(authCtx.isAdmin) || isTruthyAdminFlag(authCtx.permissions?.is_admin)) return true;
         if (routeCtx.isSystem) {
             const systemPerms = authCtx.permissions || {};
-            return authCtx.isAdmin === true
+            if (routeCtx.file === 'config.html') {
+                return isTruthyAdminFlag(authCtx.isAdmin)
+                    || !!systemPerms.config_manage
+                    || !!systemPerms.catalog_manage
+                    || !!systemPerms.pdf_layout_manage
+                    || !!systemPerms.users_manage
+                    || !!systemPerms.roles_manage
+                    || !!systemPerms.permissions_manage;
+            }
+            return isTruthyAdminFlag(authCtx.isAdmin)
                 || !!systemPerms.config_manage
                 || !!systemPerms.catalog_manage
                 || !!systemPerms.pdf_layout_manage
@@ -1534,18 +1695,6 @@
         }
     }
 
-    function isVerifierLayoutContext(authCtx) {
-        return authCtx?.isVerifier === true;
-    }
-
-    const VERIFIER_TENANT_PREFERENCE_KEY = 'hub_verifier_dashboard_tenant_v1';
-
-    function persistVerifierTenantPreference(tenantSlug) {
-        const normalized = normalizeTenantSlug(tenantSlug);
-        if (!normalized) return;
-        try { localStorage.setItem(VERIFIER_TENANT_PREFERENCE_KEY, normalized); } catch (_) {}
-    }
-
     function getLayoutNavFile(link) {
         const rawHref = String(link?.getAttribute?.('href') || link?.getAttribute?.('data-href') || '').trim();
         if (!rawHref) return '';
@@ -1553,168 +1702,9 @@
         return String(cleanHref.split('/').pop() || '').trim().toLowerCase();
     }
 
-    function getCurrentVerifierNavFile() {
-        const file = String(window.location.pathname.split('/').pop() || '').trim().toLowerCase();
-        return ['catalog.html', 'clientes.html', 'control.html'].includes(file) ? file : 'catalog.html';
-    }
-
-    function getCurrentVerifierTenantSlug() {
-        const path = String(window.location.pathname || '').toLowerCase();
-        const tenantSlug = path.indexOf('/cotizadorcp/') !== -1 ? 'casa_de_piedra' : 'plaza_mayor';
-        persistVerifierTenantPreference(tenantSlug);
-        return tenantSlug;
-    }
-
-    function getVerifierTenantDirectory(tenantSlug) {
-        return tenantSlug === 'casa_de_piedra' ? 'cotizadorcp' : 'cotizador';
-    }
-
-    function buildVerifierTenantHref(tenantSlug, page) {
-        const directory = getVerifierTenantDirectory(tenantSlug);
-        const targetPage = ['catalog.html', 'clientes.html', 'control.html'].includes(page) ? page : 'catalog.html';
-        return `../${directory}/${targetPage}`;
-    }
-
-    function getVerifierNavTenants(authCtx) {
-        const rawTenants = Array.isArray(authCtx?.allowedTenants) && authCtx.allowedTenants.length
-            ? authCtx.allowedTenants
-            : (Array.isArray(authCtx?.profile?.allowed_tenants) ? authCtx.profile.allowed_tenants : []);
-        const normalized = rawTenants
-            .map((tenant) => normalizeTenantSlug(tenant))
-            .filter((tenant) => tenant === 'plaza_mayor' || tenant === 'casa_de_piedra');
-        const unique = Array.from(new Set(normalized));
-        if (unique.length) return unique;
-        return ['plaza_mayor', 'casa_de_piedra'];
-    }
-
-    function markLayoutNavActive(link, page) {
-        const currentFile = String(window.location.pathname.split('/').pop() || '').trim().toLowerCase();
-        const isActive = currentFile === page;
-        link.classList.toggle('bg-white/20', isActive);
-        link.classList.toggle('shadow-inner', isActive);
-    }
-
-    function ensureVerifierControlNavLink(navRoot) {
-        if (!navRoot) return;
-        let link = Array.from(navRoot.querySelectorAll('a[href], a[data-href]')).find((item) => {
-            return !item.closest('[data-verifier-tenant-switch]') && getLayoutNavFile(item) === 'control.html';
-        });
-        if (!link) {
-            link = document.createElement('a');
-            link.href = 'control.html';
-            link.className = 'px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap flex items-center gap-2';
-            const spacer = navRoot.querySelector('.flex-grow');
-            if (spacer) navRoot.insertBefore(link, spacer);
-            else navRoot.appendChild(link);
-        }
-        link.innerHTML = '<i class="fa-solid fa-clipboard-check"></i> Control';
-        link.classList.remove('hidden');
-        markLayoutNavActive(link, 'control.html');
-    }
-
-    function ensureVerifierTenantSwitch(navRoot, authCtx) {
-        if (!navRoot) return;
-        let switcher = navRoot.querySelector('[data-verifier-tenant-switch]');
-        if (!switcher) {
-            switcher = document.createElement('div');
-            switcher.setAttribute('data-verifier-tenant-switch', 'true');
-            const spacer = navRoot.querySelector('.flex-grow');
-            if (spacer) spacer.insertAdjacentElement('afterend', switcher);
-            else navRoot.appendChild(switcher);
-        } else {
-            const spacer = navRoot.querySelector('.flex-grow');
-            if (spacer && switcher.previousElementSibling !== spacer) spacer.insertAdjacentElement('afterend', switcher);
-        }
-        const tenants = getVerifierNavTenants(authCtx);
-        if (tenants.length < 2) {
-            switcher.className = 'hidden';
-            switcher.innerHTML = '';
-            return;
-        }
-        const currentTenant = getCurrentVerifierTenantSlug();
-        const currentPage = getCurrentVerifierNavFile();
-        switcher.className = 'ml-auto flex items-center gap-1 rounded-full bg-black/10 p-1 border border-white/15 shrink-0';
-        switcher.innerHTML = tenants.map((tenantSlug) => {
-            const active = tenantSlug === currentTenant;
-            const label = tenantSlug === 'casa_de_piedra' ? 'CP' : 'PM';
-            const title = tenantSlug === 'casa_de_piedra' ? 'Casa de Piedra' : 'Plaza Mayor';
-            const classes = active
-                ? 'bg-white text-brand-red shadow'
-                : 'text-white/80 hover:bg-white/15 hover:text-white';
-            return `<a data-verifier-tenant-option="true" data-verifier-tenant-value="${tenantSlug}" href="${buildVerifierTenantHref(tenantSlug, currentPage)}" title="${title}" class="${classes} rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-wider transition whitespace-nowrap">${label}</a>`;
-        }).join('');
-        switcher.querySelectorAll('[data-verifier-tenant-option="true"]').forEach((link) => {
-            link.addEventListener('click', () => {
-                persistVerifierTenantPreference(link.getAttribute('data-verifier-tenant-value') || '');
-            });
-        });
-    }
-
-    function ensureVerifierNavRootExists() {
-        const existingContainers = Array.from(document.querySelectorAll('nav .container'));
-        if (existingContainers.length) return existingContainers;
-        const existingNavs = Array.from(document.querySelectorAll('nav'));
-        if (existingNavs.length) return existingNavs;
-        if (!document.body) return [];
-        const nav = document.createElement('nav');
-        nav.setAttribute('data-verifier-nav', 'true');
-        nav.className = 'bg-brand-red shadow-lg sticky top-16 z-40 border-t border-red-800 transition-all duration-300';
-        nav.innerHTML = `
-            <div class="container mx-auto px-4 flex h-14 items-center text-white gap-2 overflow-x-auto no-scrollbar">
-                <a href="catalog.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap flex items-center gap-2"><i class="fa-solid fa-tags"></i> Precios</a>
-                <a href="clientes.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap flex items-center gap-2"><i class="fa-solid fa-users"></i> Clientes</a>
-                <a href="control.html" class="px-4 py-1.5 rounded-full text-xs font-bold uppercase hover:bg-white/20 transition whitespace-nowrap flex items-center gap-2"><i class="fa-solid fa-clipboard-check"></i> Control</a>
-                <div class="flex-grow"></div>
-            </div>
-        `;
-        const header = document.getElementById('hub-layout-header-rendered');
-        if (header && header.parentNode) header.insertAdjacentElement('afterend', nav);
-        else document.body.insertBefore(nav, document.body.firstChild);
-        const container = nav.querySelector('.container');
-        return container ? [container] : [nav];
-    }
-
-    function applyVerifierNavPermissions(authCtx) {
-        if (!isVerifierLayoutContext(authCtx)) return false;
-        const routeCtx = resolveLayoutRouteContext();
-        if (routeCtx.isSystem) return false;
-        if (String(window.location.pathname.split('/').pop() || '').toLowerCase() === 'index.html') return false;
-        const navRoots = ensureVerifierNavRootExists();
-        navRoots.forEach((navRoot) => {
-            navRoot.querySelectorAll('a[href], a[data-href]').forEach((link) => {
-                if (link.closest('[data-verifier-tenant-switch]')) return;
-                const page = getLayoutNavFile(link);
-                const visible = page === 'catalog.html' || page === 'clientes.html' || page === 'control.html';
-                link.classList.toggle('hidden', !visible);
-                if (!visible) return;
-                if (page === 'catalog.html') link.innerHTML = '<i class="fa-solid fa-tags"></i> Precios';
-                if (page === 'clientes.html') link.innerHTML = '<i class="fa-solid fa-users"></i> Clientes';
-                markLayoutNavActive(link, page);
-            });
-            ensureVerifierControlNavLink(navRoot);
-            ensureVerifierTenantSwitch(navRoot, authCtx);
-        });
-        const settingsBtn = document.getElementById('layout-settings-btn');
-        if (settingsBtn) {
-            const tenantSlug = getCurrentVerifierTenantSlug();
-            const tenantParam = tenantSlug === 'casa_de_piedra' ? 'cp' : 'pm';
-            settingsBtn.href = `${pathPrefix}system/config.html?tenant=${tenantParam}`;
-            const perms = authCtx?.permissions && typeof authCtx.permissions === 'object' ? authCtx.permissions : {};
-            const canOpenSettings = authCtx?.isAdmin === true
-                || perms.config_manage === true
-                || perms.users_manage === true
-                || perms.roles_manage === true
-                || perms.permissions_manage === true;
-            settingsBtn.classList.toggle('hidden', !canOpenSettings);
-            settingsBtn.classList.toggle('flex', canOpenSettings);
-        }
-        return true;
-    }
-
     function applyLayoutNavPermissions(authCtx) {
         if (!authCtx || !authCtx.permissions) return;
-        if (applyVerifierNavPermissions(authCtx)) return;
-        const isAdmin = authCtx.isAdmin === true;
+        const isAdmin = isTruthyAdminFlag(authCtx.isAdmin) || isTruthyAdminFlag(authCtx.permissions.is_admin);
         const perms = authCtx.permissions || {};
         const accessFallback = perms.access !== false;
         const navRules = {
@@ -1727,21 +1717,29 @@
             'orders.html': resolveRoutePermission(perms, 'orders_view', accessFallback),
             'cotizacion.html': resolveRoutePermission(perms, 'orders_view', accessFallback),
             'reports.html': resolveRoutePermission(perms, 'reports_view', accessFallback),
-            'clientes.html': resolveClientsPermission(perms, accessFallback)
+            'clientes.html': resolveClientsPermission(perms, accessFallback),
+            'control.html': resolveRoutePermission(perms, 'control_view', resolveControlPermission(authCtx))
         };
-        Object.keys(navRules).forEach((page) => {
-            const visible = isAdmin || !!navRules[page];
-            document.querySelectorAll(`a[href="${page}"], a[data-href="${page}"]`).forEach((link) => {
+        document.querySelectorAll('a[href], a[data-href]').forEach((link) => {
+            const file = getLayoutNavFile(link);
+            if (!file) return;
+            if (Object.prototype.hasOwnProperty.call(navRules, file)) {
+                const visible = isAdmin || !!navRules[file];
                 link.classList.toggle('hidden', !visible);
-            });
+                if (!visible && link.style) link.style.display = 'none';
+            }
         });
         document.querySelectorAll('nav a[href], nav a[data-href]').forEach((link) => {
             const href = String(link.getAttribute('href') || link.getAttribute('data-href') || '').toLowerCase();
-            if (/(^|\/)control\.html(?:$|[?#])/.test(href)) link.remove();
+            if (/(^|\/)control\.html(?:$|[?#])/.test(href)) {
+                if (!isAdmin && !resolveRoutePermission(perms, 'control_view', resolveControlPermission(authCtx))) {
+                    link.remove();
+                }
+            }
         });
         const settingsBtn = document.getElementById('layout-settings-btn');
         if (settingsBtn) {
-            const canOpenSettings = authCtx.isAdmin === true
+            const canOpenSettings = isAdmin
                 || perms.config_manage === true
                 || perms.users_manage === true
                 || perms.roles_manage === true
@@ -1750,6 +1748,7 @@
                 || perms.pdf_layout_manage === true;
             settingsBtn.classList.toggle('hidden', !canOpenSettings);
             settingsBtn.classList.toggle('flex', canOpenSettings);
+            if (!canOpenSettings && settingsBtn.style) settingsBtn.style.display = 'none';
         }
     }
 
@@ -2143,10 +2142,16 @@
         };
         let appUser = await lookupOne('app_users', 'id', userId);
         if (!appUser) appUser = await lookupOne('app_users', 'email', userEmail);
-        const merged = {
-            ...(sessionUser && typeof sessionUser === 'object' ? sessionUser : {}),
-            ...(appUser && typeof appUser === 'object' ? appUser : {})
-        };
+        let sessionBase = sessionUser;
+        try {
+            const fresh = await window.PB_SERVICES?.auth?.ensureFreshSession?.({
+                schema: (typeof TENANT_SCHEMA !== 'undefined' && TENANT_SCHEMA) ? TENANT_SCHEMA : FIN_SCHEMA,
+                allowStaleOnError: true,
+                forceRefresh: false
+            });
+            if (fresh?.user) sessionBase = fresh.user;
+        } catch (_) {}
+        const merged = mergeSessionRbacProfile(sessionBase, appUser);
         const resolvedRole = normalizeLayoutRole(
             appUser?.role
             || sessionUser?.role
@@ -2168,7 +2173,6 @@
             || sessionUser?.allowed_tenants,
             merged.tenant_default
         );
-        if (!merged.app_metadata && appUser?.app_metadata) merged.app_metadata = appUser.app_metadata;
         merged.profile = null;
         merged.app_user = appUser || null;
         return merged;

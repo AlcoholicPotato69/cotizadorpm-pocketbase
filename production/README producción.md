@@ -57,11 +57,10 @@ backend\pocketbase.exe superuser upsert admin@tu-dominio.com TuPasswordSegura123
 
 ### 2. Frontend
 
-La estrategia recomendada es separar frontend y backend:
+La estrategia oficial es unificar frontend y backend en PocketBase:
 
-- PocketBase queda como backend/API/dashboard.
-- Los HTML se sirven por fuera de PocketBase, normalmente desde `production\deploy\nginx-site\`.
-- `PUBLIC_DIR` debe quedar apagado (`set-public-dir off`) salvo decisión explícita de TI.
+- PocketBase queda como servidor unificado entregando API, dashboard y archivos estáticos.
+- `PUBLIC_DIR` se activa con `pb_public` (`set-public-dir pb_public`).
 
 Flujo completo:
 
@@ -69,15 +68,14 @@ Flujo completo:
 production\levantar-todo.bat
 ```
 
-Ese flujo pide IP/puerto del backend y del frontend, actualiza `CORS_ALLOWED_ORIGINS`, sincroniza `hub-runtime.json`/`env.js`, prepara `production\deploy\nginx-site\` y deja `PUBLIC_DIR` desactivado.
+Ese flujo pide la IP/dominio y puerto del servidor, actualiza `CORS_ALLOWED_ORIGINS`, sincroniza `hub-runtime.json`/`env.js`, prepara `pb_public/` y deja PocketBase listo para servir todo en un único puerto.
 
-Si necesitas preparar solo el frontend estático:
+Si necesitas configurar manualmente el directorio público:
 
 ```bat
 production\backend-service.bat set-frontend-url /
 production\backend-service.bat set-frontend-origin http://FRONTEND_HOST
-production\backend-service.bat set-public-dir off
-production\backend-service.bat prepare-nginx production\deploy\nginx-site FRONTEND_HOST
+production\backend-service.bat set-public-dir pb_public
 ```
 
 Si el frontend se sirve desde otro host sin proxy Nginx, cambia el runtime para apuntar al backend real:

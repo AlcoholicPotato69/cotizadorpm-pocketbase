@@ -7,6 +7,10 @@
     return require(`${__hooks}/rbac_admin_shared.js`).handleEffective(e);
   });
 
+  routerAdd("GET", "/api/hub/rbac/users", function (e) {
+    return require(`${__hooks}/rbac_admin_shared.js`).handleUsersList(e);
+  });
+
   routerAdd("POST", "/api/hub/rbac/roles/upsert", function (e) {
     return require(`${__hooks}/rbac_admin_shared.js`).handleRoleUpsert(e);
   });

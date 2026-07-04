@@ -1254,7 +1254,7 @@
     let activePocketBase = null;
 
     let isAdminUser = false;
-    let isVerifierUser = false;
+    // isVerifierUser eliminado: acceso a config viene de config_manage permission, no por nombre de rol
     let canEditConfigUser = false;
     let canAccessUsersModule = false;
     let canManageUsersModule = false;
@@ -3523,111 +3523,17 @@
       }
     };
 
-    function normalizeAdminRole(roleValue) {
-      const safe = String(roleValue || '').trim().toLowerCase();
-      if (!safe) return '';
-      if (safe === 'administrador' || safe === 'superadmin' || safe === 'super_admin') return 'admin';
-      return safe;
-    }
+    // normalizeAdminRole eliminado: NO se mapean aliases de nombre a permisos de seguridad.
+    // is_admin viene EXCLUSIVAMENTE del engine RBAC (grants_admin=true en app_roles).
+    // La fuente de verdad es /api/hub/rbac/effective → effective.is_admin.
 
-    function readUsers1StoredAuthState(key) {
-      try {
-        const raw = sessionStorage.getItem(key) || localStorage.getItem(key);
-        if (!raw) return null;
-        const parsed = JSON.parse(raw);
-        return parsed && typeof parsed === 'object' ? parsed : null;
-      } catch (_) {
-        return null;
-      }
-    }
-
-      function readAnyStoredAuthState() {
-        const keys = ['pb_native_auth_v1', 'pb_compat_auth_v1', 'pb_auth'];
-        for (const key of keys) {
-          const parsed = readUsers1StoredAuthState(key);
-          if (parsed && typeof parsed === 'object') return parsed;
-        }
-        return null;
-      }
-
-      function normalizeAuthTokenCandidate(value) {
-        const raw = String(value || '').trim();
-        if (!raw) return '';
-        if (raw.toLowerCase().startsWith('bearer ')) {
-          return String(raw.slice(7) || '').trim();
-        }
-        return raw;
-      }
-
-      function readAuthTokenCandidates() {
-        const out = [];
-        const seen = new Set();
-        const add = (value) => {
-          const token = normalizeAuthTokenCandidate(value);
-          if (!token || seen.has(token)) return;
-          seen.add(token);
-          out.push(token);
-        };
-        const keys = ['pb_native_auth_v1', 'pb_compat_auth_v1', 'pb_auth'];
-        keys.forEach((key) => {
-          const parsed = readUsers1StoredAuthState(key);
-          if (!parsed || typeof parsed !== 'object') return;
-          add(parsed.token);
-          add(parsed.access_token);
-          add(parsed?.session?.token);
-          add(parsed?.data?.token);
-        });
-        add(window.__HUB_AUTH_CONTEXT?.session?.token);
-        add(window.__HUB_AUTH_CONTEXT?.token);
-        return out;
-      }
-
-    function collectUsers1RoleCandidates(...groups) {
-      const out = [];
-      const seen = new Set();
-      groups.forEach((group) => {
-        if (!Array.isArray(group)) return;
-        group.forEach((candidate) => {
-          const role = normalizeAdminRole(candidate);
-          if (!role) return;
-          if (seen.has(role)) return;
-          seen.add(role);
-          out.push(role);
-        });
-      });
-      return out;
-    }
-
-    function getConfigRoleHints() {
-      const authState = readAnyStoredAuthState();
-      const profileHints = [
-        window.currentUserProfile,
-        window.currentUserProfile?.app_user,
-        window.currentUserProfile?.profile,
-        window.__HUB_AUTH_CONTEXT?.profile,
-        window.__HUB_AUTH_CONTEXT?.user,
-        authState?.user,
-        authState?.record
-      ].filter(Boolean);
-      const hintedRoles = collectUsers1RoleCandidates(
-        [localStorage.getItem('hub_user_cache_role')],
-        profileHints.map(item => item?.role),
-        profileHints.map(item => item?.record?.role),
-        profileHints.map(item => item?.profile?.role),
-        profileHints.map(item => item?.app_metadata?.role),
-        profileHints.map(item => item?.metadata?.role)
-      );
-      if (hintedRoles.includes('admin')) return 'admin';
-      if (hintedRoles.includes('verificador')) return 'verificador';
-      return '';
-    }
+    let hasFullConfigAccess = false;
 
     async function resolveConfigAccess() {
       await requireAdmin();
-      const hintedRole = resolvedConfigRole || getConfigRoleHints();
-      isVerifierUser = !isAdminUser && hintedRole === 'verificador';
-      canEditConfigUser = isAdminUser || isVerifierUser;
-      return canEditConfigUser || canAccessUsersModule;
+      if (hasFullConfigAccess || canEditConfigUser || canAccessUsersModule) return true;
+      if (rbacEffectivePermissions.catalog_manage === true || rbacEffectivePermissions.pdf_layout_manage === true) return true;
+      return resolveConfigAccessFromHub();
     }
 
     function getUsersAdminClient() {
@@ -3657,6 +3563,223 @@
       return null;
     }
 
+    function resolveCurrentAuthUserId() {
+      const ctx = getResolvedLayoutAuthContext();
+      return String(
+        ctx?.session?.user?.id
+        || ctx?.user?.id
+        || ctx?.profile?.id
+        || ''
+      ).trim();
+    }
+
+    function isTruthyAdminFlag(value) {
+      if (value === true) return true;
+      if (value === 1 || value === '1' || value === 'true') return true;
+      return false;
+    }
+
+    const CONFIG_RBAC_AUTH_KEYS = ['pb_native_auth_v1', 'pb_compat_auth_v1', 'pb_auth'];
+
+    function normalizeAuthTokenCandidate(value) {
+      const token = String(value || '').trim();
+      if (!token) return '';
+      return token.replace(/^bearer\s+/i, '').trim();
+    }
+
+    function readAuthTokenCandidates() {
+      const out = [];
+      const seen = new Set();
+      const add = (value) => {
+        const token = normalizeAuthTokenCandidate(value);
+        if (!token || seen.has(token)) return;
+        seen.add(token);
+        out.push(token);
+      };
+      CONFIG_RBAC_AUTH_KEYS.forEach((key) => {
+        try {
+          const raw = sessionStorage.getItem(key) || localStorage.getItem(key);
+          if (!raw) return;
+          const parsed = JSON.parse(raw);
+          add(parsed?.token);
+          add(parsed?.access_token);
+        } catch (_) { }
+      });
+      const layoutSession = getResolvedLayoutAuthContext()?.session;
+      add(layoutSession?.token);
+      add(layoutSession?.access_token);
+      add(window.__HUB_ACTIVE_SESSION?.token);
+      add(window.__HUB_ACTIVE_SESSION?.access_token);
+      return out;
+    }
+
+    function readRuntimeAuthTokens() {
+      const out = [];
+      const seen = new Set();
+      const add = (value) => {
+        const token = normalizeAuthTokenCandidate(value);
+        if (!token || seen.has(token)) return;
+        seen.add(token);
+        out.push(token);
+      };
+      add(window.globalPocketBase?.authStore?.token);
+      add(window.pbClient?.authStore?.token);
+      add(window.tenantPocketBase?.authStore?.token);
+      return out;
+    }
+
+    function mergeTokenCandidates(...groups) {
+      const out = [];
+      const seen = new Set();
+      groups.forEach((group) => {
+        if (!Array.isArray(group)) return;
+        group.forEach((value) => {
+          const token = normalizeAuthTokenCandidate(value);
+          if (!token || seen.has(token)) return;
+          seen.add(token);
+          out.push(token);
+        });
+      });
+      return out;
+    }
+
+    async function refreshRbacTokenCandidates() {
+      if (window.PB_SERVICES?.auth?.getSession) {
+        try {
+          await window.PB_SERVICES.auth.getSession({ forceRefresh: false });
+        } catch (_) { }
+      }
+      return mergeTokenCandidates(readAuthTokenCandidates(), readRuntimeAuthTokens());
+    }
+
+    function getRbacApiBase() {
+      const explicit = String(window.HUB_CONFIG?.pocketbaseUrl || '').trim();
+      if (explicit) return explicit.replace(/\/+$/, '');
+      return String(window.location.origin || '').replace(/\/+$/, '');
+    }
+
+    async function rbacRequest(path, options = {}) {
+      const cfg = { method: 'GET', ...options };
+      const requestUrl = `${getRbacApiBase()}${path}`;
+      const requestHeaders = { ...(cfg.headers || {}) };
+      const rawBody = cfg.body;
+      const isCrossOrigin = (() => {
+        try {
+          const reqOrigin = new URL(requestUrl, window.location.href).origin;
+          return reqOrigin !== String(window.location.origin || '').trim();
+        } catch (_) {
+          return true;
+        }
+      })();
+      const isFormData = typeof FormData !== 'undefined' && rawBody instanceof FormData;
+      const isPlainBodyObject = !!rawBody && typeof rawBody === 'object' && !isFormData;
+      const requestBody = (() => {
+        if (!isPlainBodyObject) return rawBody;
+        if (!isCrossOrigin) return JSON.stringify(rawBody);
+        const params = new URLSearchParams();
+        Object.keys(rawBody).forEach((key) => {
+          const value = rawBody[key];
+          if (value === undefined || value === null) return;
+          if (typeof value === 'object') params.append(String(key), JSON.stringify(value));
+          else params.append(String(key), String(value));
+        });
+        return params;
+      })();
+      const defaultCredentials = cfg.credentials || (isCrossOrigin ? 'omit' : 'include');
+      if (isPlainBodyObject && !isCrossOrigin && !requestHeaders['Content-Type']) {
+        requestHeaders['Content-Type'] = 'application/json';
+      }
+
+      const runFetch = async (headers, credentialsMode = defaultCredentials) => {
+        let response = null;
+        try {
+          response = await fetch(requestUrl, {
+            method: cfg.method || 'GET',
+            headers,
+            body: requestBody,
+            credentials: credentialsMode,
+            cache: 'no-store'
+          });
+        } catch (fetchError) {
+          return { response: null, data: {}, fetchError };
+        }
+        const data = await response.json().catch(() => ({}));
+        return { response, data, fetchError: null };
+      };
+
+      const buildError = (response, data, fetchError = null) => {
+        const message = fetchError
+          ? String(fetchError?.message || 'No se pudo conectar con el backend RBAC.')
+          : String(data?.message || data?.error || `HTTP ${response?.status || 500}`);
+        const err = new Error(message);
+        err.status = Number(response?.status || 0);
+        err.data = data;
+        if (fetchError) err.cause = fetchError;
+        return err;
+      };
+
+      const tryWithTokenList = async (tokens) => {
+        let lastAuthError = null;
+        for (let idx = 0; idx < tokens.length; idx += 1) {
+          const token = tokens[idx];
+          const authVariants = [token, `Bearer ${token}`];
+          for (let j = 0; j < authVariants.length; j += 1) {
+            const authorization = authVariants[j];
+            const headers = { ...requestHeaders, Authorization: authorization };
+            const { response, data, fetchError } = await runFetch(headers, defaultCredentials);
+            if (fetchError) {
+              lastAuthError = buildError(response, data, fetchError);
+              continue;
+            }
+            if (response.ok && data?.ok !== false) return data;
+            const err = buildError(response, data);
+            if (response.status === 401 || response.status === 403) {
+              lastAuthError = err;
+              continue;
+            }
+            throw err;
+          }
+        }
+        if (lastAuthError) throw lastAuthError;
+        throw new Error('No se pudo autenticar la solicitud RBAC.');
+      };
+
+      const fallback = await runFetch(requestHeaders, defaultCredentials);
+      if (!fallback.fetchError && fallback.response?.ok && fallback.data?.ok !== false) return fallback.data;
+
+      const canUseAuthHeader = cfg.useAuthHeader !== false;
+      if (!canUseAuthHeader) throw buildError(fallback.response, fallback.data, fallback.fetchError);
+
+      let tokens = mergeTokenCandidates(readAuthTokenCandidates(), readRuntimeAuthTokens());
+      if (!tokens.length) tokens = await refreshRbacTokenCandidates();
+      if (!tokens.length) throw buildError(fallback.response, fallback.data, fallback.fetchError);
+      return tryWithTokenList(tokens);
+    }
+
+    const CONFIG_PANEL_PERMISSIONS = Object.freeze([
+      'config_manage',
+      'catalog_manage',
+      'pdf_layout_manage',
+      'users_manage',
+      'roles_manage',
+      'permissions_manage'
+    ]);
+
+    function resolveConfigAccessFromHub() {
+      if (typeof window.HUB_RBAC?.isAdmin === 'function' && window.HUB_RBAC.isAdmin()) return true;
+      if (typeof window.HUB_RBAC?.canAny === 'function') {
+        return window.HUB_RBAC.canAny(CONFIG_PANEL_PERMISSIONS);
+      }
+      return false;
+    }
+
+    function effectiveHasPermissionSignal(effective) {
+      const safe = effective && typeof effective === 'object' ? effective : {};
+      const perms = safe.permissions && typeof safe.permissions === 'object' ? safe.permissions : {};
+      if (isTruthyAdminFlag(safe.is_admin) || isTruthyAdminFlag(perms.is_admin)) return true;
+      return CONFIG_PANEL_PERMISSIONS.some((key) => perms[key] === true);
+    }
+
     async function requireAdmin() {
       resolvedConfigRole = '';
       isAdminUser = false;
@@ -3666,15 +3789,20 @@
       canManagePermissionsModule = false;
       rbacEffectivePermissions = {};
 
-      const applyEffective = (effective) => {
+      const applyEffective = (effective, opts = {}) => {
         const safe = effective && typeof effective === 'object' ? effective : {};
         const perms = safe.permissions && typeof safe.permissions === 'object' ? safe.permissions : {};
+        const hasSignal = effectiveHasPermissionSignal(safe);
+        if (opts.requireSignal === true && !hasSignal) return;
         rbacEffectivePermissions = perms;
-        isAdminUser = safe.is_admin === true;
+        isAdminUser = isTruthyAdminFlag(safe.is_admin) || isTruthyAdminFlag(perms.is_admin);
         canManageUsersModule = perms.users_manage === true || isAdminUser;
         canManageRolesModule = perms.roles_manage === true || isAdminUser;
         canManagePermissionsModule = perms.permissions_manage === true || isAdminUser;
         canAccessUsersModule = canManageUsersModule || canManageRolesModule || canManagePermissionsModule;
+        hasFullConfigAccess = isAdminUser
+          || (canManageUsersModule && canManageRolesModule && canManagePermissionsModule);
+        canEditConfigUser = hasFullConfigAccess || perms.config_manage === true;
         if (isAdminUser) {
           resolvedConfigRole = 'admin';
           try { localStorage.setItem('hub_user_cache_role', 'admin'); } catch (_) { }
@@ -3685,23 +3813,36 @@
       const layoutEffective = layoutCtx?.effective
         || layoutCtx?.user?.effective
         || null;
-      if (layoutEffective) applyEffective(layoutEffective);
-      if (!layoutEffective) {
+      if (layoutEffective) {
+        applyEffective(layoutEffective);
+      } else {
         const layoutPerms = layoutCtx?.permissions
           || layoutCtx?.user?.permissions
           || layoutCtx?.user?.effective_permissions
           || {};
-        const layoutIsAdmin = layoutCtx?.isAdmin === true || normalizeAdminRole(layoutCtx?.user?.role) === 'admin';
+        const layoutIsAdmin = resolveConfigAccessFromHub()
+          || isTruthyAdminFlag(layoutCtx?.isAdmin)
+          || isTruthyAdminFlag(layoutCtx?.profile?.is_admin)
+          || isTruthyAdminFlag(layoutCtx?.user?.is_admin)
+          || isTruthyAdminFlag(layoutCtx?.session?.user?.is_admin)
+          || isTruthyAdminFlag(layoutPerms?.is_admin);
         applyEffective({ is_admin: layoutIsAdmin, permissions: layoutPerms });
+      }
+
+      if (resolveConfigAccessFromHub()) {
+        applyEffective({
+          is_admin: true,
+          permissions: layoutCtx?.permissions || layoutCtx?.user?.permissions || rbacEffectivePermissions
+        });
       }
 
       try {
         const effectiveResp = await rbacRequest('/api/hub/rbac/effective');
-        applyEffective(effectiveResp?.effective || {});
-        return isAdminUser;
-      } catch (_) {
-        return isAdminUser;
-      }
+        if (effectiveResp?.effective && effectiveHasPermissionSignal(effectiveResp.effective)) {
+          applyEffective(effectiveResp.effective, { requireSignal: true });
+        }
+      } catch (_) { }
+      return isAdminUser;
     }
 
     function showAdminAccessDenied() {
@@ -3759,6 +3900,7 @@
     function hasViewAccess(viewId) {
       const safeView = String(viewId || '').trim();
       if (safeView === 'v_users') return canAccessUsersModule === true;
+      // canEditConfigUser ya incluye isAdminUser (via applyEffective) — es la fuente única
       return canEditConfigUser === true;
     }
 
@@ -3876,7 +4018,11 @@
             : (canManageRolesModule || canManagePermissionsModule ? 'roles' : 'users');
           window.setUsersTab(initialTab);
         }
-        await loadUsers();
+        if (canManageUsersModule || isAdminUser) {
+          await window.loadUsers();
+        } else if (typeof window.loadRbacCatalog === 'function') {
+          await window.loadRbacCatalog(true);
+        }
       }
       if (viewId === 'v_cp_settings' && currentTenant === 'cp') {
         await loadPremontajePct();
@@ -4204,7 +4350,7 @@
         if (__materialItems.length === 0) { if (empty) empty.classList.remove('hidden'); return; }
         if (empty) empty.classList.add('hidden');
         __materialItems.forEach((name, idx) => {
-          list.innerHTML += `<div class="flex justify-between items-center bg-gray-50 border border-gray-100 p-3 rounded-lg"><span class="text-sm font-bold text-gray-700"><i class="fa-solid fa-palette text-brand-red mr-2"></i>${name}</span><button onclick="window.removeMaterialItem(${idx})" class="text-gray-400 hover:text-red-500 transition text-xs"><i class="fa-solid fa-trash"></i></button></div>`;
+          list.innerHTML += `<div class="flex justify-between items-center bg-gray-50 border border-gray-100 p-3 rounded-lg"><span class="text-sm font-bold text-gray-700"><i class="fa-solid fa-palette text-brand-red mr-2"></i>${escapePdfEditorHtml(name)}</span><button onclick="window.removeMaterialItem(${idx})" class="text-gray-400 hover:text-red-500 transition text-xs"><i class="fa-solid fa-trash"></i></button></div>`;
         });
       }
       window.addMaterialItem = async function () {
@@ -4261,7 +4407,7 @@
         if (__locationItems.length === 0) { if (empty) empty.classList.remove('hidden'); return; }
         if (empty) empty.classList.add('hidden');
         __locationItems.forEach((name, idx) => {
-          list.innerHTML += `<div class="flex justify-between items-center bg-gray-50 border border-gray-100 p-3 rounded-lg"><span class="text-sm font-bold text-gray-700"><i class="fa-solid fa-location-dot text-brand-red mr-2"></i>${name}</span><button onclick="window.removeLocationItem(${idx})" class="text-gray-400 hover:text-red-500 transition text-xs"><i class="fa-solid fa-trash"></i></button></div>`;
+          list.innerHTML += `<div class="flex justify-between items-center bg-gray-50 border border-gray-100 p-3 rounded-lg"><span class="text-sm font-bold text-gray-700"><i class="fa-solid fa-location-dot text-brand-red mr-2"></i>${escapePdfEditorHtml(name)}</span><button onclick="window.removeLocationItem(${idx})" class="text-gray-400 hover:text-red-500 transition text-xs"><i class="fa-solid fa-trash"></i></button></div>`;
         });
       }
       window.addLocationItem = async function () {
@@ -4341,7 +4487,7 @@
         __convenioItems.forEach((item, idx) => {
           list.innerHTML += `<div class="flex justify-between items-center bg-gray-50 border border-gray-100 p-3 rounded-lg gap-3">
             <div class="min-w-0">
-              <span class="text-sm font-bold text-gray-700 block truncate"><i class="fa-solid fa-handshake text-brand-red mr-2"></i>${item.nombre}</span>
+              <span class="text-sm font-bold text-gray-700 block truncate"><i class="fa-solid fa-handshake text-brand-red mr-2"></i>${escapePdfEditorHtml(item.nombre)}</span>
               <span class="text-[10px] text-gray-400 font-bold uppercase tracking-wide">Opción ${idx + 1}</span>
             </div>
             <div class="flex items-center gap-2 shrink-0">
@@ -4458,7 +4604,7 @@
         }
         if (empty) empty.classList.add('hidden');
         __cpMaterialItems.forEach((name, idx) => {
-          list.innerHTML += `<div class="flex justify-between items-center bg-gray-50 border border-gray-100 p-3 rounded-lg"><span class="text-sm font-bold text-gray-700"><i class="fa-solid fa-palette text-amber-500 mr-2"></i>${name}</span><button onclick="window.removeCpMaterialItem(${idx})" class="text-gray-400 hover:text-red-500 transition text-xs"><i class="fa-solid fa-trash"></i></button></div>`;
+          list.innerHTML += `<div class="flex justify-between items-center bg-gray-50 border border-gray-100 p-3 rounded-lg"><span class="text-sm font-bold text-gray-700"><i class="fa-solid fa-palette text-amber-500 mr-2"></i>${escapePdfEditorHtml(name)}</span><button onclick="window.removeCpMaterialItem(${idx})" class="text-gray-400 hover:text-red-500 transition text-xs"><i class="fa-solid fa-trash"></i></button></div>`;
         });
       }
       async function __saveCpMaterialsToDB() {
@@ -4517,7 +4663,7 @@
         __cpConvenioItems.forEach((item, idx) => {
           list.innerHTML += `<div class="flex justify-between items-center bg-gray-50 border border-gray-100 p-3 rounded-lg gap-3">
             <div class="min-w-0">
-              <span class="text-sm font-bold text-gray-700 block truncate"><i class="fa-solid fa-handshake text-amber-500 mr-2"></i>${item.nombre}</span>
+              <span class="text-sm font-bold text-gray-700 block truncate"><i class="fa-solid fa-handshake text-amber-500 mr-2"></i>${escapePdfEditorHtml(item.nombre)}</span>
               <span class="text-[10px] text-gray-400 font-bold uppercase tracking-wide">Opción ${idx + 1}</span>
             </div>
             <div class="flex items-center gap-2 shrink-0">
@@ -4670,165 +4816,6 @@
 
       function csvFromList(values) {
         return (Array.isArray(values) ? values : []).join(', ');
-      }
-
-      function readAuthToken() {
-        return readAuthTokenCandidates()[0] || '';
-      }
-
-      function readRuntimeAuthTokens() {
-        const out = [];
-        const seen = new Set();
-        const add = (value) => {
-          const token = normalizeAuthTokenCandidate(value);
-          if (!token || seen.has(token)) return;
-          seen.add(token);
-          out.push(token);
-        };
-        add(window.globalPocketBase?.authStore?.token);
-        add(window.pbClient?.authStore?.token);
-        add(window.tenantPocketBase?.authStore?.token);
-        add(window.pmPocketBase?.authStore?.token);
-        add(window.cpPocketBase?.authStore?.token);
-        return out;
-      }
-
-      function mergeTokenCandidates(...groups) {
-        const out = [];
-        const seen = new Set();
-        groups.forEach((group) => {
-          if (!Array.isArray(group)) return;
-          group.forEach((value) => {
-            const token = normalizeAuthTokenCandidate(value);
-            if (!token || seen.has(token)) return;
-            seen.add(token);
-            out.push(token);
-          });
-        });
-        return out;
-      }
-
-      async function refreshRbacTokenCandidates() {
-        if (!window.PB_SERVICES?.auth?.getSession) return [];
-        try {
-          await window.PB_SERVICES.auth.getSession({ forceRefresh: false });
-        } catch (_) { }
-        return mergeTokenCandidates(readAuthTokenCandidates(), readRuntimeAuthTokens());
-      }
-
-      function getRbacApiBase() {
-        const explicit = String(window.HUB_CONFIG?.pocketbaseUrl || '').trim();
-        if (explicit) return explicit.replace(/\/+$/, '');
-        return String(window.location.origin || '').replace(/\/+$/, '');
-      }
-
-      async function rbacRequest(path, options = {}) {
-        const cfg = { method: 'GET', ...options };
-        const requestUrl = `${getRbacApiBase()}${path}`;
-        const requestHeaders = { ...(cfg.headers || {}) };
-        const rawBody = cfg.body;
-        const isCrossOrigin = (() => {
-          try {
-            const reqOrigin = new URL(requestUrl, window.location.href).origin;
-            const curOrigin = String(window.location.origin || '').trim();
-            return reqOrigin !== curOrigin;
-          } catch (_) {
-            return true;
-          }
-        })();
-        const isFormData = typeof FormData !== 'undefined' && rawBody instanceof FormData;
-        const isPlainBodyObject = !!rawBody && typeof rawBody === 'object' && !isFormData;
-        const requestBody = (() => {
-          if (!isPlainBodyObject) return rawBody;
-          if (!isCrossOrigin) return JSON.stringify(rawBody);
-          const params = new URLSearchParams();
-          Object.keys(rawBody).forEach((key) => {
-            const value = rawBody[key];
-            if (value === undefined || value === null) return;
-            if (typeof value === 'object') params.append(String(key), JSON.stringify(value));
-            else params.append(String(key), String(value));
-          });
-          return params;
-        })();
-        const defaultCredentials = cfg.credentials || (isCrossOrigin ? 'omit' : 'include');
-        if (isPlainBodyObject && !isCrossOrigin && !requestHeaders['Content-Type']) {
-          requestHeaders['Content-Type'] = 'application/json';
-        }
-
-        const runFetch = async (headers, credentialsMode = defaultCredentials) => {
-          let response = null;
-          try {
-            response = await fetch(requestUrl, {
-              method: cfg.method || 'GET',
-              headers,
-              body: requestBody,
-              credentials: credentialsMode,
-              cache: 'no-store'
-            });
-          } catch (fetchError) {
-            return { response: null, data: {}, fetchError };
-          }
-          const data = await response.json().catch(() => ({}));
-          return { response, data, fetchError: null };
-        };
-
-        const buildError = (response, data, fetchError = null) => {
-          const message = fetchError
-            ? String(fetchError?.message || 'No se pudo conectar con el backend RBAC.')
-            : String(data?.message || data?.error || `HTTP ${response?.status || 500}`);
-          const err = new Error(message);
-          err.status = Number(response?.status || 0);
-          err.data = data;
-          err.response = { status: err.status, data, fetchError };
-          if (fetchError) err.cause = fetchError;
-          return err;
-        };
-
-        const tryWithTokenList = async (tokens) => {
-          let lastAuthError = null;
-          for (let idx = 0; idx < tokens.length; idx += 1) {
-            const token = tokens[idx];
-            const authVariants = [token, `Bearer ${token}`];
-            for (let j = 0; j < authVariants.length; j += 1) {
-              const authorization = authVariants[j];
-              const headers = { ...requestHeaders, Authorization: authorization };
-              const { response, data, fetchError } = await runFetch(headers, defaultCredentials);
-              if (fetchError) {
-                lastAuthError = buildError(response, data, fetchError);
-                continue;
-              }
-              if (response.ok && data?.ok !== false) return data;
-              const err = buildError(response, data);
-              const authError = response.status === 401 || response.status === 403;
-              if (authError) {
-                lastAuthError = err;
-                continue;
-              }
-              throw err;
-            }
-          }
-          if (lastAuthError) throw lastAuthError;
-          throw new Error('No se pudo autenticar la solicitud RBAC.');
-        };
-        const fallback = await runFetch(requestHeaders, defaultCredentials);
-        if (!fallback.fetchError && fallback.response?.ok && fallback.data?.ok !== false) return fallback.data;
-        const fallbackError = buildError(fallback.response, fallback.data, fallback.fetchError);
-
-        const canUseAuthHeader = cfg.useAuthHeader !== false;
-        if (!canUseAuthHeader) throw fallbackError;
-
-        let tokens = mergeTokenCandidates(readAuthTokenCandidates(), readRuntimeAuthTokens());
-        if (!tokens.length) tokens = await refreshRbacTokenCandidates();
-
-        if (tokens.length) {
-          try {
-            return await tryWithTokenList(tokens);
-          } catch (tokenErr) {
-            throw tokenErr;
-          }
-        }
-
-        throw fallbackError;
       }
 
       function setAdminPasswordModalVisible(show) {
@@ -5335,6 +5322,7 @@
           else resetRoleEditor();
         }
       }
+      window.loadRbacCatalog = loadRbacCatalog;
 
       function readTenantBadge(tenant) {
         if (tenant === 'plaza_mayor') return '<span class="inline-block px-2 py-0.5 bg-blue-50 text-blue-600 rounded text-[9px] font-bold">PM</span>';
@@ -5525,21 +5513,23 @@
       window.loadUsers = async function (opts = {}) {
         const throwOnError = opts && opts.throwOnError === true;
         const tbody = document.getElementById('users-tbody');
+        if (!tbody) return;
+        if (!(canManageUsersModule || isAdminUser)) {
+          tbody.innerHTML = '<tr><td colspan="5" class="py-8 text-center text-gray-400 font-bold italic">No tienes permiso para gestionar usuarios.</td></tr>';
+          return;
+        }
         tbody.innerHTML = '<tr><td colspan="5" class="py-8 text-center text-gray-400 font-bold italic"><i class="fa-solid fa-circle-notch fa-spin mr-2"></i> Cargando...</td></tr>';
         try {
           await loadRbacCatalog(true);
-          const pb = getUsersAdminClient();
-          if (!pb) throw new Error('No se pudo inicializar PocketBase.');
-          const { data: records, error } = await pb.from('app_users').select('*').order('login_username', { ascending: true }).limit(300);
-          if (error) throw error;
-          allUsers = Array.isArray(records) ? records : [];
+          const usersResp = await rbacRequest('/api/hub/rbac/users');
+          allUsers = Array.isArray(usersResp?.users) ? usersResp.users : [];
 
           if (!allUsers.length) {
             tbody.innerHTML = '<tr><td colspan="5" class="py-8 text-center text-gray-400 font-bold italic">No hay usuarios registrados.</td></tr>';
             return;
           }
 
-          const currentUserId = readUsers1StoredAuthState('pb_native_auth_v1')?.user?.id || '';
+          const currentUserId = resolveCurrentAuthUserId();
           let html = '';
           const canEditUsers = canManageUsersModule || isAdminUser;
           allUsers.forEach((user) => {
@@ -5736,18 +5726,15 @@
           const pb = getDB();
           let userId = id;
           let createdNow = false;
-          const existingRecord = id ? allUsers.find((item) => item.id === id) : null;
-          const appMetadata = parseJsonSafe(existingRecord?.app_metadata, {});
-          appMetadata.roles = roleSlugs;
-          appMetadata.role_primary = legacyRole;
 
+          // El rol legacy, is_admin y app_metadata.rbac los recalcula el backend en
+          // /api/hub/rbac/users/access — el frontend NO es autoridad de esos campos.
           const userPayload = {
             email: email,
             login_username: resolvedLoginUsername,
             role: legacyRole,
             tenant_default: defaultTenant || 'plaza_mayor',
-            allowed_tenants: allowed,
-            app_metadata: appMetadata
+            allowed_tenants: allowed
           };
           if (pass) {
             userPayload.password = pass;

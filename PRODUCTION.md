@@ -2,19 +2,18 @@
 
 Esta guía detalla el proceso recomendado para desplegar el proyecto "Cotizador Plaza Mayor & Casa de Piedra" en un entorno de producción profesional, evitando el uso de direcciones IP locales hardcodeadas y adoptando prácticas de despliegue con proxies inversos.
 
-## 1. Arquitectura Recomendada
+## 1. Arquitectura Unificada (PocketBase)
 
-El sistema se compone de dos partes principales que deben servirse de manera independiente:
-1. **Frontend (Archivos Estáticos):** Se recomienda usar **Nginx** o **Apache** para servir la carpeta `/frontend`.
-2. **Backend (PocketBase):** Se ejecutará como un servicio independiente y será accesible a través de un proxy inverso.
+El sistema ahora está diseñado para que **PocketBase sirva directamente tanto el Backend como el Frontend**, simplificando el despliegue a un solo proceso y un solo puerto.
+1. **Frontend y Backend Unificados:** El servicio de PocketBase sirve los archivos estáticos en la raíz `/` y la API en `/api/` o `/_/`.
+2. **Nginx Opcional:** Si se utiliza Nginx o Apache, actuará únicamente como Reverse Proxy (proxy inverso) redirigiendo todo el tráfico al puerto de PocketBase.
 
 ### Estructura de Dominio (Ejemplo)
-- Frontend: `https://cotizador.tudominio.com`
-- Backend / API: `https://api.cotizador.tudominio.com` (o bajo un path como `https://cotizador.tudominio.com/api/`)
+- Sistema unificado: `https://cotizador.tudominio.com` (API en `/api/`, Dashboard en `/_/`)
 
-## 2. Preparar el Frontend (Archivos Estáticos)
+## 2. Preparar el Sistema en Producción
 
-El flujo recomendado ya no es editar archivos JS a mano. Ejecuta:
+Para configurar y levantar todo el entorno, ejecuta:
 
 ```bat
 production\levantar-todo.bat
@@ -22,12 +21,11 @@ production\levantar-todo.bat
 
 Ese script:
 
-- pide la IP/host y puerto reales del backend
-- actualiza `frontend/client/config/hub-runtime.json`
-- actualiza `frontend/client/public/assets/libs/js/env.js`
-- deja el frontend configurado en mismo origen (`/`) para que Nginx proxy `/api/` y `/_/`
-- genera la carpeta estática `production/deploy/nginx-site/`
-- genera la plantilla `production/deploy/nginx/cotizador-production.conf`
+- pide la IP o dominio del servidor y el puerto de PocketBase
+- actualiza `BIND_ADDR`, `BACKEND_URL`, y configura el frontend same-origin (`/`)
+- activa `PUBLIC_DIR=pb_public` para que PocketBase sirva el Frontend
+- actualiza automáticamente `frontend/client/config/hub-runtime.json` y `env.js`
+- genera la plantilla opcional `production/deploy/nginx/cotizador-production.conf` por si usas proxy inverso
 
 Si necesitas rehacer solo la parte del frontend/Nginx:
 

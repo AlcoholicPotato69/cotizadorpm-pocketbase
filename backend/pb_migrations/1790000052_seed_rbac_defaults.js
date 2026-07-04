@@ -104,6 +104,7 @@ migrate((app) => {
         "access",
         "catalog_view",
         "catalog_manage",
+        "config_manage",       // acceso explícito a config (reemplaza isVerifierUser bypass)
         "clients_view",
         "clients_verify",
         "clients_all_docs",
@@ -112,6 +113,7 @@ migrate((app) => {
       deny: ["orders_edit", "quotes_delete", "users_manage", "roles_manage", "permissions_manage"]
     }
   });
+
 
   upsertRole(roleCollection, {
     slug: "alta_clientes",

@@ -557,13 +557,20 @@
             return null;
         }
 
+        function isUserEffectiveAdmin(p) {
+            if (!p) return false;
+            if (p.is_admin === true || p.rbac_is_admin === true || p.app_metadata?.rbac?.is_admin === true) return true;
+            if (window.currentUserPermissions?.is_admin === true || window.__HUB_AUTH_CONTEXT?.isAdmin === true) return true;
+            return false;
+        }
+
         function canShowDashboardApp(app, profile, role) {
             const normalizedRole = normalizeDashboardRole(role || profile?.role || profile?.rol || '');
             const perms = getDashboardFinanzasPermissions(profile);
             const key = getDashboardModuleKey(app);
             const accessFallback = !perms || perms.access !== false;
 
-            if (normalizedRole === 'admin') return true;
+            if (isUserEffectiveAdmin(profile)) return true;
             if (key === 'control') {
                 const explicit = hasExplicitDashboardPermission(perms, ['control_view']);
                 return explicit === null ? canOpenControlFromDashboard(normalizedRole, profile) : explicit;
@@ -758,12 +765,24 @@
                     ? ['plaza_mayor', 'casa_de_piedra']
                     : ((roleFallback === 'plaza_mayor' || roleFallback === 'casa_de_piedra') ? [roleFallback] : []));
 
-            const profile = profileRecord || {
+            const profile = profileRecord
+                ? { ...(user && typeof user === 'object' ? user : {}), ...profileRecord }
+                : {
                 role: roleFallback,
                 username: user?.username || user?.email?.split('@')[0] || '',
                 allowed_tenants: allowedFallback,
                 tenant_default: user?.tenant_default || user?.default_tenant || null,
             };
+            if (user?.is_admin === true && profile.is_admin !== true) profile.is_admin = true;
+            if (user?.app_metadata?.rbac?.is_admin === true) {
+                profile.app_metadata = profile.app_metadata && typeof profile.app_metadata === 'object'
+                    ? profile.app_metadata
+                    : {};
+                profile.app_metadata.rbac = {
+                    ...(profile.app_metadata.rbac && typeof profile.app_metadata.rbac === 'object' ? profile.app_metadata.rbac : {}),
+                    is_admin: true,
+                };
+            }
 
             // Determinar nombre a mostrar
             let displayName = '';
@@ -801,12 +820,12 @@
             const grid = document.getElementById('apps-grid');
             const p = preloadedProfile || user || {};
             let userRole = normalizeDashboardRole(p.role || p.rol || '');
+            const isAdmin = isUserEffectiveAdmin(p);
             const allowedTenants = Array.isArray(p.allowed_tenants)
                 ? p.allowed_tenants.map(normalizeDashboardTenant).filter(Boolean)
-                : ((userRole === 'admin' || userRole === 'verificador')
+                : ((isAdmin || userRole === 'verificador')
                     ? ['plaza_mayor', 'casa_de_piedra']
                     : ((userRole === 'plaza_mayor' || userRole === 'casa_de_piedra') ? [userRole] : []));
-            const isAdmin = userRole === 'admin';
             const isVerifier = userRole === 'verificador';
 
             const hasPM = isAdmin || allowedTenants.includes('plaza_mayor');
@@ -985,8 +1004,8 @@
                 return;
             }
 
-                if (userRole === 'admin' || (hasPM && hasCP)) {
-                    await renderTenantSwitchDashboard(grid, profile, userRole, buildModules, cardHTML, { includeClients: true, includeAdminTools: userRole === 'admin' });
+                if (isAdmin || (hasPM && hasCP)) {
+                    await renderTenantSwitchDashboard(grid, profile, userRole, buildModules, cardHTML, { includeClients: true, includeAdminTools: isAdmin });
                     return;
                 }
 
@@ -1030,14 +1049,14 @@
             if (userCanOpenControl && !filteredModules.some(isControlDashboardModule)) {
                 const controlPrefix = resolveDashboardControlPrefix(profile);
                 filteredModules.push({
-                    name: userRole === 'admin' ? 'Control Operativo' : 'Control',
+                    name: isAdmin ? 'Control Operativo' : 'Control',
                     description: 'Bitácora, responsables y reportes en una vista independiente.',
                     icon: 'fa-solid fa-shield-halved',
                     url_path: `${controlPrefix}/control.html`,
-                    color: userRole === 'admin' ? 'gray' : 'red'
+                    color: isAdmin ? 'gray' : 'red'
                 });
             }
-            if ((userRole === 'admin' || canShowDashboardApp({ name: 'Configuracion', url_path: 'system/config.html' }, profile, userRole))
+            if ((isAdmin || canShowDashboardApp({ name: 'Configuracion', url_path: 'system/config.html' }, profile, userRole))
                 && !filteredModules.some((module) => getDashboardModuleKey(module) === 'config')) {
                 filteredModules.push({
                     name: 'Configuracion',

@@ -115,6 +115,12 @@
     });
   }
 
+  function isTruthyAdminFlag(value) {
+    if (value === true) return true;
+    if (value === 1 || value === "1" || value === "true") return true;
+    return false;
+  }
+
   function normalizeUser(record) {
     if (!record) return null;
     let role = String(record.role || "").toLowerCase().trim();
@@ -165,6 +171,8 @@
       .map((x) => normalizeTenant(x))
       .filter(Boolean);
     if (fallbackTenant && allowed.indexOf(fallbackTenant) === -1) allowed.push(fallbackTenant);
+    // is_admin viene EXCLUSIVAMENTE del backend RBAC engine (top-level o meta.rbac)
+    const isAdmin = isTruthyAdminFlag(record.is_admin) || isTruthyAdminFlag(metaRbac.is_admin);
     return {
       id: record.id,
       email: record.email || "",
@@ -177,6 +185,7 @@
       effective_permissions: effectivePermissions,
       effective_permissions_map: effectiveMap,
       permissions: effectivePermissions,
+      is_admin: isAdmin,
       app_metadata: metadata,
       rbac_mode: record.rbac_mode || metaRbac.mode || "",
       rbac_version: record.rbac_version || metaRbac.version || ""

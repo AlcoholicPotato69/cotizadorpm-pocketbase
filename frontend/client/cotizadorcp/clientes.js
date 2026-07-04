@@ -485,6 +485,19 @@ function calcDocumentValidity(dateValue, validDays = CLIENT_DOC_VALIDITY_DAYS, w
   return { status: 'ok', daysLeft, date: normalized, expiry: expiryStr };
 }
 
+function isClientDocumentExpired(client, field) {
+  if (!client || !field) return false;
+  if (field !== 'doc_constancia_fiscal' && field !== 'doc_comprobante_domicilio') return false;
+  const validity = getClientDocumentValidityConfig(field);
+  const traffic = calcDocumentValidity(
+    getClientDocumentValidityReferenceDate(client, field),
+    validity.validDays,
+    validity.warningDays,
+    validity.criticalDays
+  );
+  return traffic.status === 'expired';
+}
+
 function isDocumentOmitted(docState = {}, validationState = {}) {
   return docState?.omitido === true
     || validationState?.omitido === true
@@ -1400,7 +1413,8 @@ function openClientModal(client=null) {
       if (inputId === 'doc-constancia') fieldName = 'doc_constancia_fiscal';
       const rawFilename = Array.isArray(client[fieldName]) ? client[fieldName][0] : client[fieldName];
       const rawStatus = String(estados?.[fieldName]?.status || '').trim().toLowerCase();
-      if (rawFilename && (rawStatus === 'aprobado' || rawStatus === 'pendiente')) {
+      const expired = isClientDocumentExpired(client, fieldName);
+      if (rawFilename && (rawStatus === 'aprobado' || rawStatus === 'pendiente') && !expired) {
         if (input) {
           input.disabled = true;
           input.classList.add('opacity-50', 'cursor-not-allowed');
@@ -1414,6 +1428,10 @@ function openClientModal(client=null) {
             ? 'text-[10px] text-emerald-600 font-bold mt-1'
             : 'text-[10px] text-orange-600 font-bold mt-1';
         }
+      } else if (rawFilename && expired && statusEl) {
+        statusEl.classList.remove('hidden');
+        statusEl.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> Vencido — puedes remplazar';
+        statusEl.className = 'text-[10px] text-amber-600 font-bold mt-1';
       }
     }
   });
@@ -3050,6 +3068,7 @@ function syncVerificationActionPanel(label, options = {}) {
   const omitted = options.omitted === true;
   const allowOmit = options.allowOmit !== false;
   const allowDelete = options.allowDelete !== false;
+  const allowApprove = options.allowApprove !== false;
 
   if (actionPanel) actionPanel.classList.remove('hidden');
   if (actionLabel) actionLabel.textContent = `Decisión: ${label || 'Documento'}`;
@@ -3059,7 +3078,7 @@ function syncVerificationActionPanel(label, options = {}) {
   if (omitWrap) omitWrap.classList.toggle('hidden', !allowOmit);
   if (omitToggle) omitToggle.disabled = !allowOmit;
   if (omitNote) omitNote.classList.toggle('hidden', !allowOmit || !omitted);
-  setVerificationButtonState(approveBtn, hasFile && !omitted);
+  setVerificationButtonState(approveBtn, hasFile && !omitted && allowApprove);
   setVerificationButtonState(rejectBtn, hasFile && !omitted);
   setVerificationButtonState(deleteBtn, hasFile && allowDelete);
 }
@@ -3479,6 +3498,10 @@ function openVerificationModal(client) {
       statusLabel = 'Faltante';
       statusColor = 'text-gray-400';
       statusCss = 'bg-gray-100 text-gray-500';
+    } else if (isClientDocumentExpired(client, item.field)) {
+      statusLabel = 'Vencido';
+      statusColor = 'text-amber-500';
+      statusCss = 'bg-amber-100 text-amber-800';
     } else if (docInfo.status === 'aprobado') {
       statusLabel = 'Aprobado';
       statusColor = 'text-emerald-500';
@@ -3695,7 +3718,12 @@ async function loadVerifDoc(field, label, fileName) {
   document.getElementById('verif-preview-img').src = '';
 
   const allowOmit = canClientDocumentBeOmitted(field);
-  syncVerificationActionPanel(label, { uploaded: docInfo.uploaded, omitted: docInfo.omitted, allowOmit });
+  syncVerificationActionPanel(label, {
+    uploaded: docInfo.uploaded,
+    omitted: docInfo.omitted,
+    allowOmit,
+    allowApprove: docInfo.uploaded && !isClientDocumentExpired(verifCurrentClient, field)
+  });
 
   const previewError = document.getElementById('verif-preview-error');
   const previewErrorText = document.getElementById('verif-preview-error-text');

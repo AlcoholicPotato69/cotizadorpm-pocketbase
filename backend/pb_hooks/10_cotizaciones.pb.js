@@ -1443,7 +1443,12 @@
     }
 
     if (e.auth) {
-      enforceQuotePermission(e, "orders_edit", "No tienes permisos para crear cotizaciones.");
+      require(`${__hooks}/rbac_shared.js`).authorizeOrThrow(e, "orders_edit", {
+        tenant: e.record ? e.record.get("tenant") : "",
+        targetType: "cotizaciones",
+        targetId: String(e.record ? (e.record.get("id") || "") : "").trim(),
+        message: "No tienes permisos para crear cotizaciones."
+      });
     }
 
     // ── Solicitud pública (sin autenticación) ──
@@ -1577,7 +1582,12 @@
     if (e.hasSuperuserAuth && e.hasSuperuserAuth()) {
       return e.next();
     }
-    enforceQuotePermission(e, "orders_edit", "No tienes permisos para editar cotizaciones.");
+    require(`${__hooks}/rbac_shared.js`).authorizeOrThrow(e, "orders_edit", {
+      tenant: e.record ? e.record.get("tenant") : "",
+      targetType: "cotizaciones",
+      targetId: String(e.record ? (e.record.get("id") || "") : "").trim(),
+      message: "No tienes permisos para editar cotizaciones."
+    });
     function stripTagsLocal(v) {
       return String(v || "").replace(/<[^>]*>/g, "");
     }
@@ -2090,7 +2100,12 @@
 
   onRecordDeleteRequest(function (e) {
     if (e.hasSuperuserAuth && e.hasSuperuserAuth()) return e.next();
-    enforceQuotePermission(e, "quotes_delete", "No tienes permisos para eliminar cotizaciones.");
+    require(`${__hooks}/rbac_shared.js`).authorizeOrThrow(e, "quotes_delete", {
+      tenant: e.record ? e.record.get("tenant") : "",
+      targetType: "cotizaciones",
+      targetId: String(e.record ? (e.record.get("id") || "") : "").trim(),
+      message: "No tienes permisos para eliminar cotizaciones."
+    });
     e.next();
   }, "cotizaciones");
 

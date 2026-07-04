@@ -78,9 +78,12 @@
     if (!safe) return "";
     if (typeof safe.normalize === "function") safe = safe.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
     safe = safe.replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
-    if (safe === "administrador" || safe === "superadmin" || safe === "super_admin") return "admin";
+    // Aliases de tenant para compatibilidad de datos legacy (no permisos)
     if (safe === "plazamayor" || safe === "pm" || safe === "finanzas") return "plaza_mayor";
     if (safe === "casadepiedra" || safe === "cp") return "casa_de_piedra";
+    // ponytail: alias solo para resolver slug en app_roles; is_admin viene de grants_admin=true
+    if (safe === "administrador" || safe === "superadmin" || safe === "super_admin") return "admin";
+    // NOTA: NO se usa el nombre del rol como bypass de permisos — solo empareja registros en app_roles.
     return safe;
   }
 
@@ -244,6 +247,7 @@
           description: trim(row.getString("description") || row.get("description") || ""),
           active: row.getBool ? row.getBool("active") !== false : (row.get("active") !== false),
           system_role: row.getBool ? row.getBool("system_role") === true : row.get("system_role") === true,
+          grants_admin: row.getBool ? row.getBool("grants_admin") === true : row.get("grants_admin") === true,
           sort_order: Number(row.getInt ? row.getInt("sort_order") : row.get("sort_order") || 0),
           global: normalizeOverridePair(row.getString ? row.getString("permissions_global") : row.get("permissions_global")),
           byTenant: normalizeTenantOverrides(row.getString ? row.getString("permissions_tenant_overrides") : row.get("permissions_tenant_overrides"))
@@ -252,7 +256,11 @@
         byId[id] = role;
         bySlug[slug] = role;
       }
-    } catch (_) {}
+    } catch (_) {
+      // Lectura fallida: conserva el último snapshot bueno en vez de degradar a
+      // "nadie tiene permisos" durante el TTL completo.
+      if (roleCache.list.length) return roleCache;
+    }
 
     roleCache.loadedAt = nowMs();
     roleCache.list = list;
@@ -358,11 +366,13 @@
     return matched;
   }
 
-  function hasAdminRole(authRecord, roles) {
-    const directRole = normalizeRole(authRecord && authRecord.getString ? authRecord.getString("role") : authRecord && authRecord.role);
-    if (directRole === "admin") return true;
+  // is_admin se determina EXCLUSIVAMENTE por el flag grants_admin=true en app_roles.
+  // system_role solo significa "rol protegido/no borrable" (los 5 roles semilla lo tienen,
+  // y usarlo como flag de admin convertía a TODO usuario con rol semilla en admin efectivo).
+  // No se admite ningún bypass por nombre de slug — "admin" es solo un nombre.
+  function hasAdminRole(_authRecord, roles) {
     for (let i = 0; i < roles.length; i += 1) {
-      if (normalizeRole(roles[i].slug) === "admin") return true;
+      if (roles[i].grants_admin === true) return true;
     }
     return false;
   }
@@ -371,9 +381,8 @@
     const safeTenant = normalizeTenant(tenant);
     if (!safeTenant) return true;
     if (!authRecord) return false;
+    // adminEffective viene del engine (grants_admin=true) — es la única puerta de acceso total
     if (adminEffective === true) return true;
-    const role = normalizeRole(authRecord.getString ? authRecord.getString("role") : authRecord.role);
-    if (role === "admin") return true;
     const allowed = normalizeAllowedTenants(authRecord);
     return allowed.indexOf(safeTenant) !== -1;
   }
@@ -486,6 +495,8 @@
     meta.rbac.version = String(Math.floor(roleCache.loadedAt / 1000) || 0);
 
     const email = trim(authRecord.getString("email"));
+    // ponytail: is_admin va al top-level y a meta.rbac para que layout.js lo lea directamente
+    meta.rbac.is_admin = effective.is_admin === true;
     return {
       id: trim(authRecord.get("id")),
       email: email,
@@ -498,6 +509,7 @@
       effective_permissions: effective.permissions,
       effective_permissions_map: map,
       permissions: effective.permissions,
+      is_admin: effective.is_admin === true,
       rbac_mode: getRbacMode(),
       rbac_version: meta.rbac.version
     };
@@ -629,29 +641,22 @@
     }
   }
 
-  function ensureLastAdminLock(authRecord, candidateRoleTokens) {
-    const tokens = uniqueStrings(candidateRoleTokens).map(normalizeRole).filter(Boolean);
-    const hasExplicitTokens = Array.isArray(candidateRoleTokens);
-    const willRemainAdmin = tokens.indexOf("admin") !== -1
-      || (!hasExplicitTokens && normalizeRole(authRecord && authRecord.getString ? authRecord.getString("role") : "") === "admin");
-    if (willRemainAdmin) return true;
-    const all = $app.findRecordsByFilter(AUTH_COLLECTION, 'id != ""', "", 2000, 0) || [];
-    let admins = 0;
+  // Verifica que quedará al menos otro usuario admin efectivo (grants_admin) tras el cambio.
+  // Usa isEffectiveAdminRecord() que pasa por el engine RBAC — no hay slug-match.
+  function ensureLastAdminLock(authRecord, _candidateRoleTokens) {
     const me = trim(authRecord && authRecord.get ? authRecord.get("id") : "");
+    const all = $app.findRecordsByFilter(AUTH_COLLECTION, 'id != ""', "", 2000, 0) || [];
     for (let i = 0; i < all.length; i += 1) {
       const row = all[i];
       const id = trim(row.get("id"));
-      const role = normalizeRole(row.getString("role"));
-      const tokensRow = resolveRoleTokens(row).map(normalizeRole);
-      const hasAdmin = role === "admin" || tokensRow.indexOf("admin") !== -1;
-      if (!hasAdmin) continue;
       if (id === me) continue;
-      admins += 1;
-      if (admins > 0) break;
+      if (isEffectiveAdminRecord(row)) return true;
     }
-    return admins > 0;
+    return false;
   }
 
+  // is_admin se determina únicamente por el engine RBAC (grants_admin=true).
+  // Si el engine falla, NO asumimos admin — fallback a false.
   function isEffectiveAdminRecord(record) {
     if (!record) return false;
     try {
@@ -661,10 +666,7 @@
       const effective = resolveEffective(record, tenantHint);
       return !!(effective && effective.is_admin === true);
     } catch (_) {
-      const role = normalizeRole(record.getString ? record.getString("role") : record.role);
-      if (role === "admin") return true;
-      const tokens = resolveRoleTokens(record).map(normalizeRole);
-      return tokens.indexOf("admin") !== -1;
+      return false;
     }
   }
 
@@ -680,6 +682,41 @@
       if (isEffectiveAdminRecord(row)) return true;
     }
     return false;
+  }
+
+  const LEGACY_ROLE_PRIORITY = ["admin", "verificador", "plaza_mayor", "casa_de_piedra", "user"];
+
+  // Campo legacy "role" (select) coherente con los roles RBAC asignados. Solo se usa
+  // para display y compatibilidad: las API rules ya no dependen de él salvo el caso
+  // "verificador" en colecciones de staff.
+  function resolveLegacyRoleForRecord(record, matchedSlugs) {
+    const slugs = Array.isArray(matchedSlugs) ? matchedSlugs : resolveMatchedRoles(record || {}).map((r) => r.slug);
+    for (let i = 0; i < LEGACY_ROLE_PRIORITY.length; i += 1) {
+      if (slugs.indexOf(LEGACY_ROLE_PRIORITY[i]) !== -1) return LEGACY_ROLE_PRIORITY[i];
+    }
+    const current = normalizeRole(record && record.getString ? record.getString("role") : "");
+    if (LEGACY_ROLE_PRIORITY.indexOf(current) !== -1) return current;
+    const tenantDefault = normalizeTenant(record && record.get ? record.get("tenant_default") : "");
+    return tenantDefault || "plaza_mayor";
+  }
+
+  // Recalcula y persiste los campos materializados (is_admin + role legacy) del usuario.
+  // El backend es el ÚNICO escritor de app_users.is_admin; las API rules lo consumen.
+  function syncUserAdminFlag(record, options) {
+    const opts = safeObject(options);
+    if (!record || !record.get) return { changed: false, is_admin: false };
+    const matched = resolveMatchedRoles(record);
+    const isAdmin = hasAdminRole(record, matched);
+    const legacyRole = resolveLegacyRoleForRecord(record, matched.map((r) => r.slug));
+    const changedAdmin = (record.getBool ? record.getBool("is_admin") === true : record.get("is_admin") === true) !== isAdmin;
+    const changedRole = normalizeRole(record.getString ? record.getString("role") : "") !== legacyRole;
+    const changed = changedAdmin || changedRole;
+    if (changed) {
+      record.set("is_admin", isAdmin);
+      record.set("role", legacyRole);
+      if (opts.save !== false) $app.save(record);
+    }
+    return { changed: changed, is_admin: isAdmin, role: legacyRole };
   }
 
   module.exports = {
@@ -706,6 +743,8 @@
     revokeUserSessionsByRecord,
     revokeUserSessionsById,
     ensureLastAdminLock,
-    ensureAdminWouldRemainAfterDelete
+    ensureAdminWouldRemainAfterDelete,
+    isEffectiveAdminRecord,
+    syncUserAdminFlag
   };
 })();

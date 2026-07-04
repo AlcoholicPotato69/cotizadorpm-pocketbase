@@ -5,7 +5,7 @@ set "SCRIPT_DIR=%~dp0"
 if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
 set "ROOT_DIR=%SCRIPT_DIR%\.."
 for %%I in ("%ROOT_DIR%") do set "ROOT_DIR=%%~fI"
-set "BACKEND_SCRIPT=%SCRIPT_DIR%\backend-service.bat"
+set "BACKEND_SCRIPT=%SCRIPT_DIR%\deploy\backend-service.bat"
 set "LOG_DIR=%ROOT_DIR%\backend\logs"
 set "TMP_STEP_LOG=%TEMP%\levantar-todo-step.log"
 set "PAUSE_AT_END=1"
@@ -43,36 +43,41 @@ if not exist "%ROOT_DIR%\backend\pocketbase.exe" (
 call :require_admin
 if errorlevel 1 goto :fail
 
-set "CUSTOM_IP=127.0.0.1"
-set "CUSTOM_PORT=8090"
-set "CUSTOM_FRONTEND_HOST=127.0.0.1"
-set "CUSTOM_FRONTEND_PORT=80"
+set "CONF_FILE=%SCRIPT_DIR%\deploy\server-network.conf"
+set "DO_CONFIG=0"
+if not exist "%CONF_FILE%" set "DO_CONFIG=1"
+if /I "%~1"=="--config" set "DO_CONFIG=1"
+if /I "%~1"=="-c" set "DO_CONFIG=1"
+if /I "%~1"=="--reconfigure" set "DO_CONFIG=1"
 
-echo.
-echo ============================================================
-echo   CONFIGURACION DE BACKEND
-echo ============================================================
-echo.
-echo Este valor se usara para que PocketBase escuche y para generar la plantilla Nginx.
-echo Si Nginx correra en el mismo servidor, puedes dejar 127.0.0.1 y usar el proxy local.
-set /p "CUSTOM_IP=Escribe la IP o hostname del backend [127.0.0.1]: "
-set /p "CUSTOM_PORT=Escribe el puerto del backend [8090]: "
-if "%CUSTOM_IP%"=="" set "CUSTOM_IP=127.0.0.1"
-if "%CUSTOM_PORT%"=="" set "CUSTOM_PORT=8090"
+if "%DO_CONFIG%"=="1" (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%\deploy\interactive-network-setup.ps1" -ConfFile "%CONF_FILE%"
+  if errorlevel 1 goto :fail
+) else (
+  echo [INFO] Usando configuracion de red de deploy\server-network.conf. Para cambiarla usa: levantar-todo.bat --config
+)
 
-echo.
-echo ============================================================
-echo   CONFIGURACION DE FRONTEND HTML
-echo ============================================================
-echo.
-echo Los HTML NO se serviran desde PocketBase. Se preparara un site estatico para Nginx u otro servidor web.
-echo Este origen se autorizara en CORS para que el frontend pueda hablar con el backend cuando no use mismo origen.
-set /p "CUSTOM_FRONTEND_HOST=Escribe la IP o hostname del frontend HTML [127.0.0.1]: "
-set /p "CUSTOM_FRONTEND_PORT=Escribe el puerto HTTP del frontend [80]: "
-if "%CUSTOM_FRONTEND_HOST%"=="" set "CUSTOM_FRONTEND_HOST=127.0.0.1"
-if "%CUSTOM_FRONTEND_PORT%"=="" set "CUSTOM_FRONTEND_PORT=80"
-set "CUSTOM_FRONTEND_ORIGIN=http://%CUSTOM_FRONTEND_HOST%"
-if not "%CUSTOM_FRONTEND_PORT%"=="80" set "CUSTOM_FRONTEND_ORIGIN=http://%CUSTOM_FRONTEND_HOST%:%CUSTOM_FRONTEND_PORT%"
+set "BIND_IP=127.0.0.1"
+set "SELECTED_IP=127.0.0.1"
+set "BACKEND_PORT=8090"
+set "FRONTEND_PORT=8090"
+set "BACKEND_URL=http://127.0.0.1:8090"
+set "FRONTEND_ORIGIN=http://127.0.0.1:8090"
+
+if exist "%CONF_FILE%" (
+  for /f "usebackq tokens=1,* delims==" %%A in ("%CONF_FILE%") do (
+    if /I "%%~A"=="BIND_IP" set "BIND_IP=%%~B"
+    if /I "%%~A"=="SELECTED_IP" set "SELECTED_IP=%%~B"
+    if /I "%%~A"=="BACKEND_PORT" set "BACKEND_PORT=%%~B"
+    if /I "%%~A"=="FRONTEND_PORT" set "FRONTEND_PORT=%%~B"
+    if /I "%%~A"=="BACKEND_URL" set "BACKEND_URL=%%~B"
+    if /I "%%~A"=="FRONTEND_ORIGIN" set "FRONTEND_ORIGIN=%%~B"
+  )
+)
+
+set "CUSTOM_IP=%SELECTED_IP%"
+set "CUSTOM_PORT=%BACKEND_PORT%"
+set "CUSTOM_ORIGIN=%FRONTEND_ORIGIN%"
 
 call :exec_backend_step "Paso: Limpiando procesos huerfanos..." cleanup-orphans
 if errorlevel 1 goto :fail
@@ -80,22 +85,22 @@ if errorlevel 1 goto :fail
 call :exec_backend_step "Paso: Desactivando HTTPS previo..." disable-https
 if errorlevel 1 goto :fail
 
-call :exec_backend_step "Paso: Forzando bind local..." set-bind "%CUSTOM_IP%:%CUSTOM_PORT%"
+call :exec_backend_step "Paso: Configurando bind de PocketBase..." set-bind "%BIND_IP%:%BACKEND_PORT%"
 if errorlevel 1 goto :fail
 
-call :exec_backend_step "Paso: Configurando URL real del backend..." set-url "http://%CUSTOM_IP%:%CUSTOM_PORT%"
+call :exec_backend_step "Paso: Configurando URL real del servidor..." set-url "%BACKEND_URL%"
 if errorlevel 1 goto :fail
 
-call :exec_backend_step "Paso: Configurando frontend same-origin para Nginx..." set-frontend-url "/"
+call :exec_backend_step "Paso: Configurando frontend same-origin..." set-frontend-url "/"
 if errorlevel 1 goto :fail
 
-call :exec_backend_step "Paso: Autorizando origen del frontend HTML..." set-frontend-origin "%CUSTOM_FRONTEND_ORIGIN%"
+call :exec_backend_step "Paso: Autorizando origen en CORS..." set-frontend-origin "%FRONTEND_ORIGIN%"
 if errorlevel 1 goto :fail
 
-call :exec_backend_step "Paso: Desactivando publicDir de PocketBase..." set-public-dir off
+call :exec_backend_step "Paso: Activando publicDir unificado de PocketBase..." set-public-dir "pb_public"
 if errorlevel 1 goto :fail
 
-call :exec_backend_step "Paso: Preparando carpeta estatica y nginx.conf..." prepare-nginx "production\deploy\nginx-site" "%CUSTOM_FRONTEND_HOST%"
+call :exec_backend_step "Paso: Preparando carpeta estatica y nginx.conf opcional..." prepare-nginx "production\deploy\nginx-site" "%SELECTED_IP%"
 if errorlevel 1 goto :fail
 
 call :exec_backend_step "Paso: Instalando/actualizando servicio Windows..." install
@@ -119,10 +124,10 @@ if not "%RUNNING_RC%"=="0" (
   goto :fail
 )
 
-echo [CHECK] Health-check local http://%CUSTOM_IP%:%CUSTOM_PORT%/api/health
->> "%RUN_LOG%" echo [CHECK] Health-check local http://%CUSTOM_IP%:%CUSTOM_PORT%/api/health
+echo [CHECK] Health-check local http://127.0.0.1:%BACKEND_PORT%/api/health
+>> "%RUN_LOG%" echo [CHECK] Health-check local http://127.0.0.1:%BACKEND_PORT%/api/health
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$ok = $false; for ($i = 1; $i -le 20; $i++) { try { $r = Invoke-WebRequest -UseBasicParsing -Uri 'http://%CUSTOM_IP%:%CUSTOM_PORT%/api/health' -TimeoutSec 5 -ErrorAction Stop; if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 400) { $ok = $true; break } } catch { Start-Sleep -Seconds 1 } }; if (-not $ok) { exit 9 }"
+  "$ok = $false; for ($i = 1; $i -le 20; $i++) { try { $r = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:%BACKEND_PORT%/api/health' -TimeoutSec 5 -ErrorAction Stop; if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 400) { $ok = $true; break } } catch { Start-Sleep -Seconds 1 } }; if (-not $ok) { exit 9 }"
 if errorlevel 1 (
   echo [ERROR] Health-check local fallo.
   >> "%RUN_LOG%" echo [ERROR] Health-check local fallo.
@@ -135,13 +140,11 @@ echo.
 echo ============================================================
 echo   PREPARACION DE PRODUCCION COMPLETADA
 echo ============================================================
-echo   BACKEND_REAL: http://%CUSTOM_IP%:%CUSTOM_PORT%
-echo   FRONTEND_ORIGIN: %CUSTOM_FRONTEND_ORIGIN%
-echo   FRONTEND_RUNTIME: / ^(Nginx proxy /api y /_ al backend^)
-echo   Servicio: CotizadorPocketBase
-echo   Estado esperado: RUNNING
-echo   Site Nginx: production\deploy\nginx-site
-echo   nginx.conf: production\deploy\nginx\cotizador-production.conf
+echo   URL SERVIDOR (Backend):  %BACKEND_URL%
+echo   FRONTEND:                http://%SELECTED_IP%:%FRONTEND_PORT%/client/index.html (o /)
+echo   API REST:                %BACKEND_URL%/api/
+echo   DASHBOARD:               %BACKEND_URL%/_/
+echo   Servicio:                CotizadorPocketBase (RUNNING)
 echo   Log: %RUN_LOG%
 echo ============================================================
 echo.
@@ -208,11 +211,9 @@ echo.
 echo Configura:
 echo   - BIND_ADDR=IP:PUERTO
 echo   - BACKEND_URL real del servicio
-echo   - FRONTEND_BACKEND_URL=/ ^(mismo origen via Nginx^)
-echo   - CORS_ALLOWED_ORIGINS con la IP/host del frontend HTML
-echo   - PUBLIC_DIR desactivado para que PocketBase no sirva HTML
-echo   - carpeta estatica production\deploy\nginx-site
-echo   - plantilla production\deploy\nginx\cotizador-production.conf
+echo   - FRONTEND_BACKEND_URL=/ ^(mismo origen en PocketBase^)
+echo   - CORS_ALLOWED_ORIGINS con la IP/host del servidor
+echo   - PUBLIC_DIR=pb_public para que PocketBase sirva el Frontend
 echo   - servicio CotizadorPocketBase en RUNNING
 echo.
 echo Uso:
